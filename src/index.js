@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const cron = require('node-cron');
 const logger = require('./utils/logger');
 const config = require('./utils/config');
@@ -142,6 +143,20 @@ async function main() {
     `Social scan: every 15 min\n\n` +
     `<i>${new Date().toUTCString()}</i>`
   );
+
+  // Health check server for Deployzy
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+    } else {
+      res.writeHead(200);
+      res.end('CryptoSignal Bot Running');
+    }
+  });
+  server.listen(process.env.PORT || 3000, () => {
+    logger.info(`Health check server on port ${process.env.PORT || 3000}`);
+  });
 
   logger.info('All systems running');
 
