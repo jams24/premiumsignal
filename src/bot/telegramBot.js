@@ -1,0 +1,211 @@
+const { Telegraf, Markup } = require('telegraf');
+const logger = require('../utils/logger');
+const config = require('../utils/config');
+const db = require('../db/database');
+const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult } = require('../utils/formatting');
+
+class TelegramBot {
+  constructor({ technicalScanner, socialScanner, onchainTracker }) {
+    this.bot = new Telegraf(config.telegram.botToken);
+    this.channelId = config.telegram.channelId;
+    this.technicalScanner = technicalScanner;
+    this.socialScanner = socialScanner;
+    this.onchainTracker = onchainTracker;
+    this.setupCommands();
+  }
+
+  setupCommands() {
+    this.bot.command('start', (ctx) => {
+      ctx.replyWithHTML(
+        `<b>🤖 CryptoSignal Bot</b>\n\n` +
+        `<b>Commands:</b>\n` +
+        `/signals — Active signals\n` +
+        `/scan — Run market scan now\n` +
+        `/trending — Social sentiment scan\n` +
+        `/funding — Funding rate extremes\n` +
+        `/stats — Signal performance stats\n` +
+        `/whale <token> <chain> <address> — Check whale activity\n` +
+        `/help — Show this menu\n\n` +
+        `Signals are auto-posted to the channel.`
+      );
+    });
+
+    this.bot.command('help', (ctx) => ctx.replyWithHTML(
+      `<b>Signal Types:</b>\n` +
+      `🆕 LISTING — New exchange listing detected\n` +
+      `🚀 BREAKOUT — Technical breakout with volume\n` +
+      `📊 VOLUME_SPIKE — Unusual volume detected\n` +
+      `🐋 WHALE — Large on-chain movement\n` +
+      `📉 FUNDING_SHORT — Extreme funding rate\n\n` +
+      `<b>Confidence:</b> ⭐⭐⭐⭐⭐ (1-5 stars)\n` +
+      `Higher confidence = stronger confluence of signals`
+    ));
+
+    this.bot.command('signals', async (ctx) => {
+      try {
+        const signals = await db.getActiveSignals();
+        if (!signals.length) return ctx.reply('No active signals right now. Stay patient.');
+
+        let msg = '📡 <b>ACTIVE SIGNALS</b>\n\n';
+        for (const s of signals.slice(0, 5)) {
+          const dir = s.direction === 'long' ? '🟢' : '🔴';
+          msg += `${dir} <b>$${s.symbol}</b> (${s.exchange}) — ${s.type}\n`;
+          msg += `   Entry: $${s.entry_low} - $${s.entry_high}\n`;
+          msg += `   TP1: $${s.tp1} | SL: $${s.stop_loss}\n`;
+          msg += `   ${s.catalyst}\n\n`;
+        }
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Error fetching signals.');
+        logger.error(`/signals error: ${err.message}`);
+      }
+    });
+
+    this.bot.command('scan', async (ctx) => {
+      ctx.reply('🔍 Scanning markets... this may take 30-60 seconds.');
+      try {
+        const results = await this.technicalScanner.scanAll();
+        const msg = formatScanResult(results);
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Scan failed. Check logs.');
+        logger.error(`/scan error: ${err.message}`);
+      }
+    });
+
+    this.bot.command('trending', async (ctx) => {
+      ctx.reply('🔍 Checking social sentiment...');
+      try {
+        const [twitter, gecko] = await Promise.all([
+          this.socialScanner.scanTwitterTrending(),
+          this.socialScanner.getCoingeckoTrending(),
+        ]);
+        const msg = this.socialScanner.formatTrending(twitter, gecko);
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Social scan failed.');
+        logger.error(`/trending error: ${err.message}`);
+      }
+    });
+
+    this.bot.command('funding', async (ctx) => {
+      ctx.reply('🔍 Checking funding rates...');
+      try {
+        let allOpps = [];
+        for (const [id, ex] of Object.entries(this.technicalScanner.exchanges)) {
+          const opps = await this.technicalScanner.findFundingRateExtremes(ex, id);
+          allOpps = allOpps.concat(opps);
+        }
+
+        if (!allOpps.length) return ctx.reply('No extreme funding rates found.');
+
+        let msg = '📉 <b>FUNDING RATE EXTREMES</b>\n\n';
+        for (const o of allOpps.slice(0, 15)) {
+          const sym = o.symbol.replace('/USDT:USDT', '');
+          const dir = o.direction === 'long' ? '🟢' : '🔴';
+          msg += `${dir} <b>${sym}</b> (${o.exchange}) — ${o.reason}\n`;
+        }
+        msg += '\n<i>Extreme funding = potential mean reversion opportunity</i>';
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Funding check failed.');
+        logger.error(`/funding error: ${err.message}`);
+      }
+    });
+
+    this.bot.command('stats', async (ctx) => {
+      try {
+        const stats = await db.getSignalStats();
+        ctx.replyWithHTML(
+          `📊 <b>SIGNAL PERFORMANCE</b>\n\n` +
+          `Total Signals: ${stats.total}\n` +
+          `TP1 Hit: ${stats.tp1Hit} (${stats.winRate}%)\n` +
+          `TP2 Hit: ${stats.tp2Hit}\n` +
+          `SL Hit: ${stats.slHit}\n` +
+          `Win Rate: ${stats.winRate}%`
+        );
+      } catch (err) {
+        ctx.reply('Error fetching stats.');
+      }
+    });
+
+    this.bot.command('whale', async (ctx) => {
+      const args = ctx.message.text.split(' ').slice(1);
+      if (args.length < 3) return ctx.reply('Usage: /whale <TOKEN> <chain> <contract_address>\nExample: /whale TUT ethereum 0x123...');
+
+      const [symbol, chain, address] = args;
+      ctx.reply(`🐋 Checking whale activity for $${symbol.toUpperCase()} on ${chain}...`);
+
+      try {
+        let alerts = [];
+        if (chain.toLowerCase() === 'ethereum' || chain.toLowerCase() === 'eth') {
+          alerts = await this.onchainTracker.checkEthWhales(address, symbol.toUpperCase());
+        } else if (chain.toLowerCase() === 'bsc' || chain.toLowerCase() === 'bnb') {
+          alerts = await this.onchainTracker.checkBscWhales(address, symbol.toUpperCase());
+        } else if (chain.toLowerCase() === 'solana' || chain.toLowerCase() === 'sol') {
+          alerts = await this.onchainTracker.checkSolanaWhales(address, symbol.toUpperCase());
+        } else {
+          return ctx.reply('Supported chains: ethereum, bsc, solana');
+        }
+
+        if (!alerts.length) return ctx.reply('No recent whale transactions found.');
+
+        for (const alert of alerts.slice(0, 5)) {
+          ctx.replyWithHTML(formatWhaleAlert(alert));
+        }
+      } catch (err) {
+        ctx.reply('Whale check failed.');
+        logger.error(`/whale error: ${err.message}`);
+      }
+    });
+  }
+
+  async sendSignal(signal) {
+    if (!this.channelId) return;
+    try {
+      await this.bot.telegram.sendMessage(this.channelId, formatSignalMessage(signal), { parse_mode: 'HTML' });
+      logger.info(`Signal sent to channel: ${signal.type} ${signal.symbol}`);
+    } catch (err) {
+      logger.error(`Failed to send signal: ${err.message}`);
+    }
+  }
+
+  async sendListingAlert(listing) {
+    if (!this.channelId) return;
+    try {
+      await this.bot.telegram.sendMessage(this.channelId, formatListingAlert(listing), { parse_mode: 'HTML' });
+      logger.info(`Listing alert sent: ${listing.symbol} on ${listing.exchange}`);
+    } catch (err) {
+      logger.error(`Failed to send listing alert: ${err.message}`);
+    }
+  }
+
+  async sendWhaleAlert(alert) {
+    if (!this.channelId) return;
+    try {
+      await this.bot.telegram.sendMessage(this.channelId, formatWhaleAlert(alert), { parse_mode: 'HTML' });
+    } catch (err) {
+      logger.error(`Failed to send whale alert: ${err.message}`);
+    }
+  }
+
+  async sendRaw(message) {
+    if (!this.channelId) return;
+    try {
+      await this.bot.telegram.sendMessage(this.channelId, message, { parse_mode: 'HTML' });
+    } catch (err) {
+      logger.error(`Failed to send message: ${err.message}`);
+    }
+  }
+
+  async launch() {
+    await this.bot.launch();
+    logger.info('Telegram bot launched');
+  }
+
+  stop() {
+    this.bot.stop('SIGTERM');
+  }
+}
+
+module.exports = TelegramBot;
