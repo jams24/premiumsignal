@@ -30,6 +30,84 @@ class TelegramBot {
       );
     });
 
+    this.bot.command('menu', (ctx) => {
+      ctx.replyWithHTML(
+        `📡 <b>CryptoSignal Control Panel</b>\n\nSelect an option below:`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('📡 Active Signals', 'action_signals'), Markup.button.callback('🔍 Market Scan', 'action_scan')],
+          [Markup.button.callback('🔥 Trending', 'action_trending'), Markup.button.callback('📉 Funding Rates', 'action_funding')],
+          [Markup.button.callback('🐋 Whale Tracker', 'action_whale_info'), Markup.button.callback('📊 Stats', 'action_stats')],
+          [Markup.button.callback('❓ Help', 'action_help')],
+        ])
+      );
+    });
+
+    this.bot.action('action_signals', async (ctx) => {
+      await ctx.answerCbQuery();
+      const signals = await db.getActiveSignals();
+      if (!signals.length) return ctx.replyWithHTML('No active signals right now. Stay patient.');
+      let msg = '📡 <b>ACTIVE SIGNALS</b>\n\n';
+      for (const s of signals.slice(0, 5)) {
+        const dir = s.direction === 'long' ? '🟢' : '🔴';
+        msg += `${dir} <b>$${s.symbol}</b> (${s.exchange}) — ${s.type}\nEntry: $${s.entry_low} - $${s.entry_high} | TP1: $${s.tp1} | SL: $${s.stop_loss}\n${s.catalyst}\n\n`;
+      }
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.action('action_scan', async (ctx) => {
+      await ctx.answerCbQuery('Scanning markets...');
+      ctx.reply('🔍 Scanning markets... this may take 30-60 seconds.');
+      const results = await this.technicalScanner.scanAll();
+      ctx.replyWithHTML(formatScanResult(results));
+    });
+
+    this.bot.action('action_trending', async (ctx) => {
+      await ctx.answerCbQuery('Checking sentiment...');
+      const [twitter, gecko] = await Promise.all([
+        this.socialScanner.scanTwitterTrending(),
+        this.socialScanner.getCoingeckoTrending(),
+      ]);
+      ctx.replyWithHTML(this.socialScanner.formatTrending(twitter, gecko));
+    });
+
+    this.bot.action('action_funding', async (ctx) => {
+      await ctx.answerCbQuery('Checking funding rates...');
+      let allOpps = [];
+      for (const [id, ex] of Object.entries(this.technicalScanner.exchanges)) {
+        const opps = await this.technicalScanner.findFundingRateExtremes(ex, id);
+        allOpps = allOpps.concat(opps);
+      }
+      if (!allOpps.length) return ctx.reply('No extreme funding rates found.');
+      let msg = '📉 <b>FUNDING RATE EXTREMES</b>\n\n';
+      for (const o of allOpps.slice(0, 15)) {
+        const sym = o.symbol.replace('/USDT:USDT', '');
+        const dir = o.direction === 'long' ? '🟢' : '🔴';
+        msg += `${dir} <b>${sym}</b> (${o.exchange}) — ${o.reason}\n`;
+      }
+      msg += '\n<i>Extreme funding = potential mean reversion opportunity</i>';
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.action('action_whale_info', async (ctx) => {
+      await ctx.answerCbQuery();
+      ctx.replyWithHTML('🐋 <b>Whale Tracker</b>\n\nUsage:\n<code>/whale TOKEN chain contract_address</code>\n\nExample:\n<code>/whale TUT ethereum 0x123...</code>\n\nSupported chains: ethereum, bsc, solana');
+    });
+
+    this.bot.action('action_stats', async (ctx) => {
+      await ctx.answerCbQuery();
+      const stats = await db.getSignalStats();
+      ctx.replyWithHTML(
+        `📊 <b>SIGNAL PERFORMANCE</b>\n\nTotal Signals: ${stats.total}\nTP1 Hit: ${stats.tp1Hit} (${stats.winRate}%)\nTP2 Hit: ${stats.tp2Hit}\nSL Hit: ${stats.slHit}\nWin Rate: ${stats.winRate}%`
+      );
+    });
+
+    this.bot.action('action_help', async (ctx) => {
+      await ctx.answerCbQuery();
+      ctx.replyWithHTML(
+        `<b>Signal Types:</b>\n🆕 LISTING — New exchange listing\n🚀 BREAKOUT — Technical breakout\n📊 VOLUME_SPIKE — Unusual volume\n🐋 WHALE — On-chain whale movement\n📉 FUNDING — Extreme funding rate\n\n⭐ Confidence: 1-5 stars (higher = more confluence)`
+      );
+    });
+
     this.bot.command('help', (ctx) => ctx.replyWithHTML(
       `<b>Signal Types:</b>\n` +
       `🆕 LISTING — New exchange listing detected\n` +
@@ -199,6 +277,19 @@ class TelegramBot {
   }
 
   async launch() {
+    // Register command menu (shows in Telegram UI)
+    await this.bot.telegram.setMyCommands([
+      { command: 'start', description: 'Start the bot' },
+      { command: 'menu', description: 'Open the control panel' },
+      { command: 'signals', description: 'View active trading signals' },
+      { command: 'scan', description: 'Run a live market scan' },
+      { command: 'trending', description: 'Social sentiment & trending coins' },
+      { command: 'funding', description: 'Funding rate extremes' },
+      { command: 'whale', description: 'Track on-chain whale activity' },
+      { command: 'stats', description: 'Signal performance & win rate' },
+      { command: 'help', description: 'Show all commands & signal types' },
+    ]);
+
     await this.bot.launch();
     logger.info('Telegram bot launched');
   }

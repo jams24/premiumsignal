@@ -16,7 +16,7 @@ class ListingMonitor {
       { id: 'mexc', class: ccxt.mexc },
       { id: 'binance', class: ccxt.binance },
       { id: 'bybit', class: ccxt.bybit },
-      { id: 'bitget', class: ccxt.bitget },
+      // bitget v1 API decommissioned — re-enable when ccxt supports v2
     ];
 
     for (const cfg of exchangeConfigs) {
