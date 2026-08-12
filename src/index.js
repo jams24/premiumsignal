@@ -7,6 +7,7 @@ const db = require('./db/database');
 const ListingMonitor = require('./collectors/listingMonitor');
 const TechnicalScanner = require('./collectors/technicalScanner');
 const OnchainTracker = require('./collectors/onchainTracker');
+const MarketIntel = require('./collectors/marketIntel');
 const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
 const SignalTracker = require('./engine/signalTracker');
@@ -45,12 +46,13 @@ async function main() {
 
   const technicalScanner = new TechnicalScanner(listingMonitor.exchanges);
   const onchainTracker = new OnchainTracker();
+  const marketIntel = new MarketIntel(listingMonitor.exchanges);
   const socialScanner = new SocialScanner();
   const signalEngine = new SignalEngine();
   const signalTracker = new SignalTracker(listingMonitor.exchanges);
 
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel });
 
   // Wire up listing alerts
   listingMonitor.onNewListing(async (listing) => {
@@ -149,6 +151,44 @@ async function main() {
       }
     } catch (err) {
       logger.error(`Social scan error: ${err.message}`);
+    }
+  });
+
+  // DEX mover scan every 10 minutes — catch pre-CEX pumps
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const movers = await marketIntel.getDexTopMovers();
+      const hot = movers.filter(m => m.priceChange1h > 50 && m.volume24h > 500000);
+      for (const token of hot.slice(0, 3)) {
+        await bot.sendRaw(marketIntel.formatDexAlert(token));
+      }
+    } catch (err) {
+      logger.error(`DEX scan error: ${err.message}`);
+    }
+  });
+
+  // Full market intel brief every 4 hours
+  cron.schedule('0 */4 * * *', async () => {
+    try {
+      logger.info('Running market intel brief...');
+      const [overview, stablecoins, dexMovers] = await Promise.all([
+        marketIntel.getMarketOverview(),
+        marketIntel.getStablecoinFlows(),
+        marketIntel.getDexTopMovers(),
+      ]);
+
+      let oiData = [];
+      let lsRatio = [];
+      const firstExchange = Object.entries(listingMonitor.exchanges)[0];
+      if (firstExchange) {
+        oiData = await marketIntel.getOpenInterest(firstExchange[0]);
+        lsRatio = await marketIntel.getLongShortRatio(firstExchange[0]);
+      }
+
+      const msg = marketIntel.formatMarketBrief(overview, oiData, stablecoins, dexMovers, lsRatio);
+      await bot.sendRaw(msg);
+    } catch (err) {
+      logger.error(`Market intel error: ${err.message}`);
     }
   });
 

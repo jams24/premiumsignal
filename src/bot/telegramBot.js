@@ -5,12 +5,13 @@ const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, marketIntel }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.channelId = config.telegram.channelId;
     this.technicalScanner = technicalScanner;
     this.socialScanner = socialScanner;
     this.onchainTracker = onchainTracker;
+    this.marketIntel = marketIntel;
     this.setupCommands();
   }
 
@@ -36,6 +37,7 @@ class TelegramBot {
         Markup.inlineKeyboard([
           [Markup.button.callback('📡 Active Signals', 'action_signals'), Markup.button.callback('🔍 Market Scan', 'action_scan')],
           [Markup.button.callback('🔥 Trending', 'action_trending'), Markup.button.callback('📉 Funding Rates', 'action_funding')],
+          [Markup.button.callback('🧠 Market Intel', 'action_intel'), Markup.button.callback('🔥 DEX Movers', 'action_dex')],
           [Markup.button.callback('🐋 Whale Tracker', 'action_whale_info'), Markup.button.callback('📊 Stats', 'action_stats')],
           [Markup.button.callback('📋 Review Signals', 'action_review')],
           [Markup.button.callback('❓ Help', 'action_help')],
@@ -100,6 +102,37 @@ class TelegramBot {
       ctx.replyWithHTML(
         `📊 <b>SIGNAL PERFORMANCE</b>\n\nTotal Signals: ${stats.total}\nTP1 Hit: ${stats.tp1Hit} (${stats.winRate}%)\nTP2 Hit: ${stats.tp2Hit}\nSL Hit: ${stats.slHit}\nWin Rate: ${stats.winRate}%`
       );
+    });
+
+    this.bot.action('action_intel', async (ctx) => {
+      await ctx.answerCbQuery('Gathering intel...');
+      try {
+        const [overview, stablecoins, dexMovers] = await Promise.all([
+          this.marketIntel.getMarketOverview(),
+          this.marketIntel.getStablecoinFlows(),
+          this.marketIntel.getDexTopMovers(),
+        ]);
+        const msg = this.marketIntel.formatMarketBrief(overview, [], stablecoins, dexMovers, []);
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Intel failed.');
+      }
+    });
+
+    this.bot.action('action_dex', async (ctx) => {
+      await ctx.answerCbQuery('Scanning DEX...');
+      try {
+        const movers = await this.marketIntel.getDexTopMovers();
+        if (!movers.length) return ctx.reply('No significant DEX movers.');
+        let msg = '🔥 <b>DEX TOP MOVERS</b>\n\n';
+        for (const d of movers.slice(0, 7)) {
+          const vol = d.volume24h > 1e6 ? `$${(d.volume24h / 1e6).toFixed(1)}M` : `$${(d.volume24h / 1e3).toFixed(0)}K`;
+          msg += `🔥 <b>${escapeHtml(d.symbol)}</b> (${d.chain}) +${d.priceChange24h.toFixed(0)}% | Vol: ${vol}\n`;
+        }
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('DEX scan failed.');
+      }
     });
 
     this.bot.action('action_review', async (ctx) => {
@@ -227,6 +260,56 @@ class TelegramBot {
       }
     });
 
+    this.bot.command('intel', async (ctx) => {
+      ctx.reply('🔍 Gathering market intelligence... this takes 15-30 seconds.');
+      try {
+        const [overview, stablecoins, dexMovers] = await Promise.all([
+          this.marketIntel.getMarketOverview(),
+          this.marketIntel.getStablecoinFlows(),
+          this.marketIntel.getDexTopMovers(),
+        ]);
+
+        let oiData = [];
+        let lsRatio = [];
+        for (const [id, ex] of Object.entries(this.technicalScanner.exchanges)) {
+          const [oi, ls] = await Promise.all([
+            this.marketIntel.getOpenInterest(id),
+            this.marketIntel.getLongShortRatio(id),
+          ]);
+          oiData = oiData.concat(oi);
+          lsRatio = lsRatio.concat(ls);
+          break; // one exchange is enough to avoid rate limits
+        }
+
+        const msg = this.marketIntel.formatMarketBrief(overview, oiData, stablecoins, dexMovers, lsRatio);
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Intel report failed. Check logs.');
+        logger.error(`/intel error: ${err.message}`);
+      }
+    });
+
+    this.bot.command('dex', async (ctx) => {
+      ctx.reply('🔍 Scanning DEX for trending tokens...');
+      try {
+        const movers = await this.marketIntel.getDexTopMovers();
+        if (!movers.length) return ctx.reply('No significant DEX movers found right now.');
+
+        let msg = '🔥 <b>DEX TOP MOVERS</b>\n<i>Tokens pumping on-chain before CEX listings</i>\n\n';
+        for (const d of movers.slice(0, 10)) {
+          const vol = d.volume24h > 1e6 ? `$${(d.volume24h / 1e6).toFixed(1)}M` : `$${(d.volume24h / 1e3).toFixed(0)}K`;
+          const buy = d.buyRatio ? ` | ${d.buyRatio}% buys` : '';
+          msg += `🔥 <b>${escapeHtml(d.symbol)}</b> (${d.chain})\n`;
+          msg += `   +${d.priceChange24h.toFixed(0)}% (1h: ${d.priceChange1h > 0 ? '+' : ''}${d.priceChange1h.toFixed(0)}%) | Vol: ${vol}${buy}\n\n`;
+        }
+        msg += '⚡ <i>DEX pumps often precede CEX listings — watch for announcements</i>';
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('DEX scan failed.');
+        logger.error(`/dex error: ${err.message}`);
+      }
+    });
+
     this.bot.command('review', async (ctx) => {
       try {
         const all = await db.getAllSignals(30);
@@ -338,6 +421,8 @@ class TelegramBot {
       { command: 'scan', description: 'Run a live market scan' },
       { command: 'trending', description: 'Social sentiment & trending coins' },
       { command: 'funding', description: 'Funding rate extremes' },
+      { command: 'intel', description: 'Full market intelligence brief' },
+      { command: 'dex', description: 'DEX trending tokens (pre-CEX alpha)' },
       { command: 'whale', description: 'Track on-chain whale activity' },
       { command: 'stats', description: 'Signal performance & win rate' },
       { command: 'review', description: 'Review past signal performance' },
