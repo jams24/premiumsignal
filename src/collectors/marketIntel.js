@@ -192,16 +192,38 @@ class MarketIntel {
 
   async getDexTopMovers() {
     try {
-      // DeFiLlama top tokens by volume change
-      const { data } = await axios.get('https://api.dexscreener.com/latest/dex/tokens/trending', {
-        timeout: 10000,
-      });
+      // Use DexScreener search for high-volume trending tokens
+      const searches = ['trending', 'pump', 'moon'];
+      let allPairs = [];
 
-      if (!data) return [];
+      for (const q of searches) {
+        try {
+          const { data } = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${q}`, { timeout: 10000 });
+          if (data?.pairs) allPairs = allPairs.concat(data.pairs);
+        } catch (e) { /* skip */ }
+      }
 
-      // Parse trending tokens from DEX screener
-      const tokens = (Array.isArray(data) ? data : data.pairs || [])
-        .filter(p => p && p.baseToken)
+      // Also get boosted tokens
+      try {
+        const { data: boosts } = await axios.get('https://api.dexscreener.com/token-boosts/top/v1', { timeout: 10000 });
+        if (Array.isArray(boosts)) {
+          for (const b of boosts.slice(0, 10)) {
+            try {
+              const { data: tokenData } = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${b.tokenAddress}`, { timeout: 8000 });
+              if (tokenData?.pairs) allPairs = allPairs.concat(tokenData.pairs.slice(0, 2));
+            } catch (e) { /* skip */ }
+          }
+        }
+      } catch (e) { /* skip */ }
+
+      // Deduplicate by base token address
+      const seen = new Set();
+      const tokens = allPairs
+        .filter(p => {
+          if (!p?.baseToken?.address || seen.has(p.baseToken.address)) return false;
+          seen.add(p.baseToken.address);
+          return true;
+        })
         .map(p => ({
           symbol: p.baseToken.symbol,
           name: p.baseToken.name,
@@ -358,8 +380,105 @@ class MarketIntel {
       msg += '\n';
     }
 
+    // MARKET DIRECTION PREDICTION
+    const direction = this.predictDirection(overview, stablecoins, oiData, lsRatio, dexMovers);
+    msg += `<b>═══ MARKET DIRECTION ═══</b>\n`;
+    msg += `${direction.emoji} <b>${direction.bias}</b> (${direction.confidence}% confidence)\n\n`;
+    for (const reason of direction.reasons) {
+      msg += `${reason}\n`;
+    }
+    msg += `\n<b>Suggested approach:</b> ${direction.strategy}\n\n`;
+
     msg += '⚠️ <i>On-chain data is directional, not predictive — always confirm with price action. DYOR.</i>';
     return msg;
+  }
+
+  predictDirection(overview, stablecoins, oiData, lsRatio, dexMovers) {
+    let bullScore = 0;
+    let bearScore = 0;
+    const reasons = [];
+
+    // 1. Market cap momentum
+    if (overview) {
+      const change = parseFloat(overview.marketCapChange24h);
+      if (change > 2) { bullScore += 20; reasons.push('🟢 Market cap up ' + change + '% in 24h'); }
+      else if (change > 0) { bullScore += 10; reasons.push('🟢 Market cap slightly positive'); }
+      else if (change < -2) { bearScore += 20; reasons.push('🔴 Market cap down ' + change + '% in 24h'); }
+      else if (change < 0) { bearScore += 10; reasons.push('🔴 Market cap slightly negative'); }
+
+      // BTC dominance rising = risk-off (bearish for alts)
+      if (parseFloat(overview.btcDominance) > 58) { bearScore += 10; reasons.push('🔴 High BTC dominance (' + overview.btcDominance + '%) — risk-off environment for alts'); }
+      else if (parseFloat(overview.btcDominance) < 50) { bullScore += 10; reasons.push('🟢 Low BTC dominance (' + overview.btcDominance + '%) — alt season potential'); }
+    }
+
+    // 2. Stablecoin flows — most important macro signal
+    if (stablecoins.length) {
+      const usdtChange = stablecoins.find(s => s.symbol === 'USDT');
+      const usdcChange = stablecoins.find(s => s.symbol === 'USDC');
+
+      if (usdtChange?.change7d) {
+        const change = parseFloat(usdtChange.change7d);
+        if (change > 0.5) { bullScore += 25; reasons.push('🟢 USDT supply growing (+' + change + '%) — new money entering'); }
+        else if (change < -0.5) { bearScore += 25; reasons.push('🔴 USDT supply shrinking (' + change + '%) — money leaving crypto'); }
+        else if (change < 0) { bearScore += 10; reasons.push('🟡 USDT supply flat/slightly declining'); }
+        else { bullScore += 5; reasons.push('🟡 USDT supply stable'); }
+      }
+
+      if (usdcChange?.change7d) {
+        const change = parseFloat(usdcChange.change7d);
+        if (change > 1) { bullScore += 15; reasons.push('🟢 USDC supply growing — institutional inflows'); }
+        else if (change < -1) { bearScore += 15; reasons.push('🔴 USDC supply shrinking — institutional outflows'); }
+      }
+    }
+
+    // 3. Open Interest analysis
+    if (oiData.length) {
+      const oiUp = oiData.filter(o => parseFloat(o.oiChange) > 0).length;
+      const oiDown = oiData.filter(o => parseFloat(o.oiChange) < 0).length;
+      if (oiUp > oiDown * 2) { bullScore += 15; reasons.push('🟢 OI expanding across ' + oiUp + ' tokens — new positions opening'); }
+      else if (oiDown > oiUp * 2) { bearScore += 15; reasons.push('🔴 OI contracting across ' + oiDown + ' tokens — positions closing'); }
+    }
+
+    // 4. Funding rates (crowd positioning)
+    if (lsRatio.length) {
+      const extremeLongs = lsRatio.filter(l => l.fundingRate > 0.001).length;
+      const extremeShorts = lsRatio.filter(l => l.fundingRate < -0.001).length;
+      if (extremeLongs > 10) { bearScore += 10; reasons.push('🟡 Many tokens with extreme positive funding — crowded longs (contrarian bearish)'); }
+      else if (extremeShorts > 10) { bullScore += 10; reasons.push('🟡 Many tokens with extreme negative funding — crowded shorts (contrarian bullish)'); }
+    }
+
+    // 5. DEX activity
+    if (dexMovers.length) {
+      const pumping = dexMovers.filter(d => d.priceChange24h > 20).length;
+      const dumping = dexMovers.filter(d => d.priceChange24h < -20).length;
+      if (pumping > 10) { bullScore += 10; reasons.push('🟢 ' + pumping + ' tokens pumping on DEX — strong speculative appetite'); }
+      if (dumping > pumping) { bearScore += 10; reasons.push('🔴 More DEX tokens dumping than pumping'); }
+      if (pumping > 5) { bullScore += 5; reasons.push('🟢 Active DEX market with ' + dexMovers.length + ' notable movers'); }
+    }
+
+    // Calculate final bias
+    const total = bullScore + bearScore;
+    const bullPct = total > 0 ? Math.round((bullScore / total) * 100) : 50;
+
+    let bias, emoji, strategy;
+    if (bullPct >= 70) {
+      bias = 'STRONGLY BULLISH'; emoji = '🟢🟢🟢';
+      strategy = 'Favor long positions, look for dips to enter. Ride momentum but set trailing stops.';
+    } else if (bullPct >= 58) {
+      bias = 'BULLISH'; emoji = '🟢🟢';
+      strategy = 'Lean long on breakouts with confirmed volume. Be selective with entries.';
+    } else if (bullPct >= 42) {
+      bias = 'NEUTRAL / CHOPPY'; emoji = '🟡🟡';
+      strategy = 'Range-trade, avoid heavy leverage. Wait for clear direction before committing.';
+    } else if (bullPct >= 30) {
+      bias = 'BEARISH'; emoji = '🔴🔴';
+      strategy = 'Favor shorts on resistance rejections. Reduce position sizes. Look for funding rate shorts.';
+    } else {
+      bias = 'STRONGLY BEARISH'; emoji = '🔴🔴🔴';
+      strategy = 'Stay mostly in stablecoins. Short overextended pumps. Wait for capitulation signals to buy.';
+    }
+
+    return { bias, emoji, confidence: Math.abs(bullPct - 50) + 50, reasons, strategy, bullScore, bearScore };
   }
 
   formatOIAlert(oi) {

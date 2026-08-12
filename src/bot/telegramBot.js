@@ -271,14 +271,16 @@ class TelegramBot {
 
         let oiData = [];
         let lsRatio = [];
-        for (const [id, ex] of Object.entries(this.technicalScanner.exchanges)) {
-          const [oi, ls] = await Promise.all([
-            this.marketIntel.getOpenInterest(id),
-            this.marketIntel.getLongShortRatio(id),
-          ]);
-          oiData = oiData.concat(oi);
-          lsRatio = lsRatio.concat(ls);
-          break; // one exchange is enough to avoid rate limits
+        // Get OI from first available exchange, funding from all
+        const exchangeEntries = Object.entries(this.technicalScanner.exchanges);
+        if (exchangeEntries.length) {
+          const [firstId] = exchangeEntries[0];
+          oiData = await this.marketIntel.getOpenInterest(firstId);
+
+          for (const [id] of exchangeEntries) {
+            const ls = await this.marketIntel.getLongShortRatio(id);
+            lsRatio = lsRatio.concat(ls);
+          }
         }
 
         const msg = this.marketIntel.formatMarketBrief(overview, oiData, stablecoins, dexMovers, lsRatio);
