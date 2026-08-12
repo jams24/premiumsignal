@@ -1,5 +1,6 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
+const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
 
 class MarketIntel {
@@ -39,7 +40,7 @@ class MarketIntel {
           if (prevOI) {
             const change = ((currentOI - prevOI) / prevOI) * 100;
             if (Math.abs(change) > 10) {
-              results.push({
+              const oiEntry = {
                 symbol: symbol.replace('/USDT:USDT', ''),
                 exchange: exchangeId,
                 openInterest: currentOI,
@@ -48,7 +49,9 @@ class MarketIntel {
                 priceChange: ticker.percentage || 0,
                 signal: change > 15 ? 'OI_SURGE' : change < -15 ? 'OI_DROP' : 'OI_SHIFT',
                 interpretation: this.interpretOI(change, ticker.percentage || 0),
-              });
+              };
+              results.push(oiEntry);
+              await db.saveOISnapshot(oiEntry).catch(() => {});
             }
           }
           this.previousOI.set(key, currentOI);

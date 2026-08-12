@@ -96,8 +96,59 @@ async function init(retries = 3) {
       timestamp TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS oi_snapshots (
+      id SERIAL PRIMARY KEY,
+      exchange TEXT,
+      symbol TEXT,
+      open_interest DOUBLE PRECISION,
+      oi_change DOUBLE PRECISION,
+      price DOUBLE PRECISION,
+      price_change DOUBLE PRECISION,
+      interpretation TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS dex_alerts (
+      id SERIAL PRIMARY KEY,
+      symbol TEXT,
+      chain TEXT,
+      dex TEXT,
+      price DOUBLE PRECISION,
+      volume_24h DOUBLE PRECISION,
+      price_change_24h DOUBLE PRECISION,
+      price_change_1h DOUBLE PRECISION,
+      liquidity DOUBLE PRECISION,
+      buy_ratio TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS intel_briefs (
+      id SERIAL PRIMARY KEY,
+      total_mcap DOUBLE PRECISION,
+      total_volume DOUBLE PRECISION,
+      btc_dominance DOUBLE PRECISION,
+      mcap_change_24h DOUBLE PRECISION,
+      stablecoin_data JSONB,
+      oi_summary JSONB,
+      dex_summary JSONB,
+      funding_summary JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS alert_log (
+      id SERIAL PRIMARY KEY,
+      alert_type TEXT NOT NULL,
+      symbol TEXT,
+      data JSONB,
+      message TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_snapshots_symbol_time ON market_snapshots(symbol, timestamp);
     CREATE INDEX IF NOT EXISTS idx_signals_closed ON signals(closed_at);
+    CREATE INDEX IF NOT EXISTS idx_oi_symbol_time ON oi_snapshots(symbol, created_at);
+    CREATE INDEX IF NOT EXISTS idx_dex_time ON dex_alerts(created_at);
+    CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at);
   `);
   logger.info('Database tables ready');
 }
@@ -173,4 +224,80 @@ async function getSignalStats() {
   return { total: +s.total, tp1Hit: +s.tp1_hit, tp2Hit: +s.tp2_hit, slHit: +s.sl_hit, winRate: s.total > 0 ? ((s.tp1_hit / s.total) * 100).toFixed(1) : '0' };
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats };
+async function saveOISnapshot(oi) {
+  await query(
+    'INSERT INTO oi_snapshots (exchange, symbol, open_interest, oi_change, price, price_change, interpretation) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    [oi.exchange, oi.symbol, oi.openInterest, parseFloat(oi.oiChange), oi.price, oi.priceChange, oi.interpretation]
+  );
+}
+
+async function saveDexAlert(token) {
+  await query(
+    'INSERT INTO dex_alerts (symbol, chain, dex, price, volume_24h, price_change_24h, price_change_1h, liquidity, buy_ratio) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    [token.symbol, token.chain, token.dex, token.priceUsd, token.volume24h, token.priceChange24h, token.priceChange1h, token.liquidity, token.buyRatio]
+  );
+}
+
+async function saveIntelBrief(brief) {
+  await query(
+    'INSERT INTO intel_briefs (total_mcap, total_volume, btc_dominance, mcap_change_24h, stablecoin_data, oi_summary, dex_summary, funding_summary) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [brief.totalMcap, brief.totalVolume, brief.btcDominance, brief.mcapChange, JSON.stringify(brief.stablecoins), JSON.stringify(brief.oiData), JSON.stringify(brief.dexData), JSON.stringify(brief.fundingData)]
+  );
+}
+
+async function logAlert(alertType, symbol, data, message) {
+  await query(
+    'INSERT INTO alert_log (alert_type, symbol, data, message) VALUES ($1,$2,$3,$4)',
+    [alertType, symbol, JSON.stringify(data), message]
+  );
+}
+
+async function getAnalysisData(days = 7) {
+  const interval = `${days} days`;
+
+  const [signals, oi, dex, alerts, briefs] = await Promise.all([
+    query(`SELECT * FROM signals WHERE created_at > NOW() - INTERVAL '${interval}' ORDER BY created_at`),
+    query(`SELECT * FROM oi_snapshots WHERE created_at > NOW() - INTERVAL '${interval}' ORDER BY created_at`),
+    query(`SELECT * FROM dex_alerts WHERE created_at > NOW() - INTERVAL '${interval}' ORDER BY created_at`),
+    query(`SELECT alert_type, symbol, COUNT(*) as count FROM alert_log WHERE created_at > NOW() - INTERVAL '${interval}' GROUP BY alert_type, symbol ORDER BY count DESC`),
+    query(`SELECT * FROM intel_briefs WHERE created_at > NOW() - INTERVAL '${interval}' ORDER BY created_at`),
+  ]);
+
+  // Signal performance breakdown by type
+  const signalsByType = {};
+  for (const s of signals.rows) {
+    if (!signalsByType[s.type]) signalsByType[s.type] = { total: 0, tp1: 0, tp2: 0, tp3: 0, sl: 0 };
+    signalsByType[s.type].total++;
+    if (s.hit_tp1) signalsByType[s.type].tp1++;
+    if (s.hit_tp2) signalsByType[s.type].tp2++;
+    if (s.hit_tp3) signalsByType[s.type].tp3++;
+    if (s.hit_sl) signalsByType[s.type].sl++;
+  }
+
+  // OI accuracy: did OI signals correctly predict direction?
+  const oiAccuracy = { correct: 0, wrong: 0, total: oi.rows.length };
+
+  // Most alerted tokens
+  const topTokens = alerts.rows.slice(0, 10);
+
+  // DEX → CEX conversion: tokens that appeared in DEX alerts AND later in signals
+  const dexSymbols = new Set(dex.rows.map(d => d.symbol));
+  const signalSymbols = new Set(signals.rows.map(s => s.symbol));
+  const dexToCex = [...dexSymbols].filter(s => signalSymbols.has(s));
+
+  // Market condition trends from briefs
+  const mcapTrend = briefs.rows.length >= 2
+    ? ((briefs.rows[briefs.rows.length - 1].total_mcap - briefs.rows[0].total_mcap) / briefs.rows[0].total_mcap * 100).toFixed(2)
+    : null;
+
+  return {
+    period: `${days} days`,
+    signals: { total: signals.rows.length, byType: signalsByType, raw: signals.rows },
+    oi: { total: oi.rows.length, accuracy: oiAccuracy, snapshots: oi.rows },
+    dex: { total: dex.rows.length, alerts: dex.rows, convertedToCex: dexToCex },
+    alertLog: topTokens,
+    briefs: { count: briefs.rows.length, mcapTrend },
+  };
+}
+
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData };

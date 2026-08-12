@@ -343,6 +343,91 @@ class TelegramBot {
       }
     });
 
+    this.bot.command('analyse', async (ctx) => {
+      const args = ctx.message.text.split(' ').slice(1);
+      const days = parseInt(args[0]) || 7;
+      ctx.reply(`📊 Analysing ${days} days of data... this may take a moment.`);
+
+      try {
+        const data = await db.getAnalysisData(days);
+
+        let msg = `📊 <b>FULL ANALYSIS REPORT (${data.period})</b>\n\n`;
+
+        // Signal Performance
+        msg += `<b>═══ SIGNAL PERFORMANCE ═══</b>\n`;
+        msg += `Total Signals: ${data.signals.total}\n`;
+        for (const [type, stats] of Object.entries(data.signals.byType)) {
+          const wr = stats.total > 0 ? ((stats.tp1 / stats.total) * 100).toFixed(0) : '0';
+          msg += `\n<b>${type}:</b> ${stats.total} signals\n`;
+          msg += `  TP1: ${stats.tp1} | TP2: ${stats.tp2} | TP3: ${stats.tp3} | SL: ${stats.sl}\n`;
+          msg += `  Win Rate: ${wr}%\n`;
+        }
+
+        // OI Analysis
+        msg += `\n<b>═══ OPEN INTEREST DATA ═══</b>\n`;
+        msg += `OI Snapshots: ${data.oi.total}\n`;
+        if (data.oi.snapshots.length) {
+          const topOI = {};
+          for (const snap of data.oi.snapshots) {
+            if (!topOI[snap.symbol]) topOI[snap.symbol] = [];
+            topOI[snap.symbol].push(snap);
+          }
+          const sorted = Object.entries(topOI).sort((a, b) => b[1].length - a[1].length).slice(0, 5);
+          for (const [sym, snaps] of sorted) {
+            const avgChange = (snaps.reduce((a, s) => a + s.oi_change, 0) / snaps.length).toFixed(1);
+            msg += `  ${escapeHtml(sym)}: ${snaps.length} shifts, avg ${avgChange}% OI change\n`;
+          }
+        }
+
+        // DEX Analysis
+        msg += `\n<b>═══ DEX ACTIVITY ═══</b>\n`;
+        msg += `DEX Alerts: ${data.dex.total}\n`;
+        if (data.dex.convertedToCex.length) {
+          msg += `DEX→CEX Conversions: ${data.dex.convertedToCex.join(', ')}\n`;
+          msg += `<i>(Tokens spotted on DEX that later appeared in our signals)</i>\n`;
+        }
+
+        // Most Active Tokens
+        if (data.alertLog.length) {
+          msg += `\n<b>═══ MOST ACTIVE TOKENS ═══</b>\n`;
+          for (const t of data.alertLog.slice(0, 8)) {
+            msg += `  ${escapeHtml(t.symbol || 'N/A')}: ${t.count} alerts (${t.alert_type})\n`;
+          }
+        }
+
+        // Market Trend
+        if (data.briefs.mcapTrend) {
+          msg += `\n<b>═══ MARKET TREND ═══</b>\n`;
+          msg += `Total Mcap Change: ${data.briefs.mcapTrend > 0 ? '+' : ''}${data.briefs.mcapTrend}%\n`;
+          msg += `Intel Briefs Collected: ${data.briefs.count}\n`;
+        }
+
+        // Recommendations
+        msg += `\n<b>═══ INSIGHTS ═══</b>\n`;
+        const totalSignals = data.signals.total;
+        if (totalSignals > 0) {
+          const bestType = Object.entries(data.signals.byType)
+            .map(([type, s]) => ({ type, wr: s.total > 0 ? s.tp1 / s.total : 0 }))
+            .sort((a, b) => b.wr - a.wr)[0];
+          const worstType = Object.entries(data.signals.byType)
+            .map(([type, s]) => ({ type, wr: s.total > 0 ? s.tp1 / s.total : 0, sl: s.sl }))
+            .sort((a, b) => a.wr - b.wr)[0];
+
+          if (bestType) msg += `Best performing: <b>${bestType.type}</b> (${(bestType.wr * 100).toFixed(0)}% win rate)\n`;
+          if (worstType && worstType.type !== bestType?.type) msg += `Needs improvement: <b>${worstType.type}</b> (${(worstType.wr * 100).toFixed(0)}% win rate)\n`;
+        }
+        if (data.dex.convertedToCex.length) {
+          msg += `DEX scanner is catching pre-CEX movers ✅\n`;
+        }
+
+        msg += `\n<i>Run /analyse 14 for 14-day analysis, /analyse 30 for monthly</i>`;
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Analysis failed. Make sure there is enough data collected.');
+        logger.error(`/analyse error: ${err.message}`);
+      }
+    });
+
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 3) return ctx.reply('Usage: /whale <TOKEN> <chain> <contract_address>\nExample: /whale TUT ethereum 0x123...');
@@ -426,6 +511,7 @@ class TelegramBot {
       { command: 'whale', description: 'Track on-chain whale activity' },
       { command: 'stats', description: 'Signal performance & win rate' },
       { command: 'review', description: 'Review past signal performance' },
+      { command: 'analyse', description: 'Full analysis report (usage: /analyse 7)' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 

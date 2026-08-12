@@ -97,6 +97,7 @@ async function main() {
         const signal = await signalEngine.processBreakoutSignal(scan);
         if (signal) {
           await bot.sendSignal(signal);
+          await db.logAlert('SIGNAL', signal.symbol, signal, `${signal.type} ${signal.direction} ${signal.symbol}`).catch(() => {});
           signalCount++;
         }
       }
@@ -158,9 +159,14 @@ async function main() {
   cron.schedule('*/10 * * * *', async () => {
     try {
       const movers = await marketIntel.getDexTopMovers();
+      // Save all DEX movers to DB
+      for (const token of movers.slice(0, 10)) {
+        await db.saveDexAlert(token).catch(() => {});
+      }
       const hot = movers.filter(m => m.priceChange1h > 50 && m.volume24h > 500000);
       for (const token of hot.slice(0, 3)) {
         await bot.sendRaw(marketIntel.formatDexAlert(token));
+        await db.logAlert('DEX_PUMP', token.symbol, token, `${token.symbol} +${token.priceChange1h.toFixed(0)}% 1h on ${token.chain}`).catch(() => {});
       }
     } catch (err) {
       logger.error(`DEX scan error: ${err.message}`);
@@ -187,6 +193,18 @@ async function main() {
 
       const msg = marketIntel.formatMarketBrief(overview, oiData, stablecoins, dexMovers, lsRatio);
       await bot.sendRaw(msg);
+
+      // Save brief to DB for later analysis
+      await db.saveIntelBrief({
+        totalMcap: overview?.totalMarketCap,
+        totalVolume: overview?.totalVolume,
+        btcDominance: overview?.btcDominance,
+        mcapChange: overview?.marketCapChange24h,
+        stablecoins,
+        oiData,
+        dexData: dexMovers.slice(0, 10),
+        fundingData: lsRatio.slice(0, 10),
+      }).catch(() => {});
     } catch (err) {
       logger.error(`Market intel error: ${err.message}`);
     }
