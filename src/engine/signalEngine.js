@@ -4,7 +4,7 @@ const db = require('../db/database');
 class SignalEngine {
   constructor() {
     this.recentSignals = new Map(); // dedup: symbol -> timestamp
-    this.cooldownMs = 30 * 60 * 1000; // 30 min cooldown per symbol
+    this.cooldownMs = 4 * 60 * 60 * 1000; // 4 hour cooldown per symbol (was 30min — too many dupes)
   }
 
   async processListingSignal(listing, technicalData) {
@@ -21,7 +21,8 @@ class SignalEngine {
       volumeInfo: 'New listing — monitor volume in first 30min',
     };
 
-    // If we have price data already, add entry/TP/SL
+    // Only generate signal if we have price data
+    if (!technicalData?.currentPrice) return null;
     if (technicalData) {
       Object.assign(signal, {
         currentPrice: technicalData.currentPrice,
@@ -42,7 +43,10 @@ class SignalEngine {
 
   async processBreakoutSignal(scan) {
     if (this.isOnCooldown(scan.symbol)) return null;
-    if (scan.score < 50) return null;
+    // Require higher score — 50 was too loose, 53% SL rate
+    if (scan.score < 65) return null;
+    // Require minimum volume ratio to avoid low-conviction signals
+    if (scan.volumeRatio < 2) return null;
 
     const confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
 

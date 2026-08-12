@@ -136,10 +136,10 @@ class TechnicalScanner {
 
       const entryLow = isLong ? currentPrice * 0.995 : currentPrice * 1.005;
       const entryHigh = isLong ? currentPrice * 1.005 : currentPrice * 0.995;
-      const tp1 = isLong ? currentPrice + atrValue * 1.5 : currentPrice - atrValue * 1.5;
-      const tp2 = isLong ? currentPrice + atrValue * 3 : currentPrice - atrValue * 3;
-      const tp3 = isLong ? currentPrice + atrValue * 5 : currentPrice - atrValue * 5;
-      const stopLoss = isLong ? currentPrice - atrValue * 1.2 : currentPrice + atrValue * 1.2;
+      const tp1 = isLong ? currentPrice + atrValue * 2 : currentPrice - atrValue * 2;
+      const tp2 = isLong ? currentPrice + atrValue * 4 : currentPrice - atrValue * 4;
+      const tp3 = isLong ? currentPrice + atrValue * 6 : currentPrice - atrValue * 6;
+      const stopLoss = isLong ? currentPrice - atrValue * 2.5 : currentPrice + atrValue * 2.5;
 
       return {
         symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),

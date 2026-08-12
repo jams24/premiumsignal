@@ -93,7 +93,7 @@ async function main() {
       const results = await technicalScanner.scanAll();
       let signalCount = 0;
 
-      for (const scan of results.slice(0, 5)) {
+      for (const scan of results.slice(0, 3)) {
         const signal = await signalEngine.processBreakoutSignal(scan);
         if (signal) {
           await bot.sendSignal(signal);
