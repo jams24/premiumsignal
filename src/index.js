@@ -9,6 +9,7 @@ const TechnicalScanner = require('./collectors/technicalScanner');
 const OnchainTracker = require('./collectors/onchainTracker');
 const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
+const SignalTracker = require('./engine/signalTracker');
 const TelegramBot = require('./bot/telegramBot');
 
 let dbReady = false;
@@ -46,6 +47,7 @@ async function main() {
   const onchainTracker = new OnchainTracker();
   const socialScanner = new SocialScanner();
   const signalEngine = new SignalEngine();
+  const signalTracker = new SignalTracker(listingMonitor.exchanges);
 
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker });
@@ -116,6 +118,20 @@ async function main() {
       logger.info(`Scan complete: ${results.length} candidates, ${signalCount} signals sent`);
     } catch (err) {
       logger.error(`Scheduled scan error: ${err.message}`);
+    }
+  });
+
+  // Track signal TP/SL hits every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      const updates = await signalTracker.checkAllSignals();
+      for (const update of updates) {
+        const msg = signalTracker.formatUpdate(update);
+        if (msg) await bot.sendRaw(msg);
+      }
+      if (updates.length) logger.info(`Tracker: ${updates.length} signal updates`);
+    } catch (err) {
+      logger.error(`Signal tracker error: ${err.message}`);
     }
   });
 

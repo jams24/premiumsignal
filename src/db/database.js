@@ -141,6 +141,24 @@ async function getRecentSnapshots(symbol, hours = 24) {
   return rows;
 }
 
+async function updateSignalHit(id, field) {
+  await query(`UPDATE signals SET ${field} = TRUE WHERE id = $1`, [id]);
+}
+
+async function closeSignal(id) {
+  await query('UPDATE signals SET closed_at = NOW() WHERE id = $1', [id]);
+}
+
+async function getClosedSignals(limit = 20) {
+  const { rows } = await query('SELECT * FROM signals WHERE closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT $1', [limit]);
+  return rows;
+}
+
+async function getAllSignals(limit = 50) {
+  const { rows } = await query('SELECT * FROM signals ORDER BY created_at DESC LIMIT $1', [limit]);
+  return rows;
+}
+
 async function getSignalStats() {
   const { rows } = await query(`
     SELECT
@@ -155,4 +173,4 @@ async function getSignalStats() {
   return { total: +s.total, tp1Hit: +s.tp1_hit, tp2Hit: +s.tp2_hit, slHit: +s.sl_hit, winRate: s.total > 0 ? ((s.tp1_hit / s.total) * 100).toFixed(1) : '0' };
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats };
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats };

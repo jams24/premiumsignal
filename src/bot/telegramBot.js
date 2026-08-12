@@ -37,6 +37,7 @@ class TelegramBot {
           [Markup.button.callback('📡 Active Signals', 'action_signals'), Markup.button.callback('🔍 Market Scan', 'action_scan')],
           [Markup.button.callback('🔥 Trending', 'action_trending'), Markup.button.callback('📉 Funding Rates', 'action_funding')],
           [Markup.button.callback('🐋 Whale Tracker', 'action_whale_info'), Markup.button.callback('📊 Stats', 'action_stats')],
+          [Markup.button.callback('📋 Review Signals', 'action_review')],
           [Markup.button.callback('❓ Help', 'action_help')],
         ])
       );
@@ -99,6 +100,25 @@ class TelegramBot {
       ctx.replyWithHTML(
         `📊 <b>SIGNAL PERFORMANCE</b>\n\nTotal Signals: ${stats.total}\nTP1 Hit: ${stats.tp1Hit} (${stats.winRate}%)\nTP2 Hit: ${stats.tp2Hit}\nSL Hit: ${stats.slHit}\nWin Rate: ${stats.winRate}%`
       );
+    });
+
+    this.bot.action('action_review', async (ctx) => {
+      await ctx.answerCbQuery();
+      const all = await db.getAllSignals(15);
+      if (!all.length) return ctx.reply('No signals recorded yet.');
+      const stats = await db.getSignalStats();
+      let msg = `📋 <b>SIGNAL REVIEW</b>\n\nTotal: ${stats.total} | Win Rate: ${stats.winRate}%\nTP1: ${stats.tp1Hit} | TP2: ${stats.tp2Hit} | SL: ${stats.slHit}\n\n`;
+      for (const s of all.slice(0, 10)) {
+        const dir = s.direction === 'long' ? '🟢' : '🔴';
+        let status = '⏳';
+        if (s.hit_sl) status = '🔴 SL';
+        else if (s.hit_tp3) status = '🏆 TP3';
+        else if (s.hit_tp2) status = '✅✅';
+        else if (s.hit_tp1) status = '✅ TP1';
+        else if (s.closed_at) status = '⏰';
+        msg += `${dir} <b>$${s.symbol}</b> ${status} | $${s.current_price}\n`;
+      }
+      ctx.replyWithHTML(msg);
     });
 
     this.bot.action('action_help', async (ctx) => {
@@ -207,6 +227,39 @@ class TelegramBot {
       }
     });
 
+    this.bot.command('review', async (ctx) => {
+      try {
+        const all = await db.getAllSignals(30);
+        if (!all.length) return ctx.reply('No signals recorded yet.');
+
+        const stats = await db.getSignalStats();
+        let msg = `📋 <b>SIGNAL REVIEW</b>\n\n`;
+        msg += `<b>Overall:</b> ${stats.total} signals | Win Rate: ${stats.winRate}%\n`;
+        msg += `TP1: ${stats.tp1Hit} | TP2: ${stats.tp2Hit} | SL: ${stats.slHit}\n\n`;
+        msg += `<b>Recent Signals:</b>\n`;
+
+        for (const s of all.slice(0, 15)) {
+          const dir = s.direction === 'long' ? '🟢' : '🔴';
+          let status = '⏳ Active';
+          if (s.hit_sl) status = '🔴 SL Hit';
+          else if (s.hit_tp3) status = '🏆 TP3';
+          else if (s.hit_tp2) status = '✅✅ TP2';
+          else if (s.hit_tp1) status = '✅ TP1';
+          else if (s.closed_at) status = '⏰ Expired';
+
+          const date = new Date(s.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+          msg += `${dir} <b>$${s.symbol}</b> ${s.type} | ${status} | ${date}\n`;
+          msg += `   Entry: $${s.current_price} → TP1: $${s.tp1}\n`;
+        }
+
+        msg += `\n<i>Use /stats for detailed performance metrics</i>`;
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Error fetching review data.');
+        logger.error(`/review error: ${err.message}`);
+      }
+    });
+
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 3) return ctx.reply('Usage: /whale <TOKEN> <chain> <contract_address>\nExample: /whale TUT ethereum 0x123...');
@@ -287,6 +340,7 @@ class TelegramBot {
       { command: 'funding', description: 'Funding rate extremes' },
       { command: 'whale', description: 'Track on-chain whale activity' },
       { command: 'stats', description: 'Signal performance & win rate' },
+      { command: 'review', description: 'Review past signal performance' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 
