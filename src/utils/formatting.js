@@ -1,3 +1,7 @@
+function escapeHtml(text) {
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function formatSignalMessage(signal) {
   const emoji = {
     LISTING: '🆕',
@@ -26,7 +30,7 @@ function formatSignalMessage(signal) {
 <b>TP3:</b> $${signal.tp3} (${signal.tp3Pct}%)
 <b>Stop Loss:</b> $${signal.stopLoss} (${signal.slPct}%)${leverage}
 
-<b>Catalyst:</b> ${signal.catalyst}
+<b>Catalyst:</b> ${escapeHtml(signal.catalyst)}
 <b>Volume:</b> ${signal.volumeInfo || 'N/A'}
 
 ⚠️ <i>DYOR — Not Financial Advice</i>
@@ -72,4 +76,4 @@ function formatScanResult(results) {
   return msg;
 }
 
-module.exports = { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult };
+module.exports = { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml };

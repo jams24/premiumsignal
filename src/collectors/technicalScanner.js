@@ -16,7 +16,13 @@ class TechnicalScanner {
         const perpMarkets = Object.values(exchange.markets).filter(m => m.swap && m.quote === 'USDT' && m.active);
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
-        for (const [symbol, ticker] of Object.entries(tickers)) {
+        // Sort by volume and only deep-analyze top movers to save memory/time
+        const sorted = Object.entries(tickers)
+          .filter(([, t]) => t.quoteVolume > 500000)
+          .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
+          .slice(0, 100);
+
+        for (const [symbol, ticker] of sorted) {
           try {
             const score = this.quickScore(ticker);
             if (score >= 40) {

@@ -9,4 +9,4 @@ COPY src/ src/
 
 EXPOSE 3000
 
-CMD ["node", "src/index.js"]
+CMD ["node", "--max-old-space-size=512", "src/index.js"]

@@ -30,13 +30,6 @@ class ListingMonitor {
         const markets = await this.exchanges[cfg.id].loadMarkets();
         this.previousMarkets[cfg.id] = new Set(Object.keys(markets));
 
-        // Seed known listings into DB
-        for (const symbol of this.previousMarkets[cfg.id]) {
-          const market = markets[symbol];
-          const marketType = market.swap ? 'perp' : 'spot';
-          await db.addListing(cfg.id, symbol, marketType);
-        }
-
         logger.info(`${cfg.id}: loaded ${this.previousMarkets[cfg.id].size} markets`);
       } catch (err) {
         logger.warn(`Failed to init ${cfg.id}: ${err.message}`);

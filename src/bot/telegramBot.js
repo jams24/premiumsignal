@@ -2,7 +2,7 @@ const { Telegraf, Markup } = require('telegraf');
 const logger = require('../utils/logger');
 const config = require('../utils/config');
 const db = require('../db/database');
-const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult } = require('../utils/formatting');
+const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 
 class TelegramBot {
   constructor({ technicalScanner, socialScanner, onchainTracker }) {
@@ -49,7 +49,7 @@ class TelegramBot {
       let msg = '📡 <b>ACTIVE SIGNALS</b>\n\n';
       for (const s of signals.slice(0, 5)) {
         const dir = s.direction === 'long' ? '🟢' : '🔴';
-        msg += `${dir} <b>$${s.symbol}</b> (${s.exchange}) — ${s.type}\nEntry: $${s.entry_low} - $${s.entry_high} | TP1: $${s.tp1} | SL: $${s.stop_loss}\n${s.catalyst}\n\n`;
+        msg += `${dir} <b>$${s.symbol}</b> (${s.exchange}) — ${s.type}\nEntry: $${s.entry_low} - $${s.entry_high} | TP1: $${s.tp1} | SL: $${s.stop_loss}\n${escapeHtml(s.catalyst)}\n\n`;
       }
       ctx.replyWithHTML(msg);
     });
@@ -130,7 +130,7 @@ class TelegramBot {
           msg += `${dir} <b>$${s.symbol}</b> (${s.exchange}) — ${s.type}\n`;
           msg += `   Entry: $${s.entry_low} - $${s.entry_high}\n`;
           msg += `   TP1: $${s.tp1} | SL: $${s.stop_loss}\n`;
-          msg += `   ${s.catalyst}\n\n`;
+          msg += `   ${escapeHtml(s.catalyst)}\n\n`;
         }
         ctx.replyWithHTML(msg);
       } catch (err) {
