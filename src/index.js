@@ -11,11 +11,32 @@ const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
 const TelegramBot = require('./bot/telegramBot');
 
+let dbReady = false;
+
 async function main() {
   logger.info('=== CryptoSignal Bot Starting ===');
 
-  // Init database
-  await db.init();
+  // Start health check server FIRST so Deployzy doesn't kill the container
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', dbReady, uptime: process.uptime() }));
+    } else {
+      res.writeHead(200);
+      res.end('CryptoSignal Bot Running');
+    }
+  });
+  server.listen(process.env.PORT || 3000, () => {
+    logger.info(`Health check server on port ${process.env.PORT || 3000}`);
+  });
+
+  // Init database (non-fatal — bot works without it, just no persistence)
+  try {
+    await db.init();
+    dbReady = true;
+  } catch (err) {
+    logger.warn(`Database unavailable — running without persistence: ${err.message}`);
+  }
 
   // Init collectors
   const listingMonitor = new ListingMonitor();
@@ -31,10 +52,9 @@ async function main() {
 
   // Wire up listing alerts
   listingMonitor.onNewListing(async (listing) => {
-    logger.info(`🆕 New listing detected: ${listing.symbol} on ${listing.exchange}`);
+    logger.info(`New listing detected: ${listing.symbol} on ${listing.exchange}`);
     await bot.sendListingAlert(listing);
 
-    // Try to generate a full signal after a short delay (let price settle)
     setTimeout(async () => {
       try {
         const exchange = listingMonitor.exchanges[listing.exchange];
@@ -45,7 +65,7 @@ async function main() {
       } catch (e) {
         logger.error(`Post-listing signal failed: ${e.message}`);
       }
-    }, 60000); // wait 1 min for price data
+    }, 60000);
   });
 
   // Wire up whale alerts
@@ -55,7 +75,6 @@ async function main() {
 
   // === Scheduled Jobs ===
 
-  // Check for new listings every 60 seconds
   const listingInterval = setInterval(async () => {
     try {
       await listingMonitor.check();
@@ -64,14 +83,13 @@ async function main() {
     }
   }, config.signals.listingCheckInterval);
 
-  // Full technical scan every 5 minutes
   cron.schedule('*/5 * * * *', async () => {
     logger.info('Running scheduled technical scan...');
     try {
       const results = await technicalScanner.scanAll();
       let signalCount = 0;
 
-      for (const scan of results.slice(0, 5)) { // top 5 candidates
+      for (const scan of results.slice(0, 5)) {
         const signal = await signalEngine.processBreakoutSignal(scan);
         if (signal) {
           await bot.sendSignal(signal);
@@ -79,13 +97,11 @@ async function main() {
         }
       }
 
-      // Check funding rate extremes
       for (const [id, exchange] of Object.entries(listingMonitor.exchanges)) {
         const fundingOpps = await technicalScanner.findFundingRateExtremes(exchange, id);
         for (const opp of fundingOpps.slice(0, 3)) {
           const fundingSignal = signalEngine.processFundingSignal(opp);
           if (fundingSignal) {
-            // Funding signals are info-only, post as raw message
             await bot.sendRaw(
               `📉 <b>FUNDING ALERT</b>\n\n` +
               `<b>${opp.symbol}</b> on ${opp.exchange}\n` +
@@ -103,7 +119,6 @@ async function main() {
     }
   });
 
-  // Social sentiment scan every 15 minutes
   cron.schedule('*/15 * * * *', async () => {
     try {
       const [twitter, gecko] = await Promise.all([
@@ -111,7 +126,6 @@ async function main() {
         socialScanner.getCoingeckoTrending(),
       ]);
 
-      // Only post if there are surging tokens
       const surging = twitter.filter(t => t.velocity === 'SURGING');
       if (surging.length > 0) {
         const msg = socialScanner.formatTrending(surging, gecko.slice(0, 5));
@@ -122,7 +136,6 @@ async function main() {
     }
   });
 
-  // Announcement page scrape every 2 minutes
   cron.schedule('*/2 * * * *', async () => {
     try {
       await listingMonitor.checkAnnouncementPages();
@@ -138,34 +151,20 @@ async function main() {
   await bot.sendRaw(
     `🤖 <b>CryptoSignal Bot Online</b>\n\n` +
     `Monitoring: ${Object.keys(listingMonitor.exchanges).join(', ')}\n` +
+    `Database: ${dbReady ? '✅ Connected' : '⚠️ Unavailable'}\n` +
     `Listing check: every ${config.signals.listingCheckInterval / 1000}s\n` +
     `Technical scan: every 5 min\n` +
     `Social scan: every 15 min\n\n` +
     `<i>${new Date().toUTCString()}</i>`
   );
 
-  // Health check server for Deployzy
-  const server = http.createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
-    } else {
-      res.writeHead(200);
-      res.end('CryptoSignal Bot Running');
-    }
-  });
-  server.listen(process.env.PORT || 3000, () => {
-    logger.info(`Health check server on port ${process.env.PORT || 3000}`);
-  });
-
   logger.info('All systems running');
 
-  // Graceful shutdown
   const shutdown = () => {
     logger.info('Shutting down...');
     clearInterval(listingInterval);
     bot.stop();
-    db.pool.end();
+    if (dbReady) db.pool.end();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

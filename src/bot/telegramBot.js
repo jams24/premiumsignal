@@ -24,7 +24,7 @@ class TelegramBot {
         `/trending — Social sentiment scan\n` +
         `/funding — Funding rate extremes\n` +
         `/stats — Signal performance stats\n` +
-        `/whale <token> <chain> <address> — Check whale activity\n` +
+        `/whale &lt;token&gt; &lt;chain&gt; &lt;address&gt; — Check whale activity\n` +
         `/help — Show this menu\n\n` +
         `Signals are auto-posted to the channel.`
       );
