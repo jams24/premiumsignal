@@ -149,6 +149,32 @@ async function init(retries = 3) {
     CREATE INDEX IF NOT EXISTS idx_oi_symbol_time ON oi_snapshots(symbol, created_at);
     CREATE INDEX IF NOT EXISTS idx_dex_time ON dex_alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at);
+
+    CREATE TABLE IF NOT EXISTS trades (
+      id SERIAL PRIMARY KEY,
+      signal_id INTEGER,
+      symbol TEXT NOT NULL,
+      exchange TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'paper',
+      entry_price DOUBLE PRECISION NOT NULL,
+      quantity DOUBLE PRECISION,
+      position_size DOUBLE PRECISION,
+      leverage INTEGER DEFAULT 5,
+      tp1 DOUBLE PRECISION, tp2 DOUBLE PRECISION, tp3 DOUBLE PRECISION,
+      stop_loss DOUBLE PRECISION,
+      hit_tp1 BOOLEAN DEFAULT FALSE,
+      hit_tp2 BOOLEAN DEFAULT FALSE,
+      exit_price DOUBLE PRECISION,
+      pnl_pct DOUBLE PRECISION,
+      pnl_usd DOUBLE PRECISION,
+      close_reason TEXT,
+      status TEXT DEFAULT 'open',
+      order_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      closed_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
   `);
   logger.info('Database tables ready');
 }
@@ -300,4 +326,48 @@ async function getAnalysisData(days = 7) {
   };
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData };
+async function saveTrade(trade) {
+  const { rows } = await query(
+    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, stop_loss, order_id, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.stopLoss, trade.orderId || null, 'open']
+  );
+  return rows[0];
+}
+
+async function getOpenTrades() {
+  const { rows } = await query("SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC");
+  return rows;
+}
+
+async function updateTradeHit(id, field) {
+  await query(`UPDATE trades SET ${field} = TRUE WHERE id = $1`, [id]);
+}
+
+async function closeTrade(id, exitPrice, pnlPct, pnlUsd, reason) {
+  await query(
+    'UPDATE trades SET status=$1, exit_price=$2, pnl_pct=$3, pnl_usd=$4, close_reason=$5, closed_at=NOW() WHERE id=$6',
+    ['closed', exitPrice, pnlPct, pnlUsd, reason, id]
+  );
+}
+
+async function getTradeStats() {
+  const { rows } = await query(`
+    SELECT
+      mode,
+      COUNT(*) as total,
+      COUNT(*) FILTER (WHERE status = 'closed') as closed,
+      COUNT(*) FILTER (WHERE status = 'open') as open,
+      COUNT(*) FILTER (WHERE close_reason = 'tp3') as full_wins,
+      COUNT(*) FILTER (WHERE close_reason IN ('tp1','tp2','tp3')) as wins,
+      COUNT(*) FILTER (WHERE close_reason = 'sl') as losses,
+      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      COALESCE(AVG(pnl_pct) FILTER (WHERE status = 'closed'), 0) as avg_pnl_pct,
+      MAX(pnl_usd) as best_trade,
+      MIN(pnl_usd) as worst_trade
+    FROM trades GROUP BY mode
+  `);
+  return rows;
+}
+
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats };

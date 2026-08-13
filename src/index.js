@@ -11,6 +11,7 @@ const MarketIntel = require('./collectors/marketIntel');
 const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
 const SignalTracker = require('./engine/signalTracker');
+const TradeExecutor = require('./engine/tradeExecutor');
 const TelegramBot = require('./bot/telegramBot');
 
 let dbReady = false;
@@ -51,8 +52,22 @@ async function main() {
   const signalEngine = new SignalEngine();
   const signalTracker = new SignalTracker(listingMonitor.exchanges);
 
+  // Init trade executor (paper mode by default)
+  const tradeExecutor = new TradeExecutor(listingMonitor.exchanges, {
+    mode: process.env.TRADE_MODE || 'paper',
+    maxPositionSize: parseFloat(process.env.TRADE_SIZE) || 50,
+    maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS) || 200,
+    maxConcurrentPositions: parseInt(process.env.MAX_POSITIONS) || 5,
+    defaultLeverage: parseInt(process.env.DEFAULT_LEVERAGE) || 5,
+  });
+
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor });
+
+  // Wire trade executor notifications to Telegram
+  tradeExecutor.onTradeUpdate(async (msg) => {
+    await bot.sendRaw(msg);
+  });
 
   // Wire up listing alerts
   listingMonitor.onNewListing(async (listing) => {
@@ -65,7 +80,10 @@ async function main() {
         if (!exchange) return;
         const ticker = await exchange.fetchTicker(listing.pair);
         const signal = await signalEngine.processListingSignal(listing, { currentPrice: ticker.last });
-        if (signal) await bot.sendSignal(signal);
+        if (signal) {
+          await bot.sendSignal(signal);
+          await tradeExecutor.executeSignal(signal);
+        }
       } catch (e) {
         logger.error(`Post-listing signal failed: ${e.message}`);
       }
@@ -97,6 +115,7 @@ async function main() {
         const signal = await signalEngine.processBreakoutSignal(scan);
         if (signal) {
           await bot.sendSignal(signal);
+          await tradeExecutor.executeSignal(signal);
           await db.logAlert('SIGNAL', signal.symbol, signal, `${signal.type} ${signal.direction} ${signal.symbol}`).catch(() => {});
           signalCount++;
         }
@@ -210,6 +229,15 @@ async function main() {
     }
   });
 
+  // Check open trades for TP/SL hits every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      await tradeExecutor.checkOpenTrades();
+    } catch (err) {
+      logger.error(`Trade tracker error: ${err.message}`);
+    }
+  });
+
   cron.schedule('*/2 * * * *', async () => {
     try {
       await listingMonitor.checkAnnouncementPages();
@@ -226,6 +254,7 @@ async function main() {
     `🤖 <b>CryptoSignal Bot Online</b>\n\n` +
     `Monitoring: ${Object.keys(listingMonitor.exchanges).join(', ')}\n` +
     `Database: ${dbReady ? '✅ Connected' : '⚠️ Unavailable'}\n` +
+    `Auto-Trade: ${tradeExecutor.mode.toUpperCase()} mode | $${tradeExecutor.maxPositionSize}/trade | ${tradeExecutor.defaultLeverage}x\n` +
     `Listing check: every ${config.signals.listingCheckInterval / 1000}s\n` +
     `Technical scan: every 5 min\n` +
     `Social scan: every 15 min\n\n` +

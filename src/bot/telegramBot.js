@@ -5,13 +5,14 @@ const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker, marketIntel }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.channelId = config.telegram.channelId;
     this.technicalScanner = technicalScanner;
     this.socialScanner = socialScanner;
     this.onchainTracker = onchainTracker;
     this.marketIntel = marketIntel;
+    this.tradeExecutor = tradeExecutor;
     this.setupCommands();
   }
 
@@ -40,6 +41,8 @@ class TelegramBot {
           [Markup.button.callback('🧠 Market Intel', 'action_intel'), Markup.button.callback('🔥 DEX Movers', 'action_dex')],
           [Markup.button.callback('🐋 Whale Tracker', 'action_whale_info'), Markup.button.callback('📊 Stats', 'action_stats')],
           [Markup.button.callback('📋 Review Signals', 'action_review')],
+          [Markup.button.callback('🤖 Auto-Trade', 'action_trade'), Markup.button.callback('📊 Positions', 'action_positions')],
+          [Markup.button.callback('💰 P&L', 'action_pnl'), Markup.button.callback('🛑 Kill Switch', 'action_stop')],
           [Markup.button.callback('❓ Help', 'action_help')],
         ])
       );
@@ -152,6 +155,46 @@ class TelegramBot {
         msg += `${dir} <b>$${s.symbol}</b> ${status} | $${s.current_price}\n`;
       }
       ctx.replyWithHTML(msg);
+    });
+
+    this.bot.action('action_trade', async (ctx) => {
+      await ctx.answerCbQuery();
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const te = this.tradeExecutor;
+      ctx.replyWithHTML(
+        `🤖 <b>AUTO-TRADING</b>\n\nMode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\nSize: $${te.maxPositionSize} | Leverage: ${te.defaultLeverage}x\nToday P&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit`
+      );
+    });
+
+    this.bot.action('action_positions', async (ctx) => {
+      await ctx.answerCbQuery();
+      const trades = await db.getOpenTrades();
+      if (!trades.length) return ctx.reply('No open positions.');
+      let msg = `📊 <b>OPEN POSITIONS</b> (${trades.length})\n\n`;
+      for (const t of trades) {
+        const dir = t.direction === 'long' ? '🟢' : '🔴';
+        msg += `${t.mode === 'paper' ? '📝' : '💰'} ${dir} <b>$${t.symbol}</b> @ $${t.entry_price} (${t.leverage}x)\n`;
+      }
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.action('action_pnl', async (ctx) => {
+      await ctx.answerCbQuery();
+      const stats = await db.getTradeStats();
+      if (!stats.length) return ctx.reply('No trade data yet.');
+      let msg = '💰 <b>TRADE P&L</b>\n\n';
+      for (const s of stats) {
+        msg += `<b>${s.mode.toUpperCase()}</b>: ${s.total} trades | P&L: $${parseFloat(s.total_pnl).toFixed(2)} | WR: ${s.closed > 0 ? ((s.wins / s.closed) * 100).toFixed(0) : '0'}%\n`;
+      }
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.action('action_stop', async (ctx) => {
+      await ctx.answerCbQuery('Closing all positions...');
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const count = await this.tradeExecutor.closeAllPositions();
+      this.tradeExecutor.enabled = false;
+      ctx.replyWithHTML(`🛑 <b>KILL SWITCH</b>\n\n${count} position(s) closed. Auto-trading disabled.`);
     });
 
     this.bot.action('action_help', async (ctx) => {
@@ -430,6 +473,103 @@ class TelegramBot {
       }
     });
 
+    // === TRADE COMMANDS ===
+
+    this.bot.command('trade', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const mode = this.tradeExecutor.mode;
+      const enabled = this.tradeExecutor.enabled;
+      ctx.replyWithHTML(
+        `🤖 <b>AUTO-TRADING STATUS</b>\n\n` +
+        `Mode: <b>${mode.toUpperCase()}</b> ${mode === 'paper' ? '📝' : '💰'}\n` +
+        `Status: ${enabled ? '✅ ENABLED' : '❌ DISABLED'}\n` +
+        `Position Size: $${this.tradeExecutor.maxPositionSize}\n` +
+        `Max Concurrent: ${this.tradeExecutor.maxConcurrentPositions}\n` +
+        `Leverage: ${this.tradeExecutor.defaultLeverage}x\n` +
+        `Daily Loss Limit: $${this.tradeExecutor.maxDailyLoss}\n` +
+        `Today P&L: $${this.tradeExecutor.dailyPnL.toFixed(2)}\n\n` +
+        `<b>Commands:</b>\n` +
+        `/positions — View open positions\n` +
+        `/pnl — Trade performance stats\n` +
+        `/stop — Kill switch (close all)\n` +
+        `/trademode paper|live — Switch mode`
+      );
+    });
+
+    this.bot.command('positions', async (ctx) => {
+      try {
+        const trades = await db.getOpenTrades();
+        if (!trades.length) return ctx.reply('No open positions.');
+        let msg = `📊 <b>OPEN POSITIONS</b> (${trades.length})\n\n`;
+        for (const t of trades) {
+          const dir = t.direction === 'long' ? '🟢' : '🔴';
+          const modeTag = t.mode === 'paper' ? '📝' : '💰';
+          msg += `${modeTag} ${dir} <b>$${t.symbol}</b> (${t.exchange})\n`;
+          msg += `   Entry: $${t.entry_price} | Size: $${t.position_size} (${t.leverage}x)\n`;
+          msg += `   TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}\n`;
+          msg += `   SL: $${t.stop_loss}\n\n`;
+        }
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Error fetching positions.');
+      }
+    });
+
+    this.bot.command('pnl', async (ctx) => {
+      try {
+        const stats = await db.getTradeStats();
+        if (!stats.length) return ctx.reply('No trade data yet.');
+        let msg = `💰 <b>TRADE PERFORMANCE</b>\n\n`;
+        for (const s of stats) {
+          const modeTag = s.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
+          msg += `<b>${modeTag}</b>\n`;
+          msg += `Total: ${s.total} | Open: ${s.open} | Closed: ${s.closed}\n`;
+          msg += `Wins: ${s.wins} | Full Wins (TP3): ${s.full_wins} | Losses: ${s.losses}\n`;
+          msg += `Win Rate: ${s.closed > 0 ? ((s.wins / s.closed) * 100).toFixed(1) : '0'}%\n`;
+          msg += `Total P&L: $${parseFloat(s.total_pnl).toFixed(2)}\n`;
+          msg += `Avg P&L: ${parseFloat(s.avg_pnl_pct).toFixed(2)}%\n`;
+          msg += `Best: $${parseFloat(s.best_trade || 0).toFixed(2)} | Worst: $${parseFloat(s.worst_trade || 0).toFixed(2)}\n\n`;
+        }
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Error fetching trade stats.');
+      }
+    });
+
+    this.bot.command('stop', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      ctx.reply('🛑 KILL SWITCH — closing all positions...');
+      try {
+        const count = await this.tradeExecutor.closeAllPositions();
+        this.tradeExecutor.enabled = false;
+        ctx.replyWithHTML(`🛑 <b>ALL POSITIONS CLOSED</b>\n\n${count} position(s) closed.\nAuto-trading DISABLED.\n\nUse /trademode paper or /trademode live to re-enable.`);
+      } catch (err) {
+        ctx.reply('Error closing positions.');
+      }
+    });
+
+    this.bot.command('trademode', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const mode = args[0]?.toLowerCase();
+      if (mode === 'paper' || mode === 'live') {
+        this.tradeExecutor.mode = mode;
+        this.tradeExecutor.enabled = true;
+        ctx.replyWithHTML(`✅ Trading mode set to <b>${mode.toUpperCase()}</b>\nAuto-trading ENABLED.${mode === 'live' ? '\n\n⚠️ <b>WARNING: Real funds will be used!</b>' : ''}`);
+      } else {
+        ctx.reply('Usage: /trademode paper or /trademode live');
+      }
+    });
+
+    this.bot.command('setsize', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const size = parseFloat(args[0]);
+      if (!size || size < 5 || size > 10000) return ctx.reply('Usage: /setsize <amount in USDT>\nExample: /setsize 100\nRange: $5 - $10,000');
+      this.tradeExecutor.maxPositionSize = size;
+      ctx.replyWithHTML(`✅ Position size set to <b>$${size}</b> per trade.`);
+    });
+
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 3) return ctx.reply('Usage: /whale <TOKEN> <chain> <contract_address>\nExample: /whale TUT ethereum 0x123...');
@@ -514,6 +654,12 @@ class TelegramBot {
       { command: 'stats', description: 'Signal performance & win rate' },
       { command: 'review', description: 'Review past signal performance' },
       { command: 'analyse', description: 'Full analysis report (usage: /analyse 7)' },
+      { command: 'trade', description: 'Auto-trading status & config' },
+      { command: 'positions', description: 'View open trade positions' },
+      { command: 'pnl', description: 'Trade P&L and performance' },
+      { command: 'stop', description: 'Kill switch — close all & disable' },
+      { command: 'trademode', description: 'Switch paper/live mode' },
+      { command: 'setsize', description: 'Set position size (e.g. /setsize 100)' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 
