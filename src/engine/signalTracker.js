@@ -2,8 +2,9 @@ const logger = require('../utils/logger');
 const db = require('../db/database');
 
 class SignalTracker {
-  constructor(exchanges) {
+  constructor(exchanges, signalEngine) {
     this.exchanges = exchanges;
+    this.signalEngine = signalEngine;
   }
 
   async checkAllSignals() {
@@ -38,6 +39,7 @@ class SignalTracker {
           update = { id: signal.id, hit: 'sl', price: currentPrice, symbol: signal.symbol };
           await db.updateSignalHit(signal.id, 'hit_sl');
           await db.closeSignal(signal.id);
+          if (this.signalEngine) this.signalEngine.markSLHit(signal.symbol);
         }
 
         // Auto-close signals older than 48 hours

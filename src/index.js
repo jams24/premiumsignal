@@ -50,7 +50,7 @@ async function main() {
   const marketIntel = new MarketIntel(listingMonitor.exchanges);
   const socialScanner = new SocialScanner();
   const signalEngine = new SignalEngine();
-  const signalTracker = new SignalTracker(listingMonitor.exchanges);
+  const signalTracker = new SignalTracker(listingMonitor.exchanges, signalEngine);
 
   // Init trade executor (paper mode by default)
   const tradeExecutor = new TradeExecutor(listingMonitor.exchanges, {
@@ -111,7 +111,7 @@ async function main() {
       const results = await technicalScanner.scanAll();
       let signalCount = 0;
 
-      for (const scan of results.slice(0, 3)) {
+      for (const scan of results.slice(0, 2)) {
         const signal = await signalEngine.processBreakoutSignal(scan);
         if (signal) {
           await bot.sendSignal(signal);

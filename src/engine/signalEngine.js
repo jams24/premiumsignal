@@ -3,8 +3,15 @@ const db = require('../db/database');
 
 class SignalEngine {
   constructor() {
-    this.recentSignals = new Map(); // dedup: symbol -> timestamp
-    this.cooldownMs = 4 * 60 * 60 * 1000; // 4 hour cooldown per symbol (was 30min — too many dupes)
+    this.recentSignals = new Map(); // dedup: symbol -> timestamp (cross-exchange)
+    this.cooldownMs = 4 * 60 * 60 * 1000;
+    this.slBackoffMs = 12 * 60 * 60 * 1000; // 12hr cooldown after SL hit
+    this.slSymbols = new Map(); // symbol -> timestamp of last SL
+  }
+
+  markSLHit(symbol) {
+    const base = symbol.replace('/USDT:USDT', '').replace('/USDT', '');
+    this.slSymbols.set(base, Date.now());
   }
 
   async processListingSignal(listing, technicalData) {
@@ -21,20 +28,23 @@ class SignalEngine {
       volumeInfo: 'New listing — monitor volume in first 30min',
     };
 
-    // Only generate signal if we have price data
     if (!technicalData?.currentPrice) return null;
-    if (technicalData) {
-      Object.assign(signal, {
-        currentPrice: technicalData.currentPrice,
-        entryLow: technicalData.currentPrice * 0.95,
-        entryHigh: technicalData.currentPrice * 1.02,
-        tp1: technicalData.currentPrice * 1.20,
-        tp2: technicalData.currentPrice * 1.50,
-        tp3: technicalData.currentPrice * 2.00,
-        stopLoss: technicalData.currentPrice * 0.85,
-        tp1Pct: '20.0', tp2Pct: '50.0', tp3Pct: '100.0', slPct: '15.0',
-      });
-    }
+    // ATR-based targets (same as breakouts — old 20%/50%/100% were unrealistic)
+    const atr = technicalData.atr || technicalData.currentPrice * 0.03;
+    const price = technicalData.currentPrice;
+    Object.assign(signal, {
+      currentPrice: price,
+      entryLow: price * 0.995,
+      entryHigh: price * 1.005,
+      tp1: price + atr * 2,
+      tp2: price + atr * 4,
+      tp3: price + atr * 6,
+      stopLoss: price - atr * 3.5,
+      tp1Pct: ((atr * 2 / price) * 100).toFixed(1),
+      tp2Pct: ((atr * 4 / price) * 100).toFixed(1),
+      tp3Pct: ((atr * 6 / price) * 100).toFixed(1),
+      slPct: ((atr * 3.5 / price) * 100).toFixed(1),
+    });
 
     this.markSent(listing.symbol);
     await db.saveSignal(signal);
@@ -43,10 +53,10 @@ class SignalEngine {
 
   async processBreakoutSignal(scan) {
     if (this.isOnCooldown(scan.symbol)) return null;
-    // Require higher score — 50 was too loose, 53% SL rate
-    if (scan.score < 65) return null;
-    // Require minimum volume ratio to avoid low-conviction signals
-    if (scan.volumeRatio < 2) return null;
+    if (scan.score < 70) return null;
+    // Volume spike type requires 5x+ (sweet spot is 5-7x at 50% WR)
+    const minVol = scan.volumeRatio > 3 ? 5 : 2;
+    if (scan.volumeRatio < minVol) return null;
 
     const confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
 
@@ -91,13 +101,19 @@ class SignalEngine {
   }
 
   isOnCooldown(symbol) {
-    const lastSent = this.recentSignals.get(symbol);
+    const base = symbol.replace('/USDT:USDT', '').replace('/USDT', '');
+    // Check SL backoff first (12hr after SL hit)
+    const lastSL = this.slSymbols.get(base);
+    if (lastSL && Date.now() - lastSL < this.slBackoffMs) return true;
+    // Normal cooldown (cross-exchange — uses base symbol only)
+    const lastSent = this.recentSignals.get(base);
     if (!lastSent) return false;
     return Date.now() - lastSent < this.cooldownMs;
   }
 
   markSent(symbol) {
-    this.recentSignals.set(symbol, Date.now());
+    const base = symbol.replace('/USDT:USDT', '').replace('/USDT', '');
+    this.recentSignals.set(base, Date.now());
   }
 }
 

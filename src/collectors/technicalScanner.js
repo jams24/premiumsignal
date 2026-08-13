@@ -104,8 +104,9 @@ class TechnicalScanner {
       if (currentEma20 > currentEma50) { score += 10; signals.push('EMA20>EMA50'); }
       else { score += 5; signals.push('EMA20<EMA50'); }
 
-      // RSI
-      if (currentRSI > 70) { score += 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
+      // RSI — block 90+ (82% SL rate), sweet spot is 70-80
+      if (currentRSI > 90) { return null; }
+      if (currentRSI > 70) { score += currentRSI <= 80 ? 15 : 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
       else if (currentRSI < 30) { score += 15; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI > 50 && currentRSI < 70) { score += 5; signals.push(`RSI bullish ${currentRSI.toFixed(0)}`); }
 
@@ -130,6 +131,18 @@ class TechnicalScanner {
 
       if (score < 40) return null;
 
+      // Require bearish candle confirmation for shorts
+      if (direction === 'short') {
+        const lastOpen = ohlcv[ohlcv.length - 1][1];
+        const lastClose = ohlcv[ohlcv.length - 1][4];
+        if (lastClose >= lastOpen) return null; // skip if latest candle is green
+        signals.push('Bearish candle confirmed');
+      }
+
+      // Suppress signals during low-liquidity hours (06:00 and 15:00 UTC)
+      const currentHourUTC = new Date().getUTCHours();
+      if (currentHourUTC === 6 || currentHourUTC === 15) return null;
+
       // Calculate TP/SL using ATR
       const atrValue = currentATR || currentPrice * 0.02;
       const isLong = direction === 'long';
@@ -139,7 +152,7 @@ class TechnicalScanner {
       const tp1 = isLong ? currentPrice + atrValue * 2 : currentPrice - atrValue * 2;
       const tp2 = isLong ? currentPrice + atrValue * 4 : currentPrice - atrValue * 4;
       const tp3 = isLong ? currentPrice + atrValue * 6 : currentPrice - atrValue * 6;
-      const stopLoss = isLong ? currentPrice - atrValue * 2.5 : currentPrice + atrValue * 2.5;
+      const stopLoss = isLong ? currentPrice - atrValue * 3.5 : currentPrice + atrValue * 3.5;
 
       return {
         symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),
