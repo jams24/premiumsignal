@@ -154,6 +154,19 @@ class TechnicalScanner {
       const change24h = ticker.percentage || 0;
       if (Math.abs(change24h) > 15) score += 10;
 
+      // Overextension filter: skip if price moved too much in recent candles
+      const recentCloses = closes.slice(-6);
+      const recentLow = Math.min(...recentCloses);
+      const recentHigh = Math.max(...recentCloses);
+      const recentMove = ((recentHigh - recentLow) / recentLow) * 100;
+      if (recentMove > 40) {
+        return null;
+      }
+      if (recentMove > 25) {
+        score -= 15;
+        signals.push(`Overextended ${recentMove.toFixed(0)}% in 6 candles`);
+      }
+
       // SMC Analysis
       const smcResult = this.smc.analyze(ohlcv);
       let smcData = null;
