@@ -80,16 +80,31 @@ class TradeExecutor {
   // Get available balance for sizing
   async getBalance() {
     if (this.mode === 'paper') return this.paperBalance;
-    const exchangeId = Object.keys(this.exchanges)[0];
-    const exchange = this.exchanges[exchangeId];
-    if (!exchange || !exchange.apiKey) return this.paperBalance;
-    try {
-      const balance = await exchange.fetchBalance();
-      return balance.free?.USDT || balance.total?.USDT || this.paperBalance;
-    } catch (e) {
-      logger.warn(`Balance fetch failed: ${e.message}`);
-      return this.paperBalance;
+    const balances = await this.getAllBalances();
+    let total = 0;
+    for (const b of Object.values(balances)) total += b.free;
+    return total || this.paperBalance;
+  }
+
+  // Get balances from all exchanges with API keys
+  async getAllBalances() {
+    const results = {};
+    for (const [id, exchange] of Object.entries(this.exchanges)) {
+      if (!exchange.apiKey || !exchange.secret) continue;
+      try {
+        const params = id === 'bybit' ? { type: 'unified' } : {};
+        const balance = await exchange.fetchBalance(params);
+        results[id] = {
+          free: balance.free?.USDT || 0,
+          total: balance.total?.USDT || 0,
+          used: balance.used?.USDT || 0,
+        };
+      } catch (e) {
+        logger.warn(`${id} balance fetch failed: ${e.message}`);
+        results[id] = { free: 0, total: 0, used: 0, error: e.message };
+      }
     }
+    return results;
   }
 
   // Calculate position size based on risk % or fixed amount

@@ -15,8 +15,7 @@ class ListingMonitor {
     const exchangeConfigs = [
       { id: 'mexc', class: ccxt.mexc },
       { id: 'binance', class: ccxt.binance },
-      { id: 'bybit', class: ccxt.bybit },
-      // bitget v1 API decommissioned — re-enable when ccxt supports v2
+      { id: 'bybit', class: ccxt.bybit, options: { accountType: 'UNIFIED' } },
     ];
 
     for (const cfg of exchangeConfigs) {
@@ -26,6 +25,7 @@ class ListingMonitor {
           apiKey: creds.apiKey,
           secret: creds.secret,
           enableRateLimit: true,
+          options: cfg.options || {},
         });
         const markets = await this.exchanges[cfg.id].loadMarkets();
         this.previousMarkets[cfg.id] = new Set(Object.keys(markets));

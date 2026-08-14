@@ -736,8 +736,18 @@ class TelegramBot {
         this.tradeExecutor.paperBalance = bal;
         return ctx.replyWithHTML(`✅ Paper balance set to <b>$${bal}</b>`);
       }
-      const balance = await this.tradeExecutor.getBalance();
-      ctx.replyWithHTML(`💰 <b>${this.tradeExecutor.mode === 'paper' ? 'Paper' : 'Live'} Balance:</b> $${balance.toFixed(2)}`);
+      ctx.reply('Fetching balances...');
+      const balances = await this.tradeExecutor.getAllBalances();
+      let msg = `💰 <b>ACCOUNT BALANCES</b>\n\n`;
+      let totalFree = 0;
+      for (const [id, b] of Object.entries(balances)) {
+        msg += `${b.error ? '❌' : '✅'} <b>${id}</b>: $${b.free.toFixed(2)} free / $${b.total.toFixed(2)} total\n`;
+        totalFree += b.free;
+      }
+      if (Object.keys(balances).length > 1) msg += `\n<b>Total free:</b> $${totalFree.toFixed(2)}\n`;
+      msg += `\n📝 <b>Paper balance:</b> $${this.tradeExecutor.paperBalance.toFixed(2)}`;
+      msg += `\n\nActive: <b>${this.tradeExecutor.mode.toUpperCase()}</b>`;
+      ctx.replyWithHTML(msg);
     });
 
     this.bot.command('whale', async (ctx) => {
@@ -1123,17 +1133,31 @@ class TelegramBot {
       await this.showFilterPanel(ctx);
     });
 
-    // ── PAPER BALANCE ──
+    // ── BALANCE ──
     this.bot.action('cfg_balance', async (ctx) => {
-      await ctx.answerCbQuery();
+      await ctx.answerCbQuery('Fetching balances...');
       const t = te();
-      const bal = t.mode === 'paper' ? t.paperBalance : 0;
+      const balances = await t.getAllBalances();
+
+      let balText = '';
+      let totalFree = 0;
+      for (const [id, b] of Object.entries(balances)) {
+        const icon = b.error ? '❌' : '✅';
+        balText += `${icon} <b>${id}</b>: $${b.free.toFixed(2)} free / $${b.total.toFixed(2)} total${b.used > 0 ? ` ($${b.used.toFixed(2)} in use)` : ''}\n`;
+        totalFree += b.free;
+      }
+      if (!Object.keys(balances).length) balText = '<i>No exchange API keys configured</i>\n';
+
+      const paperBal = t.paperBalance;
       ctx.editMessageText(
-        `💰 <b>${t.mode === 'paper' ? 'PAPER' : 'LIVE'} BALANCE</b>\n\n` +
-        `Current: <b>$${(t.mode === 'paper' ? t.paperBalance : 0).toFixed(2)}</b>\n\n` +
-        `${t.mode === 'paper' ? 'Set your starting paper balance for simulated trading.\nThis updates as paper trades close.' : 'Live balance is fetched from your exchange.\nUse /balance to check current amount.'}\n\n` +
-        `${t.riskPct > 0 ? `With ${t.riskPct}% risk, each trade uses $${(bal * t.riskPct / 100).toFixed(2)}` : `Using fixed position size: $${t.maxPositionSize}`}`,
+        `💰 <b>ACCOUNT BALANCES</b>\n\n` +
+        `<b>═══ Exchange Accounts ═══</b>\n${balText}\n` +
+        `<b>═══ Paper Account ═══</b>\n` +
+        `📝 Paper Balance: <b>$${paperBal.toFixed(2)}</b>\n\n` +
+        `Active mode: <b>${t.mode.toUpperCase()}</b> ${t.mode === 'paper' ? `(using $${paperBal.toFixed(2)})` : `(using $${totalFree.toFixed(2)} across exchanges)`}\n` +
+        `${t.riskPct > 0 ? `Risk sizing: ${t.riskPct}% = $${((t.mode === 'paper' ? paperBal : totalFree) * t.riskPct / 100).toFixed(2)}/trade` : `Fixed sizing: $${t.maxPositionSize}/trade`}`,
         { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Refresh Balances', 'cfg_balance')],
           ...(t.mode === 'paper' ? [
             [Markup.button.callback(`$500${check(500, Math.round(t.paperBalance))}`, 'cfg_bal_500'),
              Markup.button.callback(`$1000${check(1000, Math.round(t.paperBalance))}`, 'cfg_bal_1000'),
@@ -1164,7 +1188,7 @@ class TelegramBot {
   // Render the main settings panel
   async showSettingsMain(ctx, isNewMessage = false) {
     const t = this.tradeExecutor;
-    const balance = t.mode === 'paper' ? t.paperBalance : await t.getBalance();
+    const balance = await t.getBalance();
     const sizeDisplay = t.riskPct > 0
       ? `${t.riskPct}% ($${(balance * t.riskPct / 100).toFixed(2)})`
       : `$${t.maxPositionSize}`;
