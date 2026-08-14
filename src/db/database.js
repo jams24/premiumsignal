@@ -420,6 +420,13 @@ async function getTradeStats() {
   return rows;
 }
 
+async function getTodayPnL() {
+  const { rows } = await query(
+    `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= CURRENT_DATE`
+  );
+  return rows.length ? parseFloat(rows[0].total) : 0;
+}
+
 async function saveSettings(config) {
   const json = JSON.stringify(config);
   await query(
@@ -434,4 +441,4 @@ async function loadSettings() {
   return rows.length ? rows[0].config : null;
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradeDCA, saveSettings, loadSettings };
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradeDCA, saveSettings, loadSettings, getTodayPnL };

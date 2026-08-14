@@ -1316,6 +1316,7 @@ class TelegramBot {
   // Render the main settings panel
   async showSettingsMain(ctx, isNewMessage = false) {
     const t = this.tradeExecutor;
+    await t.recalcDailyPnL();
     const balance = await t.getBalance();
     const sizeDisplay = t.riskPct > 0
       ? `${t.riskPct}% ($${(balance * t.riskPct / 100).toFixed(2)})`
@@ -1367,7 +1368,8 @@ class TelegramBot {
        Markup.button.callback(`⭐ Confidence: ${t.minConfidence}/5`, 'cfg_conf')],
       [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter'),
        Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades')],
-      [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
+      [Markup.button.callback('🔄 Refresh', 'cfg_main'),
+       Markup.button.callback('🛑 Kill Switch', 'action_stop')],
     ]);
 
     if (isNewMessage) {

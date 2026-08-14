@@ -47,6 +47,14 @@ class TradeExecutor {
     }
   }
 
+  async recalcDailyPnL() {
+    try {
+      const result = await db.getTodayPnL();
+      this.dailyPnL = result || 0;
+      this.dailyPnLResetDate = new Date().toDateString();
+    } catch (e) { logger.warn(`Failed to recalc daily PnL: ${e.message}`); }
+  }
+
   async canTrade(signal) {
     if (!this.enabled) return { ok: false, reason: 'Trading disabled' };
 
