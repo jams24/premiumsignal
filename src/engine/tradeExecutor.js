@@ -92,7 +92,7 @@ class TradeExecutor {
     for (const [id, exchange] of Object.entries(this.exchanges)) {
       if (!exchange.apiKey || !exchange.secret) continue;
       try {
-        const params = id === 'bybit' ? { type: 'unified' } : {};
+        const params = id === 'bybit' ? { type: 'unified' } : id === 'binance' ? { type: 'future' } : {};
         const balance = await exchange.fetchBalance(params);
         results[id] = {
           free: balance.free?.USDT || 0,
@@ -143,6 +143,33 @@ class TradeExecutor {
       signalFilter: [...this.signalFilter],
       dailyPnL: this.dailyPnL,
     };
+  }
+
+  applyConfig(cfg) {
+    if (!cfg) return;
+    if (cfg.mode != null) this.mode = cfg.mode;
+    if (cfg.enabled != null) this.enabled = cfg.enabled;
+    if (cfg.maxPositionSize != null) this.maxPositionSize = cfg.maxPositionSize;
+    if (cfg.riskPct != null) this.riskPct = cfg.riskPct;
+    if (cfg.paperBalance != null) this.paperBalance = cfg.paperBalance;
+    if (cfg.maxDailyLoss != null) this.maxDailyLoss = cfg.maxDailyLoss;
+    if (cfg.maxLossPerTrade != null) this.maxLossPerTrade = cfg.maxLossPerTrade;
+    if (cfg.maxConcurrentPositions != null) this.maxConcurrentPositions = cfg.maxConcurrentPositions;
+    if (cfg.minConfidence != null) this.minConfidence = cfg.minConfidence;
+    if (cfg.defaultLeverage != null) this.defaultLeverage = cfg.defaultLeverage;
+    if (cfg.dynamicLeverage != null) this.dynamicLeverage = cfg.dynamicLeverage;
+    if (cfg.signalFilter != null) this.signalFilter = new Set(cfg.signalFilter);
+  }
+
+  async saveConfig() {
+    try { await db.saveSettings(this.getConfig()); } catch (e) { logger.warn(`Failed to save settings: ${e.message}`); }
+  }
+
+  async loadConfig() {
+    try {
+      const cfg = await db.loadSettings();
+      if (cfg) { this.applyConfig(cfg); logger.info('Settings loaded from database'); }
+    } catch (e) { logger.warn(`Failed to load settings: ${e.message}`); }
   }
 
   // Calculate invalidation level: nearest structure level where thesis breaks
@@ -264,6 +291,8 @@ class TradeExecutor {
     };
 
     await db.saveTrade(trade);
+    this.paperBalance -= (positionSize / 3);
+    this.saveConfig();
 
     const msg = `📝 <b>PAPER TRADE OPENED</b>\n\n` +
       `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(signal.symbol)}</b>\n` +
@@ -446,7 +475,7 @@ class TradeExecutor {
             action = 'invalidated';
             await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
-            if (trade.mode === 'paper') this.paperBalance += pnlUsd;
+            if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
           }
         }
 
@@ -455,6 +484,7 @@ class TradeExecutor {
           action = 'tp4';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp4');
           this.dailyPnL += pnlUsd;
+          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
         }
         // --- TP3 CHECK + TRAILING SL ---
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
@@ -488,17 +518,22 @@ class TradeExecutor {
           action = 'sl';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'sl');
           this.dailyPnL += pnlUsd;
+          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
         }
         // --- AUTO-CLOSE AFTER 48h ---
         else if (!action && Date.now() - new Date(trade.created_at).getTime() > 48 * 60 * 60 * 1000) {
           action = 'expired';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;
+          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
         }
 
         if (action) {
           if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired'].includes(action)) {
             await this.closeExchangePosition(trade);
+          }
+          if (trade.mode === 'paper' && ['tp4', 'sl', 'invalidated', 'expired'].includes(action)) {
+            this.saveConfig();
           }
 
           const msg = this.formatTradeUpdate(trade, action, currentPrice, pnlPct, pnlUsd);
@@ -533,6 +568,7 @@ class TradeExecutor {
           `Added at $${trade.dca_price_2.toPrecision(6)}\n` +
           `New avg entry: $${newEntry.toPrecision(6)}\n` +
           `Position now 2/3 filled`;
+        if (trade.mode === 'paper') { this.paperBalance -= trade.position_size / 2; this.saveConfig(); }
         await this.notify(msg);
         logger.info(`${trade.symbol}: DCA 2/3 filled at $${trade.dca_price_2}`);
       }
@@ -556,6 +592,7 @@ class TradeExecutor {
           `Added at $${trade.dca_price_3.toPrecision(6)}\n` +
           `New avg entry: $${newEntry.toPrecision(6)}\n` +
           `Full position now open`;
+        if (trade.mode === 'paper') { this.paperBalance -= trade.position_size / 3; this.saveConfig(); }
         await this.notify(msg);
         logger.info(`${trade.symbol}: DCA 3/3 filled at $${trade.dca_price_3}`);
       }
@@ -600,6 +637,8 @@ class TradeExecutor {
         const pnlUsd = (pnlPct / 100) * trade.position_size * trade.leverage;
 
         if (trade.mode === 'live') await this.closeExchangePosition(trade);
+        if (trade.mode === 'paper') { this.paperBalance += pnlUsd; this.saveConfig(); }
+        this.dailyPnL += pnlUsd;
         await db.closeTrade(trade.id, currentPrice || trade.entry_price, pnlPct, pnlUsd, 'manual_close');
       } catch (err) {
         logger.error(`Failed to close ${trade.symbol}: ${err.message}`);

@@ -574,6 +574,7 @@ class TelegramBot {
       try {
         const count = await this.tradeExecutor.closeAllPositions();
         this.tradeExecutor.enabled = false;
+        this.tradeExecutor.saveConfig();
         ctx.replyWithHTML(`🛑 <b>ALL POSITIONS CLOSED</b>\n\n${count} position(s) closed.\nAuto-trading DISABLED.\n\nUse /trademode paper or /trademode live to re-enable.`);
       } catch (err) {
         ctx.reply('Error closing positions.');
@@ -587,6 +588,7 @@ class TelegramBot {
       if (mode === 'paper' || mode === 'live') {
         this.tradeExecutor.mode = mode;
         this.tradeExecutor.enabled = true;
+        this.tradeExecutor.saveConfig();
         ctx.replyWithHTML(`✅ Trading mode set to <b>${mode.toUpperCase()}</b>\nAuto-trading ENABLED.${mode === 'live' ? '\n\n⚠️ <b>WARNING: Real funds will be used!</b>' : ''}`);
       } else {
         ctx.reply('Usage: /trademode paper or /trademode live');
@@ -599,6 +601,7 @@ class TelegramBot {
       const size = parseFloat(args[0]);
       if (!size || size < 5 || size > 10000) return ctx.reply('Usage: /setsize <amount in USDT>\nExample: /setsize 100\nRange: $5 - $10,000');
       this.tradeExecutor.maxPositionSize = size;
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Position size set to <b>$${size}</b> per trade.${this.tradeExecutor.riskPct > 0 ? '\n⚠️ Risk-based sizing is active — fixed size is used as max cap.' : ''}`);
     });
 
@@ -608,6 +611,7 @@ class TelegramBot {
       const lev = parseInt(args[0]);
       if (!lev || lev < 1 || lev > 50) return ctx.reply('Usage: /setleverage <1-50>\nExample: /setleverage 10');
       this.tradeExecutor.defaultLeverage = lev;
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Default leverage set to <b>${lev}x</b>${this.tradeExecutor.dynamicLeverage ? '\nDynamic leverage is ON — actual leverage scales with confidence.' : ''}`);
     });
 
@@ -617,6 +621,7 @@ class TelegramBot {
       const loss = parseFloat(args[0]);
       if (!loss || loss < 10 || loss > 50000) return ctx.reply('Usage: /setloss <daily limit in USDT>\nExample: /setloss 500');
       this.tradeExecutor.maxDailyLoss = loss;
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Daily loss limit set to <b>$${loss}</b>`);
     });
 
@@ -626,10 +631,12 @@ class TelegramBot {
       const loss = parseFloat(args[0]);
       if (args[0] === '0' || args[0] === 'off') {
         this.tradeExecutor.maxLossPerTrade = 0;
+        this.tradeExecutor.saveConfig();
         return ctx.replyWithHTML('✅ Per-trade loss cap <b>disabled</b>.');
       }
       if (!loss || loss < 1 || loss > 10000) return ctx.reply('Usage: /setmaxloss <max USDT loss per trade>\nExample: /setmaxloss 25\nUse /setmaxloss 0 to disable');
       this.tradeExecutor.maxLossPerTrade = loss;
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Max loss per trade capped at <b>$${loss}</b>`);
     });
 
@@ -639,6 +646,7 @@ class TelegramBot {
       const max = parseInt(args[0]);
       if (!max || max < 1 || max > 20) return ctx.reply('Usage: /setpositions <1-20>\nExample: /setpositions 3');
       this.tradeExecutor.maxConcurrentPositions = max;
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Max concurrent positions set to <b>${max}</b>`);
     });
 
@@ -648,6 +656,7 @@ class TelegramBot {
       const conf = parseInt(args[0]);
       if (!conf || conf < 1 || conf > 5) return ctx.reply('Usage: /setconfidence <1-5>\nExample: /setconfidence 4\n\n1 = trade everything\n5 = only highest conviction');
       this.tradeExecutor.minConfidence = conf;
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Minimum confidence set to <b>${conf}/5</b> ${'⭐'.repeat(conf)}`);
     });
 
@@ -682,11 +691,13 @@ class TelegramBot {
       }
       if (args[0] === 'off') {
         this.tradeExecutor.riskPct = 0;
+        this.tradeExecutor.saveConfig();
         return ctx.replyWithHTML(`✅ Risk-based sizing <b>disabled</b>. Using fixed $${this.tradeExecutor.maxPositionSize}/trade.`);
       }
       const pct = parseFloat(args[0]);
       if (!pct || pct < 0.1 || pct > 10) return ctx.reply('Usage: /risk <0.1 - 10>\nExample: /risk 2 (risk 2% of balance per trade)\nUse /risk off for fixed sizing');
       this.tradeExecutor.riskPct = pct;
+      this.tradeExecutor.saveConfig();
       const balance = await this.tradeExecutor.getBalance();
       ctx.replyWithHTML(`✅ Risk-based sizing set to <b>${pct}%</b> of balance\nCurrent balance: $${balance.toFixed(2)} → $${(balance * pct / 100).toFixed(2)}/trade`);
     });
@@ -696,9 +707,11 @@ class TelegramBot {
       const args = ctx.message.text.split(' ').slice(1);
       if (args[0] === 'on') {
         this.tradeExecutor.dynamicLeverage = true;
+        this.tradeExecutor.saveConfig();
         ctx.replyWithHTML('✅ Dynamic leverage <b>ON</b>\n\nConf 5: 2x base | Conf 4: 1x base | Conf 3: 0.6x base');
       } else if (args[0] === 'off') {
         this.tradeExecutor.dynamicLeverage = false;
+        this.tradeExecutor.saveConfig();
         ctx.replyWithHTML(`✅ Dynamic leverage <b>OFF</b> — fixed at ${this.tradeExecutor.defaultLeverage}x`);
       } else {
         ctx.reply('Usage: /dynlev on or /dynlev off');
@@ -720,10 +733,12 @@ class TelegramBot {
       }
       if (args[0] === 'off' || args[0] === 'all') {
         this.tradeExecutor.signalFilter.clear();
+        this.tradeExecutor.saveConfig();
         return ctx.replyWithHTML('✅ Signal filter <b>cleared</b> — trading all signal types.');
       }
       const types = args[0].toUpperCase().split(',').map(t => t.trim()).filter(Boolean);
       this.tradeExecutor.signalFilter = new Set(types);
+      this.tradeExecutor.saveConfig();
       ctx.replyWithHTML(`✅ Signal filter set: <b>${types.join(', ')}</b>\nOnly these signal types will trigger trades.`);
     });
 
@@ -734,6 +749,7 @@ class TelegramBot {
         const bal = parseFloat(args[0]);
         if (!bal || bal < 10) return ctx.reply('Usage: /balance <amount>\nExample: /balance 5000\nSets paper trading balance.');
         this.tradeExecutor.paperBalance = bal;
+        this.tradeExecutor.saveConfig();
         return ctx.replyWithHTML(`✅ Paper balance set to <b>$${bal}</b>`);
       }
       ctx.reply('Fetching balances...');
@@ -825,6 +841,7 @@ class TelegramBot {
       const mode = ctx.match[1];
       te().mode = mode;
       te().enabled = true;
+      te().saveConfig();
       await ctx.answerCbQuery(`Mode set to ${mode.toUpperCase()}`);
       await this.showSettingsMain(ctx);
     });
@@ -833,6 +850,7 @@ class TelegramBot {
     this.bot.action('cfg_toggle', async (ctx) => {
       const t = te();
       t.enabled = !t.enabled;
+      t.saveConfig();
       await ctx.answerCbQuery(t.enabled ? 'Trading ENABLED' : 'Trading DISABLED');
       await this.showSettingsMain(ctx);
     });
@@ -860,6 +878,7 @@ class TelegramBot {
     for (const size of [25, 50, 100, 250, 500, 1000]) {
       this.bot.action(`cfg_size_${size}`, async (ctx) => {
         te().maxPositionSize = size;
+        te().saveConfig();
         await ctx.answerCbQuery(`Position size: $${size}`);
         ctx.editMessageText(
           `✅ Position size set to <b>$${size}</b>`,
@@ -897,6 +916,7 @@ class TelegramBot {
     for (const pct of [0, 1, 2, 3, 5, 10]) {
       this.bot.action(`cfg_risk_${pct}`, async (ctx) => {
         te().riskPct = pct;
+        te().saveConfig();
         const label = pct === 0 ? 'OFF — using fixed size' : `${pct}% of balance`;
         await ctx.answerCbQuery(`Risk sizing: ${label}`);
         ctx.editMessageText(
@@ -937,6 +957,7 @@ class TelegramBot {
     for (const lev of [2, 3, 5, 10, 15, 20]) {
       this.bot.action(`cfg_lev_${lev}`, async (ctx) => {
         te().defaultLeverage = lev;
+        te().saveConfig();
         await ctx.answerCbQuery(`Leverage: ${lev}x`);
         ctx.editMessageText(
           `✅ Default leverage set to <b>${lev}x</b>${te().dynamicLeverage ? '\nDynamic mode ON — actual leverage scales with confidence.' : ''}`,
@@ -949,6 +970,7 @@ class TelegramBot {
     this.bot.action('cfg_dynlev_toggle', async (ctx) => {
       const t = te();
       t.dynamicLeverage = !t.dynamicLeverage;
+      t.saveConfig();
       await ctx.answerCbQuery(`Dynamic leverage: ${t.dynamicLeverage ? 'ON' : 'OFF'}`);
       // Re-render leverage panel
       ctx.editMessageText(
@@ -990,6 +1012,7 @@ class TelegramBot {
     for (const loss of [50, 100, 200, 500, 1000, 2500]) {
       this.bot.action(`cfg_dloss_${loss}`, async (ctx) => {
         te().maxDailyLoss = loss;
+        te().saveConfig();
         await ctx.answerCbQuery(`Daily loss limit: $${loss}`);
         ctx.editMessageText(
           `✅ Daily loss limit set to <b>$${loss}</b>`,
@@ -1024,6 +1047,7 @@ class TelegramBot {
     for (const loss of [0, 10, 25, 50, 100, 250]) {
       this.bot.action(`cfg_tloss_${loss}`, async (ctx) => {
         te().maxLossPerTrade = loss;
+        te().saveConfig();
         const label = loss === 0 ? 'OFF' : `$${loss}`;
         await ctx.answerCbQuery(`Per-trade loss cap: ${label}`);
         ctx.editMessageText(
@@ -1062,6 +1086,7 @@ class TelegramBot {
     for (const pos of [1, 2, 3, 5, 8, 10]) {
       this.bot.action(`cfg_mpos_${pos}`, async (ctx) => {
         te().maxConcurrentPositions = pos;
+        te().saveConfig();
         await ctx.answerCbQuery(`Max positions: ${pos}`);
         ctx.editMessageText(
           `✅ Max concurrent positions: <b>${pos}</b>`,
@@ -1099,6 +1124,7 @@ class TelegramBot {
     for (const conf of [1, 2, 3, 4, 5]) {
       this.bot.action(`cfg_conf_${conf}`, async (ctx) => {
         te().minConfidence = conf;
+        te().saveConfig();
         await ctx.answerCbQuery(`Min confidence: ${conf}/5`);
         ctx.editMessageText(
           `✅ Minimum confidence: <b>${conf}/5</b> ${'⭐'.repeat(conf)}`,
@@ -1123,12 +1149,14 @@ class TelegramBot {
         } else {
           t.signalFilter.add(type);
         }
+        t.saveConfig();
         await ctx.answerCbQuery(`${type}: ${t.signalFilter.has(type) ? 'ON' : 'OFF'}`);
         await this.showFilterPanel(ctx);
       });
     }
     this.bot.action('cfg_filt_all', async (ctx) => {
       te().signalFilter.clear();
+      te().saveConfig();
       await ctx.answerCbQuery('All signal types enabled');
       await this.showFilterPanel(ctx);
     });
@@ -1174,6 +1202,7 @@ class TelegramBot {
       this.bot.action(`cfg_bal_${bal}`, async (ctx) => {
         if (te().mode !== 'paper') return ctx.answerCbQuery('Only available in paper mode');
         te().paperBalance = bal;
+        te().saveConfig();
         await ctx.answerCbQuery(`Paper balance: $${bal}`);
         ctx.editMessageText(
           `✅ Paper balance set to <b>$${bal}</b>${te().riskPct > 0 ? `\nTrade size: $${(bal * te().riskPct / 100).toFixed(2)} (${te().riskPct}%)` : ''}`,
@@ -1194,10 +1223,24 @@ class TelegramBot {
       : `$${t.maxPositionSize}`;
     const filterDisplay = t.signalFilter.size > 0 ? [...t.signalFilter].join(', ') : 'All';
 
+    let balLine = '';
+    if (t.mode === 'paper') {
+      balLine = `📝 Paper Balance: <b>$${t.paperBalance.toFixed(2)}</b>`;
+    } else {
+      const liveBalances = await t.getAllBalances();
+      let totalFree = 0;
+      const parts = [];
+      for (const [id, b] of Object.entries(liveBalances)) {
+        parts.push(`${id}: $${b.free.toFixed(2)}`);
+        totalFree += b.free;
+      }
+      balLine = `💰 Live Balance: <b>$${totalFree.toFixed(2)}</b>${parts.length ? ` (${parts.join(' | ')})` : ''}`;
+    }
+
     const text =
       `⚙️ <b>TRADING SETTINGS</b>\n\n` +
       `${t.mode === 'paper' ? '📝' : '💰'} Mode: <b>${t.mode.toUpperCase()}</b> | ${t.enabled ? '✅ ON' : '❌ OFF'}\n` +
-      `💰 Balance: <b>$${balance.toFixed(2)}</b>\n` +
+      `${balLine}\n` +
       `💵 Size: <b>${sizeDisplay}</b>/trade\n` +
       `⚡ Leverage: <b>${t.defaultLeverage}x</b>${t.dynamicLeverage ? ' (dynamic)' : ''}\n` +
       `🛡️ Daily Loss: <b>$${t.maxDailyLoss}</b> | Per-Trade: <b>${t.maxLossPerTrade > 0 ? `$${t.maxLossPerTrade}` : 'Off'}</b>\n` +

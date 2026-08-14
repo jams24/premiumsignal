@@ -66,6 +66,9 @@ async function main() {
     dynamicLeverage: process.env.DYNAMIC_LEVERAGE !== 'false',
   });
 
+  // Load persisted settings from DB
+  if (dbReady) await tradeExecutor.loadConfig();
+
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor });
 

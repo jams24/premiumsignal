@@ -186,6 +186,13 @@ async function init(retries = 3) {
       closed_at TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+
+    CREATE TABLE IF NOT EXISTS bot_settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      config JSONB NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      CHECK (id = 1)
+    );
   `);
 
   // Add new columns to existing trades table (safe — IF NOT EXISTS not available for columns, so catch errors)
@@ -413,4 +420,18 @@ async function getTradeStats() {
   return rows;
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradeDCA };
+async function saveSettings(config) {
+  const json = JSON.stringify(config);
+  await query(
+    `INSERT INTO bot_settings (id, config, updated_at) VALUES (1, $1, NOW())
+     ON CONFLICT (id) DO UPDATE SET config = $1, updated_at = NOW()`,
+    [json]
+  );
+}
+
+async function loadSettings() {
+  const { rows } = await query('SELECT config FROM bot_settings WHERE id = 1');
+  return rows.length ? rows[0].config : null;
+}
+
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradeDCA, saveSettings, loadSettings };
