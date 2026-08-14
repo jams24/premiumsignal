@@ -1329,9 +1329,18 @@ class TelegramBot {
 
         msg += `<b>Total unrealized PnL: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>`;
 
+        const closeButtons = trades.reduce((rows, t, i) => {
+          if (i % 3 === 0) rows.push([]);
+          const pnlIcon = totalPnl >= 0 ? '' : '';
+          rows[rows.length - 1].push(Markup.button.callback(`❌ ${t.symbol}`, `close_trade_${t.id}`));
+          return rows;
+        }, []);
+
         ctx.editMessageText(msg, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
+            ...closeButtons,
+            [Markup.button.callback('🛑 Close All', 'close_all_trades')],
             [Markup.button.callback('🔄 Refresh', 'cfg_trades')],
             [Markup.button.callback('⬅️ Settings', 'cfg_main')],
           ]).reply_markup,
@@ -1343,6 +1352,54 @@ class TelegramBot {
         });
       }
     });
+
+    // ── CLOSE SINGLE TRADE ──
+    this.bot.action(/^close_trade_(\d+)$/, async (ctx) => {
+      const tradeId = parseInt(ctx.match[1]);
+      await ctx.answerCbQuery(`Closing trade #${tradeId}...`);
+      try {
+        const result = await this.tradeExecutor.closeSingleTrade(tradeId);
+        if (!result) {
+          return ctx.answerCbQuery('Trade not found or already closed', { show_alert: true });
+        }
+        const { trade, pnlUsd } = result;
+        const pnlSign = pnlUsd >= 0 ? '+' : '';
+        await this.sendRaw(
+          `✅ <b>MANUAL CLOSE</b> ${trade.symbol}\n\n` +
+          `PnL: ${pnlUsd >= 0 ? '🟢' : '🔴'} ${pnlSign}$${pnlUsd.toFixed(2)}\n` +
+          `Mode: ${trade.mode}`
+        );
+        await this.refreshTradesPanel(ctx);
+      } catch (e) {
+        logger.error(`Manual close error: ${e.message}`);
+        ctx.answerCbQuery(`Failed: ${e.message}`, { show_alert: true });
+      }
+    });
+
+    // ── CLOSE ALL TRADES ──
+    this.bot.action('close_all_trades', async (ctx) => {
+      await ctx.answerCbQuery('Closing all positions...');
+      try {
+        const count = await this.tradeExecutor.closeAllPositions();
+        await this.sendRaw(`🛑 <b>ALL POSITIONS CLOSED</b>\n\n${count} trade(s) closed manually.`);
+        await this.refreshTradesPanel(ctx);
+      } catch (e) {
+        logger.error(`Close all error: ${e.message}`);
+        ctx.answerCbQuery(`Failed: ${e.message}`, { show_alert: true });
+      }
+    });
+  }
+
+  async refreshTradesPanel(ctx) {
+    try {
+      ctx.editMessageText(
+        `📋 <b>ACTIVE TRADES</b>\n\n<i>Updated. Tap Refresh to reload.</i>`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Refresh', 'cfg_trades')],
+          [Markup.button.callback('⬅️ Settings', 'cfg_main')],
+        ]).reply_markup }
+      );
+    } catch (e) { /* ignore */ }
   }
 
   // Render the main settings panel

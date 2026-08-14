@@ -161,17 +161,34 @@ class TechnicalScanner {
         score += smcResult.score;
         for (const s of smcResult.signals) signals.push(s);
 
-        // SMC can override direction: ChoCH is a strong reversal signal
+        // SMC can override direction: ChoCH or BOS with structure bias
         const bullishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BULLISH');
         const bearishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BEARISH');
         if (bullishChoch && direction === 'short') direction = 'long';
         if (bearishChoch && direction === 'long') direction = 'short';
+
+        // BOS with structure bias also overrides direction
+        const hasBos = smcResult.bosEvents?.length > 0;
+        if (hasBos && smcResult.structureBias === 'bullish' && direction === 'short') {
+          direction = 'long';
+          signals.push('SMC bullish BOS overrides short');
+        } else if (hasBos && smcResult.structureBias === 'bearish' && direction === 'long') {
+          direction = 'short';
+          signals.push('SMC bearish BOS overrides long');
+        }
 
         // SMC structure confirmation bonus
         if ((smcResult.structureBias === 'bullish' && direction === 'long') ||
             (smcResult.structureBias === 'bearish' && direction === 'short')) {
           score += 10;
           signals.push('SMC confirms direction');
+        }
+
+        // Penalize if SMC structure still conflicts with direction after overrides
+        if ((smcResult.structureBias === 'bullish' && direction === 'short') ||
+            (smcResult.structureBias === 'bearish' && direction === 'long')) {
+          score -= 20;
+          signals.push('SMC conflicts with direction');
         }
 
         smcData = {

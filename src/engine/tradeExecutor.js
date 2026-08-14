@@ -737,6 +737,38 @@ class TradeExecutor {
     }
   }
 
+  async closeSingleTrade(tradeId) {
+    const trades = await db.getOpenTrades();
+    const trade = trades.find(t => t.id === tradeId);
+    if (!trade) return null;
+
+    const exchange = this.exchanges[trade.exchange];
+    if (!exchange) throw new Error(`Exchange ${trade.exchange} not available`);
+
+    const pairs = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`];
+    let currentPrice = null;
+    for (const pair of pairs) {
+      if (exchange.markets?.[pair]) {
+        const ticker = await exchange.fetchTicker(pair);
+        currentPrice = ticker.last;
+        break;
+      }
+    }
+
+    const isLong = trade.direction === 'long';
+    const pnlPct = currentPrice ? (isLong
+      ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
+      : ((trade.entry_price - currentPrice) / trade.entry_price) * 100) : 0;
+    const pnlUsd = (pnlPct / 100) * trade.position_size * trade.leverage;
+
+    if (trade.mode === 'live') await this.closeExchangePosition(trade);
+    if (trade.mode === 'paper') { this.paperBalance += (trade.position_size || 0) + pnlUsd; this.saveConfig(); }
+    this.dailyPnL += pnlUsd;
+    await db.closeTrade(trade.id, currentPrice || trade.entry_price, pnlPct, pnlUsd, 'manual_close');
+
+    return { trade, currentPrice, pnlPct, pnlUsd };
+  }
+
   async closeAllPositions() {
     const trades = await db.getOpenTrades();
     for (const trade of trades) {
