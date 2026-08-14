@@ -14,6 +14,7 @@ class TelegramBot {
     this.marketIntel = marketIntel;
     this.tradeExecutor = tradeExecutor;
     this.setupCommands();
+    this.setupSettingsPanel();
   }
 
   setupCommands() {
@@ -35,6 +36,7 @@ class TelegramBot {
         `/whale &lt;token&gt; &lt;chain&gt; &lt;addr&gt; — Whale tracker\n\n` +
         `<b>🤖 Auto-Trading:</b>\n` +
         `/trade — Trading status &amp; config\n` +
+        `/settings — Interactive settings panel\n` +
         `/positions — Open positions (DCA, trailing SL)\n` +
         `/pnl — Trade P&amp;L performance\n` +
         `/trademode paper|live — Switch mode\n` +
@@ -55,8 +57,8 @@ class TelegramBot {
           [Markup.button.callback('🐋 Whale Tracker', 'action_whale_info'), Markup.button.callback('📊 Stats', 'action_stats')],
           [Markup.button.callback('📋 Review Signals', 'action_review')],
           [Markup.button.callback('🤖 Auto-Trade', 'action_trade'), Markup.button.callback('📊 Positions', 'action_positions')],
-          [Markup.button.callback('💰 P&L', 'action_pnl'), Markup.button.callback('🛑 Kill Switch', 'action_stop')],
-          [Markup.button.callback('❓ Help', 'action_help')],
+          [Markup.button.callback('💰 P&L', 'action_pnl'), Markup.button.callback('⚙️ Settings', 'cfg_main_new')],
+          [Markup.button.callback('🛑 Kill Switch', 'action_stop'), Markup.button.callback('❓ Help', 'action_help')],
         ])
       );
     });
@@ -769,6 +771,477 @@ class TelegramBot {
     });
   }
 
+  // ═══════════════════════════════════════════════
+  // INTERACTIVE SETTINGS PANEL (inline buttons)
+  // ═══════════════════════════════════════════════
+  setupSettingsPanel() {
+    const te = () => this.tradeExecutor;
+    const check = (val, current) => val === current ? ' ✅' : '';
+
+    // ── MAIN SETTINGS PANEL ──
+    this.bot.action('cfg_main', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.showSettingsMain(ctx);
+    });
+
+    this.bot.command('settings', async (ctx) => {
+      if (!te()) return ctx.reply('Trade executor not initialized.');
+      await this.showSettingsMain(ctx, true);
+    });
+
+    this.bot.action('cfg_main_new', async (ctx) => {
+      await ctx.answerCbQuery();
+      if (!te()) return ctx.reply('Trade executor not initialized.');
+      await this.showSettingsMain(ctx, true);
+    });
+
+    // ── TRADE MODE ──
+    this.bot.action('cfg_mode', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `⚙️ <b>TRADE MODE</b>\n\n` +
+        `Current: <b>${t.mode.toUpperCase()}</b> ${t.mode === 'paper' ? '📝' : '💰'}\n\n` +
+        `📝 <b>Paper</b> — Simulated trades, no real funds.\nPerfect for testing strategies risk-free.\n\n` +
+        `💰 <b>Live</b> — Real orders on exchange.\nRequires API keys. Real profit and loss.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`📝 Paper${check('paper', t.mode)}`, 'cfg_mode_paper'),
+           Markup.button.callback(`💰 Live${check('live', t.mode)}`, 'cfg_mode_live')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    this.bot.action(/^cfg_mode_(paper|live)$/, async (ctx) => {
+      const mode = ctx.match[1];
+      te().mode = mode;
+      te().enabled = true;
+      await ctx.answerCbQuery(`Mode set to ${mode.toUpperCase()}`);
+      await this.showSettingsMain(ctx);
+    });
+
+    // ── ENABLE / DISABLE ──
+    this.bot.action('cfg_toggle', async (ctx) => {
+      const t = te();
+      t.enabled = !t.enabled;
+      await ctx.answerCbQuery(t.enabled ? 'Trading ENABLED' : 'Trading DISABLED');
+      await this.showSettingsMain(ctx);
+    });
+
+    // ── POSITION SIZE ──
+    this.bot.action('cfg_size', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `💵 <b>POSITION SIZE</b>\n\n` +
+        `Current: <b>$${t.maxPositionSize}</b> per trade\n` +
+        `${t.riskPct > 0 ? `⚠️ Risk-based sizing is active (${t.riskPct}%) — this acts as the max cap.\n` : ''}\n` +
+        `How much USDT to allocate per trade.\nWith DCA, this is split into 3 entries (1/3 each).`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`$25${check(25, t.maxPositionSize)}`, 'cfg_size_25'),
+           Markup.button.callback(`$50${check(50, t.maxPositionSize)}`, 'cfg_size_50'),
+           Markup.button.callback(`$100${check(100, t.maxPositionSize)}`, 'cfg_size_100')],
+          [Markup.button.callback(`$250${check(250, t.maxPositionSize)}`, 'cfg_size_250'),
+           Markup.button.callback(`$500${check(500, t.maxPositionSize)}`, 'cfg_size_500'),
+           Markup.button.callback(`$1000${check(1000, t.maxPositionSize)}`, 'cfg_size_1000')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const size of [25, 50, 100, 250, 500, 1000]) {
+      this.bot.action(`cfg_size_${size}`, async (ctx) => {
+        te().maxPositionSize = size;
+        await ctx.answerCbQuery(`Position size: $${size}`);
+        ctx.editMessageText(
+          `✅ Position size set to <b>$${size}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('💵 Change Size', 'cfg_size'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+
+    // ── RISK % SIZING ──
+    this.bot.action('cfg_risk', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `📊 <b>RISK-BASED SIZING</b>\n\n` +
+        `Current: <b>${t.riskPct > 0 ? `${t.riskPct}% of balance` : 'OFF (fixed size)'}</b>\n\n` +
+        `Instead of a fixed dollar amount, risk a % of your balance per trade.\n` +
+        `Example: 2% of $1000 = $20 per trade.\n\n` +
+        `🟢 <b>1%</b> — Conservative. Survives 50+ losing trades.\n` +
+        `🟡 <b>2%</b> — Standard. Good balance of growth vs protection.\n` +
+        `🟠 <b>3%</b> — Moderate. Faster growth, faster drawdown.\n` +
+        `🔴 <b>5%</b> — Aggressive. High risk, high reward.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`OFF (fixed $)${check(0, t.riskPct)}`, 'cfg_risk_0'),
+           Markup.button.callback(`1%${check(1, t.riskPct)}`, 'cfg_risk_1')],
+          [Markup.button.callback(`2%${check(2, t.riskPct)}`, 'cfg_risk_2'),
+           Markup.button.callback(`3%${check(3, t.riskPct)}`, 'cfg_risk_3')],
+          [Markup.button.callback(`5%${check(5, t.riskPct)}`, 'cfg_risk_5'),
+           Markup.button.callback(`10%${check(10, t.riskPct)}`, 'cfg_risk_10')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const pct of [0, 1, 2, 3, 5, 10]) {
+      this.bot.action(`cfg_risk_${pct}`, async (ctx) => {
+        te().riskPct = pct;
+        const label = pct === 0 ? 'OFF — using fixed size' : `${pct}% of balance`;
+        await ctx.answerCbQuery(`Risk sizing: ${label}`);
+        ctx.editMessageText(
+          `✅ Risk-based sizing: <b>${label}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('📊 Change Risk %', 'cfg_risk'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+
+    // ── LEVERAGE ──
+    this.bot.action('cfg_lev', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `⚡ <b>LEVERAGE</b>\n\n` +
+        `Current: <b>${t.defaultLeverage}x</b>${t.dynamicLeverage ? ' (dynamic)' : ' (fixed)'}\n\n` +
+        `Multiplies your position size and both gains and losses.\n\n` +
+        `🟢 <b>2-3x</b> — Safe. Small moves, small risk.\n` +
+        `🟡 <b>5x</b> — Standard. Balanced risk/reward.\n` +
+        `🟠 <b>10x</b> — Aggressive. 10% move = 100% gain or loss.\n` +
+        `🔴 <b>20x</b> — Very risky. Liquidation is close.\n\n` +
+        `<b>Dynamic leverage</b> adjusts automatically:\n` +
+        `Conf ⭐⭐⭐⭐⭐ = 2x base | ⭐⭐⭐⭐ = 1x | ⭐⭐⭐ = 0.6x`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`2x${check(2, t.defaultLeverage)}`, 'cfg_lev_2'),
+           Markup.button.callback(`3x${check(3, t.defaultLeverage)}`, 'cfg_lev_3'),
+           Markup.button.callback(`5x${check(5, t.defaultLeverage)}`, 'cfg_lev_5')],
+          [Markup.button.callback(`10x${check(10, t.defaultLeverage)}`, 'cfg_lev_10'),
+           Markup.button.callback(`15x${check(15, t.defaultLeverage)}`, 'cfg_lev_15'),
+           Markup.button.callback(`20x${check(20, t.defaultLeverage)}`, 'cfg_lev_20')],
+          [Markup.button.callback(`Dynamic: ${t.dynamicLeverage ? '✅ ON' : '❌ OFF'}`, 'cfg_dynlev_toggle')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const lev of [2, 3, 5, 10, 15, 20]) {
+      this.bot.action(`cfg_lev_${lev}`, async (ctx) => {
+        te().defaultLeverage = lev;
+        await ctx.answerCbQuery(`Leverage: ${lev}x`);
+        ctx.editMessageText(
+          `✅ Default leverage set to <b>${lev}x</b>${te().dynamicLeverage ? '\nDynamic mode ON — actual leverage scales with confidence.' : ''}`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('⚡ Change Leverage', 'cfg_lev'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+    this.bot.action('cfg_dynlev_toggle', async (ctx) => {
+      const t = te();
+      t.dynamicLeverage = !t.dynamicLeverage;
+      await ctx.answerCbQuery(`Dynamic leverage: ${t.dynamicLeverage ? 'ON' : 'OFF'}`);
+      // Re-render leverage panel
+      ctx.editMessageText(
+        `⚡ <b>LEVERAGE</b>\n\nDynamic leverage: <b>${t.dynamicLeverage ? '✅ ON' : '❌ OFF'}</b>\nBase: <b>${t.defaultLeverage}x</b>`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`2x${check(2, t.defaultLeverage)}`, 'cfg_lev_2'),
+           Markup.button.callback(`3x${check(3, t.defaultLeverage)}`, 'cfg_lev_3'),
+           Markup.button.callback(`5x${check(5, t.defaultLeverage)}`, 'cfg_lev_5')],
+          [Markup.button.callback(`10x${check(10, t.defaultLeverage)}`, 'cfg_lev_10'),
+           Markup.button.callback(`15x${check(15, t.defaultLeverage)}`, 'cfg_lev_15'),
+           Markup.button.callback(`20x${check(20, t.defaultLeverage)}`, 'cfg_lev_20')],
+          [Markup.button.callback(`Dynamic: ${t.dynamicLeverage ? '✅ ON' : '❌ OFF'}`, 'cfg_dynlev_toggle')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+
+    // ── DAILY LOSS LIMIT ──
+    this.bot.action('cfg_dailyloss', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `🛡️ <b>DAILY LOSS LIMIT</b>\n\n` +
+        `Current: <b>$${t.maxDailyLoss}</b>\n` +
+        `Today's P&L: $${t.dailyPnL.toFixed(2)}\n\n` +
+        `When total daily losses reach this limit, the bot stops opening new trades until midnight UTC.\n` +
+        `Existing positions remain open with their own SL.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`$50${check(50, t.maxDailyLoss)}`, 'cfg_dloss_50'),
+           Markup.button.callback(`$100${check(100, t.maxDailyLoss)}`, 'cfg_dloss_100'),
+           Markup.button.callback(`$200${check(200, t.maxDailyLoss)}`, 'cfg_dloss_200')],
+          [Markup.button.callback(`$500${check(500, t.maxDailyLoss)}`, 'cfg_dloss_500'),
+           Markup.button.callback(`$1000${check(1000, t.maxDailyLoss)}`, 'cfg_dloss_1000'),
+           Markup.button.callback(`$2500${check(2500, t.maxDailyLoss)}`, 'cfg_dloss_2500')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const loss of [50, 100, 200, 500, 1000, 2500]) {
+      this.bot.action(`cfg_dloss_${loss}`, async (ctx) => {
+        te().maxDailyLoss = loss;
+        await ctx.answerCbQuery(`Daily loss limit: $${loss}`);
+        ctx.editMessageText(
+          `✅ Daily loss limit set to <b>$${loss}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🛡️ Change Limit', 'cfg_dailyloss'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+
+    // ── PER-TRADE LOSS CAP ──
+    this.bot.action('cfg_tradeloss', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `🔒 <b>PER-TRADE LOSS CAP</b>\n\n` +
+        `Current: <b>${t.maxLossPerTrade > 0 ? `$${t.maxLossPerTrade}` : 'OFF'}</b>\n\n` +
+        `Caps the maximum USDT you can lose on a single trade.\n` +
+        `When risk-based sizing is active, this overrides if the calculated size would exceed the cap.\n\n` +
+        `<i>This limits position size, not the stop loss distance.</i>`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`OFF${check(0, t.maxLossPerTrade)}`, 'cfg_tloss_0'),
+           Markup.button.callback(`$10${check(10, t.maxLossPerTrade)}`, 'cfg_tloss_10'),
+           Markup.button.callback(`$25${check(25, t.maxLossPerTrade)}`, 'cfg_tloss_25')],
+          [Markup.button.callback(`$50${check(50, t.maxLossPerTrade)}`, 'cfg_tloss_50'),
+           Markup.button.callback(`$100${check(100, t.maxLossPerTrade)}`, 'cfg_tloss_100'),
+           Markup.button.callback(`$250${check(250, t.maxLossPerTrade)}`, 'cfg_tloss_250')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const loss of [0, 10, 25, 50, 100, 250]) {
+      this.bot.action(`cfg_tloss_${loss}`, async (ctx) => {
+        te().maxLossPerTrade = loss;
+        const label = loss === 0 ? 'OFF' : `$${loss}`;
+        await ctx.answerCbQuery(`Per-trade loss cap: ${label}`);
+        ctx.editMessageText(
+          `✅ Per-trade loss cap: <b>${label}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔒 Change Cap', 'cfg_tradeloss'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+
+    // ── MAX POSITIONS ──
+    this.bot.action('cfg_maxpos', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `📊 <b>MAX CONCURRENT POSITIONS</b>\n\n` +
+        `Current: <b>${t.maxConcurrentPositions}</b>\n\n` +
+        `How many trades can be open at the same time.\n` +
+        `Lower = more focused, less capital spread.\n` +
+        `Higher = more opportunities, but more exposure.\n\n` +
+        `🟢 <b>1-2</b> — Very focused. Best for small accounts.\n` +
+        `🟡 <b>3-5</b> — Balanced. Standard for most strategies.\n` +
+        `🟠 <b>8-10</b> — Wide net. Needs larger capital.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`1${check(1, t.maxConcurrentPositions)}`, 'cfg_mpos_1'),
+           Markup.button.callback(`2${check(2, t.maxConcurrentPositions)}`, 'cfg_mpos_2'),
+           Markup.button.callback(`3${check(3, t.maxConcurrentPositions)}`, 'cfg_mpos_3')],
+          [Markup.button.callback(`5${check(5, t.maxConcurrentPositions)}`, 'cfg_mpos_5'),
+           Markup.button.callback(`8${check(8, t.maxConcurrentPositions)}`, 'cfg_mpos_8'),
+           Markup.button.callback(`10${check(10, t.maxConcurrentPositions)}`, 'cfg_mpos_10')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const pos of [1, 2, 3, 5, 8, 10]) {
+      this.bot.action(`cfg_mpos_${pos}`, async (ctx) => {
+        te().maxConcurrentPositions = pos;
+        await ctx.answerCbQuery(`Max positions: ${pos}`);
+        ctx.editMessageText(
+          `✅ Max concurrent positions: <b>${pos}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('📊 Change', 'cfg_maxpos'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+
+    // ── MIN CONFIDENCE ──
+    this.bot.action('cfg_conf', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      ctx.editMessageText(
+        `⭐ <b>MINIMUM CONFIDENCE</b>\n\n` +
+        `Current: <b>${t.minConfidence}/5</b> ${'⭐'.repeat(t.minConfidence)}\n\n` +
+        `Signals below this confidence level are ignored.\n` +
+        `Confidence is based on how many indicators align.\n\n` +
+        `⭐ <b>1</b> — Trade everything. Maximum trades, lowest quality.\n` +
+        `⭐⭐ <b>2</b> — Very loose. Catches most opportunities.\n` +
+        `⭐⭐⭐ <b>3</b> — Moderate. Decent filter.\n` +
+        `⭐⭐⭐⭐ <b>4</b> — Strict. Only strong setups. <i>(Recommended)</i>\n` +
+        `⭐⭐⭐⭐⭐ <b>5</b> — Maximum. Only the best of the best.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`⭐ 1${check(1, t.minConfidence)}`, 'cfg_conf_1'),
+           Markup.button.callback(`⭐⭐ 2${check(2, t.minConfidence)}`, 'cfg_conf_2')],
+          [Markup.button.callback(`⭐⭐⭐ 3${check(3, t.minConfidence)}`, 'cfg_conf_3'),
+           Markup.button.callback(`⭐⭐⭐⭐ 4${check(4, t.minConfidence)}`, 'cfg_conf_4')],
+          [Markup.button.callback(`⭐⭐⭐⭐⭐ 5${check(5, t.minConfidence)}`, 'cfg_conf_5')],
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const conf of [1, 2, 3, 4, 5]) {
+      this.bot.action(`cfg_conf_${conf}`, async (ctx) => {
+        te().minConfidence = conf;
+        await ctx.answerCbQuery(`Min confidence: ${conf}/5`);
+        ctx.editMessageText(
+          `✅ Minimum confidence: <b>${conf}/5</b> ${'⭐'.repeat(conf)}`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('⭐ Change', 'cfg_conf'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+
+    // ── SIGNAL FILTER ──
+    this.bot.action('cfg_filter', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.showFilterPanel(ctx);
+    });
+    const signalTypes = ['BREAKOUT', 'VOLUME_SPIKE', 'LISTING', 'FUNDING_SHORT'];
+    for (const type of signalTypes) {
+      this.bot.action(`cfg_filt_${type}`, async (ctx) => {
+        const t = te();
+        if (t.signalFilter.has(type)) {
+          t.signalFilter.delete(type);
+        } else {
+          t.signalFilter.add(type);
+        }
+        await ctx.answerCbQuery(`${type}: ${t.signalFilter.has(type) ? 'ON' : 'OFF'}`);
+        await this.showFilterPanel(ctx);
+      });
+    }
+    this.bot.action('cfg_filt_all', async (ctx) => {
+      te().signalFilter.clear();
+      await ctx.answerCbQuery('All signal types enabled');
+      await this.showFilterPanel(ctx);
+    });
+
+    // ── PAPER BALANCE ──
+    this.bot.action('cfg_balance', async (ctx) => {
+      await ctx.answerCbQuery();
+      const t = te();
+      const bal = t.mode === 'paper' ? t.paperBalance : 0;
+      ctx.editMessageText(
+        `💰 <b>${t.mode === 'paper' ? 'PAPER' : 'LIVE'} BALANCE</b>\n\n` +
+        `Current: <b>$${(t.mode === 'paper' ? t.paperBalance : 0).toFixed(2)}</b>\n\n` +
+        `${t.mode === 'paper' ? 'Set your starting paper balance for simulated trading.\nThis updates as paper trades close.' : 'Live balance is fetched from your exchange.\nUse /balance to check current amount.'}\n\n` +
+        `${t.riskPct > 0 ? `With ${t.riskPct}% risk, each trade uses $${(bal * t.riskPct / 100).toFixed(2)}` : `Using fixed position size: $${t.maxPositionSize}`}`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          ...(t.mode === 'paper' ? [
+            [Markup.button.callback(`$500${check(500, Math.round(t.paperBalance))}`, 'cfg_bal_500'),
+             Markup.button.callback(`$1000${check(1000, Math.round(t.paperBalance))}`, 'cfg_bal_1000'),
+             Markup.button.callback(`$2500${check(2500, Math.round(t.paperBalance))}`, 'cfg_bal_2500')],
+            [Markup.button.callback(`$5000${check(5000, Math.round(t.paperBalance))}`, 'cfg_bal_5000'),
+             Markup.button.callback(`$10000${check(10000, Math.round(t.paperBalance))}`, 'cfg_bal_10000'),
+             Markup.button.callback(`$25000${check(25000, Math.round(t.paperBalance))}`, 'cfg_bal_25000')],
+          ] : []),
+          [Markup.button.callback('⬅️ Back', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    for (const bal of [500, 1000, 2500, 5000, 10000, 25000]) {
+      this.bot.action(`cfg_bal_${bal}`, async (ctx) => {
+        if (te().mode !== 'paper') return ctx.answerCbQuery('Only available in paper mode');
+        te().paperBalance = bal;
+        await ctx.answerCbQuery(`Paper balance: $${bal}`);
+        ctx.editMessageText(
+          `✅ Paper balance set to <b>$${bal}</b>${te().riskPct > 0 ? `\nTrade size: $${(bal * te().riskPct / 100).toFixed(2)} (${te().riskPct}%)` : ''}`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('💰 Change Balance', 'cfg_balance'), Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup }
+        );
+      });
+    }
+  }
+
+  // Render the main settings panel
+  async showSettingsMain(ctx, isNewMessage = false) {
+    const t = this.tradeExecutor;
+    const balance = t.mode === 'paper' ? t.paperBalance : await t.getBalance();
+    const sizeDisplay = t.riskPct > 0
+      ? `${t.riskPct}% ($${(balance * t.riskPct / 100).toFixed(2)})`
+      : `$${t.maxPositionSize}`;
+    const filterDisplay = t.signalFilter.size > 0 ? [...t.signalFilter].join(', ') : 'All';
+
+    const text =
+      `⚙️ <b>TRADING SETTINGS</b>\n\n` +
+      `${t.mode === 'paper' ? '📝' : '💰'} Mode: <b>${t.mode.toUpperCase()}</b> | ${t.enabled ? '✅ ON' : '❌ OFF'}\n` +
+      `💰 Balance: <b>$${balance.toFixed(2)}</b>\n` +
+      `💵 Size: <b>${sizeDisplay}</b>/trade\n` +
+      `⚡ Leverage: <b>${t.defaultLeverage}x</b>${t.dynamicLeverage ? ' (dynamic)' : ''}\n` +
+      `🛡️ Daily Loss: <b>$${t.maxDailyLoss}</b> | Per-Trade: <b>${t.maxLossPerTrade > 0 ? `$${t.maxLossPerTrade}` : 'Off'}</b>\n` +
+      `📊 Max Positions: <b>${t.maxConcurrentPositions}</b>\n` +
+      `⭐ Min Confidence: <b>${t.minConfidence}/5</b>\n` +
+      `🔍 Filter: <b>${filterDisplay}</b>\n` +
+      `📈 Today P&L: <b>$${t.dailyPnL.toFixed(2)}</b>\n\n` +
+      `Tap any button below to configure:`;
+
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback(`${t.mode === 'paper' ? '📝' : '💰'} Mode: ${t.mode.toUpperCase()}`, 'cfg_mode'),
+       Markup.button.callback(`${t.enabled ? '✅ ON' : '❌ OFF'}`, 'cfg_toggle')],
+      [Markup.button.callback(`💵 Size: $${t.maxPositionSize}`, 'cfg_size'),
+       Markup.button.callback(`📊 Risk: ${t.riskPct > 0 ? `${t.riskPct}%` : 'OFF'}`, 'cfg_risk')],
+      [Markup.button.callback(`⚡ Leverage: ${t.defaultLeverage}x`, 'cfg_lev'),
+       Markup.button.callback(`💰 Balance`, 'cfg_balance')],
+      [Markup.button.callback(`🛡️ Daily Loss: $${t.maxDailyLoss}`, 'cfg_dailyloss'),
+       Markup.button.callback(`🔒 Trade Cap: ${t.maxLossPerTrade > 0 ? `$${t.maxLossPerTrade}` : 'Off'}`, 'cfg_tradeloss')],
+      [Markup.button.callback(`📊 Positions: ${t.maxConcurrentPositions}`, 'cfg_maxpos'),
+       Markup.button.callback(`⭐ Confidence: ${t.minConfidence}/5`, 'cfg_conf')],
+      [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter')],
+      [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
+    ]);
+
+    if (isNewMessage) {
+      await ctx.replyWithHTML(text, keyboard);
+    } else {
+      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+    }
+  }
+
+  // Render the signal filter panel
+  async showFilterPanel(ctx) {
+    const t = this.tradeExecutor;
+    const types = ['BREAKOUT', 'VOLUME_SPIKE', 'LISTING', 'FUNDING_SHORT'];
+    const noFilter = t.signalFilter.size === 0;
+
+    const typeDescriptions = {
+      BREAKOUT: '🚀 Technical breakout with indicator confluence',
+      VOLUME_SPIKE: '📊 Unusual volume spike (3x+ average)',
+      LISTING: '🆕 New exchange listing detected',
+      FUNDING_SHORT: '📉 Extreme funding rate reversal',
+    };
+
+    let desc = `🔍 <b>SIGNAL TYPE FILTER</b>\n\n`;
+    desc += `${noFilter ? '✅ Trading <b>ALL</b> signal types' : `Trading only: <b>${[...t.signalFilter].join(', ')}</b>`}\n\n`;
+    desc += `Toggle which signal types trigger auto-trades:\n\n`;
+    for (const type of types) {
+      const active = noFilter || t.signalFilter.has(type);
+      desc += `${active ? '✅' : '❌'} ${typeDescriptions[type]}\n`;
+    }
+    desc += `\n<i>Tap to toggle each type. "All Types" clears the filter.</i>`;
+
+    ctx.editMessageText(desc, {
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback(`${noFilter ? '✅' : '☑️'} All Types`, 'cfg_filt_all')],
+        ...types.map(type => [
+          Markup.button.callback(
+            `${(noFilter || t.signalFilter.has(type)) ? '✅' : '❌'} ${type}`,
+            `cfg_filt_${type}`
+          ),
+        ]),
+        [Markup.button.callback('⬅️ Back', 'cfg_main')],
+      ]).reply_markup,
+    });
+  }
+
   async sendSignal(signal) {
     if (!this.channelId) return;
     try {
@@ -827,6 +1300,7 @@ class TelegramBot {
       { command: 'pnl', description: 'Trade P&L and performance' },
       { command: 'stop', description: 'Kill switch — close all & disable' },
       { command: 'trademode', description: 'Switch paper/live mode' },
+      { command: 'settings', description: 'Interactive settings panel (buttons)' },
       { command: 'risk', description: 'Risk management panel' },
       { command: 'setsize', description: 'Set position size (e.g. /setsize 100)' },
       { command: 'setleverage', description: 'Set leverage (e.g. /setleverage 10)' },
