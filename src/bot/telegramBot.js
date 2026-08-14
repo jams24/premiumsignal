@@ -1212,6 +1212,79 @@ class TelegramBot {
         );
       });
     }
+
+    // ── ACTIVE TRADES ──
+    this.bot.action('cfg_trades', async (ctx) => {
+      await ctx.answerCbQuery('Loading trades...');
+      try {
+        const trades = await db.getOpenTrades();
+        if (!trades.length) {
+          return ctx.editMessageText(
+            `📋 <b>ACTIVE TRADES</b>\n\n<i>No open positions.</i>`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'cfg_trades')],
+              [Markup.button.callback('⬅️ Settings', 'cfg_main')],
+            ]).reply_markup }
+          );
+        }
+
+        const te = this.tradeExecutor;
+        let msg = `📋 <b>ACTIVE TRADES</b> (${trades.length})\n\n`;
+        let totalPnl = 0;
+
+        for (const t of trades) {
+          let currentPrice = null;
+          try {
+            const pairs = [`${t.symbol}/USDT:USDT`, `${t.symbol}/USDT`];
+            for (const [, ex] of Object.entries(te.exchanges)) {
+              for (const pair of pairs) {
+                if (ex.markets?.[pair]) {
+                  const ticker = await ex.fetchTicker(pair);
+                  currentPrice = ticker.last;
+                  break;
+                }
+              }
+              if (currentPrice) break;
+            }
+          } catch (e) { /* skip */ }
+
+          const isLong = t.direction === 'long';
+          const pnlPct = currentPrice
+            ? (isLong ? ((currentPrice - t.entry_price) / t.entry_price) * 100
+                      : ((t.entry_price - currentPrice) / t.entry_price) * 100)
+            : 0;
+          const pnlLev = pnlPct * (t.leverage || 1);
+          const pnlUsd = (pnlPct / 100) * (t.position_size || 0) * (t.leverage || 1);
+          totalPnl += pnlUsd;
+
+          const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';
+          const dir = isLong ? '⬆️' : '⬇️';
+          const dca = t.dca_filled_3 ? '3/3' : t.dca_filled_2 ? '2/3' : '1/3';
+          const tpHit = [t.hit_tp1 ? 'TP1✅' : '', t.hit_tp2 ? 'TP2✅' : '', t.hit_tp3 ? 'TP3✅' : ''].filter(Boolean).join(' ') || 'none';
+
+          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange})\n`;
+          msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
+          msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
+          msg += `DCA: ${dca} | TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
+          msg += `Size: $${(t.position_size || 0).toFixed(2)} | ${t.mode}\n\n`;
+        }
+
+        msg += `<b>Total unrealized PnL: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>`;
+
+        ctx.editMessageText(msg, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Refresh', 'cfg_trades')],
+            [Markup.button.callback('⬅️ Settings', 'cfg_main')],
+          ]).reply_markup,
+        });
+      } catch (e) {
+        logger.error(`Active trades panel error: ${e.message}`);
+        ctx.editMessageText('❌ Failed to load trades.', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'cfg_main')]]).reply_markup,
+        });
+      }
+    });
   }
 
   // Render the main settings panel
@@ -1261,7 +1334,8 @@ class TelegramBot {
        Markup.button.callback(`🔒 Trade Cap: ${t.maxLossPerTrade > 0 ? `$${t.maxLossPerTrade}` : 'Off'}`, 'cfg_tradeloss')],
       [Markup.button.callback(`📊 Positions: ${t.maxConcurrentPositions}`, 'cfg_maxpos'),
        Markup.button.callback(`⭐ Confidence: ${t.minConfidence}/5`, 'cfg_conf')],
-      [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter')],
+      [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter'),
+       Markup.button.callback(`📋 Active Trades`, 'cfg_trades')],
       [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
     ]);
 
