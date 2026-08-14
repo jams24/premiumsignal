@@ -1101,14 +1101,19 @@ class TelegramBot {
           [Markup.button.callback(`1${check(1, t.maxConcurrentPositions)}`, 'cfg_mpos_1'),
            Markup.button.callback(`2${check(2, t.maxConcurrentPositions)}`, 'cfg_mpos_2'),
            Markup.button.callback(`3${check(3, t.maxConcurrentPositions)}`, 'cfg_mpos_3')],
-          [Markup.button.callback(`5${check(5, t.maxConcurrentPositions)}`, 'cfg_mpos_5'),
+          [Markup.button.callback(`4${check(4, t.maxConcurrentPositions)}`, 'cfg_mpos_4'),
+           Markup.button.callback(`5${check(5, t.maxConcurrentPositions)}`, 'cfg_mpos_5'),
+           Markup.button.callback(`6${check(6, t.maxConcurrentPositions)}`, 'cfg_mpos_6')],
+          [Markup.button.callback(`7${check(7, t.maxConcurrentPositions)}`, 'cfg_mpos_7'),
            Markup.button.callback(`8${check(8, t.maxConcurrentPositions)}`, 'cfg_mpos_8'),
            Markup.button.callback(`10${check(10, t.maxConcurrentPositions)}`, 'cfg_mpos_10')],
+          [Markup.button.callback(`15${check(15, t.maxConcurrentPositions)}`, 'cfg_mpos_15'),
+           Markup.button.callback(`20${check(20, t.maxConcurrentPositions)}`, 'cfg_mpos_20')],
           [Markup.button.callback('⬅️ Back', 'cfg_main')],
         ]).reply_markup }
       );
     });
-    for (const pos of [1, 2, 3, 5, 8, 10]) {
+    for (const pos of [1, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20]) {
       this.bot.action(`cfg_mpos_${pos}`, async (ctx) => {
         te().maxConcurrentPositions = pos;
         te().saveConfig();
