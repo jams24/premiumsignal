@@ -127,6 +127,62 @@ class TradeExecutor {
     return Math.max(Math.floor(this.defaultLeverage * 0.6), 2);
   }
 
+  // Set leverage with fallback — tries requested, then halves until it works
+  async setLeverageWithFallback(exchange, pair, desiredLeverage) {
+    const market = exchange.markets[pair];
+    // Respect exchange max leverage limits if available
+    const maxLev = market?.limits?.leverage?.max || 125;
+    let lev = Math.min(desiredLeverage, maxLev);
+
+    while (lev >= 1) {
+      try {
+        await exchange.setLeverage(lev, pair);
+        if (lev !== desiredLeverage) logger.info(`${pair}: leverage fallback ${desiredLeverage}x → ${lev}x`);
+        return lev;
+      } catch (e) {
+        const msg = e.message || '';
+        if (msg.includes('leverage') || msg.includes('Leverage') || msg.includes('max')) {
+          // Try to parse max from error (e.g. "maxLeverage is 5")
+          const match = msg.match(/(\d+)/);
+          if (match) {
+            const parsed = parseInt(match[1]);
+            if (parsed > 0 && parsed < lev) { lev = parsed; continue; }
+          }
+          lev = Math.floor(lev / 2);
+          if (lev < 1) lev = 1;
+          if (lev === Math.floor(desiredLeverage / 2) || lev === 1) {
+            // Last attempt at 1x
+            try {
+              await exchange.setLeverage(1, pair);
+              logger.warn(`${pair}: leverage fallback to 1x`);
+              return 1;
+            } catch (e2) {
+              logger.warn(`${pair}: could not set any leverage, using exchange default`);
+              return desiredLeverage;
+            }
+          }
+        } else {
+          logger.warn(`${pair}: setLeverage error (non-leverage): ${msg}`);
+          return desiredLeverage;
+        }
+      }
+    }
+    return desiredLeverage;
+  }
+
+  // Check if notional meets exchange minimum, adjust if needed
+  calcMinNotional(exchange, pair, qty, price) {
+    const market = exchange.markets[pair];
+    const notional = qty * price;
+    // Binance futures minimum is $5 per order (was $20, lowered), most exchanges $1-5
+    const minNotional = market?.limits?.cost?.min || 5;
+    if (notional < minNotional) {
+      const minQty = (minNotional * 1.05) / price; // 5% buffer
+      return { ok: false, minQty, minNotional, currentNotional: notional };
+    }
+    return { ok: true, minQty: qty, minNotional, currentNotional: notional };
+  }
+
   getConfig() {
     return {
       mode: this.mode,
@@ -330,8 +386,8 @@ class TradeExecutor {
         return null;
       }
 
-      const leverage = this.calcLeverage(signal);
-      try { await exchange.setLeverage(leverage, pair); } catch (e) { logger.warn(`Could not set leverage for ${pair}: ${e.message}`); }
+      const desiredLeverage = this.calcLeverage(signal);
+      const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
       try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
 
       const positionSize = await this.calcPositionSize(signal);
@@ -340,7 +396,24 @@ class TradeExecutor {
 
       // DCA: only enter 1/3 of position at market
       const fullQty = positionSize / entryPrice;
-      const dcaQty1 = fullQty / 3;
+      let dcaQty1 = fullQty / 3;
+
+      // Check minimum notional
+      const notionalCheck = this.calcMinNotional(exchange, pair, dcaQty1, entryPrice);
+      if (!notionalCheck.ok) {
+        // Try full position instead of 1/3 DCA
+        const fullCheck = this.calcMinNotional(exchange, pair, fullQty, entryPrice);
+        if (!fullCheck.ok) {
+          const msg = `⚠️ <b>TRADE SKIPPED</b> ${signal.symbol}\n\nPosition too small: $${notionalCheck.currentNotional.toFixed(2)} < $${notionalCheck.minNotional} minimum.\nIncrease trade size or use paper mode.`;
+          await this.notify(msg);
+          logger.warn(`${pair}: notional $${notionalCheck.currentNotional.toFixed(2)} below min $${notionalCheck.minNotional}, skipping`);
+          return null;
+        }
+        // Use full position (no DCA split) if 1/3 is too small
+        dcaQty1 = fullQty;
+        logger.info(`${pair}: 1/3 DCA too small, entering full position at once`);
+      }
+
       const market = exchange.markets[pair];
       const roundedQty = exchange.amountToPrecision(pair, dcaQty1);
 
@@ -358,20 +431,35 @@ class TradeExecutor {
         });
       } catch (e) { logger.warn(`SL order failed for ${pair}: ${e.message}`); }
 
-      // Place DCA limit orders for parts 2 and 3
+      // Place DCA limit orders for parts 2 and 3 (skip if we used full position above)
       const { dcaPrice2, dcaPrice3 } = this.calcDCALevels(signal);
-      const dcaQty2 = exchange.amountToPrecision(pair, fullQty / 3);
-      const dcaQty3 = exchange.amountToPrecision(pair, fullQty / 3);
+      const usedFullEntry = dcaQty1 >= fullQty * 0.9;
+      let dcaQty2Rounded, dcaQty3Rounded;
 
-      try {
-        await exchange.createOrder(pair, 'limit', side, dcaQty2, exchange.priceToPrecision(pair, dcaPrice2));
-        logger.info(`DCA2 limit order placed at $${dcaPrice2.toPrecision(6)}`);
-      } catch (e) { logger.warn(`DCA2 order failed: ${e.message}`); }
+      if (!usedFullEntry) {
+        dcaQty2Rounded = exchange.amountToPrecision(pair, fullQty / 3);
+        dcaQty3Rounded = exchange.amountToPrecision(pair, fullQty / 3);
 
-      try {
-        await exchange.createOrder(pair, 'limit', side, dcaQty3, exchange.priceToPrecision(pair, dcaPrice3));
-        logger.info(`DCA3 limit order placed at $${dcaPrice3.toPrecision(6)}`);
-      } catch (e) { logger.warn(`DCA3 order failed: ${e.message}`); }
+        const dca2Check = this.calcMinNotional(exchange, pair, fullQty / 3, dcaPrice2);
+        if (dca2Check.ok) {
+          try {
+            await exchange.createOrder(pair, 'limit', side, dcaQty2Rounded, exchange.priceToPrecision(pair, dcaPrice2));
+            logger.info(`DCA2 limit order placed at $${dcaPrice2.toPrecision(6)}`);
+          } catch (e) { logger.warn(`DCA2 order failed: ${e.message}`); }
+        } else { logger.info(`DCA2 skipped: below min notional`); }
+
+        const dca3Check = this.calcMinNotional(exchange, pair, fullQty / 3, dcaPrice3);
+        if (dca3Check.ok) {
+          try {
+            await exchange.createOrder(pair, 'limit', side, dcaQty3Rounded, exchange.priceToPrecision(pair, dcaPrice3));
+            logger.info(`DCA3 limit order placed at $${dcaPrice3.toPrecision(6)}`);
+          } catch (e) { logger.warn(`DCA3 order failed: ${e.message}`); }
+        } else { logger.info(`DCA3 skipped: below min notional`); }
+      } else {
+        dcaQty2Rounded = '0';
+        dcaQty3Rounded = '0';
+        logger.info(`DCA orders skipped — entered full position at once`);
+      }
 
       const invalidation = this.calcInvalidation(signal);
       const tp4 = this.calcTP4(signal);
@@ -384,7 +472,7 @@ class TradeExecutor {
         mode: 'live',
         entryPrice: order.average || entryPrice,
         quantity: parseFloat(roundedQty),
-        positionSize: positionSize / 3,
+        positionSize: usedFullEntry ? positionSize : positionSize / 3,
         leverage,
         tp1: signal.tp1,
         tp2: signal.tp2,
@@ -393,23 +481,27 @@ class TradeExecutor {
         stopLoss: signal.stopLoss,
         originalStopLoss: signal.stopLoss,
         invalidation,
-        dcaQty2: parseFloat(dcaQty2),
-        dcaQty3: parseFloat(dcaQty3),
-        dcaPrice2,
-        dcaPrice3,
-        dcaStage: 1,
+        dcaQty2: usedFullEntry ? 0 : parseFloat(dcaQty2Rounded),
+        dcaQty3: usedFullEntry ? 0 : parseFloat(dcaQty3Rounded),
+        dcaPrice2: usedFullEntry ? null : dcaPrice2,
+        dcaPrice3: usedFullEntry ? null : dcaPrice3,
+        dcaStage: usedFullEntry ? 3 : 1,
         orderId: order.id,
         status: 'open',
       };
 
       await db.saveTrade(trade);
 
+      const entryLabel = usedFullEntry ? 'full entry (size too small for DCA)' : '1/3 DCA';
+      const sizeLabel = usedFullEntry ? `$${positionSize.toFixed(2)}` : `$${(positionSize / 3).toFixed(2)} of $${positionSize.toFixed(2)}`;
+      const dcaLine = usedFullEntry ? 'DCA: disabled (min notional)' : `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}`;
+      const levNote = leverage !== desiredLeverage ? ` (wanted ${desiredLeverage}x)` : '';
       const msg = `🔴 <b>LIVE TRADE EXECUTED</b> 🔴\n\n` +
         `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(signal.symbol)}</b>\n` +
         `Exchange: ${signal.exchange}\n` +
-        `Entry: $${trade.entryPrice} (1/3 DCA)\n` +
-        `Size: $${(positionSize / 3).toFixed(2)} of $${positionSize} (${leverage}x)\n` +
-        `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}\n` +
+        `Entry: $${trade.entryPrice} (${entryLabel})\n` +
+        `Size: ${sizeLabel} (${leverage}x${levNote})\n` +
+        `${dcaLine}\n` +
         `TP1-4: $${signal.tp1} / $${signal.tp2} / $${signal.tp3} / $${tp4.toPrecision(6)}\n` +
         `SL: $${signal.stopLoss} | Invalidation: $${invalidation.toPrecision(6)}\n` +
         `Order ID: <code>${order.id}</code>\n\n` +

@@ -1183,7 +1183,8 @@ class TelegramBot {
         `<b>═══ Paper Account ═══</b>\n` +
         `📝 Paper Balance: <b>$${paperBal.toFixed(2)}</b>\n\n` +
         `Active mode: <b>${t.mode.toUpperCase()}</b> ${t.mode === 'paper' ? `(using $${paperBal.toFixed(2)})` : `(using $${totalFree.toFixed(2)} across exchanges)`}\n` +
-        `${t.riskPct > 0 ? `Risk sizing: ${t.riskPct}% = $${((t.mode === 'paper' ? paperBal : totalFree) * t.riskPct / 100).toFixed(2)}/trade` : `Fixed sizing: $${t.maxPositionSize}/trade`}`,
+        `${t.riskPct > 0 ? `Risk sizing: ${t.riskPct}% = $${((t.mode === 'paper' ? paperBal : totalFree) * t.riskPct / 100).toFixed(2)}/trade` : `Fixed sizing: $${t.maxPositionSize}/trade`}\n\n` +
+        `<i>⚠️ Binance futures min order: $5 notional\nBybit futures min order: $5 notional\nIf trade size too small for DCA, bot enters full position at once.\nLeverage auto-adjusts if token max is lower than your setting.</i>`,
         { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
           [Markup.button.callback('🔄 Refresh Balances', 'cfg_balance')],
           ...(t.mode === 'paper' ? [
