@@ -888,19 +888,23 @@ class TelegramBot {
         `💵 <b>POSITION SIZE</b>\n\n` +
         `Current: <b>$${t.maxPositionSize}</b> per trade\n` +
         `${t.riskPct > 0 ? `⚠️ Risk-based sizing is active (${t.riskPct}%) — this acts as the max cap.\n` : ''}\n` +
-        `How much USDT to allocate per trade.\nWith DCA, this is split into 3 entries (1/3 each).`,
+        `How much USDT to allocate per trade.\nWith DCA, this is split into 3 entries (1/3 each).\n\n` +
+        `<i>Custom: type /setsize 12 for any amount</i>`,
         { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback(`$25${check(25, t.maxPositionSize)}`, 'cfg_size_25'),
-           Markup.button.callback(`$50${check(50, t.maxPositionSize)}`, 'cfg_size_50'),
-           Markup.button.callback(`$100${check(100, t.maxPositionSize)}`, 'cfg_size_100')],
-          [Markup.button.callback(`$250${check(250, t.maxPositionSize)}`, 'cfg_size_250'),
-           Markup.button.callback(`$500${check(500, t.maxPositionSize)}`, 'cfg_size_500'),
-           Markup.button.callback(`$1000${check(1000, t.maxPositionSize)}`, 'cfg_size_1000')],
+          [Markup.button.callback(`$5${check(5, t.maxPositionSize)}`, 'cfg_size_5'),
+           Markup.button.callback(`$10${check(10, t.maxPositionSize)}`, 'cfg_size_10'),
+           Markup.button.callback(`$15${check(15, t.maxPositionSize)}`, 'cfg_size_15')],
+          [Markup.button.callback(`$20${check(20, t.maxPositionSize)}`, 'cfg_size_20'),
+           Markup.button.callback(`$25${check(25, t.maxPositionSize)}`, 'cfg_size_25'),
+           Markup.button.callback(`$50${check(50, t.maxPositionSize)}`, 'cfg_size_50')],
+          [Markup.button.callback(`$100${check(100, t.maxPositionSize)}`, 'cfg_size_100'),
+           Markup.button.callback(`$250${check(250, t.maxPositionSize)}`, 'cfg_size_250'),
+           Markup.button.callback(`$500${check(500, t.maxPositionSize)}`, 'cfg_size_500')],
           [Markup.button.callback('⬅️ Back', 'cfg_main')],
         ]).reply_markup }
       );
     });
-    for (const size of [25, 50, 100, 250, 500, 1000]) {
+    for (const size of [5, 10, 15, 20, 25, 50, 100, 250, 500]) {
       this.bot.action(`cfg_size_${size}`, async (ctx) => {
         te().maxPositionSize = size;
         te().saveConfig();
