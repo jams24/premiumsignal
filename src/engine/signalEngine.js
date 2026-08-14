@@ -71,6 +71,7 @@ class SignalEngine {
       tp1: scan.tp1, tp2: scan.tp2, tp3: scan.tp3,
       stopLoss: scan.stopLoss,
       tp1Pct: scan.tp1Pct, tp2Pct: scan.tp2Pct, tp3Pct: scan.tp3Pct, slPct: scan.slPct,
+      atr: scan.atr || null,
       confidence,
       catalyst: scan.signals.join(' | '),
       suggestedLeverage: confidence >= 4 ? 10 : 5,

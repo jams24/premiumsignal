@@ -6,8 +6,8 @@ const { escapeHtml } = require('../utils/formatting');
 class TradeExecutor {
   constructor(exchanges, config = {}) {
     this.exchanges = exchanges;
-    this.mode = config.mode || 'paper'; // 'paper' or 'live'
-    this.maxPositionSize = config.maxPositionSize || 50; // USDT per trade
+    this.mode = config.mode || 'paper';
+    this.maxPositionSize = config.maxPositionSize || 50;
     this.maxDailyLoss = config.maxDailyLoss || 200;
     this.maxConcurrentPositions = config.maxConcurrentPositions || 5;
     this.minConfidence = config.minConfidence || 4;
@@ -41,29 +41,53 @@ class TradeExecutor {
 
     this.resetDailyPnL();
 
-    // Daily loss limit
     if (this.dailyPnL <= -this.maxDailyLoss) {
       return { ok: false, reason: `Daily loss limit reached ($${this.dailyPnL.toFixed(2)}/$${this.maxDailyLoss})` };
     }
 
-    // Confidence filter
     if (signal.confidence < this.minConfidence) {
       return { ok: false, reason: `Confidence ${signal.confidence} < minimum ${this.minConfidence}` };
     }
 
-    // Max concurrent positions
     const openPositions = await db.getOpenTrades();
     if (openPositions.length >= this.maxConcurrentPositions) {
       return { ok: false, reason: `Max concurrent positions reached (${openPositions.length}/${this.maxConcurrentPositions})` };
     }
 
-    // Don't double-enter same symbol
     const existing = openPositions.find(p => p.symbol === signal.symbol && p.exchange === signal.exchange);
     if (existing) {
       return { ok: false, reason: `Already in position on ${signal.symbol}` };
     }
 
     return { ok: true };
+  }
+
+  // Calculate invalidation level: nearest structure level where thesis breaks
+  calcInvalidation(signal) {
+    const price = signal.currentPrice;
+    const atr = signal.atr || Math.abs(signal.stopLoss - price);
+    const isLong = signal.direction === 'long';
+    // Invalidation = ATR * 4 beyond entry (wider than SL, structure-level break)
+    return isLong ? price - atr * 1.3 : price + atr * 1.3;
+  }
+
+  // Calculate DCA levels: 3-part scaling
+  calcDCALevels(signal) {
+    const price = signal.currentPrice;
+    const atr = signal.atr || Math.abs(signal.stopLoss - price) / 3.5;
+    const isLong = signal.direction === 'long';
+    return {
+      dcaPrice2: isLong ? price - atr * 1.0 : price + atr * 1.0,
+      dcaPrice3: isLong ? price - atr * 1.5 : price + atr * 1.5,
+    };
+  }
+
+  // Calculate TP4 (extended target)
+  calcTP4(signal) {
+    const price = signal.currentPrice;
+    const atr = signal.atr || Math.abs(signal.tp1 - price) / 2;
+    const isLong = signal.direction === 'long';
+    return isLong ? price + atr * 8 : price - atr * 8;
   }
 
   async executeSignal(signal) {
@@ -83,8 +107,15 @@ class TradeExecutor {
   async executePaperTrade(signal) {
     const entryPrice = signal.currentPrice;
     const positionSize = this.maxPositionSize;
-    const quantity = positionSize / entryPrice;
     const leverage = signal.suggestedLeverage || this.defaultLeverage;
+
+    // DCA: enter 1/3 at market, set limits for 2/3 and 3/3
+    const dcaQty1 = (positionSize / 3) / entryPrice;
+    const dcaQty2 = (positionSize / 3) / entryPrice;
+    const dcaQty3 = (positionSize / 3) / entryPrice;
+    const { dcaPrice2, dcaPrice3 } = this.calcDCALevels(signal);
+    const invalidation = this.calcInvalidation(signal);
+    const tp4 = this.calcTP4(signal);
 
     const trade = {
       signalId: signal.id || null,
@@ -93,13 +124,21 @@ class TradeExecutor {
       direction: signal.direction,
       mode: 'paper',
       entryPrice,
-      quantity,
-      positionSize,
+      quantity: dcaQty1,
+      positionSize: positionSize / 3,
       leverage,
       tp1: signal.tp1,
       tp2: signal.tp2,
       tp3: signal.tp3,
+      tp4,
       stopLoss: signal.stopLoss,
+      originalStopLoss: signal.stopLoss,
+      invalidation,
+      dcaQty2,
+      dcaQty3,
+      dcaPrice2,
+      dcaPrice3,
+      dcaStage: 1,
       status: 'open',
     };
 
@@ -108,14 +147,15 @@ class TradeExecutor {
     const msg = `📝 <b>PAPER TRADE OPENED</b>\n\n` +
       `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(signal.symbol)}</b>\n` +
       `Exchange: ${signal.exchange}\n` +
-      `Entry: $${entryPrice}\n` +
-      `Size: $${positionSize} (${leverage}x leverage)\n` +
-      `TP1: $${signal.tp1} | TP2: $${signal.tp2} | TP3: $${signal.tp3}\n` +
-      `SL: $${signal.stopLoss}\n\n` +
-      `<i>Paper mode — no real funds used</i>`;
+      `Entry: $${entryPrice} (1/3 DCA)\n` +
+      `Size: $${(positionSize / 3).toFixed(2)} of $${positionSize} (${leverage}x)\n` +
+      `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}\n` +
+      `TP1: $${signal.tp1} | TP2: $${signal.tp2} | TP3: $${signal.tp3} | TP4: $${tp4.toPrecision(6)}\n` +
+      `SL: $${signal.stopLoss} | Invalidation: $${invalidation.toPrecision(6)}\n\n` +
+      `<i>Paper mode — trailing SL + DCA active</i>`;
 
     await this.notify(msg);
-    logger.info(`Paper trade opened: ${signal.direction} ${signal.symbol} @ $${entryPrice}`);
+    logger.info(`Paper trade opened: ${signal.direction} ${signal.symbol} @ $${entryPrice} (1/3 DCA)`);
     return trade;
   }
 
@@ -126,7 +166,6 @@ class TradeExecutor {
       return null;
     }
 
-    // Check if exchange has API credentials
     if (!exchange.apiKey || !exchange.secret) {
       logger.error(`No API credentials for ${signal.exchange} — falling back to paper`);
       return this.executePaperTrade(signal);
@@ -139,58 +178,51 @@ class TradeExecutor {
         return null;
       }
 
-      // Set leverage
       const leverage = signal.suggestedLeverage || this.defaultLeverage;
-      try {
-        await exchange.setLeverage(leverage, pair);
-      } catch (e) {
-        logger.warn(`Could not set leverage for ${pair}: ${e.message}`);
-      }
+      try { await exchange.setLeverage(leverage, pair); } catch (e) { logger.warn(`Could not set leverage for ${pair}: ${e.message}`); }
+      try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
 
-      // Set margin mode to cross
-      try {
-        await exchange.setMarginMode('cross', pair);
-      } catch (e) { /* may already be set */ }
-
-      // Calculate quantity
       const positionSize = this.maxPositionSize;
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
-      const quantity = positionSize / entryPrice;
 
-      // Round to market precision
+      // DCA: only enter 1/3 of position at market
+      const fullQty = positionSize / entryPrice;
+      const dcaQty1 = fullQty / 3;
       const market = exchange.markets[pair];
-      const roundedQty = exchange.amountToPrecision(pair, quantity);
+      const roundedQty = exchange.amountToPrecision(pair, dcaQty1);
 
-      // Place market order
       const side = signal.direction === 'long' ? 'buy' : 'sell';
       const order = await exchange.createOrder(pair, 'market', side, roundedQty);
 
-      logger.info(`Live order placed: ${side} ${roundedQty} ${pair} on ${signal.exchange}`);
+      logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (1/3 DCA)`);
 
-      // Place TP and SL orders
+      // Place SL order on full expected position
       const closeSide = signal.direction === 'long' ? 'sell' : 'buy';
-
-      // Stop Loss
       try {
         await exchange.createOrder(pair, 'stop_market', closeSide, roundedQty, undefined, {
           stopPrice: exchange.priceToPrecision(pair, signal.stopLoss),
           reduceOnly: true,
         });
-      } catch (e) {
-        logger.warn(`SL order failed for ${pair}: ${e.message}`);
-      }
+      } catch (e) { logger.warn(`SL order failed for ${pair}: ${e.message}`); }
 
-      // Take Profit 1 (close 50%)
+      // Place DCA limit orders for parts 2 and 3
+      const { dcaPrice2, dcaPrice3 } = this.calcDCALevels(signal);
+      const dcaQty2 = exchange.amountToPrecision(pair, fullQty / 3);
+      const dcaQty3 = exchange.amountToPrecision(pair, fullQty / 3);
+
       try {
-        const tp1Qty = exchange.amountToPrecision(pair, quantity * 0.5);
-        await exchange.createOrder(pair, 'take_profit_market', closeSide, tp1Qty, undefined, {
-          stopPrice: exchange.priceToPrecision(pair, signal.tp1),
-          reduceOnly: true,
-        });
-      } catch (e) {
-        logger.warn(`TP1 order failed for ${pair}: ${e.message}`);
-      }
+        await exchange.createOrder(pair, 'limit', side, dcaQty2, exchange.priceToPrecision(pair, dcaPrice2));
+        logger.info(`DCA2 limit order placed at $${dcaPrice2.toPrecision(6)}`);
+      } catch (e) { logger.warn(`DCA2 order failed: ${e.message}`); }
+
+      try {
+        await exchange.createOrder(pair, 'limit', side, dcaQty3, exchange.priceToPrecision(pair, dcaPrice3));
+        logger.info(`DCA3 limit order placed at $${dcaPrice3.toPrecision(6)}`);
+      } catch (e) { logger.warn(`DCA3 order failed: ${e.message}`); }
+
+      const invalidation = this.calcInvalidation(signal);
+      const tp4 = this.calcTP4(signal);
 
       const trade = {
         signalId: signal.id || null,
@@ -200,12 +232,20 @@ class TradeExecutor {
         mode: 'live',
         entryPrice: order.average || entryPrice,
         quantity: parseFloat(roundedQty),
-        positionSize,
+        positionSize: positionSize / 3,
         leverage,
         tp1: signal.tp1,
         tp2: signal.tp2,
         tp3: signal.tp3,
+        tp4,
         stopLoss: signal.stopLoss,
+        originalStopLoss: signal.stopLoss,
+        invalidation,
+        dcaQty2: parseFloat(dcaQty2),
+        dcaQty3: parseFloat(dcaQty3),
+        dcaPrice2,
+        dcaPrice3,
+        dcaStage: 1,
         orderId: order.id,
         status: 'open',
       };
@@ -215,11 +255,12 @@ class TradeExecutor {
       const msg = `🔴 <b>LIVE TRADE EXECUTED</b> 🔴\n\n` +
         `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(signal.symbol)}</b>\n` +
         `Exchange: ${signal.exchange}\n` +
-        `Entry: $${trade.entryPrice}\n` +
-        `Size: $${positionSize} (${leverage}x)\n` +
-        `Qty: ${roundedQty}\n` +
-        `Order ID: <code>${order.id}</code>\n` +
-        `TP1: $${signal.tp1} | SL: $${signal.stopLoss}\n\n` +
+        `Entry: $${trade.entryPrice} (1/3 DCA)\n` +
+        `Size: $${(positionSize / 3).toFixed(2)} of $${positionSize} (${leverage}x)\n` +
+        `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}\n` +
+        `TP1-4: $${signal.tp1} / $${signal.tp2} / $${signal.tp3} / $${tp4.toPrecision(6)}\n` +
+        `SL: $${signal.stopLoss} | Invalidation: $${invalidation.toPrecision(6)}\n` +
+        `Order ID: <code>${order.id}</code>\n\n` +
         `⚠️ <b>LIVE TRADE — Real funds at risk</b>`;
 
       await this.notify(msg);
@@ -244,16 +285,26 @@ class TradeExecutor {
 
         const pairs = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`];
         let currentPrice = null;
+        let ohlcv = null;
         for (const pair of pairs) {
           if (exchange.markets?.[pair]) {
             const ticker = await exchange.fetchTicker(pair);
             currentPrice = ticker.last;
+            // Fetch 4H candle for invalidation check
+            try {
+              ohlcv = await exchange.fetchOHLCV(pair, '4h', undefined, 2);
+            } catch (e) { /* ok — invalidation check will be skipped */ }
             break;
           }
         }
         if (!currentPrice) continue;
 
         const isLong = trade.direction === 'long';
+
+        // --- DCA CHECK: fill DCA 2 and DCA 3 if price reaches levels ---
+        await this.checkDCAFills(trade, currentPrice, isLong);
+
+        // Recalculate P&L based on current avg entry (may have changed from DCA)
         const pnlPct = isLong
           ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
           : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
@@ -261,38 +312,68 @@ class TradeExecutor {
 
         let action = null;
 
-        // Check TP3
-        if (trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
-          action = 'tp3';
-          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp3');
+        // --- INVALIDATION CHECK: 4H candle close below invalidation level ---
+        if (trade.invalidation && ohlcv && ohlcv.length >= 2) {
+          const prevCandle = ohlcv[ohlcv.length - 2];
+          const prevClose = prevCandle[4];
+          const invalidated = isLong
+            ? prevClose < trade.invalidation
+            : prevClose > trade.invalidation;
+          if (invalidated) {
+            action = 'invalidated';
+            await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'invalidated');
+            this.dailyPnL += pnlUsd;
+          }
+        }
+
+        // --- TP4 CHECK ---
+        if (!action && trade.tp4 && (isLong ? currentPrice >= trade.tp4 : currentPrice <= trade.tp4)) {
+          action = 'tp4';
+          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp4');
           this.dailyPnL += pnlUsd;
         }
-        // Check TP2
-        else if (!trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
+        // --- TP3 CHECK + TRAILING SL ---
+        else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
+          action = 'tp3';
+          await db.updateTradeHit(trade.id, 'hit_tp3');
+          // Trail SL to TP2 level
+          const newSL = trade.tp2;
+          await db.updateTradeStopLoss(trade.id, newSL);
+          logger.info(`${trade.symbol}: TP3 hit, SL trailed to TP2 ($${newSL})`);
+        }
+        // --- TP2 CHECK + TRAILING SL ---
+        else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
           action = 'tp2';
           await db.updateTradeHit(trade.id, 'hit_tp2');
+          // Trail SL to TP1 level
+          const newSL = trade.tp1;
+          await db.updateTradeStopLoss(trade.id, newSL);
+          logger.info(`${trade.symbol}: TP2 hit, SL trailed to TP1 ($${newSL})`);
         }
-        // Check TP1
-        else if (!trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
+        // --- TP1 CHECK + TRAILING SL TO BREAKEVEN ---
+        else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
+          // Trail SL to breakeven (entry price)
+          const newSL = trade.entry_price;
+          await db.updateTradeStopLoss(trade.id, newSL);
+          logger.info(`${trade.symbol}: TP1 hit, SL moved to breakeven ($${newSL})`);
         }
-        // Check SL
-        else if (trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {
+        // --- SL CHECK ---
+        else if (!action && trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {
           action = 'sl';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'sl');
           this.dailyPnL += pnlUsd;
         }
-        // Auto-close after 48h
-        else if (Date.now() - new Date(trade.created_at).getTime() > 48 * 60 * 60 * 1000) {
+        // --- AUTO-CLOSE AFTER 48h ---
+        else if (!action && Date.now() - new Date(trade.created_at).getTime() > 48 * 60 * 60 * 1000) {
           action = 'expired';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;
         }
 
         if (action) {
-          // Close live position on exchange if live mode
-          if (trade.mode === 'live' && (action === 'tp3' || action === 'sl' || action === 'expired')) {
+          if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired'].includes(action)) {
             await this.closeExchangePosition(trade);
           }
 
@@ -306,6 +387,55 @@ class TradeExecutor {
     }
 
     return updates;
+  }
+
+  async checkDCAFills(trade, currentPrice, isLong) {
+    // DCA 2: price reached DCA level 2 and not yet filled
+    if (trade.dca_price_2 && !trade.dca_filled_2) {
+      const dcaHit = isLong ? currentPrice <= trade.dca_price_2 : currentPrice >= trade.dca_price_2;
+      if (dcaHit) {
+        const newQty = trade.quantity + (trade.dca_qty_2 || trade.quantity);
+        const newEntry = ((trade.entry_price * trade.quantity) + (trade.dca_price_2 * (trade.dca_qty_2 || trade.quantity))) / newQty;
+        const newSize = trade.position_size + (trade.position_size); // add another 1/3
+
+        await db.updateTradeDCA(trade.id, 2, newEntry, newQty);
+        // Update local trade object for subsequent checks this cycle
+        trade.entry_price = newEntry;
+        trade.quantity = newQty;
+        trade.position_size = newSize;
+        trade.dca_filled_2 = true;
+
+        const msg = `📝 <b>DCA 2/3 FILLED</b> $${escapeHtml(trade.symbol)}\n\n` +
+          `Added at $${trade.dca_price_2.toPrecision(6)}\n` +
+          `New avg entry: $${newEntry.toPrecision(6)}\n` +
+          `Position now 2/3 filled`;
+        await this.notify(msg);
+        logger.info(`${trade.symbol}: DCA 2/3 filled at $${trade.dca_price_2}`);
+      }
+    }
+
+    // DCA 3: price reached DCA level 3 and not yet filled
+    if (trade.dca_price_3 && !trade.dca_filled_3 && trade.dca_filled_2) {
+      const dcaHit = isLong ? currentPrice <= trade.dca_price_3 : currentPrice >= trade.dca_price_3;
+      if (dcaHit) {
+        const newQty = trade.quantity + (trade.dca_qty_3 || trade.quantity / 2);
+        const newEntry = ((trade.entry_price * trade.quantity) + (trade.dca_price_3 * (trade.dca_qty_3 || trade.quantity / 2))) / newQty;
+        const newSize = trade.position_size + (trade.position_size / 2);
+
+        await db.updateTradeDCA(trade.id, 3, newEntry, newQty);
+        trade.entry_price = newEntry;
+        trade.quantity = newQty;
+        trade.position_size = newSize;
+        trade.dca_filled_3 = true;
+
+        const msg = `📝 <b>DCA 3/3 FILLED</b> $${escapeHtml(trade.symbol)}\n\n` +
+          `Added at $${trade.dca_price_3.toPrecision(6)}\n` +
+          `New avg entry: $${newEntry.toPrecision(6)}\n` +
+          `Full position now open`;
+        await this.notify(msg);
+        logger.info(`${trade.symbol}: DCA 3/3 filled at $${trade.dca_price_3}`);
+      }
+    }
   }
 
   async closeExchangePosition(trade) {
@@ -364,16 +494,24 @@ class TradeExecutor {
     const pnlSign = pnlUsd >= 0 ? '+' : '';
 
     if (action === 'tp1') {
-      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n🎯 Partial target hit. Running for TP2/TP3.`;
+      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n🔒 <b>SL moved to breakeven ($${trade.entry_price})</b>\n🎯 Running for TP2/TP3/TP4.`;
     }
     if (action === 'tp2') {
-      return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🚀 Riding to TP3...`;
+      return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 <b>SL trailed to TP1 ($${trade.tp1})</b>\n🚀 Riding to TP3/TP4...`;
     }
     if (action === 'tp3') {
-      return `${modeTag} 🏆 <b>TP3 FULL TARGET</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 Trade closed. Maximum profit captured.`;
+      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 <b>SL trailed to TP2 ($${trade.tp2})</b>\n🚀 Extended target TP4 active...`;
+    }
+    if (action === 'tp4') {
+      return `${modeTag} 🏆 <b>TP4 FULL TARGET!</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 Extended target hit. Maximum profit captured.`;
     }
     if (action === 'sl') {
-      return `${modeTag} 🔴 <b>STOP LOSS</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\nTrade closed. Risk managed.`;
+      const wasTrailed = trade.original_stop_loss && trade.stop_loss !== trade.original_stop_loss;
+      const slNote = wasTrailed ? `\n🔒 SL was trailed from $${trade.original_stop_loss} to $${trade.stop_loss}` : '';
+      return `${modeTag} 🔴 <b>STOP LOSS</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}${slNote}\n\nTrade closed. Risk managed.`;
+    }
+    if (action === 'invalidated') {
+      return `${modeTag} ⛔ <b>INVALIDATED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n4H candle closed below invalidation ($${trade.invalidation})\nThesis broken — trade closed before SL.`;
     }
     if (action === 'expired') {
       return `${modeTag} ⏰ <b>EXPIRED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\nAuto-closed after 48 hours.`;

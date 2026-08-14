@@ -162,9 +162,20 @@ async function init(retries = 3) {
       position_size DOUBLE PRECISION,
       leverage INTEGER DEFAULT 5,
       tp1 DOUBLE PRECISION, tp2 DOUBLE PRECISION, tp3 DOUBLE PRECISION,
+      tp4 DOUBLE PRECISION,
       stop_loss DOUBLE PRECISION,
+      original_stop_loss DOUBLE PRECISION,
+      invalidation DOUBLE PRECISION,
       hit_tp1 BOOLEAN DEFAULT FALSE,
       hit_tp2 BOOLEAN DEFAULT FALSE,
+      hit_tp3 BOOLEAN DEFAULT FALSE,
+      dca_stage INTEGER DEFAULT 1,
+      dca_qty_2 DOUBLE PRECISION,
+      dca_qty_3 DOUBLE PRECISION,
+      dca_price_2 DOUBLE PRECISION,
+      dca_price_3 DOUBLE PRECISION,
+      dca_filled_2 BOOLEAN DEFAULT FALSE,
+      dca_filled_3 BOOLEAN DEFAULT FALSE,
       exit_price DOUBLE PRECISION,
       pnl_pct DOUBLE PRECISION,
       pnl_usd DOUBLE PRECISION,
@@ -176,6 +187,25 @@ async function init(retries = 3) {
     );
     CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
   `);
+
+  // Add new columns to existing trades table (safe — IF NOT EXISTS not available for columns, so catch errors)
+  const newCols = [
+    ['tp4', 'DOUBLE PRECISION'],
+    ['original_stop_loss', 'DOUBLE PRECISION'],
+    ['invalidation', 'DOUBLE PRECISION'],
+    ['hit_tp3', 'BOOLEAN DEFAULT FALSE'],
+    ['dca_stage', 'INTEGER DEFAULT 1'],
+    ['dca_qty_2', 'DOUBLE PRECISION'],
+    ['dca_qty_3', 'DOUBLE PRECISION'],
+    ['dca_price_2', 'DOUBLE PRECISION'],
+    ['dca_price_3', 'DOUBLE PRECISION'],
+    ['dca_filled_2', 'BOOLEAN DEFAULT FALSE'],
+    ['dca_filled_3', 'BOOLEAN DEFAULT FALSE'],
+  ];
+  for (const [col, type] of newCols) {
+    try { await p.query(`ALTER TABLE trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
+  }
+
   logger.info('Database tables ready');
 }
 
@@ -328,9 +358,9 @@ async function getAnalysisData(days = 7) {
 
 async function saveTrade(trade) {
   const { rows } = await query(
-    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, stop_loss, order_id, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
-    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.stopLoss, trade.orderId || null, 'open']
+    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, invalidation, dca_stage, dca_qty_2, dca_qty_3, dca_price_2, dca_price_3, order_id, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING id`,
+    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null, trade.stopLoss, trade.originalStopLoss || trade.stopLoss, trade.invalidation || null, trade.dcaStage || 1, trade.dcaQty2 || null, trade.dcaQty3 || null, trade.dcaPrice2 || null, trade.dcaPrice3 || null, trade.orderId || null, 'open']
   );
   return rows[0];
 }
@@ -348,6 +378,17 @@ async function closeTrade(id, exitPrice, pnlPct, pnlUsd, reason) {
   await query(
     'UPDATE trades SET status=$1, exit_price=$2, pnl_pct=$3, pnl_usd=$4, close_reason=$5, closed_at=NOW() WHERE id=$6',
     ['closed', exitPrice, pnlPct, pnlUsd, reason, id]
+  );
+}
+
+async function updateTradeStopLoss(id, newSL) {
+  await query('UPDATE trades SET stop_loss = $1 WHERE id = $2', [newSL, id]);
+}
+
+async function updateTradeDCA(id, stage, newEntryPrice, newQty) {
+  await query(
+    `UPDATE trades SET dca_filled_${stage} = TRUE, entry_price = $1, quantity = $2, dca_stage = $3 WHERE id = $4`,
+    [newEntryPrice, newQty, stage, id]
   );
 }
 
@@ -370,4 +411,4 @@ async function getTradeStats() {
   return rows;
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats };
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradeDCA };

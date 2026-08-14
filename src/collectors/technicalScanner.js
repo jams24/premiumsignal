@@ -165,6 +165,7 @@ class TechnicalScanner {
         rsi: currentRSI,
         score,
         signals,
+        atr: atrValue,
         entryLow: parseFloat(entryLow.toPrecision(6)),
         entryHigh: parseFloat(entryHigh.toPrecision(6)),
         tp1: parseFloat(tp1.toPrecision(6)),

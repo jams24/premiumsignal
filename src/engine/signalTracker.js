@@ -87,7 +87,7 @@ class SignalTracker {
       : ((s.current_price - update.price) / s.current_price * 100).toFixed(2);
 
     if (update.hit === 'tp1') {
-      return `✅ <b>TP1 HIT!</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP1: $${s.tp1}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n🎯 Partial profits secured. TP2 & TP3 still active.`;
+      return `✅ <b>TP1 HIT!</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP1: $${s.tp1}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n🔒 SL moved to breakeven\n🎯 Running for TP2 & TP3.`;
     }
     if (update.hit === 'tp2') {
       return `✅✅ <b>TP2 HIT!</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP2: $${s.tp2}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n🚀 Riding to TP3...`;
