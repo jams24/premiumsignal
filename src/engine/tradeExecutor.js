@@ -108,7 +108,7 @@ class TradeExecutor {
     if (this.mode === 'paper') return this.paperBalance;
     const balances = await this.getAllBalances();
     let total = 0;
-    for (const b of Object.values(balances)) total += b.free;
+    for (const b of Object.values(balances)) total += (b.total > 0 ? b.total : b.free);
     return total || this.paperBalance;
   }
 

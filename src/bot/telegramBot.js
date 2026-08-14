@@ -1230,11 +1230,11 @@ class TelegramBot {
       const balances = await t.getAllBalances();
 
       let balText = '';
-      let totalFree = 0;
+      let totalBal = 0;
       for (const [id, b] of Object.entries(balances)) {
         const icon = b.error ? '❌' : '✅';
-        balText += `${icon} <b>${id}</b>: $${b.free.toFixed(2)} free / $${b.total.toFixed(2)} total${b.used > 0 ? ` ($${b.used.toFixed(2)} in use)` : ''}\n`;
-        totalFree += b.free;
+        balText += `${icon} <b>${id}</b>: $${b.total.toFixed(2)} total${b.free > 0 && b.free !== b.total ? ` ($${b.free.toFixed(2)} free)` : ''}${b.used > 0 ? ` ($${b.used.toFixed(2)} in use)` : ''}\n`;
+        totalBal += b.total;
       }
       if (!Object.keys(balances).length) balText = '<i>No exchange API keys configured</i>\n';
 
@@ -1244,8 +1244,8 @@ class TelegramBot {
         `<b>═══ Exchange Accounts ═══</b>\n${balText}\n` +
         `<b>═══ Paper Account ═══</b>\n` +
         `📝 Paper Balance: <b>$${paperBal.toFixed(2)}</b>\n\n` +
-        `Active mode: <b>${t.mode.toUpperCase()}</b> ${t.mode === 'paper' ? `(using $${paperBal.toFixed(2)})` : `(using $${totalFree.toFixed(2)} across exchanges)`}\n` +
-        `${t.riskPct > 0 ? `Risk sizing: ${t.riskPct}% = $${((t.mode === 'paper' ? paperBal : totalFree) * t.riskPct / 100).toFixed(2)}/trade` : `Fixed sizing: $${t.maxPositionSize}/trade`}\n\n` +
+        `Active mode: <b>${t.mode.toUpperCase()}</b> ${t.mode === 'paper' ? `(using $${paperBal.toFixed(2)})` : `(using $${totalBal.toFixed(2)} across exchanges)`}\n` +
+        `${t.riskPct > 0 ? `Risk sizing: ${t.riskPct}% = $${((t.mode === 'paper' ? paperBal : totalBal) * t.riskPct / 100).toFixed(2)}/trade` : `Fixed sizing: $${t.maxPositionSize}/trade`}\n\n` +
         `<i>⚠️ Binance futures min order: $5 notional\nBybit futures min order: $5 notional\nIf trade size too small for DCA, bot enters full position at once.\nLeverage auto-adjusts if token max is lower than your setting.</i>`,
         { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
           [Markup.button.callback('🔄 Refresh Balances', 'cfg_balance')],
@@ -1423,8 +1423,9 @@ class TelegramBot {
     let totalFree = 0;
     const parts = [];
     for (const [id, b] of Object.entries(liveBalances)) {
-      if (!b.error) parts.push(`${id}: $${b.free.toFixed(2)}`);
-      totalFree += b.free;
+      const display = b.total > 0 ? b.total : b.free;
+      if (!b.error) parts.push(`${id}: $${display.toFixed(2)}`);
+      totalFree += display;
     }
     const liveBalLine = parts.length ? parts.join(' | ') : 'No API keys';
 
