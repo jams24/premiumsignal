@@ -1186,6 +1186,38 @@ class TelegramBot {
       await this.showFilterPanel(ctx);
     });
 
+    // ── EXCLUDED SYMBOLS ──
+    this.bot.action('cfg_exclude', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.showExcludePanel(ctx);
+    });
+    const excludeTokens = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'];
+    for (const token of excludeTokens) {
+      this.bot.action(`cfg_excl_${token}`, async (ctx) => {
+        const t = te();
+        if (!t.excludedSymbols) t.excludedSymbols = new Set();
+        if (t.excludedSymbols.has(token)) {
+          t.excludedSymbols.delete(token);
+        } else {
+          t.excludedSymbols.add(token);
+        }
+        t.saveConfig();
+        await ctx.answerCbQuery(`${token}: ${t.excludedSymbols.has(token) ? 'excluded' : 'allowed'}`);
+        await this.showExcludePanel(ctx);
+      });
+    }
+    this.bot.action('cfg_excl_clear', async (ctx) => {
+      const t = te();
+      if (!t.excludedSymbols || t.excludedSymbols.size === 0) {
+        t.excludedSymbols = new Set(excludeTokens);
+      } else {
+        t.excludedSymbols = new Set();
+      }
+      t.saveConfig();
+      await ctx.answerCbQuery(t.excludedSymbols.size ? 'All excluded' : 'All cleared');
+      await this.showExcludePanel(ctx);
+    });
+
     // ── BALANCE ──
     this.bot.action('cfg_balance', async (ctx) => {
       await ctx.answerCbQuery('Fetching balances...');
@@ -1317,6 +1349,7 @@ class TelegramBot {
   async showSettingsMain(ctx, isNewMessage = false) {
     const t = this.tradeExecutor;
     await t.recalcDailyPnL();
+    const totalPnl = await db.getAllTimePnL().catch(() => 0);
     const balance = await t.getBalance();
     const sizeDisplay = t.riskPct > 0
       ? `${t.riskPct}% ($${(balance * t.riskPct / 100).toFixed(2)})`
@@ -1350,8 +1383,10 @@ class TelegramBot {
       `📊 Max Positions: <b>${t.maxConcurrentPositions}</b>\n` +
       `⭐ Min Confidence: <b>${t.minConfidence}/5</b>\n` +
       `🔍 Filter: <b>${filterDisplay}</b>\n` +
-      `📈 Today P&L: <b>$${t.dailyPnL.toFixed(2)}</b>\n\n` +
-      `Tap any button below to configure:`;
+      `📈 Today P&L: <b>${t.dailyPnL >= 0 ? '+' : ''}$${t.dailyPnL.toFixed(2)}</b> (realized)\n` +
+      `📊 Total P&L: <b>${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>\n` +
+      `${t.excludedSymbols?.size ? `🚫 Excluded: <b>${[...t.excludedSymbols].join(', ')}</b>\n` : ''}` +
+      `\nTap any button below to configure:`;
 
     const openTrades = await db.getOpenTrades().catch(() => []);
 
@@ -1367,9 +1402,10 @@ class TelegramBot {
       [Markup.button.callback(`📊 Positions: ${t.maxConcurrentPositions}`, 'cfg_maxpos'),
        Markup.button.callback(`⭐ Confidence: ${t.minConfidence}/5`, 'cfg_conf')],
       [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter'),
-       Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades')],
-      [Markup.button.callback('🔄 Refresh', 'cfg_main'),
-       Markup.button.callback('🛑 Kill Switch', 'action_stop')],
+       Markup.button.callback(`🚫 Excluded (${t.excludedSymbols?.size || 0})`, 'cfg_exclude')],
+      [Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades'),
+       Markup.button.callback('🔄 Refresh', 'cfg_main')],
+      [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
     ]);
 
     if (isNewMessage) {
@@ -1411,6 +1447,36 @@ class TelegramBot {
             `cfg_filt_${type}`
           ),
         ]),
+        [Markup.button.callback('⬅️ Back', 'cfg_main')],
+      ]).reply_markup,
+    });
+  }
+
+  async showExcludePanel(ctx) {
+    const t = this.tradeExecutor;
+    const commonTokens = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'];
+    const noExclusions = !t.excludedSymbols || t.excludedSymbols.size === 0;
+
+    let desc = `🚫 <b>EXCLUDED TOKENS</b>\n\n`;
+    desc += noExclusions
+      ? `No tokens excluded — bot trades <b>all</b> tokens.\n\n`
+      : `Excluded: <b>${[...t.excludedSymbols].join(', ')}</b>\n\n`;
+    desc += `Toggle tokens to exclude from auto-trading.\n`;
+    desc += `Large caps like BTC/ETH move slower and need different strategies.\n\n`;
+    desc += `<i>Tap to toggle. Excluded tokens won't trigger trades.</i>`;
+
+    ctx.editMessageText(desc, {
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard([
+        ...commonTokens.reduce((rows, token, i) => {
+          if (i % 4 === 0) rows.push([]);
+          const excluded = t.excludedSymbols?.has(token);
+          rows[rows.length - 1].push(Markup.button.callback(
+            `${excluded ? '🚫' : '✅'} ${token}`, `cfg_excl_${token}`
+          ));
+          return rows;
+        }, []),
+        [Markup.button.callback(noExclusions ? '🚫 Exclude All Above' : '✅ Clear All', 'cfg_excl_clear')],
         [Markup.button.callback('⬅️ Back', 'cfg_main')],
       ]).reply_markup,
     });

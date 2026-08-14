@@ -27,6 +27,9 @@ class TradeExecutor {
 
     // Dynamic leverage by confidence: maps confidence level → leverage multiplier
     this.dynamicLeverage = config.dynamicLeverage !== false;
+
+    // Excluded symbols: skip signals for these tokens
+    this.excludedSymbols = new Set(config.excludedSymbols || ['BTC', 'ETH', 'SOL']);
   }
 
   onTradeUpdate(callback) {
@@ -70,6 +73,10 @@ class TradeExecutor {
 
     if (this.signalFilter.size > 0 && !this.signalFilter.has(signal.type)) {
       return { ok: false, reason: `Signal type ${signal.type} not in filter [${[...this.signalFilter].join(', ')}]` };
+    }
+
+    if (this.excludedSymbols.size > 0 && this.excludedSymbols.has(signal.symbol?.toUpperCase())) {
+      return { ok: false, reason: `${signal.symbol} is in excluded list` };
     }
 
     const openPositions = await db.getOpenTrades();
@@ -205,6 +212,7 @@ class TradeExecutor {
       defaultLeverage: this.defaultLeverage,
       dynamicLeverage: this.dynamicLeverage,
       signalFilter: [...this.signalFilter],
+      excludedSymbols: [...this.excludedSymbols],
       dailyPnL: this.dailyPnL,
     };
   }
@@ -223,6 +231,7 @@ class TradeExecutor {
     if (cfg.defaultLeverage != null) this.defaultLeverage = cfg.defaultLeverage;
     if (cfg.dynamicLeverage != null) this.dynamicLeverage = cfg.dynamicLeverage;
     if (cfg.signalFilter != null) this.signalFilter = new Set(cfg.signalFilter);
+    if (cfg.excludedSymbols != null) this.excludedSymbols = new Set(cfg.excludedSymbols);
   }
 
   async saveConfig() {
