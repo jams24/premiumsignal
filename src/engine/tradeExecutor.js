@@ -30,6 +30,9 @@ class TradeExecutor {
 
     // Excluded symbols: skip signals for these tokens
     this.excludedSymbols = new Set(config.excludedSymbols || ['BTC', 'ETH', 'SOL']);
+
+    // Cooldown: symbol → timestamp, prevents re-entry after invalidation/SL
+    this.cooldowns = new Map();
   }
 
   onTradeUpdate(callback) {
@@ -77,6 +80,12 @@ class TradeExecutor {
 
     if (this.excludedSymbols.size > 0 && this.excludedSymbols.has(signal.symbol?.toUpperCase())) {
       return { ok: false, reason: `${signal.symbol} is in excluded list` };
+    }
+
+    const cooldownUntil = this.cooldowns.get(signal.symbol?.toUpperCase());
+    if (cooldownUntil && Date.now() < cooldownUntil) {
+      const minsLeft = Math.ceil((cooldownUntil - Date.now()) / 60000);
+      return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining after invalidation)` };
     }
 
     const openPositions = await db.getOpenTrades();
@@ -585,6 +594,7 @@ class TradeExecutor {
             await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+            this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
           }
         }
 
@@ -628,6 +638,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'sl');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
         }
         // --- AUTO-CLOSE AFTER 48h ---
         else if (!action && Date.now() - new Date(trade.created_at).getTime() > 48 * 60 * 60 * 1000) {
