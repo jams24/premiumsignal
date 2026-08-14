@@ -613,27 +613,27 @@ class TradeExecutor {
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
           action = 'tp3';
           await db.updateTradeHit(trade.id, 'hit_tp3');
-          // Trail SL to TP2 level
           const newSL = trade.tp2;
           await db.updateTradeStopLoss(trade.id, newSL);
+          await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP3 hit, SL trailed to TP2 ($${newSL})`);
         }
         // --- TP2 CHECK + TRAILING SL ---
         else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
           action = 'tp2';
           await db.updateTradeHit(trade.id, 'hit_tp2');
-          // Trail SL to TP1 level
           const newSL = trade.tp1;
           await db.updateTradeStopLoss(trade.id, newSL);
+          await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP2 hit, SL trailed to TP1 ($${newSL})`);
         }
         // --- TP1 CHECK + TRAILING SL TO BREAKEVEN ---
         else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
-          // Trail SL to breakeven (entry price)
           const newSL = trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
+          await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP1 hit, SL moved to breakeven ($${newSL})`);
         }
         // --- SL CHECK ---
@@ -729,11 +729,48 @@ class TradeExecutor {
 
     try {
       const pair = `${trade.symbol}/USDT:USDT`;
+      // Cancel all open orders on this pair first (SL, DCA limits)
+      try {
+        await exchange.cancelAllOrders(pair);
+        logger.info(`Cancelled open orders for ${pair}`);
+      } catch (e) { logger.warn(`Cancel orders failed for ${pair}: ${e.message}`); }
+
       const side = trade.direction === 'long' ? 'sell' : 'buy';
       await exchange.createOrder(pair, 'market', side, trade.quantity, undefined, { reduceOnly: true });
       logger.info(`Closed live position: ${pair} on ${trade.exchange}`);
     } catch (err) {
       logger.error(`Failed to close position ${trade.symbol}: ${err.message}`);
+    }
+  }
+
+  async updateExchangeSL(trade, newSLPrice) {
+    const exchange = this.exchanges[trade.exchange];
+    if (!exchange || !exchange.apiKey || trade.mode !== 'live') return;
+
+    try {
+      const pair = `${trade.symbol}/USDT:USDT`;
+      const closeSide = trade.direction === 'long' ? 'sell' : 'buy';
+
+      // Cancel existing SL orders
+      try {
+        const openOrders = await exchange.fetchOpenOrders(pair);
+        for (const order of openOrders) {
+          if (order.type === 'stop_market' || order.type === 'stop' || order.stopPrice) {
+            await exchange.cancelOrder(order.id, pair);
+            logger.info(`Cancelled old SL order ${order.id}`);
+          }
+        }
+      } catch (e) { logger.warn(`Failed to cancel old SL: ${e.message}`); }
+
+      // Place new SL at updated price
+      const qty = trade.quantity || exchange.amountToPrecision(pair, trade.position_size / newSLPrice);
+      await exchange.createOrder(pair, 'stop_market', closeSide, qty, undefined, {
+        stopPrice: exchange.priceToPrecision(pair, newSLPrice),
+        reduceOnly: true,
+      });
+      logger.info(`Updated SL for ${pair} to $${newSLPrice}`);
+    } catch (err) {
+      logger.error(`Failed to update SL for ${trade.symbol}: ${err.message}`);
     }
   }
 
