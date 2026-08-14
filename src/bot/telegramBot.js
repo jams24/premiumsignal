@@ -837,12 +837,37 @@ class TelegramBot {
         ]).reply_markup }
       );
     });
-    this.bot.action(/^cfg_mode_(paper|live)$/, async (ctx) => {
-      const mode = ctx.match[1];
-      te().mode = mode;
+    this.bot.action('cfg_mode_paper', async (ctx) => {
+      te().mode = 'paper';
       te().enabled = true;
       te().saveConfig();
-      await ctx.answerCbQuery(`Mode set to ${mode.toUpperCase()}`);
+      await ctx.answerCbQuery('Paper mode activated');
+      await this.showSettingsMain(ctx);
+    });
+    this.bot.action('cfg_mode_live', async (ctx) => {
+      const t = te();
+      // Show confirmation before enabling live
+      ctx.editMessageText(
+        `⚠️ <b>SWITCH TO LIVE TRADING?</b>\n\n` +
+        `This will use <b>real funds</b> on your exchange accounts.\n\n` +
+        `Every signal that passes your filters will place real orders.\n` +
+        `Make sure your risk settings are correct before enabling.\n\n` +
+        `Current settings:\n` +
+        `💵 Size: $${t.maxPositionSize}/trade\n` +
+        `⚡ Leverage: ${t.defaultLeverage}x\n` +
+        `🔒 Max loss/trade: ${t.maxLossPerTrade > 0 ? `$${t.maxLossPerTrade}` : 'No cap ⚠️'}\n` +
+        `🛡️ Daily loss limit: $${t.maxDailyLoss}`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Yes, go LIVE', 'cfg_mode_live_confirm')],
+          [Markup.button.callback('❌ Cancel', 'cfg_main')],
+        ]).reply_markup }
+      );
+    });
+    this.bot.action('cfg_mode_live_confirm', async (ctx) => {
+      te().mode = 'live';
+      te().enabled = true;
+      te().saveConfig();
+      await ctx.answerCbQuery('🔴 LIVE TRADING ACTIVATED');
       await this.showSettingsMain(ctx);
     });
 
@@ -1297,18 +1322,21 @@ class TelegramBot {
       : `$${t.maxPositionSize}`;
     const filterDisplay = t.signalFilter.size > 0 ? [...t.signalFilter].join(', ') : 'All';
 
+    // Always fetch live balances
+    const liveBalances = await t.getAllBalances();
+    let totalFree = 0;
+    const parts = [];
+    for (const [id, b] of Object.entries(liveBalances)) {
+      if (!b.error) parts.push(`${id}: $${b.free.toFixed(2)}`);
+      totalFree += b.free;
+    }
+    const liveBalLine = parts.length ? parts.join(' | ') : 'No API keys';
+
     let balLine = '';
     if (t.mode === 'paper') {
-      balLine = `📝 Paper Balance: <b>$${t.paperBalance.toFixed(2)}</b>`;
+      balLine = `📝 Paper: <b>$${t.paperBalance.toFixed(2)}</b>\n💰 Live: ${liveBalLine}`;
     } else {
-      const liveBalances = await t.getAllBalances();
-      let totalFree = 0;
-      const parts = [];
-      for (const [id, b] of Object.entries(liveBalances)) {
-        parts.push(`${id}: $${b.free.toFixed(2)}`);
-        totalFree += b.free;
-      }
-      balLine = `💰 Live Balance: <b>$${totalFree.toFixed(2)}</b>${parts.length ? ` (${parts.join(' | ')})` : ''}`;
+      balLine = `💰 Live: <b>$${totalFree.toFixed(2)}</b> (${liveBalLine})\n📝 Paper: $${t.paperBalance.toFixed(2)}`;
     }
 
     const text =
@@ -1324,9 +1352,11 @@ class TelegramBot {
       `📈 Today P&L: <b>$${t.dailyPnL.toFixed(2)}</b>\n\n` +
       `Tap any button below to configure:`;
 
+    const openTrades = await db.getOpenTrades().catch(() => []);
+
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback(`${t.mode === 'paper' ? '📝' : '💰'} Mode: ${t.mode.toUpperCase()}`, 'cfg_mode'),
-       Markup.button.callback(`${t.enabled ? '✅ ON' : '❌ OFF'}`, 'cfg_toggle')],
+      [Markup.button.callback(`${t.mode === 'paper' ? '📝' : '🔴'} Mode: ${t.mode.toUpperCase()}`, 'cfg_mode'),
+       Markup.button.callback(`${t.enabled ? '✅ Trading ON' : '⛔ Trading OFF'}`, 'cfg_toggle')],
       [Markup.button.callback(`💵 Size: $${t.maxPositionSize}`, 'cfg_size'),
        Markup.button.callback(`📊 Risk: ${t.riskPct > 0 ? `${t.riskPct}%` : 'OFF'}`, 'cfg_risk')],
       [Markup.button.callback(`⚡ Leverage: ${t.defaultLeverage}x`, 'cfg_lev'),
@@ -1336,7 +1366,7 @@ class TelegramBot {
       [Markup.button.callback(`📊 Positions: ${t.maxConcurrentPositions}`, 'cfg_maxpos'),
        Markup.button.callback(`⭐ Confidence: ${t.minConfidence}/5`, 'cfg_conf')],
       [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter'),
-       Markup.button.callback(`📋 Active Trades`, 'cfg_trades')],
+       Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades')],
       [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
     ]);
 
