@@ -180,12 +180,12 @@ class TechnicalScanner {
         if (bullishChoch && direction === 'short') direction = 'long';
         if (bearishChoch && direction === 'long') direction = 'short';
 
-        // BOS with structure bias also overrides direction
-        const hasBos = smcResult.bosEvents?.length > 0;
-        if (hasBos && smcResult.structureBias === 'bullish' && direction === 'short') {
+        // BOS with structure bias overrides direction — use the LATEST BOS event
+        const latestBos = smcResult.bosEvents?.length > 0 ? smcResult.bosEvents[smcResult.bosEvents.length - 1] : null;
+        if (latestBos && smcResult.structureBias === 'bullish' && latestBos.type === 'BOS_BULLISH' && direction === 'short') {
           direction = 'long';
           signals.push('SMC bullish BOS overrides short');
-        } else if (hasBos && smcResult.structureBias === 'bearish' && direction === 'long') {
+        } else if (latestBos && smcResult.structureBias === 'bearish' && latestBos.type === 'BOS_BEARISH' && direction === 'long') {
           direction = 'short';
           signals.push('SMC bearish BOS overrides long');
         }

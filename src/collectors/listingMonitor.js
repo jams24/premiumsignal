@@ -21,11 +21,16 @@ class ListingMonitor {
     for (const cfg of exchangeConfigs) {
       try {
         const creds = config.exchanges[cfg.id] || {};
+        const opts = { ...(cfg.options || {}) };
+        if (cfg.id === 'binance') {
+          opts.defaultType = 'swap';
+          opts.fetchMarkets = ['linear'];
+        }
         this.exchanges[cfg.id] = new cfg.class({
           apiKey: creds.apiKey,
           secret: creds.secret,
           enableRateLimit: true,
-          options: cfg.options || {},
+          options: opts,
         });
         const markets = await this.exchanges[cfg.id].loadMarkets();
         this.previousMarkets[cfg.id] = new Set(Object.keys(markets));
