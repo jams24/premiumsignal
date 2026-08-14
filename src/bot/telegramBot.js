@@ -20,15 +20,28 @@ class TelegramBot {
     this.bot.command('start', (ctx) => {
       ctx.replyWithHTML(
         `<b>🤖 CryptoSignal Bot</b>\n\n` +
-        `<b>Commands:</b>\n` +
+        `<b>📡 Signals &amp; Scanning:</b>\n` +
+        `/menu — Interactive control panel\n` +
         `/signals — Active signals\n` +
         `/scan — Run market scan now\n` +
+        `/review — Past signal performance\n` +
+        `/stats — Signal win rate stats\n` +
+        `/analyse &lt;days&gt; — Full analysis report\n\n` +
+        `<b>📊 Market Intel:</b>\n` +
+        `/intel — Market intelligence brief\n` +
         `/trending — Social sentiment scan\n` +
         `/funding — Funding rate extremes\n` +
-        `/stats — Signal performance stats\n` +
-        `/whale &lt;token&gt; &lt;chain&gt; &lt;address&gt; — Check whale activity\n` +
-        `/help — Show this menu\n\n` +
-        `Signals are auto-posted to the channel.`
+        `/dex — DEX trending tokens\n` +
+        `/whale &lt;token&gt; &lt;chain&gt; &lt;addr&gt; — Whale tracker\n\n` +
+        `<b>🤖 Auto-Trading:</b>\n` +
+        `/trade — Trading status &amp; config\n` +
+        `/positions — Open positions (DCA, trailing SL)\n` +
+        `/pnl — Trade P&amp;L performance\n` +
+        `/trademode paper|live — Switch mode\n` +
+        `/setsize &lt;USDT&gt; — Set position size\n` +
+        `/stop — Kill switch (close all)\n` +
+        `/help — Signal types explained\n\n` +
+        `Signals auto-posted to channel.`
       );
     });
 
@@ -173,7 +186,9 @@ class TelegramBot {
       let msg = `📊 <b>OPEN POSITIONS</b> (${trades.length})\n\n`;
       for (const t of trades) {
         const dir = t.direction === 'long' ? '🟢' : '🔴';
-        msg += `${t.mode === 'paper' ? '📝' : '💰'} ${dir} <b>$${t.symbol}</b> @ $${t.entry_price} (${t.leverage}x)\n`;
+        const dcaStatus = t.dca_filled_3 ? '3/3' : t.dca_filled_2 ? '2/3' : '1/3';
+        const slTrailed = t.original_stop_loss && t.stop_loss !== t.original_stop_loss;
+        msg += `${t.mode === 'paper' ? '📝' : '💰'} ${dir} <b>$${t.symbol}</b> @ $${t.entry_price} (${t.leverage}x) DCA ${dcaStatus}${slTrailed ? ' 🔒' : ''}\n`;
       }
       ctx.replyWithHTML(msg);
     });
@@ -184,7 +199,8 @@ class TelegramBot {
       if (!stats.length) return ctx.reply('No trade data yet.');
       let msg = '💰 <b>TRADE P&L</b>\n\n';
       for (const s of stats) {
-        msg += `<b>${s.mode.toUpperCase()}</b>: ${s.total} trades | P&L: $${parseFloat(s.total_pnl).toFixed(2)} | WR: ${s.closed > 0 ? ((s.wins / s.closed) * 100).toFixed(0) : '0'}%\n`;
+        const wr = s.closed > 0 ? ((s.wins / s.closed) * 100).toFixed(0) : '0';
+        msg += `<b>${s.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'}</b>: ${s.total} trades | P&L: $${parseFloat(s.total_pnl).toFixed(2)} | WR: ${wr}%\n`;
       }
       ctx.replyWithHTML(msg);
     });
@@ -504,10 +520,12 @@ class TelegramBot {
         for (const t of trades) {
           const dir = t.direction === 'long' ? '🟢' : '🔴';
           const modeTag = t.mode === 'paper' ? '📝' : '💰';
+          const dcaStatus = t.dca_filled_3 ? '3/3' : t.dca_filled_2 ? '2/3' : '1/3';
+          const slTrailed = t.original_stop_loss && t.stop_loss !== t.original_stop_loss;
           msg += `${modeTag} ${dir} <b>$${t.symbol}</b> (${t.exchange})\n`;
-          msg += `   Entry: $${t.entry_price} | Size: $${t.position_size} (${t.leverage}x)\n`;
-          msg += `   TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}\n`;
-          msg += `   SL: $${t.stop_loss}\n\n`;
+          msg += `   Entry: $${t.entry_price} | Size: $${t.position_size} (${t.leverage}x) | DCA: ${dcaStatus}\n`;
+          msg += `   TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}${t.hit_tp3 ? ' ✅' : ''}${t.tp4 ? ` | TP4: $${t.tp4}` : ''}\n`;
+          msg += `   SL: $${t.stop_loss}${slTrailed ? ' 🔒 (trailed)' : ''}${t.invalidation ? ` | Inv: $${t.invalidation}` : ''}\n\n`;
         }
         ctx.replyWithHTML(msg);
       } catch (err) {
@@ -524,7 +542,8 @@ class TelegramBot {
           const modeTag = s.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
           msg += `<b>${modeTag}</b>\n`;
           msg += `Total: ${s.total} | Open: ${s.open} | Closed: ${s.closed}\n`;
-          msg += `Wins: ${s.wins} | Full Wins (TP3): ${s.full_wins} | Losses: ${s.losses}\n`;
+          msg += `Wins: ${s.wins} | Full Wins (TP4): ${s.full_wins} | Losses: ${s.losses}\n`;
+          msg += `Invalidated: ${s.invalidated || 0} | Expired: ${s.expired || 0}\n`;
           msg += `Win Rate: ${s.closed > 0 ? ((s.wins / s.closed) * 100).toFixed(1) : '0'}%\n`;
           msg += `Total P&L: $${parseFloat(s.total_pnl).toFixed(2)}\n`;
           msg += `Avg P&L: ${parseFloat(s.avg_pnl_pct).toFixed(2)}%\n`;
