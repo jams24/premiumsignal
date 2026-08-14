@@ -1349,7 +1349,7 @@ class TelegramBot {
   async showSettingsMain(ctx, isNewMessage = false) {
     const t = this.tradeExecutor;
     await t.recalcDailyPnL();
-    const totalPnl = await db.getAllTimePnL().catch(() => 0);
+    const totalPnl = await db.getAllTimePnL(t.pnlResetDate || null).catch(() => 0);
     const balance = await t.getBalance();
     const sizeDisplay = t.riskPct > 0
       ? `${t.riskPct}% ($${(balance * t.riskPct / 100).toFixed(2)})`

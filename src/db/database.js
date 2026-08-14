@@ -427,10 +427,11 @@ async function getTodayPnL() {
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
 
-async function getAllTimePnL() {
-  const { rows } = await query(
-    `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed'`
-  );
+async function getAllTimePnL(since) {
+  const sql = since
+    ? `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= $1`
+    : `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed'`;
+  const { rows } = await query(sql, since ? [since] : []);
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
 

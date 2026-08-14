@@ -31,6 +31,8 @@ class TradeExecutor {
     // Excluded symbols: skip signals for these tokens
     this.excludedSymbols = new Set(config.excludedSymbols || ['BTC', 'ETH', 'SOL']);
 
+    this.pnlResetDate = config.pnlResetDate || new Date().toISOString();
+
     // Cooldown: symbol → timestamp, prevents re-entry after invalidation/SL
     this.cooldowns = new Map();
   }
@@ -222,6 +224,7 @@ class TradeExecutor {
       dynamicLeverage: this.dynamicLeverage,
       signalFilter: [...this.signalFilter],
       excludedSymbols: [...this.excludedSymbols],
+      pnlResetDate: this.pnlResetDate || null,
       dailyPnL: this.dailyPnL,
     };
   }
@@ -241,6 +244,7 @@ class TradeExecutor {
     if (cfg.dynamicLeverage != null) this.dynamicLeverage = cfg.dynamicLeverage;
     if (cfg.signalFilter != null) this.signalFilter = new Set(cfg.signalFilter);
     if (cfg.excludedSymbols != null) this.excludedSymbols = new Set(cfg.excludedSymbols);
+    if (cfg.pnlResetDate != null) this.pnlResetDate = cfg.pnlResetDate;
   }
 
   async saveConfig() {
