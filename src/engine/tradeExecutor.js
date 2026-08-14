@@ -90,12 +90,50 @@ class TradeExecutor {
     return isLong ? price + atr * 8 : price - atr * 8;
   }
 
+  // Refine TP/SL using SMC order blocks and FVGs
+  refineWithSMC(signal) {
+    if (!signal.smc) return;
+    const isLong = signal.direction === 'long';
+    const price = signal.currentPrice;
+
+    // Use nearby order block as refined SL (demand zone for longs, supply zone for shorts)
+    for (const ob of signal.smc.orderBlocks || []) {
+      if (isLong && ob.type === 'OB_BULLISH' && ob.low < price && ob.low > signal.stopLoss) {
+        signal.stopLoss = ob.low;
+        logger.info(`SMC: Tightened SL to bullish OB at $${ob.low.toPrecision(6)}`);
+      }
+      if (!isLong && ob.type === 'OB_BEARISH' && ob.high > price && ob.high < signal.stopLoss) {
+        signal.stopLoss = ob.high;
+        logger.info(`SMC: Tightened SL to bearish OB at $${ob.high.toPrecision(6)}`);
+      }
+    }
+
+    // Use unfilled FVGs as TP targets if they align
+    for (const fvg of signal.smc.fvgs || []) {
+      if (isLong && fvg.type === 'FVG_BEARISH' && fvg.midpoint > price) {
+        // Bearish FVG above = liquidity target for longs
+        if (fvg.midpoint < signal.tp2 && fvg.midpoint > signal.tp1) {
+          signal.tp1 = fvg.midpoint;
+          logger.info(`SMC: Adjusted TP1 to bearish FVG midpoint $${fvg.midpoint.toPrecision(6)}`);
+        }
+      }
+      if (!isLong && fvg.type === 'FVG_BULLISH' && fvg.midpoint < price) {
+        if (fvg.midpoint > signal.tp2 && fvg.midpoint < signal.tp1) {
+          signal.tp1 = fvg.midpoint;
+          logger.info(`SMC: Adjusted TP1 to bullish FVG midpoint $${fvg.midpoint.toPrecision(6)}`);
+        }
+      }
+    }
+  }
+
   async executeSignal(signal) {
     const check = await this.canTrade(signal);
     if (!check.ok) {
       logger.info(`Trade skipped for ${signal.symbol}: ${check.reason}`);
       return null;
     }
+
+    this.refineWithSMC(signal);
 
     if (this.mode === 'paper') {
       return this.executePaperTrade(signal);
@@ -152,6 +190,7 @@ class TradeExecutor {
       `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}\n` +
       `TP1: $${signal.tp1} | TP2: $${signal.tp2} | TP3: $${signal.tp3} | TP4: $${tp4.toPrecision(6)}\n` +
       `SL: $${signal.stopLoss} | Invalidation: $${invalidation.toPrecision(6)}\n\n` +
+      `${signal.smc ? `SMC: ${signal.smc.structureBias} structure` + (signal.smc.orderBlocks?.length ? ` | ${signal.smc.orderBlocks.length} OB` : '') + (signal.smc.fvgs?.length ? ` | ${signal.smc.fvgs.length} FVG` : '') + '\n' : ''}` +
       `<i>Paper mode — trailing SL + DCA active</i>`;
 
     await this.notify(msg);

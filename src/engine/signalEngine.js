@@ -58,7 +58,15 @@ class SignalEngine {
     const minVol = scan.volumeRatio > 3 ? 5 : 2;
     if (scan.volumeRatio < minVol) return null;
 
-    const confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
+    let confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
+
+    // SMC confirmation boost: ChoCH or BOS + OB alignment = +1 confidence
+    if (scan.smc) {
+      const hasChoch = scan.smc.chochEvents?.length > 0;
+      const hasBos = scan.smc.bosEvents?.length > 0;
+      const hasOB = scan.smc.orderBlocks?.length > 0;
+      if ((hasChoch || (hasBos && hasOB)) && confidence < 5) confidence++;
+    }
 
     const signal = {
       type: scan.volumeRatio > 3 ? 'VOLUME_SPIKE' : 'BREAKOUT',
@@ -72,6 +80,7 @@ class SignalEngine {
       stopLoss: scan.stopLoss,
       tp1Pct: scan.tp1Pct, tp2Pct: scan.tp2Pct, tp3Pct: scan.tp3Pct, slPct: scan.slPct,
       atr: scan.atr || null,
+      smc: scan.smc || null,
       confidence,
       catalyst: scan.signals.join(' | '),
       suggestedLeverage: confidence >= 4 ? 10 : 5,

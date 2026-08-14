@@ -31,7 +31,7 @@ function formatSignalMessage(signal) {
 <b>Stop Loss:</b> $${signal.stopLoss} (${signal.slPct}%)${leverage}
 
 <b>Catalyst:</b> ${escapeHtml(signal.catalyst)}
-<b>Volume:</b> ${signal.volumeInfo || 'N/A'}
+<b>Volume:</b> ${signal.volumeInfo || 'N/A'}${signal.smc ? `\n\n🧠 <b>SMC:</b> ${signal.smc.structureBias} structure${signal.smc.bosEvents?.length ? ' | BOS' : ''}${signal.smc.chochEvents?.length ? ' | ChoCH' : ''}${signal.smc.orderBlocks?.length ? ` | ${signal.smc.orderBlocks.length} OB` : ''}${signal.smc.fvgs?.length ? ` | ${signal.smc.fvgs.length} FVG` : ''}` : ''}
 
 ⚠️ <i>DYOR — Not Financial Advice</i>
 🕐 ${new Date().toUTCString()}`;

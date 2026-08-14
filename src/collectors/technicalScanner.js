@@ -2,10 +2,12 @@ const ccxt = require('ccxt');
 const { RSI, EMA, BollingerBands, MACD, ATR } = require('technicalindicators');
 const logger = require('../utils/logger');
 const db = require('../db/database');
+const SMCAnalyzer = require('./smcAnalyzer');
 
 class TechnicalScanner {
   constructor(exchanges) {
-    this.exchanges = exchanges; // shared exchange instances from ListingMonitor
+    this.exchanges = exchanges;
+    this.smc = new SMCAnalyzer();
   }
 
   async scanAll() {
@@ -129,6 +131,35 @@ class TechnicalScanner {
       const change24h = ticker.percentage || 0;
       if (Math.abs(change24h) > 15) score += 10;
 
+      // SMC Analysis
+      const smcResult = this.smc.analyze(ohlcv);
+      let smcData = null;
+      if (smcResult) {
+        score += smcResult.score;
+        for (const s of smcResult.signals) signals.push(s);
+
+        // SMC can override direction: ChoCH is a strong reversal signal
+        const bullishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BULLISH');
+        const bearishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BEARISH');
+        if (bullishChoch && direction === 'short') direction = 'long';
+        if (bearishChoch && direction === 'long') direction = 'short';
+
+        // SMC structure confirmation bonus
+        if ((smcResult.structureBias === 'bullish' && direction === 'long') ||
+            (smcResult.structureBias === 'bearish' && direction === 'short')) {
+          score += 10;
+          signals.push('SMC confirms direction');
+        }
+
+        smcData = {
+          structureBias: smcResult.structureBias,
+          orderBlocks: smcResult.orderBlocks,
+          fvgs: smcResult.fvgs,
+          bosEvents: smcResult.bosEvents,
+          chochEvents: smcResult.chochEvents,
+        };
+      }
+
       if (score < 40) return null;
 
       // Require bearish candle confirmation for shorts
@@ -166,6 +197,7 @@ class TechnicalScanner {
         score,
         signals,
         atr: atrValue,
+        smc: smcData,
         entryLow: parseFloat(entryLow.toPrecision(6)),
         entryHigh: parseFloat(entryHigh.toPrecision(6)),
         tp1: parseFloat(tp1.toPrecision(6)),
