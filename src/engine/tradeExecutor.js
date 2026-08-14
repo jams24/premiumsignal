@@ -69,9 +69,9 @@ class TradeExecutor {
       return { ok: false, reason: `Max concurrent positions reached (${openPositions.length}/${this.maxConcurrentPositions})` };
     }
 
-    const existing = openPositions.find(p => p.symbol === signal.symbol && p.exchange === signal.exchange);
+    const existing = openPositions.find(p => p.symbol === signal.symbol);
     if (existing) {
-      return { ok: false, reason: `Already in position on ${signal.symbol}` };
+      return { ok: false, reason: `Already in position on ${signal.symbol} (${existing.exchange})` };
     }
 
     return { ok: true };

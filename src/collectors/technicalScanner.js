@@ -11,14 +11,13 @@ class TechnicalScanner {
   }
 
   async scanAll() {
-    const results = [];
+    const candidates = [];
 
     for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
       try {
         const perpMarkets = Object.values(exchange.markets).filter(m => m.swap && m.quote === 'USDT' && m.active);
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
-        // Sort by volume and only deep-analyze top movers to save memory/time
         const sorted = Object.entries(tickers)
           .filter(([, t]) => t.quoteVolume > 500000)
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
@@ -29,7 +28,11 @@ class TechnicalScanner {
             const score = this.quickScore(ticker);
             if (score >= 40) {
               const analysis = await this.deepAnalyze(exchange, exchangeId, symbol, ticker);
-              if (analysis) results.push(analysis);
+              if (analysis) {
+                analysis.quoteVolume = ticker.quoteVolume || 0;
+                analysis.hasApiKey = !!(exchange.apiKey && exchange.secret);
+                candidates.push(analysis);
+              }
             }
           } catch (e) { /* skip individual failures */ }
         }
@@ -38,7 +41,27 @@ class TechnicalScanner {
       }
     }
 
-    return results.sort((a, b) => b.score - a.score);
+    // Deduplicate: keep best exchange per symbol
+    const bestBySymbol = new Map();
+    for (const c of candidates) {
+      const existing = bestBySymbol.get(c.symbol);
+      if (!existing || this.preferExchange(c, existing)) {
+        bestBySymbol.set(c.symbol, c);
+      }
+    }
+
+    return [...bestBySymbol.values()].sort((a, b) => b.score - a.score);
+  }
+
+  // Pick the better exchange for a symbol
+  preferExchange(candidate, existing) {
+    // 1. Prefer exchange with API keys configured (can actually trade)
+    if (candidate.hasApiKey && !existing.hasApiKey) return true;
+    if (!candidate.hasApiKey && existing.hasApiKey) return false;
+    // 2. Prefer higher score
+    if (candidate.score !== existing.score) return candidate.score > existing.score;
+    // 3. Prefer higher volume (better liquidity/tighter spreads)
+    return candidate.quoteVolume > existing.quoteVolume;
   }
 
   quickScore(ticker) {
