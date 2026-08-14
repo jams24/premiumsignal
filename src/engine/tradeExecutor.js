@@ -645,6 +645,16 @@ class TradeExecutor {
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP1 hit, SL moved to breakeven ($${newSL})`);
         }
+        // --- PER-TRADE LOSS CAP ---
+        if (!action && this.maxLossPerTrade > 0 && pnlUsd < 0 && Math.abs(pnlUsd) >= this.maxLossPerTrade) {
+          action = 'max_loss';
+          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'max_loss');
+          this.dailyPnL += pnlUsd;
+          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+          if (trade.mode === 'live') await this.closeExchangePosition(trade);
+          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
+          logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${this.maxLossPerTrade})`);
+        }
         // --- SL CHECK ---
         else if (!action && trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {
           action = 'sl';
@@ -665,7 +675,7 @@ class TradeExecutor {
           if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired'].includes(action)) {
             await this.closeExchangePosition(trade);
           }
-          if (trade.mode === 'paper' && ['tp4', 'sl', 'invalidated', 'expired'].includes(action)) {
+          if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss'].includes(action)) {
             this.saveConfig();
           }
 
@@ -877,6 +887,9 @@ class TradeExecutor {
     }
     if (action === 'invalidated') {
       return `${modeTag} ⛔ <b>INVALIDATED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n4H candle closed below invalidation ($${trade.invalidation})\nThesis broken — trade closed before SL.`;
+    }
+    if (action === 'max_loss') {
+      return `${modeTag} 🛑 <b>MAX LOSS CAP</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n⚠️ Per-trade loss limit ($${this.maxLossPerTrade}) reached.\nPosition closed to protect capital.`;
     }
     if (action === 'expired') {
       return `${modeTag} ⏰ <b>EXPIRED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\nAuto-closed after 48 hours.`;
