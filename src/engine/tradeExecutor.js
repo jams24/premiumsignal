@@ -114,22 +114,31 @@ class TradeExecutor {
 
   // Get balances from all exchanges with API keys
   async getAllBalances() {
-    const results = {};
-    for (const [id, exchange] of Object.entries(this.exchanges)) {
-      if (!exchange.apiKey || !exchange.secret) continue;
+    if (!this._balanceCache) this._balanceCache = {};
+
+    const entries = Object.entries(this.exchanges).filter(([, ex]) => ex.apiKey && ex.secret);
+    const fetches = entries.map(async ([id, exchange]) => {
       try {
         const params = id === 'bybit' ? { type: 'unified' } : id === 'binance' ? { type: 'future' } : {};
-        const balance = await exchange.fetchBalance(params);
-        results[id] = {
+        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000));
+        const balance = await Promise.race([exchange.fetchBalance(params), timeout]);
+        const result = {
           free: balance.free?.USDT || 0,
           total: balance.total?.USDT || 0,
           used: balance.used?.USDT || 0,
         };
+        this._balanceCache[id] = result;
+        return [id, result];
       } catch (e) {
         logger.warn(`${id} balance fetch failed: ${e.message}`);
-        results[id] = { free: 0, total: 0, used: 0, error: e.message };
+        if (this._balanceCache[id]) return [id, this._balanceCache[id]];
+        return [id, { free: 0, total: 0, used: 0, error: e.message }];
       }
-    }
+    });
+
+    const settled = await Promise.all(fetches);
+    const results = {};
+    for (const [id, bal] of settled) results[id] = bal;
     return results;
   }
 
