@@ -7,6 +7,13 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 class TelegramBot {
   constructor({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor }) {
     this.bot = new Telegraf(config.telegram.botToken);
+    this.bot.catch((err) => {
+      const msg = err?.message || String(err);
+      if (msg.includes('message is not modified') || msg.includes('query is too old') || msg.includes('bot was blocked')) {
+        return;
+      }
+      logger.error(`Telegraf error: ${msg}`);
+    });
     this.channelId = config.telegram.channelId;
     this.technicalScanner = technicalScanner;
     this.socialScanner = socialScanner;

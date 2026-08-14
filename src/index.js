@@ -285,6 +285,25 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
+process.on('unhandledRejection', (err) => {
+  const msg = err?.message || String(err);
+  if (msg.includes('message is not modified') || msg.includes('query is too old') || msg.includes('bot was blocked')) {
+    logger.warn(`Telegram API (non-fatal): ${msg}`);
+    return;
+  }
+  logger.error(`Unhandled rejection: ${msg}`);
+});
+
+process.on('uncaughtException', (err) => {
+  const msg = err?.message || String(err);
+  if (msg.includes('message is not modified') || msg.includes('query is too old')) {
+    logger.warn(`Telegram API (non-fatal): ${msg}`);
+    return;
+  }
+  logger.error(`Uncaught exception: ${msg}`);
+  process.exit(1);
+});
+
 main().catch(err => {
   logger.error(`Fatal error: ${err.message}`);
   process.exit(1);
