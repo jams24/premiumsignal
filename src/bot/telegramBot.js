@@ -174,8 +174,10 @@ class TelegramBot {
       await ctx.answerCbQuery();
       if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
       const te = this.tradeExecutor;
+      const balance = await te.getBalance();
+      const sizeDisplay = te.riskPct > 0 ? `${te.riskPct}% ($${(balance * te.riskPct / 100).toFixed(2)})` : `$${te.maxPositionSize}`;
       ctx.replyWithHTML(
-        `🤖 <b>AUTO-TRADING</b>\n\nMode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\nSize: $${te.maxPositionSize} | Leverage: ${te.defaultLeverage}x\nToday P&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit`
+        `🤖 <b>AUTO-TRADING</b>\n\nMode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\nBalance: $${balance.toFixed(2)} | Size: ${sizeDisplay} | ${te.defaultLeverage}x${te.dynamicLeverage ? ' dyn' : ''}\nP&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit\n\nUse /risk for full risk panel`
       );
     });
 
@@ -493,22 +495,31 @@ class TelegramBot {
 
     this.bot.command('trade', async (ctx) => {
       if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
-      const mode = this.tradeExecutor.mode;
-      const enabled = this.tradeExecutor.enabled;
+      const te = this.tradeExecutor;
+      const balance = await te.getBalance();
+      const sizeDisplay = te.riskPct > 0
+        ? `${te.riskPct}% of balance ($${(balance * te.riskPct / 100).toFixed(2)})`
+        : `$${te.maxPositionSize} (fixed)`;
       ctx.replyWithHTML(
         `🤖 <b>AUTO-TRADING STATUS</b>\n\n` +
-        `Mode: <b>${mode.toUpperCase()}</b> ${mode === 'paper' ? '📝' : '💰'}\n` +
-        `Status: ${enabled ? '✅ ENABLED' : '❌ DISABLED'}\n` +
-        `Position Size: $${this.tradeExecutor.maxPositionSize}\n` +
-        `Max Concurrent: ${this.tradeExecutor.maxConcurrentPositions}\n` +
-        `Leverage: ${this.tradeExecutor.defaultLeverage}x\n` +
-        `Daily Loss Limit: $${this.tradeExecutor.maxDailyLoss}\n` +
-        `Today P&L: $${this.tradeExecutor.dailyPnL.toFixed(2)}\n\n` +
+        `Mode: <b>${te.mode.toUpperCase()}</b> ${te.mode === 'paper' ? '📝' : '💰'}\n` +
+        `Status: ${te.enabled ? '✅ ENABLED' : '❌ DISABLED'}\n` +
+        `Balance: $${balance.toFixed(2)}\n` +
+        `Position Size: ${sizeDisplay}\n` +
+        `Leverage: ${te.defaultLeverage}x${te.dynamicLeverage ? ' (dynamic)' : ''}\n` +
+        `Max Positions: ${te.maxConcurrentPositions}\n` +
+        `Min Confidence: ${te.minConfidence}/5\n` +
+        `Daily Loss Limit: $${te.maxDailyLoss}\n` +
+        `Per-Trade Loss Cap: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}\n` +
+        `Signal Filter: ${te.signalFilter.size > 0 ? [...te.signalFilter].join(', ') : 'All'}\n` +
+        `Today P&L: $${te.dailyPnL.toFixed(2)}\n\n` +
         `<b>Commands:</b>\n` +
-        `/positions — View open positions\n` +
-        `/pnl — Trade performance stats\n` +
-        `/stop — Kill switch (close all)\n` +
-        `/trademode paper|live — Switch mode`
+        `/risk — Risk management panel\n` +
+        `/positions — Open positions\n` +
+        `/pnl — Performance stats\n` +
+        `/balance — View/set balance\n` +
+        `/trademode paper|live — Switch mode\n` +
+        `/stop — Kill switch`
       );
     });
 
@@ -586,7 +597,145 @@ class TelegramBot {
       const size = parseFloat(args[0]);
       if (!size || size < 5 || size > 10000) return ctx.reply('Usage: /setsize <amount in USDT>\nExample: /setsize 100\nRange: $5 - $10,000');
       this.tradeExecutor.maxPositionSize = size;
-      ctx.replyWithHTML(`✅ Position size set to <b>$${size}</b> per trade.`);
+      ctx.replyWithHTML(`✅ Position size set to <b>$${size}</b> per trade.${this.tradeExecutor.riskPct > 0 ? '\n⚠️ Risk-based sizing is active — fixed size is used as max cap.' : ''}`);
+    });
+
+    this.bot.command('setleverage', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const lev = parseInt(args[0]);
+      if (!lev || lev < 1 || lev > 50) return ctx.reply('Usage: /setleverage <1-50>\nExample: /setleverage 10');
+      this.tradeExecutor.defaultLeverage = lev;
+      ctx.replyWithHTML(`✅ Default leverage set to <b>${lev}x</b>${this.tradeExecutor.dynamicLeverage ? '\nDynamic leverage is ON — actual leverage scales with confidence.' : ''}`);
+    });
+
+    this.bot.command('setloss', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const loss = parseFloat(args[0]);
+      if (!loss || loss < 10 || loss > 50000) return ctx.reply('Usage: /setloss <daily limit in USDT>\nExample: /setloss 500');
+      this.tradeExecutor.maxDailyLoss = loss;
+      ctx.replyWithHTML(`✅ Daily loss limit set to <b>$${loss}</b>`);
+    });
+
+    this.bot.command('setmaxloss', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const loss = parseFloat(args[0]);
+      if (args[0] === '0' || args[0] === 'off') {
+        this.tradeExecutor.maxLossPerTrade = 0;
+        return ctx.replyWithHTML('✅ Per-trade loss cap <b>disabled</b>.');
+      }
+      if (!loss || loss < 1 || loss > 10000) return ctx.reply('Usage: /setmaxloss <max USDT loss per trade>\nExample: /setmaxloss 25\nUse /setmaxloss 0 to disable');
+      this.tradeExecutor.maxLossPerTrade = loss;
+      ctx.replyWithHTML(`✅ Max loss per trade capped at <b>$${loss}</b>`);
+    });
+
+    this.bot.command('setpositions', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const max = parseInt(args[0]);
+      if (!max || max < 1 || max > 20) return ctx.reply('Usage: /setpositions <1-20>\nExample: /setpositions 3');
+      this.tradeExecutor.maxConcurrentPositions = max;
+      ctx.replyWithHTML(`✅ Max concurrent positions set to <b>${max}</b>`);
+    });
+
+    this.bot.command('setconfidence', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const conf = parseInt(args[0]);
+      if (!conf || conf < 1 || conf > 5) return ctx.reply('Usage: /setconfidence <1-5>\nExample: /setconfidence 4\n\n1 = trade everything\n5 = only highest conviction');
+      this.tradeExecutor.minConfidence = conf;
+      ctx.replyWithHTML(`✅ Minimum confidence set to <b>${conf}/5</b> ${'⭐'.repeat(conf)}`);
+    });
+
+    this.bot.command('risk', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      if (!args.length) {
+        const te = this.tradeExecutor;
+        const balance = await te.getBalance();
+        return ctx.replyWithHTML(
+          `📊 <b>RISK MANAGEMENT</b>\n\n` +
+          `<b>Sizing:</b> ${te.riskPct > 0 ? `${te.riskPct}% of balance ($${(balance * te.riskPct / 100).toFixed(2)}/trade)` : `Fixed $${te.maxPositionSize}/trade`}\n` +
+          `<b>Balance:</b> $${balance.toFixed(2)} (${te.mode})\n` +
+          `<b>Leverage:</b> ${te.defaultLeverage}x${te.dynamicLeverage ? ' (dynamic by confidence)' : ' (fixed)'}\n` +
+          `<b>Daily Loss Limit:</b> $${te.maxDailyLoss} (used: $${Math.abs(Math.min(0, te.dailyPnL)).toFixed(2)})\n` +
+          `<b>Per-Trade Loss Cap:</b> ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}\n` +
+          `<b>Max Positions:</b> ${te.maxConcurrentPositions}\n` +
+          `<b>Min Confidence:</b> ${te.minConfidence}/5\n` +
+          `<b>Signal Filter:</b> ${te.signalFilter.size > 0 ? [...te.signalFilter].join(', ') : 'All types'}\n\n` +
+          `<b>Commands:</b>\n` +
+          `/risk <pct> — Set risk % of balance per trade\n` +
+          `/risk off — Switch to fixed size mode\n` +
+          `/setsize — Fixed position size\n` +
+          `/setleverage — Default leverage\n` +
+          `/dynlev on|off — Dynamic leverage by confidence\n` +
+          `/setloss — Daily loss limit\n` +
+          `/setmaxloss — Max loss per single trade\n` +
+          `/setpositions — Max concurrent positions\n` +
+          `/setconfidence — Min signal confidence\n` +
+          `/filter — Signal type filter`
+        );
+      }
+      if (args[0] === 'off') {
+        this.tradeExecutor.riskPct = 0;
+        return ctx.replyWithHTML(`✅ Risk-based sizing <b>disabled</b>. Using fixed $${this.tradeExecutor.maxPositionSize}/trade.`);
+      }
+      const pct = parseFloat(args[0]);
+      if (!pct || pct < 0.1 || pct > 10) return ctx.reply('Usage: /risk <0.1 - 10>\nExample: /risk 2 (risk 2% of balance per trade)\nUse /risk off for fixed sizing');
+      this.tradeExecutor.riskPct = pct;
+      const balance = await this.tradeExecutor.getBalance();
+      ctx.replyWithHTML(`✅ Risk-based sizing set to <b>${pct}%</b> of balance\nCurrent balance: $${balance.toFixed(2)} → $${(balance * pct / 100).toFixed(2)}/trade`);
+    });
+
+    this.bot.command('dynlev', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      if (args[0] === 'on') {
+        this.tradeExecutor.dynamicLeverage = true;
+        ctx.replyWithHTML('✅ Dynamic leverage <b>ON</b>\n\nConf 5: 2x base | Conf 4: 1x base | Conf 3: 0.6x base');
+      } else if (args[0] === 'off') {
+        this.tradeExecutor.dynamicLeverage = false;
+        ctx.replyWithHTML(`✅ Dynamic leverage <b>OFF</b> — fixed at ${this.tradeExecutor.defaultLeverage}x`);
+      } else {
+        ctx.reply('Usage: /dynlev on or /dynlev off');
+      }
+    });
+
+    this.bot.command('filter', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      if (!args.length) {
+        const current = this.tradeExecutor.signalFilter.size > 0
+          ? [...this.tradeExecutor.signalFilter].join(', ')
+          : 'All types (no filter)';
+        return ctx.replyWithHTML(
+          `🔍 <b>Signal Filter:</b> ${current}\n\n` +
+          `<b>Available types:</b>\nBREAKOUT, VOLUME_SPIKE, LISTING, FUNDING_SHORT\n\n` +
+          `Usage:\n/filter BREAKOUT,VOLUME_SPIKE — Only trade these\n/filter off — Trade all types`
+        );
+      }
+      if (args[0] === 'off' || args[0] === 'all') {
+        this.tradeExecutor.signalFilter.clear();
+        return ctx.replyWithHTML('✅ Signal filter <b>cleared</b> — trading all signal types.');
+      }
+      const types = args[0].toUpperCase().split(',').map(t => t.trim()).filter(Boolean);
+      this.tradeExecutor.signalFilter = new Set(types);
+      ctx.replyWithHTML(`✅ Signal filter set: <b>${types.join(', ')}</b>\nOnly these signal types will trigger trades.`);
+    });
+
+    this.bot.command('balance', async (ctx) => {
+      if (!this.tradeExecutor) return ctx.reply('Trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      if (args.length && this.tradeExecutor.mode === 'paper') {
+        const bal = parseFloat(args[0]);
+        if (!bal || bal < 10) return ctx.reply('Usage: /balance <amount>\nExample: /balance 5000\nSets paper trading balance.');
+        this.tradeExecutor.paperBalance = bal;
+        return ctx.replyWithHTML(`✅ Paper balance set to <b>$${bal}</b>`);
+      }
+      const balance = await this.tradeExecutor.getBalance();
+      ctx.replyWithHTML(`💰 <b>${this.tradeExecutor.mode === 'paper' ? 'Paper' : 'Live'} Balance:</b> $${balance.toFixed(2)}`);
     });
 
     this.bot.command('whale', async (ctx) => {
@@ -678,7 +827,16 @@ class TelegramBot {
       { command: 'pnl', description: 'Trade P&L and performance' },
       { command: 'stop', description: 'Kill switch — close all & disable' },
       { command: 'trademode', description: 'Switch paper/live mode' },
+      { command: 'risk', description: 'Risk management panel' },
       { command: 'setsize', description: 'Set position size (e.g. /setsize 100)' },
+      { command: 'setleverage', description: 'Set leverage (e.g. /setleverage 10)' },
+      { command: 'dynlev', description: 'Dynamic leverage on/off' },
+      { command: 'setloss', description: 'Set daily loss limit' },
+      { command: 'setmaxloss', description: 'Set max loss per trade' },
+      { command: 'setpositions', description: 'Set max concurrent positions' },
+      { command: 'setconfidence', description: 'Set min signal confidence' },
+      { command: 'filter', description: 'Filter signal types to trade' },
+      { command: 'balance', description: 'View/set paper balance' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 

@@ -9,6 +9,7 @@ class TradeExecutor {
     this.mode = config.mode || 'paper';
     this.maxPositionSize = config.maxPositionSize || 50;
     this.maxDailyLoss = config.maxDailyLoss || 200;
+    this.maxLossPerTrade = config.maxLossPerTrade || 0;
     this.maxConcurrentPositions = config.maxConcurrentPositions || 5;
     this.minConfidence = config.minConfidence || 4;
     this.defaultLeverage = config.defaultLeverage || 5;
@@ -16,6 +17,16 @@ class TradeExecutor {
     this.dailyPnL = 0;
     this.dailyPnLResetDate = new Date().toDateString();
     this.callbacks = [];
+
+    // Risk-based sizing: 0 = disabled (use fixed maxPositionSize), >0 = % of balance per trade
+    this.riskPct = config.riskPct || 0;
+    this.paperBalance = config.paperBalance || 1000;
+
+    // Signal type filter: empty = trade all, otherwise only listed types
+    this.signalFilter = new Set(config.signalFilter || []);
+
+    // Dynamic leverage by confidence: maps confidence level → leverage multiplier
+    this.dynamicLeverage = config.dynamicLeverage !== false;
   }
 
   onTradeUpdate(callback) {
@@ -49,6 +60,10 @@ class TradeExecutor {
       return { ok: false, reason: `Confidence ${signal.confidence} < minimum ${this.minConfidence}` };
     }
 
+    if (this.signalFilter.size > 0 && !this.signalFilter.has(signal.type)) {
+      return { ok: false, reason: `Signal type ${signal.type} not in filter [${[...this.signalFilter].join(', ')}]` };
+    }
+
     const openPositions = await db.getOpenTrades();
     if (openPositions.length >= this.maxConcurrentPositions) {
       return { ok: false, reason: `Max concurrent positions reached (${openPositions.length}/${this.maxConcurrentPositions})` };
@@ -60,6 +75,59 @@ class TradeExecutor {
     }
 
     return { ok: true };
+  }
+
+  // Get available balance for sizing
+  async getBalance() {
+    if (this.mode === 'paper') return this.paperBalance;
+    const exchangeId = Object.keys(this.exchanges)[0];
+    const exchange = this.exchanges[exchangeId];
+    if (!exchange || !exchange.apiKey) return this.paperBalance;
+    try {
+      const balance = await exchange.fetchBalance();
+      return balance.free?.USDT || balance.total?.USDT || this.paperBalance;
+    } catch (e) {
+      logger.warn(`Balance fetch failed: ${e.message}`);
+      return this.paperBalance;
+    }
+  }
+
+  // Calculate position size based on risk % or fixed amount
+  async calcPositionSize(signal) {
+    if (this.riskPct > 0) {
+      const balance = await this.getBalance();
+      let size = balance * (this.riskPct / 100);
+      if (this.maxLossPerTrade > 0) size = Math.min(size, this.maxLossPerTrade);
+      return Math.min(size, balance * 0.2);
+    }
+    return this.maxPositionSize;
+  }
+
+  // Dynamic leverage based on confidence level
+  calcLeverage(signal) {
+    if (!this.dynamicLeverage) return signal.suggestedLeverage || this.defaultLeverage;
+    const conf = signal.confidence || 3;
+    if (conf >= 5) return Math.min(this.defaultLeverage * 2, 20);
+    if (conf >= 4) return this.defaultLeverage;
+    return Math.max(Math.floor(this.defaultLeverage * 0.6), 2);
+  }
+
+  getConfig() {
+    return {
+      mode: this.mode,
+      enabled: this.enabled,
+      maxPositionSize: this.maxPositionSize,
+      riskPct: this.riskPct,
+      paperBalance: this.paperBalance,
+      maxDailyLoss: this.maxDailyLoss,
+      maxLossPerTrade: this.maxLossPerTrade,
+      maxConcurrentPositions: this.maxConcurrentPositions,
+      minConfidence: this.minConfidence,
+      defaultLeverage: this.defaultLeverage,
+      dynamicLeverage: this.dynamicLeverage,
+      signalFilter: [...this.signalFilter],
+      dailyPnL: this.dailyPnL,
+    };
   }
 
   // Calculate invalidation level: nearest structure level where thesis breaks
@@ -144,8 +212,8 @@ class TradeExecutor {
 
   async executePaperTrade(signal) {
     const entryPrice = signal.currentPrice;
-    const positionSize = this.maxPositionSize;
-    const leverage = signal.suggestedLeverage || this.defaultLeverage;
+    const positionSize = await this.calcPositionSize(signal);
+    const leverage = this.calcLeverage(signal);
 
     // DCA: enter 1/3 at market, set limits for 2/3 and 3/3
     const dcaQty1 = (positionSize / 3) / entryPrice;
@@ -191,6 +259,7 @@ class TradeExecutor {
       `TP1: $${signal.tp1} | TP2: $${signal.tp2} | TP3: $${signal.tp3} | TP4: $${tp4.toPrecision(6)}\n` +
       `SL: $${signal.stopLoss} | Invalidation: $${invalidation.toPrecision(6)}\n\n` +
       `${signal.smc ? `SMC: ${signal.smc.structureBias} structure` + (signal.smc.orderBlocks?.length ? ` | ${signal.smc.orderBlocks.length} OB` : '') + (signal.smc.fvgs?.length ? ` | ${signal.smc.fvgs.length} FVG` : '') + '\n' : ''}` +
+      `${this.riskPct > 0 ? `Risk: ${this.riskPct}% of balance\n` : ''}` +
       `<i>Paper mode — trailing SL + DCA active</i>`;
 
     await this.notify(msg);
@@ -217,11 +286,11 @@ class TradeExecutor {
         return null;
       }
 
-      const leverage = signal.suggestedLeverage || this.defaultLeverage;
+      const leverage = this.calcLeverage(signal);
       try { await exchange.setLeverage(leverage, pair); } catch (e) { logger.warn(`Could not set leverage for ${pair}: ${e.message}`); }
       try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
 
-      const positionSize = this.maxPositionSize;
+      const positionSize = await this.calcPositionSize(signal);
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
 
@@ -362,6 +431,7 @@ class TradeExecutor {
             action = 'invalidated';
             await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
+            if (trade.mode === 'paper') this.paperBalance += pnlUsd;
           }
         }
 
