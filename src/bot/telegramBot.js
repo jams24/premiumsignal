@@ -1422,7 +1422,12 @@ class TelegramBot {
   async showSettingsMain(ctx, isNewMessage = false) {
     const t = this.tradeExecutor;
     await t.recalcDailyPnL();
-    const totalPnl = await db.getAllTimePnL(t.pnlResetDate || null).catch(() => 0);
+    const [paperPnl, livePnl, paperToday, liveToday] = await Promise.all([
+      db.getAllTimePnL(t.pnlResetDate || null, 'paper').catch(() => 0),
+      db.getAllTimePnL(t.pnlResetDate || null, 'live').catch(() => 0),
+      db.getTodayPnL('paper').catch(() => 0),
+      db.getTodayPnL('live').catch(() => 0),
+    ]);
     const balance = await t.getBalance();
     const sizeDisplay = t.riskPct > 0
       ? `${t.riskPct}% ($${(balance * t.riskPct / 100).toFixed(2)})`
@@ -1457,8 +1462,8 @@ class TelegramBot {
       `📊 Max Positions: <b>${t.maxConcurrentPositions}</b>\n` +
       `⭐ Min Confidence: <b>${t.minConfidence}/5</b>\n` +
       `🔍 Filter: <b>${filterDisplay}</b>\n` +
-      `📈 Today P&L: <b>${t.dailyPnL >= 0 ? '+' : ''}$${t.dailyPnL.toFixed(2)}</b> (realized)\n` +
-      `📊 Total P&L: <b>${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>\n` +
+      `📈 Today: 📝 <b>${paperToday >= 0 ? '+' : ''}$${paperToday.toFixed(2)}</b> | 💰 <b>${liveToday >= 0 ? '+' : ''}$${liveToday.toFixed(2)}</b>\n` +
+      `📊 Total: 📝 <b>${paperPnl >= 0 ? '+' : ''}$${paperPnl.toFixed(2)}</b> | 💰 <b>${livePnl >= 0 ? '+' : ''}$${livePnl.toFixed(2)}</b>\n` +
       `${t.excludedSymbols?.size ? `🚫 Excluded: <b>${[...t.excludedSymbols].join(', ')}</b>\n` : ''}` +
       `\nTap any button below to configure:`;
 

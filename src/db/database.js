@@ -420,18 +420,21 @@ async function getTradeStats() {
   return rows;
 }
 
-async function getTodayPnL() {
-  const { rows } = await query(
-    `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= CURRENT_DATE`
-  );
+async function getTodayPnL(mode) {
+  const sql = mode
+    ? `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= CURRENT_DATE AND mode = $1`
+    : `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= CURRENT_DATE`;
+  const { rows } = await query(sql, mode ? [mode] : []);
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
 
-async function getAllTimePnL(since) {
-  const sql = since
-    ? `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= $1`
-    : `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed'`;
-  const { rows } = await query(sql, since ? [since] : []);
+async function getAllTimePnL(since, mode) {
+  const conditions = [`status = 'closed'`];
+  const params = [];
+  if (since) { params.push(since); conditions.push(`closed_at >= $${params.length}`); }
+  if (mode) { params.push(mode); conditions.push(`mode = $${params.length}`); }
+  const sql = `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE ${conditions.join(' AND ')}`;
+  const { rows } = await query(sql, params);
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
 
