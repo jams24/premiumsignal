@@ -215,6 +215,29 @@ class TechnicalScanner {
 
       if (score < 40) return null;
 
+      // 4H trend filter: reject counter-trend entries
+      try {
+        const ohlcv4h = await exchange.fetchOHLCV(symbol, '4h', undefined, 30);
+        if (ohlcv4h.length >= 25) {
+          const closes4h = ohlcv4h.map(c => c[4]);
+          const ema20_4h = EMA.calculate({ values: closes4h, period: 20 });
+          const currentEma4h = ema20_4h[ema20_4h.length - 1];
+          const price4h = closes4h[closes4h.length - 1];
+          if (direction === 'long' && price4h < currentEma4h) {
+            score -= 15;
+            signals.push('4H below EMA20 (counter-trend)');
+          } else if (direction === 'short' && price4h > currentEma4h) {
+            score -= 15;
+            signals.push('4H above EMA20 (counter-trend)');
+          } else {
+            score += 10;
+            signals.push('4H trend aligned');
+          }
+        }
+      } catch (e) { /* 4H data unavailable, skip filter */ }
+
+      if (score < 40) return null;
+
       // Require bearish candle confirmation for shorts
       if (direction === 'short') {
         const lastOpen = ohlcv[ohlcv.length - 1][1];

@@ -627,32 +627,35 @@ class TradeExecutor {
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
         }
-        // --- TP3 CHECK + TRAILING SL ---
+        // --- TP3 CHECK: close 34% (remaining), trail SL to TP2 ---
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
           action = 'tp3';
           await db.updateTradeHit(trade.id, 'hit_tp3');
+          const partialPnl = await this.partialClosePosition(trade, 0.5, currentPrice);
           const newSL = trade.tp2;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP3 hit, SL trailed to TP2 ($${newSL})`);
+          logger.info(`${trade.symbol}: TP3 hit, closed 50% remaining (+$${partialPnl.toFixed(2)}), SL to TP2`);
         }
-        // --- TP2 CHECK + TRAILING SL ---
+        // --- TP2 CHECK: close 33% of original, trail SL to TP1 ---
         else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
           action = 'tp2';
           await db.updateTradeHit(trade.id, 'hit_tp2');
+          const partialPnl = await this.partialClosePosition(trade, 0.5, currentPrice);
           const newSL = trade.tp1;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP2 hit, SL trailed to TP1 ($${newSL})`);
+          logger.info(`${trade.symbol}: TP2 hit, closed 50% (+$${partialPnl.toFixed(2)}), SL to TP1`);
         }
-        // --- TP1 CHECK + TRAILING SL TO BREAKEVEN ---
+        // --- TP1 CHECK: close 33% of position, trail SL to breakeven ---
         else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
+          const partialPnl = await this.partialClosePosition(trade, 0.33, currentPrice);
           const newSL = trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP1 hit, SL moved to breakeven ($${newSL})`);
+          logger.info(`${trade.symbol}: TP1 hit, closed 33% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
         }
         // --- PROFIT PROTECTION: trail SL to breakeven if up >5% before TP1 ---
         if (!action && !trade.hit_tp1 && pnlPct > 5) {
@@ -760,6 +763,43 @@ class TradeExecutor {
         logger.info(`${trade.symbol}: DCA 3/3 filled at $${trade.dca_price_3}`);
       }
     }
+  }
+
+  async partialClosePosition(trade, fraction) {
+    const closeQty = trade.quantity * fraction;
+    const remainQty = trade.quantity - closeQty;
+    const remainSize = trade.position_size * (1 - fraction);
+    const isLong = trade.direction === 'long';
+    const pnlPct = isLong
+      ? ((trade.stop_loss - trade.entry_price) / trade.entry_price) * 100
+      : ((trade.entry_price - trade.stop_loss) / trade.entry_price) * 100;
+
+    if (trade.mode === 'live') {
+      const exchange = this.exchanges[trade.exchange];
+      if (exchange?.apiKey) {
+        try {
+          const pair = `${trade.symbol}/USDT:USDT`;
+          const side = isLong ? 'sell' : 'buy';
+          const roundedQty = exchange.amountToPrecision(pair, closeQty);
+          await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
+          logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: ${roundedQty}`);
+        } catch (e) { logger.error(`Partial close failed for ${trade.symbol}: ${e.message}`); }
+      }
+    }
+
+    const currentPrice = arguments[2] || trade.entry_price;
+    const partialPnlPct = isLong
+      ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
+      : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
+    const partialPnlUsd = (partialPnlPct / 100) * (trade.position_size * fraction) * trade.leverage;
+
+    await db.updateTradePartialClose(trade.id, remainQty, remainSize, partialPnlUsd);
+    this.dailyPnL += partialPnlUsd;
+    if (trade.mode === 'paper') this.paperBalance += (trade.position_size * fraction) + partialPnlUsd;
+
+    trade.quantity = remainQty;
+    trade.position_size = remainSize;
+    return partialPnlUsd;
   }
 
   async closeExchangePosition(trade) {
@@ -889,13 +929,13 @@ class TradeExecutor {
     const pnlSign = pnlUsd >= 0 ? '+' : '';
 
     if (action === 'tp1') {
-      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n🔒 <b>SL moved to breakeven ($${trade.entry_price})</b>\n🎯 Running for TP2/TP3/TP4.`;
+      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 <b>Closed 33% — profit locked</b>\n🔒 SL moved to breakeven ($${trade.entry_price})\n🎯 67% running for TP2/TP3/TP4.`;
     }
     if (action === 'tp2') {
-      return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 <b>SL trailed to TP1 ($${trade.tp1})</b>\n🚀 Riding to TP3/TP4...`;
+      return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed another 50% — more profit locked</b>\n🔒 SL trailed to TP1 ($${trade.tp1})\n🚀 34% riding to TP3/TP4...`;
     }
     if (action === 'tp3') {
-      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 <b>SL trailed to TP2 ($${trade.tp2})</b>\n🚀 Extended target TP4 active...`;
+      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed 50% remaining</b>\n🔒 SL trailed to TP2 ($${trade.tp2})\n🚀 17% riding to TP4...`;
     }
     if (action === 'tp4') {
       return `${modeTag} 🏆 <b>TP4 FULL TARGET!</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 Extended target hit. Maximum profit captured.`;

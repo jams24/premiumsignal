@@ -240,8 +240,8 @@ async function main() {
     }
   });
 
-  // Check open trades for TP/SL hits every 2 minutes
-  cron.schedule('*/2 * * * *', async () => {
+  // Check open trades for TP/SL hits every minute (tighter loss cap enforcement)
+  cron.schedule('* * * * *', async () => {
     try {
       await tradeExecutor.checkOpenTrades();
     } catch (err) {

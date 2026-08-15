@@ -208,6 +208,7 @@ async function init(retries = 3) {
     ['dca_price_3', 'DOUBLE PRECISION'],
     ['dca_filled_2', 'BOOLEAN DEFAULT FALSE'],
     ['dca_filled_3', 'BOOLEAN DEFAULT FALSE'],
+    ['realized_pnl', 'DOUBLE PRECISION DEFAULT 0'],
   ];
   for (const [col, type] of newCols) {
     try { await p.query(`ALTER TABLE trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
@@ -392,6 +393,13 @@ async function updateTradeStopLoss(id, newSL) {
   await query('UPDATE trades SET stop_loss = $1 WHERE id = $2', [newSL, id]);
 }
 
+async function updateTradePartialClose(id, newQty, newPositionSize, realizedPnl) {
+  await query(
+    'UPDATE trades SET quantity = $1, position_size = $2, realized_pnl = COALESCE(realized_pnl, 0) + $3 WHERE id = $4',
+    [newQty, newPositionSize, realizedPnl, id]
+  );
+}
+
 async function updateTradeDCA(id, stage, newEntryPrice, newQty) {
   await query(
     `UPDATE trades SET dca_filled_${stage} = TRUE, entry_price = $1, quantity = $2, dca_stage = $3 WHERE id = $4`,
@@ -452,4 +460,4 @@ async function loadSettings() {
   return rows.length ? rows[0].config : null;
 }
 
-module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL };
+module.exports = { init, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL };
