@@ -198,7 +198,7 @@ class TradeExecutor {
           }
         } else {
           logger.warn(`${pair}: setLeverage error (non-leverage): ${msg}`);
-          return desiredLeverage;
+          return 1;
         }
       }
     }
@@ -654,6 +654,17 @@ class TradeExecutor {
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP1 hit, SL moved to breakeven ($${newSL})`);
         }
+        // --- PROFIT PROTECTION: trail SL to breakeven if up >5% before TP1 ---
+        if (!action && !trade.hit_tp1 && pnlPct > 5) {
+          const currentSL = trade.stop_loss;
+          if (isLong ? currentSL < trade.entry_price : currentSL > trade.entry_price) {
+            const newSL = trade.entry_price;
+            await db.updateTradeStopLoss(trade.id, newSL);
+            await this.updateExchangeSL(trade, newSL);
+            action = 'profit_protect';
+            logger.info(`${trade.symbol}: +${pnlPct.toFixed(1)}% — SL moved to breakeven for profit protection`);
+          }
+        }
         // --- PER-TRADE LOSS CAP ---
         if (!action && this.maxLossPerTrade > 0 && pnlUsd < 0 && Math.abs(pnlUsd) >= this.maxLossPerTrade) {
           action = 'max_loss';
@@ -902,6 +913,9 @@ class TradeExecutor {
     }
     if (action === 'expired') {
       return `${modeTag} ⏰ <b>EXPIRED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\nAuto-closed after 48 hours.`;
+    }
+    if (action === 'profit_protect') {
+      return `${modeTag} 🛡️ <b>PROFIT PROTECTED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 <b>SL moved to breakeven ($${trade.entry_price})</b>\nUp ${pnlPct.toFixed(1)}% — protecting gains before TP1.`;
     }
     return '';
   }
