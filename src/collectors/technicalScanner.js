@@ -246,9 +246,9 @@ class TechnicalScanner {
         signals.push('Bearish candle confirmed');
       }
 
-      // Suppress signals during low-liquidity hours (04:00-08:00 UTC)
+      // Suppress signals during low-liquidity hours (04:00-06:00 UTC)
       const currentHourUTC = new Date().getUTCHours();
-      if (currentHourUTC >= 4 && currentHourUTC <= 7) return null;
+      if (currentHourUTC >= 4 && currentHourUTC <= 5) return null;
 
       // Calculate TP/SL using ATR
       const atrValue = currentATR || currentPrice * 0.02;
