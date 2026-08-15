@@ -433,6 +433,15 @@ class TradeExecutor {
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
 
+      // Stale entry check: reject if price moved >2% from signal price
+      const drift = Math.abs(entryPrice - signal.currentPrice) / signal.currentPrice * 100;
+      if (drift > 2) {
+        const msg = `⚠️ <b>TRADE SKIPPED</b> $${signal.symbol}\n\nPrice drifted ${drift.toFixed(1)}% from signal ($${signal.currentPrice} → $${entryPrice}).\nEntry too late — skipping.`;
+        await this.notify(msg);
+        logger.info(`${pair}: price drifted ${drift.toFixed(1)}% from signal, skipping`);
+        return null;
+      }
+
       // DCA: only enter 1/3 of position at market
       const fullQty = positionSize / entryPrice;
       let dcaQty1 = fullQty / 3;

@@ -19,7 +19,7 @@ class TechnicalScanner {
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const sorted = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 500000)
+          .filter(([, t]) => t.quoteVolume > 1500000)
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
           .slice(0, 100);
 
@@ -223,9 +223,9 @@ class TechnicalScanner {
         signals.push('Bearish candle confirmed');
       }
 
-      // Suppress signals during low-liquidity hours (06:00 and 15:00 UTC)
+      // Suppress signals during low-liquidity hours (04:00-08:00 UTC)
       const currentHourUTC = new Date().getUTCHours();
-      if (currentHourUTC === 6 || currentHourUTC === 15) return null;
+      if (currentHourUTC >= 4 && currentHourUTC <= 7) return null;
 
       // Calculate TP/SL using ATR
       const atrValue = currentATR || currentPrice * 0.02;
@@ -233,10 +233,10 @@ class TechnicalScanner {
 
       const entryLow = isLong ? currentPrice * 0.995 : currentPrice * 1.005;
       const entryHigh = isLong ? currentPrice * 1.005 : currentPrice * 0.995;
-      const tp1 = isLong ? currentPrice + atrValue * 2 : currentPrice - atrValue * 2;
-      const tp2 = isLong ? currentPrice + atrValue * 4 : currentPrice - atrValue * 4;
-      const tp3 = isLong ? currentPrice + atrValue * 6 : currentPrice - atrValue * 6;
-      const stopLoss = isLong ? currentPrice - atrValue * 3.5 : currentPrice + atrValue * 3.5;
+      const tp1 = isLong ? currentPrice + atrValue * 2.5 : currentPrice - atrValue * 2.5;
+      const tp2 = isLong ? currentPrice + atrValue * 4.5 : currentPrice - atrValue * 4.5;
+      const tp3 = isLong ? currentPrice + atrValue * 7 : currentPrice - atrValue * 7;
+      const stopLoss = isLong ? currentPrice - atrValue * 3 : currentPrice + atrValue * 3;
 
       return {
         symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),
