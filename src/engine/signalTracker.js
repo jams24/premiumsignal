@@ -86,20 +86,21 @@ class SignalTracker {
       ? ((update.price - s.current_price) / s.current_price * 100).toFixed(2)
       : ((s.current_price - update.price) / s.current_price * 100).toFixed(2);
 
+    const tag = `📡 <i>Signal tracker — not a live trade</i>`;
     if (update.hit === 'tp1') {
-      return `✅ <b>TP1 HIT!</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP1: $${s.tp1}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n🔒 SL moved to breakeven\n🎯 Running for TP2 & TP3.`;
+      return `📡 <b>SIGNAL TP1 HIT</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP1: $${s.tp1}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n${tag}`;
     }
     if (update.hit === 'tp2') {
-      return `✅✅ <b>TP2 HIT!</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP2: $${s.tp2}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n🚀 Riding to TP3...`;
+      return `📡📡 <b>SIGNAL TP2 HIT</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP2: $${s.tp2}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n${tag}`;
     }
     if (update.hit === 'tp3') {
-      return `🏆 <b>TP3 HIT — FULL TARGET!</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP3: $${s.tp3}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n💰 Signal closed. Maximum extraction achieved.`;
+      return `📡🏆 <b>SIGNAL TP3 — FULL TARGET</b> $${s.symbol}\n\nEntry: $${s.current_price}\nTP3: $${s.tp3}\nCurrent: $${update.price}\nPnL: <b>+${pnl}%</b>\n\n${tag}`;
     }
     if (update.hit === 'sl') {
-      return `🔴 <b>STOP LOSS HIT</b> $${s.symbol}\n\nEntry: $${s.current_price}\nSL: $${s.stop_loss}\nCurrent: $${update.price}\nPnL: <b>${pnl}%</b>\n\nSignal closed. Risk managed.`;
+      return `📡🔴 <b>SIGNAL SL HIT</b> $${s.symbol}\n\nEntry: $${s.current_price}\nSL: $${s.stop_loss}\nCurrent: $${update.price}\nPnL: <b>${pnl}%</b>\n\n${tag}`;
     }
     if (update.hit === 'expired') {
-      return `⏰ <b>SIGNAL EXPIRED</b> $${s.symbol}\n\nEntry: $${s.current_price}\nCurrent: $${update.price}\nPnL: <b>${pnl > 0 ? '+' : ''}${pnl}%</b>\n\nAuto-closed after 48 hours.`;
+      return `📡⏰ <b>SIGNAL EXPIRED</b> $${s.symbol}\n\nEntry: $${s.current_price}\nCurrent: $${update.price}\nPnL: <b>${pnl > 0 ? '+' : ''}${pnl}%</b>\n\n${tag}`;
     }
     return '';
   }
