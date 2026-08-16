@@ -48,10 +48,11 @@ class TradeExecutor {
   }
 
   resetDailyPnL() {
-    const today = new Date().toDateString();
+    const today = new Date().toISOString().slice(0, 10);
     if (this.dailyPnLResetDate !== today) {
       this.dailyPnL = 0;
       this.dailyPnLResetDate = today;
+      logger.info(`Daily PnL reset for ${today}`);
     }
   }
 
@@ -59,7 +60,7 @@ class TradeExecutor {
     try {
       const result = await db.getTodayPnL();
       this.dailyPnL = result || 0;
-      this.dailyPnLResetDate = new Date().toDateString();
+      this.dailyPnLResetDate = new Date().toISOString().slice(0, 10);
     } catch (e) { logger.warn(`Failed to recalc daily PnL: ${e.message}`); }
   }
 
@@ -335,6 +336,14 @@ class TradeExecutor {
     const check = await this.canTrade(signal);
     if (!check.ok) {
       logger.info(`Trade skipped for ${signal.symbol}: ${check.reason}`);
+      if (check.reason.includes('Daily loss limit')) {
+        await this.notify(
+          `🛑 <b>DAILY LOSS LIMIT</b>\n\n` +
+          `Trade skipped: <b>$${signal.symbol}</b> (${signal.direction})\n` +
+          `Today's P&L: <b>$${this.dailyPnL.toFixed(2)}</b> / -$${this.maxDailyLoss}\n\n` +
+          `<i>Trading paused until daily reset (midnight UTC).</i>`
+        );
+      }
       return null;
     }
 
@@ -470,11 +479,23 @@ class TradeExecutor {
 
       logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (1/3 DCA)`);
 
-      // Place SL order on full expected position
+      // Place SL order — use max_loss cap price if tighter than signal SL
       const closeSide = signal.direction === 'long' ? 'sell' : 'buy';
+      const entryForSL = parseFloat(order.average || order.price || entryPrice);
+      let effectiveSL = signal.stopLoss;
+      if (this.maxLossPerTrade > 0) {
+        const maxLossPct = (this.maxLossPerTrade / (positionSize * desiredLeverage)) * 100;
+        const capSL = signal.direction === 'long'
+          ? entryForSL * (1 - maxLossPct / 100)
+          : entryForSL * (1 + maxLossPct / 100);
+        if (signal.direction === 'long' ? capSL > effectiveSL : capSL < effectiveSL) {
+          effectiveSL = capSL;
+          logger.info(`${pair}: SL tightened to max_loss cap price $${capSL.toPrecision(6)}`);
+        }
+      }
       try {
         await exchange.createOrder(pair, 'stop_market', closeSide, roundedQty, undefined, {
-          stopPrice: exchange.priceToPrecision(pair, signal.stopLoss),
+          stopPrice: exchange.priceToPrecision(pair, effectiveSL),
           reduceOnly: true,
         });
       } catch (e) { logger.warn(`SL order failed for ${pair}: ${e.message}`); }
