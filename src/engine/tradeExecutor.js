@@ -198,8 +198,16 @@ class TradeExecutor {
             }
           }
         } else {
-          logger.warn(`${pair}: setLeverage error (non-leverage): ${msg}`);
-          return 1;
+          // Retry once after setting margin mode (Bybit needs cross mode before leverage)
+          try {
+            await exchange.setMarginMode('cross', pair);
+            await exchange.setLeverage(lev, pair);
+            logger.info(`${pair}: leverage ${lev}x set after margin mode retry`);
+            return lev;
+          } catch (e2) {
+            logger.warn(`${pair}: setLeverage error (non-leverage): ${msg} | retry: ${e2.message}`);
+            return 1;
+          }
         }
       }
     }
@@ -434,9 +442,9 @@ class TradeExecutor {
         return null;
       }
 
+      try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
       const desiredLeverage = this.calcLeverage(signal);
       const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
-      try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
 
       const positionSize = await this.calcPositionSize(signal);
       const ticker = await exchange.fetchTicker(pair);
