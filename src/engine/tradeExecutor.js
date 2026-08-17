@@ -970,6 +970,8 @@ class TradeExecutor {
     if (exchangeId === 'bybit') {
       params.triggerPrice = stopPrice;
       params.triggerBy = 'LastPrice';
+      // triggerDirection: 1 = rising (buy stop), 2 = falling (sell stop)
+      params.triggerDirection = side === 'sell' ? 2 : 1;
       return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     if (exchangeId === 'binance') {
@@ -1071,7 +1073,7 @@ class TradeExecutor {
     }
     if (action === 'sl') {
       const wasTrailed = trade.original_stop_loss && trade.stop_loss !== trade.original_stop_loss;
-      const slNote = wasTrailed ? `\n🔒 SL was trailed from $${trade.original_stop_loss} to $${trade.stop_loss}` : '';
+      const slNote = wasTrailed ? `\n🔒 SL was trailed from $${parseFloat(trade.original_stop_loss).toPrecision(6)} to $${parseFloat(trade.stop_loss).toPrecision(6)}` : '';
       return `${modeTag} 🔴 <b>STOP LOSS</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}${slNote}\n\nTrade closed. Risk managed.`;
     }
     if (action === 'invalidated') {
