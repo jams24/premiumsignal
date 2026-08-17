@@ -748,15 +748,37 @@ class TradeExecutor {
           }
         }
 
-        // --- PROFIT PROTECTION: trail SL to breakeven if up >5% before TP1 ---
+        // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
         if (!action && !trade.hit_tp1 && pnlPct > 5) {
           const currentSL = trade.stop_loss;
-          if (isLong ? currentSL < trade.entry_price : currentSL > trade.entry_price) {
+          const atBreakeven = isLong ? currentSL >= trade.entry_price : currentSL <= trade.entry_price;
+          if (!atBreakeven) {
+            // First trigger: move SL to breakeven
             const newSL = trade.entry_price;
             await db.updateTradeStopLoss(trade.id, newSL);
             await this.updateExchangeSL(trade, newSL);
             action = 'profit_protect';
             logger.info(`${trade.symbol}: +${pnlPct.toFixed(1)}% — SL moved to breakeven for profit protection`);
+          } else if (trade.atr) {
+            // Already at breakeven — trail SL upward at 2x ATR below peak
+            const trailDist = trade.atr * 2;
+            const peak = trade.peak_price || trade.entry_price;
+            const newPeak = isLong ? Math.max(peak, currentPrice) : Math.min(peak, currentPrice);
+            if (newPeak !== peak) {
+              await db.updateTradePeakPrice(trade.id, newPeak);
+              trade.peak_price = newPeak;
+            }
+            const trailSL = isLong ? newPeak - trailDist : newPeak + trailDist;
+            // Only move SL up (never down), and only if above breakeven
+            const aboveBreakeven = isLong ? trailSL > trade.entry_price : trailSL < trade.entry_price;
+            const shouldUpdate = isLong ? trailSL > currentSL : trailSL < currentSL;
+            if (shouldUpdate && aboveBreakeven) {
+              await db.updateTradeStopLoss(trade.id, trailSL);
+              await this.updateExchangeSL(trade, trailSL);
+              trade.stop_loss = trailSL;
+              action = 'trail';
+              logger.info(`${trade.symbol}: pre-TP1 trail SL → $${trailSL.toPrecision(6)} (peak $${newPeak.toPrecision(6)})`);
+            }
           }
         }
         // --- PER-TRADE LOSS CAP ---
