@@ -171,10 +171,10 @@ class TechnicalScanner {
 
       // Pullback filter: for longs, reject if price is too far above EMA20 (chasing)
       const distFromEma20 = ((currentPrice - currentEma20) / currentEma20) * 100;
-      if (direction === 'long' && distFromEma20 > 8) {
+      if (direction === 'long' && distFromEma20 > 5) {
         return null;
       }
-      if (direction === 'long' && distFromEma20 > 4) {
+      if (direction === 'long' && distFromEma20 > 3) {
         score -= 10;
         signals.push(`Extended ${distFromEma20.toFixed(1)}% above EMA20`);
       }

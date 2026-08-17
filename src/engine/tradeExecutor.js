@@ -394,6 +394,7 @@ class TradeExecutor {
       stopLoss: signal.stopLoss,
       originalStopLoss: signal.stopLoss,
       invalidation,
+      atr: signal.atr || null,
       dcaQty2,
       dcaQty3,
       dcaPrice2,
@@ -558,6 +559,7 @@ class TradeExecutor {
         stopLoss: signal.stopLoss,
         originalStopLoss: signal.stopLoss,
         invalidation,
+        atr: signal.atr || null,
         dcaQty2: usedFullEntry ? 0 : parseFloat(dcaQty2Rounded),
         dcaQty3: usedFullEntry ? 0 : parseFloat(dcaQty3Rounded),
         dcaPrice2: usedFullEntry ? null : dcaPrice2,
@@ -688,6 +690,31 @@ class TradeExecutor {
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP1 hit, closed 33% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
         }
+        // --- TRAILING STOP: after TP1, trail SL at 1.5x ATR below peak price ---
+        if (!action && trade.hit_tp1 && trade.atr) {
+          const trailDist = trade.atr * 1.5;
+          const peak = trade.peak_price || trade.entry_price;
+          const newPeak = isLong
+            ? Math.max(peak, currentPrice)
+            : Math.min(peak, currentPrice);
+
+          if (newPeak !== peak) {
+            await db.updateTradePeakPrice(trade.id, newPeak);
+            trade.peak_price = newPeak;
+          }
+
+          const trailSL = isLong ? newPeak - trailDist : newPeak + trailDist;
+          const currentSL = trade.stop_loss;
+          const shouldUpdate = isLong ? trailSL > currentSL : trailSL < currentSL;
+          if (shouldUpdate) {
+            await db.updateTradeStopLoss(trade.id, trailSL);
+            await this.updateExchangeSL(trade, trailSL);
+            trade.stop_loss = trailSL;
+            action = 'trail';
+            logger.info(`${trade.symbol}: trailing SL → $${trailSL.toPrecision(6)} (peak $${newPeak.toPrecision(6)}, ATR trail ${trailDist.toPrecision(4)})`);
+          }
+        }
+
         // --- PROFIT PROTECTION: trail SL to breakeven if up >5% before TP1 ---
         if (!action && !trade.hit_tp1 && pnlPct > 5) {
           const currentSL = trade.stop_loss;
@@ -987,6 +1014,9 @@ class TradeExecutor {
     }
     if (action === 'profit_protect') {
       return `${modeTag} 🛡️ <b>PROFIT PROTECTED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 <b>SL moved to breakeven ($${trade.entry_price})</b>\nUp ${pnlPct.toFixed(1)}% — protecting gains before TP1.`;
+    }
+    if (action === 'trail') {
+      return `${modeTag} 📈 <b>TRAILING SL</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n🔒 SL trailed to <b>$${trade.stop_loss.toPrecision(6)}</b>\nPeak: $${(trade.peak_price || currentPrice).toPrecision(6)}`;
     }
     return '';
   }
