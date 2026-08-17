@@ -760,8 +760,9 @@ class TradeExecutor {
             action = 'profit_protect';
             logger.info(`${trade.symbol}: +${pnlPct.toFixed(1)}% — SL moved to breakeven for profit protection`);
           } else if (trade.atr) {
-            // Already at breakeven — trail SL upward at 2x ATR below peak
-            const trailDist = trade.atr * 2;
+            // Already at breakeven — trail SL using min of 2x ATR or 50% of profit from entry
+            const profitDist = Math.abs((trade.peak_price || currentPrice) - trade.entry_price);
+            const trailDist = Math.min(trade.atr * 2, profitDist * 0.5 || trade.atr * 2);
             const peak = trade.peak_price || trade.entry_price;
             const newPeak = isLong ? Math.max(peak, currentPrice) : Math.min(peak, currentPrice);
             if (newPeak !== peak) {
