@@ -15,7 +15,7 @@ class TradeExecutor {
     this.defaultLeverage = config.defaultLeverage || 5;
     this.enabled = config.enabled !== false;
     this.dailyPnL = 0;
-    this.dailyPnLResetDate = new Date().toDateString();
+    this.dailyPnLResetDate = new Date().toISOString().slice(0, 10);
     this.callbacks = [];
 
     // Risk-based sizing: 0 = disabled (use fixed maxPositionSize), >0 = % of balance per trade
@@ -598,6 +598,7 @@ class TradeExecutor {
   }
 
   async checkOpenTrades() {
+    this.resetDailyPnL();
     const trades = await db.getOpenTrades();
     const updates = [];
 
