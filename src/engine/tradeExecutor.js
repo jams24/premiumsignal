@@ -749,7 +749,9 @@ class TradeExecutor {
         }
 
         // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
-        if (!action && !trade.hit_tp1 && pnlPct > 5) {
+        // Trigger at 5% price move OR 25% leveraged ROI (whichever comes first)
+        const leveragedPnl = pnlPct * (trade.leverage || 1);
+        if (!action && !trade.hit_tp1 && (pnlPct > 5 || leveragedPnl > 25)) {
           const currentSL = trade.stop_loss;
           const atBreakeven = isLong ? currentSL >= trade.entry_price : currentSL <= trade.entry_price;
           if (!atBreakeven) {
