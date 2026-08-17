@@ -1465,7 +1465,8 @@ class TelegramBot {
       `📈 Today: 📝 <b>${paperToday >= 0 ? '+' : ''}$${paperToday.toFixed(2)}</b> | 💰 <b>${liveToday >= 0 ? '+' : ''}$${liveToday.toFixed(2)}</b>\n` +
       `📊 Total: 📝 <b>${paperPnl >= 0 ? '+' : ''}$${paperPnl.toFixed(2)}</b> | 💰 <b>${livePnl >= 0 ? '+' : ''}$${livePnl.toFixed(2)}</b>\n` +
       `${t.excludedSymbols?.size ? `🚫 Excluded: <b>${[...t.excludedSymbols].join(', ')}</b>\n` : ''}` +
-      `\nTap any button below to configure:`;
+      `\n${this.getRiskAdvisory(t, totalFree)}\n` +
+      `Tap any button below to configure:`;
 
     const openTrades = await db.getOpenTrades().catch(() => []);
 
@@ -1492,6 +1493,63 @@ class TelegramBot {
     } else {
       await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
     }
+  }
+
+  getRiskAdvisory(t, balance) {
+    const tips = [];
+    const size = t.maxPositionSize;
+    const lev = t.defaultLeverage;
+    const cap = t.maxLossPerTrade;
+    const notional = size * lev;
+
+    // Check if max loss cap is set
+    if (!cap || cap <= 0) {
+      tips.push('⚠️ No per-trade loss cap — set one to protect against big drops');
+    }
+
+    // Check reward:risk ratio — TP1 partial (33%) vs max loss
+    if (cap > 0) {
+      const typicalTP1Pct = 7;
+      const tp1Profit = (typicalTP1Pct / 100) * (size * 0.33) * lev;
+      const ratio = tp1Profit / cap;
+      if (ratio < 0.5) {
+        tips.push(`📐 Low R:R — TP1 earns ~$${tp1Profit.toFixed(2)} vs $${cap} risk (${ratio.toFixed(1)}:1). Increase leverage or size`);
+      }
+      // Check if cap is too tight for leverage
+      const roomPct = (cap / (size * lev)) * 100;
+      if (roomPct < 1.5) {
+        tips.push(`🔒 Loss cap too tight — only ${roomPct.toFixed(1)}% room, most trades will hit it. Increase cap or reduce size`);
+      }
+    }
+
+    // Check if leverage is too low for the size
+    if (lev < 10 && size <= 15) {
+      tips.push(`⚡ Low leverage (${lev}x) with small size ($${size}) — wins too small to cover losses. Try 10x`);
+    }
+
+    // Check balance vs position size
+    if (balance > 0) {
+      const marginNeeded = size / lev;
+      const maxPositions = t.maxConcurrentPositions;
+      const totalMargin = marginNeeded * maxPositions;
+      if (totalMargin > balance * 0.9) {
+        tips.push(`💰 Tight balance — ${maxPositions} positions need ~$${totalMargin.toFixed(0)} margin, you have $${balance.toFixed(0)}`);
+      }
+      // Risk per trade vs balance
+      if (cap > 0 && cap > balance * 0.1) {
+        tips.push(`🎯 Risk per trade ($${cap}) is ${(cap / balance * 100).toFixed(0)}% of balance — keep under 5-10%`);
+      }
+    }
+
+    // Check daily loss vs balance
+    if (balance > 0 && t.maxDailyLoss > balance * 0.3) {
+      tips.push(`🛡️ Daily loss limit ($${t.maxDailyLoss}) is ${(t.maxDailyLoss / balance * 100).toFixed(0)}% of balance — consider lowering`);
+    }
+
+    if (tips.length === 0) {
+      return '✅ <i>Risk settings look good</i>\n';
+    }
+    return `💡 <b>Risk Notes:</b>\n${tips.map(t => `  ${t}`).join('\n')}\n`;
   }
 
   // Render the signal filter panel

@@ -281,8 +281,8 @@ class TradeExecutor {
     const price = signal.currentPrice;
     const atr = signal.atr || Math.abs(signal.stopLoss - price);
     const isLong = signal.direction === 'long';
-    // Invalidation = ATR * 4 beyond entry (wider than SL, structure-level break)
-    return isLong ? price - atr * 1.3 : price + atr * 1.3;
+    // Invalidation = same as SL level (3x ATR); checked only after first 4H candle closes
+    return isLong ? price - atr * 3 : price + atr * 3;
   }
 
   // Calculate DCA levels: 3-part scaling
@@ -634,7 +634,9 @@ class TradeExecutor {
         let action = null;
 
         // --- INVALIDATION CHECK: 4H candle close below invalidation level ---
-        if (trade.invalidation && ohlcv && ohlcv.length >= 2) {
+        // Skip if trade opened less than 4h ago (previous candle is pre-breakout)
+        const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
+        if (trade.invalidation && ohlcv && ohlcv.length >= 2 && tradeAgeMs > 4 * 60 * 60 * 1000) {
           const prevCandle = ohlcv[ohlcv.length - 2];
           const prevClose = prevCandle[4];
           const invalidated = isLong

@@ -129,11 +129,12 @@ class TechnicalScanner {
       if (currentEma20 > currentEma50) { score += 10; signals.push('EMA20>EMA50'); }
       else { score += 5; signals.push('EMA20<EMA50'); }
 
-      // RSI — block 90+ (82% SL rate), sweet spot is 70-80
+      // RSI — block 80+ for longs (19% win rate), sweet spot is 50-70
       if (currentRSI > 90) { return null; }
-      if (currentRSI > 70) { score += currentRSI <= 80 ? 15 : 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
+      if (currentRSI > 80) { score += 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
+      else if (currentRSI > 70) { score += 15; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
       else if (currentRSI < 30) { score += 15; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
-      else if (currentRSI > 50 && currentRSI < 70) { score += 5; signals.push(`RSI bullish ${currentRSI.toFixed(0)}`); }
+      else if (currentRSI > 50 && currentRSI < 70) { score += 10; signals.push(`RSI bullish ${currentRSI.toFixed(0)}`); }
 
       // Bollinger Band breakout
       if (currentBB && currentPrice > currentBB.upper) { score += 15; signals.push('BB upper breakout'); }
@@ -146,8 +147,9 @@ class TechnicalScanner {
         score += 10; direction = 'short'; signals.push('MACD bearish cross');
       }
 
-      // Volume spike
-      if (volumeRatio > 3) { score += 20; signals.push(`Volume ${volumeRatio.toFixed(1)}x avg`); }
+      // Volume spike — confirms interest but high spikes mean move already happened
+      if (volumeRatio > 5) { score += 5; signals.push(`Volume ${volumeRatio.toFixed(1)}x avg (spike)`); }
+      else if (volumeRatio > 3) { score += 10; signals.push(`Volume ${volumeRatio.toFixed(1)}x avg`); }
       else if (volumeRatio > 2) { score += 10; signals.push(`Volume ${volumeRatio.toFixed(1)}x avg`); }
 
       // Price change momentum
@@ -159,12 +161,22 @@ class TechnicalScanner {
       const recentLow = Math.min(...recentCloses);
       const recentHigh = Math.max(...recentCloses);
       const recentMove = ((recentHigh - recentLow) / recentLow) * 100;
-      if (recentMove > 40) {
+      if (recentMove > 30) {
         return null;
       }
-      if (recentMove > 25) {
+      if (recentMove > 15) {
         score -= 15;
         signals.push(`Overextended ${recentMove.toFixed(0)}% in 6 candles`);
+      }
+
+      // Pullback filter: for longs, reject if price is too far above EMA20 (chasing)
+      const distFromEma20 = ((currentPrice - currentEma20) / currentEma20) * 100;
+      if (direction === 'long' && distFromEma20 > 8) {
+        return null;
+      }
+      if (direction === 'long' && distFromEma20 > 4) {
+        score -= 10;
+        signals.push(`Extended ${distFromEma20.toFixed(1)}% above EMA20`);
       }
 
       // SMC Analysis
@@ -197,11 +209,10 @@ class TechnicalScanner {
           signals.push('SMC confirms direction');
         }
 
-        // Penalize if SMC structure still conflicts with direction after overrides
+        // Hard block if SMC structure conflicts with direction (0% historical win rate)
         if ((smcResult.structureBias === 'bullish' && direction === 'short') ||
             (smcResult.structureBias === 'bearish' && direction === 'long')) {
-          score -= 20;
-          signals.push('SMC conflicts with direction');
+          return null;
         }
 
         smcData = {
