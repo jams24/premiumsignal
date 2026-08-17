@@ -88,7 +88,7 @@ class TradeExecutor {
     const cooldownUntil = this.cooldowns.get(signal.symbol?.toUpperCase());
     if (cooldownUntil && Date.now() < cooldownUntil) {
       const minsLeft = Math.ceil((cooldownUntil - Date.now()) / 60000);
-      return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining after invalidation)` };
+      return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
     }
 
     const openPositions = await db.getOpenTrades();
@@ -692,6 +692,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp4');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
         }
         // --- TP3 CHECK: close 34% (remaining), trail SL to TP2 ---
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
@@ -808,6 +809,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
         }
 
         if (action) {
@@ -1014,6 +1016,7 @@ class TradeExecutor {
     if (trade.mode === 'paper') { this.paperBalance += (trade.position_size || 0) + pnlUsd; this.saveConfig(); }
     this.dailyPnL += pnlUsd;
     await db.closeTrade(trade.id, currentPrice || trade.entry_price, pnlPct, pnlUsd, 'manual_close');
+    this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
 
     return { trade, currentPrice, pnlPct, pnlUsd };
   }
