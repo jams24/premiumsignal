@@ -250,6 +250,26 @@ class TechnicalScanner {
           }
         }
 
+        // Extended move filter: penalize entries after price already ran hard from recent base
+        if (smcResult.swingHighs && smcResult.swingLows) {
+          if (direction === 'long' && smcResult.swingLows.length > 0) {
+            const recentLow = Math.max(...smcResult.swingLows.slice(-3).map(sl => sl.price));
+            const moveFromBase = ((currentPrice - recentLow) / recentLow) * 100;
+            if (moveFromBase > 15) {
+              score -= 20;
+              signals.push(`Extended move +${moveFromBase.toFixed(1)}% from base — chasing`);
+            }
+          }
+          if (direction === 'short' && smcResult.swingHighs.length > 0) {
+            const recentHigh = Math.min(...smcResult.swingHighs.slice(-3).map(sh => sh.price));
+            const moveFromTop = ((recentHigh - currentPrice) / recentHigh) * 100;
+            if (moveFromTop > 15) {
+              score -= 20;
+              signals.push(`Extended move -${moveFromTop.toFixed(1)}% from top — chasing`);
+            }
+          }
+        }
+
         smcData = {
           structureBias: smcResult.structureBias,
           orderBlocks: smcResult.orderBlocks,
