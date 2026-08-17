@@ -493,7 +493,7 @@ class TradeExecutor {
       const entryForSL = parseFloat(order.average || order.price || entryPrice);
       let effectiveSL = signal.stopLoss;
       if (this.maxLossPerTrade > 0) {
-        const maxLossPct = (this.maxLossPerTrade / (positionSize * desiredLeverage)) * 100;
+        const maxLossPct = (this.maxLossPerTrade / positionSize) * 100;
         const capSL = signal.direction === 'long'
           ? entryForSL * (1 - maxLossPct / 100)
           : entryForSL * (1 + maxLossPct / 100);
@@ -630,7 +630,7 @@ class TradeExecutor {
         const pnlPct = isLong
           ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
           : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
-        const pnlUsd = (pnlPct / 100) * trade.position_size * trade.leverage;
+        const pnlUsd = (pnlPct / 100) * trade.position_size;
 
         let action = null;
 
@@ -905,7 +905,7 @@ class TradeExecutor {
     const partialPnlPct = isLong
       ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
       : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
-    const partialPnlUsd = (partialPnlPct / 100) * (trade.position_size * fraction) * trade.leverage;
+    const partialPnlUsd = (partialPnlPct / 100) * (trade.position_size * fraction);
 
     await db.updateTradePartialClose(trade.id, remainQty, remainSize, partialPnlUsd);
     this.dailyPnL += partialPnlUsd;
@@ -1004,7 +1004,7 @@ class TradeExecutor {
     const pnlPct = currentPrice ? (isLong
       ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
       : ((trade.entry_price - currentPrice) / trade.entry_price) * 100) : 0;
-    const pnlUsd = (pnlPct / 100) * trade.position_size * trade.leverage;
+    const pnlUsd = (pnlPct / 100) * trade.position_size;
 
     if (trade.mode === 'live') await this.closeExchangePosition(trade);
     if (trade.mode === 'paper') { this.paperBalance += (trade.position_size || 0) + pnlUsd; this.saveConfig(); }
@@ -1035,7 +1035,7 @@ class TradeExecutor {
         const pnlPct = currentPrice ? (isLong
           ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
           : ((trade.entry_price - currentPrice) / trade.entry_price) * 100) : 0;
-        const pnlUsd = (pnlPct / 100) * trade.position_size * trade.leverage;
+        const pnlUsd = (pnlPct / 100) * trade.position_size;
 
         if (trade.mode === 'live') await this.closeExchangePosition(trade);
         if (trade.mode === 'paper') { this.paperBalance += pnlUsd; this.saveConfig(); }

@@ -1328,7 +1328,7 @@ class TelegramBot {
                       : ((t.entry_price - currentPrice) / t.entry_price) * 100)
             : 0;
           const pnlLev = pnlPct * (t.leverage || 1);
-          const pnlUsd = (pnlPct / 100) * (t.position_size || 0) * (t.leverage || 1);
+          const pnlUsd = (pnlPct / 100) * (t.position_size || 0);
           totalPnl += pnlUsd;
 
           const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';

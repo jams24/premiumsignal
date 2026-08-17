@@ -42,7 +42,6 @@ function simulateTrade(trade) {
   const isLong = trade.direction === 'long';
   const entry = parseFloat(trade.entry_price);
   const exit = parseFloat(trade.exit_price);
-  const leverage = trade.leverage || 10;
   const size = parseFloat(trade.position_size) || 12;
   const tp1 = parseFloat(trade.tp1);
   const tp2 = parseFloat(trade.tp2);
@@ -53,7 +52,7 @@ function simulateTrade(trade) {
     symbol: trade.symbol,
     mode: trade.mode,
     direction: trade.direction,
-    oldPnl: parseFloat(trade.pnl_usd) || 0,
+    oldPnl: (parseFloat(trade.pnl_usd) || 0) / (trade.leverage || 1),
     oldReason: trade.close_reason,
     newPnl: 0,
     newReason: trade.close_reason,
@@ -99,10 +98,10 @@ function simulateTrade(trade) {
     const tp1PnlPct = isLong
       ? ((tp1 - entry) / entry) * 100
       : ((entry - tp1) / entry) * 100;
-    realizedPnl += (tp1PnlPct / 100) * closeSize * leverage;
+    realizedPnl += (tp1PnlPct / 100) * closeSize;
     remainingSize -= closeSize;
     slMovedToBreakeven = true;
-    result.changes.push(`TP1: closed ${(ENGINE.partialTP1 * 100).toFixed(0)}% (+$${((tp1PnlPct / 100) * closeSize * leverage).toFixed(2)})`);
+    result.changes.push(`TP1: closed ${(ENGINE.partialTP1 * 100).toFixed(0)}% (+$${((tp1PnlPct / 100) * closeSize).toFixed(2)})`);
   }
 
   if (priceReachedTP2) {
@@ -110,9 +109,9 @@ function simulateTrade(trade) {
     const tp2PnlPct = isLong
       ? ((tp2 - entry) / entry) * 100
       : ((entry - tp2) / entry) * 100;
-    realizedPnl += (tp2PnlPct / 100) * closeSize * leverage;
+    realizedPnl += (tp2PnlPct / 100) * closeSize;
     remainingSize -= closeSize;
-    result.changes.push(`TP2: closed ${(ENGINE.partialTP2 * 100).toFixed(0)}% (+$${((tp2PnlPct / 100) * closeSize * leverage).toFixed(2)})`);
+    result.changes.push(`TP2: closed ${(ENGINE.partialTP2 * 100).toFixed(0)}% (+$${((tp2PnlPct / 100) * closeSize).toFixed(2)})`);
   }
 
   if (priceReachedTP3) {
@@ -120,9 +119,9 @@ function simulateTrade(trade) {
     const tp3PnlPct = isLong
       ? ((tp3 - entry) / entry) * 100
       : ((entry - tp3) / entry) * 100;
-    realizedPnl += (tp3PnlPct / 100) * closeSize * leverage;
+    realizedPnl += (tp3PnlPct / 100) * closeSize;
     remainingSize -= closeSize;
-    result.changes.push(`TP3: closed ${(ENGINE.partialTP3 * 100).toFixed(0)}% (+$${((tp3PnlPct / 100) * closeSize * leverage).toFixed(2)})`);
+    result.changes.push(`TP3: closed ${(ENGINE.partialTP3 * 100).toFixed(0)}% (+$${((tp3PnlPct / 100) * closeSize).toFixed(2)})`);
   }
 
   // Profit protection: if up >5% and no TP hit, SL moves to breakeven
@@ -145,7 +144,7 @@ function simulateTrade(trade) {
         ? ((exit - entry) / entry) * 100
         : ((entry - exit) / entry) * 100;
     }
-    realizedPnl += (remainExitPnlPct / 100) * remainingSize * leverage;
+    realizedPnl += (remainExitPnlPct / 100) * remainingSize;
   }
 
   // Max loss cap
