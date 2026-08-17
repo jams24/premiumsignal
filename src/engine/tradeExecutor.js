@@ -926,14 +926,29 @@ class TradeExecutor {
 
     try {
       const pair = `${trade.symbol}/USDT:USDT`;
-      // Cancel all open orders on this pair first (SL, DCA limits)
       try {
         await exchange.cancelAllOrders(pair);
         logger.info(`Cancelled open orders for ${pair}`);
       } catch (e) { logger.warn(`Cancel orders failed for ${pair}: ${e.message}`); }
 
+      // Fetch actual position size from exchange (may differ after partial closes)
+      let qty = trade.quantity;
+      try {
+        const positions = await exchange.fetchPositions([pair]);
+        const pos = positions.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+        if (pos && Math.abs(pos.contracts) > 0) {
+          qty = Math.abs(pos.contracts);
+          logger.info(`Actual position size for ${pair}: ${qty} (trade.quantity was ${trade.quantity})`);
+        } else if (pos && pos.contractSize && pos.notional) {
+          qty = Math.abs(pos.notional / pos.contractSize);
+        } else if (!pos) {
+          logger.info(`No open position found for ${pair} — already closed on exchange`);
+          return;
+        }
+      } catch (e) { logger.warn(`Could not fetch position for ${pair}, using trade.quantity: ${e.message}`); }
+
       const side = trade.direction === 'long' ? 'sell' : 'buy';
-      await exchange.createOrder(pair, 'market', side, trade.quantity, undefined, { reduceOnly: true });
+      await exchange.createOrder(pair, 'market', side, qty, undefined, { reduceOnly: true });
       logger.info(`Closed live position: ${pair} on ${trade.exchange}`);
     } catch (err) {
       logger.error(`Failed to close position ${trade.symbol}: ${err.message}`);
@@ -979,9 +994,8 @@ class TradeExecutor {
       return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     if (exchangeId === 'binance') {
-      params.stopPrice = stopPrice;
-      params.type = 'STOP_MARKET';
-      return exchange.createOrder(pair, 'STOP_MARKET', side, qty, undefined, params);
+      params.stopLossPrice = stopPrice;
+      return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     // Default fallback
     params.stopPrice = stopPrice;
