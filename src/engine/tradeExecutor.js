@@ -503,10 +503,8 @@ class TradeExecutor {
         }
       }
       try {
-        await exchange.createOrder(pair, 'stop_market', closeSide, roundedQty, undefined, {
-          stopPrice: exchange.priceToPrecision(pair, effectiveSL),
-          reduceOnly: true,
-        });
+        const slPrice = exchange.priceToPrecision(pair, effectiveSL);
+        await this.placeStopOrder(exchange, signal.exchange, pair, closeSide, roundedQty, slPrice);
       } catch (e) { logger.warn(`SL order failed for ${pair}: ${e.message}`); }
 
       // Place DCA limit orders for parts 2 and 3 (skip if we used full position above)
@@ -636,9 +634,43 @@ class TradeExecutor {
 
         let action = null;
 
+        // --- SMC THESIS RE-CHECK: every 15 min, re-run SMC to detect structure flip ---
+        const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
+        if (!action && tradeAgeMs > 30 * 60 * 1000 && !trade.hit_tp1) {
+          const lastRecheck = trade._lastSmcRecheck || 0;
+          if (Date.now() - lastRecheck > 15 * 60 * 1000) {
+            trade._lastSmcRecheck = Date.now();
+            try {
+              const pair = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`].find(p => exchange.markets?.[p]);
+              if (pair) {
+                const ohlcv1h = await exchange.fetchOHLCV(pair, '1h', undefined, 100);
+                if (ohlcv1h && ohlcv1h.length >= 20) {
+                  const SMCAnalyzer = require('../collectors/smcAnalyzer');
+                  const smc = new SMCAnalyzer();
+                  const result = smc.analyze(ohlcv1h);
+                  if (result && result.structureBias !== 'neutral') {
+                    const structureConflict = (isLong && result.structureBias === 'bearish') ||
+                      (!isLong && result.structureBias === 'bullish');
+                    const hasChoch = isLong
+                      ? result.chochEvents.some(e => e.type === 'CHOCH_BEARISH')
+                      : result.chochEvents.some(e => e.type === 'CHOCH_BULLISH');
+                    if (structureConflict && hasChoch && pnlUsd < 0) {
+                      action = 'thesis_broken';
+                      await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'thesis_broken');
+                      this.dailyPnL += pnlUsd;
+                      if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+                      this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
+                      logger.info(`${trade.symbol}: SMC structure flipped ${result.structureBias} with ChoCH — thesis broken, closing`);
+                    }
+                  }
+                }
+              }
+            } catch (e) { /* SMC recheck failed, skip */ }
+          }
+        }
+
         // --- INVALIDATION CHECK: 4H candle close below invalidation level ---
         // Skip if trade opened less than 4h ago (previous candle is pre-breakout)
-        const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
         if (trade.invalidation && ohlcv && ohlcv.length >= 2 && tradeAgeMs > 4 * 60 * 60 * 1000) {
           const prevCandle = ohlcv[ohlcv.length - 2];
           const prevClose = prevCandle[4];
@@ -754,10 +786,10 @@ class TradeExecutor {
         }
 
         if (action) {
-          if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired'].includes(action)) {
+          if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired', 'thesis_broken'].includes(action)) {
             await this.closeExchangePosition(trade);
           }
-          if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss'].includes(action)) {
+          if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken'].includes(action)) {
             this.saveConfig();
           }
 
@@ -902,14 +934,29 @@ class TradeExecutor {
 
       // Place new SL at updated price
       const qty = trade.quantity || exchange.amountToPrecision(pair, trade.position_size / newSLPrice);
-      await exchange.createOrder(pair, 'stop_market', closeSide, qty, undefined, {
-        stopPrice: exchange.priceToPrecision(pair, newSLPrice),
-        reduceOnly: true,
-      });
+      const slPrice = exchange.priceToPrecision(pair, newSLPrice);
+      await this.placeStopOrder(exchange, trade.exchange, pair, closeSide, qty, slPrice);
       logger.info(`Updated SL for ${pair} to $${newSLPrice}`);
     } catch (err) {
       logger.error(`Failed to update SL for ${trade.symbol}: ${err.message}`);
     }
+  }
+
+  async placeStopOrder(exchange, exchangeId, pair, side, qty, stopPrice) {
+    const params = { reduceOnly: true };
+    if (exchangeId === 'bybit') {
+      params.triggerPrice = stopPrice;
+      params.triggerBy = 'LastPrice';
+      return exchange.createOrder(pair, 'market', side, qty, undefined, params);
+    }
+    if (exchangeId === 'binance') {
+      params.stopPrice = stopPrice;
+      params.type = 'STOP_MARKET';
+      return exchange.createOrder(pair, 'STOP_MARKET', side, qty, undefined, params);
+    }
+    // Default fallback
+    params.stopPrice = stopPrice;
+    return exchange.createOrder(pair, 'stop_market', side, qty, undefined, params);
   }
 
   async closeSingleTrade(tradeId) {
@@ -1006,6 +1053,9 @@ class TradeExecutor {
     }
     if (action === 'invalidated') {
       return `${modeTag} ⛔ <b>INVALIDATED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n4H candle closed below invalidation ($${trade.invalidation})\nThesis broken — trade closed before SL.`;
+    }
+    if (action === 'thesis_broken') {
+      return `${modeTag} 🔄 <b>THESIS BROKEN</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\nSMC structure flipped against ${trade.direction} with ChoCH.\nEarly exit — thesis no longer valid.`;
     }
     if (action === 'max_loss') {
       return `${modeTag} 🛑 <b>MAX LOSS CAP</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n⚠️ Per-trade loss limit ($${this.maxLossPerTrade}) reached.\nPosition closed to protect capital.`;

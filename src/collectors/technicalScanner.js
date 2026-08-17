@@ -215,6 +215,41 @@ class TechnicalScanner {
           return null;
         }
 
+        // Resistance/support zone filter: block entries heading into nearby S/R
+        if (smcResult.swingHighs && smcResult.swingLows) {
+          if (direction === 'long') {
+            // Check if there's a recent swing high or bearish OB just above entry (within 2% = resistance ceiling)
+            const nearResistance = smcResult.swingHighs.some(sh => {
+              const dist = ((sh.price - currentPrice) / currentPrice) * 100;
+              return dist > 0 && dist < 2;
+            });
+            const nearBearishOB = smcResult.orderBlocks.some(ob => {
+              if (ob.type !== 'OB_BEARISH') return false;
+              const dist = ((ob.low - currentPrice) / currentPrice) * 100;
+              return dist > 0 && dist < 2;
+            });
+            if (nearResistance || nearBearishOB) {
+              score -= 15;
+              signals.push(`Near resistance ${nearBearishOB ? '(supply zone)' : '(swing high)'} — risky long`);
+            }
+          }
+          if (direction === 'short') {
+            const nearSupport = smcResult.swingLows.some(sl => {
+              const dist = ((currentPrice - sl.price) / currentPrice) * 100;
+              return dist > 0 && dist < 2;
+            });
+            const nearBullishOB = smcResult.orderBlocks.some(ob => {
+              if (ob.type !== 'OB_BULLISH') return false;
+              const dist = ((currentPrice - ob.high) / currentPrice) * 100;
+              return dist > 0 && dist < 2;
+            });
+            if (nearSupport || nearBullishOB) {
+              score -= 15;
+              signals.push(`Near support ${nearBullishOB ? '(demand zone)' : '(swing low)'} — risky short`);
+            }
+          }
+        }
+
         smcData = {
           structureBias: smcResult.structureBias,
           orderBlocks: smcResult.orderBlocks,
