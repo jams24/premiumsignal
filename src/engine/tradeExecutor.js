@@ -85,6 +85,26 @@ class TradeExecutor {
       return { ok: false, reason: `${signal.symbol} is in excluded list` };
     }
 
+    // Losing streak circuit breaker: pause 2h after 3 consecutive losses
+    try {
+      const recentTrades = await db.query(
+        `SELECT pnl_usd, close_reason, closed_at FROM trades WHERE status = 'closed' AND mode = 'live' ORDER BY closed_at DESC LIMIT 5`
+      );
+      let streak = 0;
+      for (const t of recentTrades.rows) {
+        if (parseFloat(t.pnl_usd) < -0.01) streak++;
+        else break;
+      }
+      if (streak >= 3) {
+        const lastClose = new Date(recentTrades.rows[0].closed_at).getTime();
+        const cooldownEnd = lastClose + 2 * 60 * 60 * 1000;
+        if (Date.now() < cooldownEnd) {
+          const minsLeft = Math.ceil((cooldownEnd - Date.now()) / 60000);
+          return { ok: false, reason: `Losing streak (${streak} losses) — paused ${minsLeft}m` };
+        }
+      }
+    } catch (e) { /* DB error, skip check */ }
+
     const cooldownUntil = this.cooldowns.get(signal.symbol?.toUpperCase());
     if (cooldownUntil && Date.now() < cooldownUntil) {
       const minsLeft = Math.ceil((cooldownUntil - Date.now()) / 60000);
