@@ -289,12 +289,15 @@ class TechnicalScanner {
           const ema20_4h = EMA.calculate({ values: closes4h, period: 20 });
           const currentEma4h = ema20_4h[ema20_4h.length - 1];
           const price4h = closes4h[closes4h.length - 1];
+          const trendGap = Math.abs((price4h - currentEma4h) / currentEma4h) * 100;
           if (direction === 'long' && price4h < currentEma4h) {
-            score -= 15;
-            signals.push('4H below EMA20 (counter-trend)');
+            if (trendGap > 5) return null; // hard block: strong downtrend
+            score -= 20;
+            signals.push(`4H below EMA20 by ${trendGap.toFixed(1)}% (counter-trend)`);
           } else if (direction === 'short' && price4h > currentEma4h) {
-            score -= 15;
-            signals.push('4H above EMA20 (counter-trend)');
+            if (trendGap > 5) return null; // hard block: strong uptrend
+            score -= 20;
+            signals.push(`4H above EMA20 by ${trendGap.toFixed(1)}% (counter-trend)`);
           } else {
             score += 10;
             signals.push('4H trend aligned');
@@ -304,13 +307,12 @@ class TechnicalScanner {
 
       if (score < 40) return null;
 
-      // Require bearish candle confirmation for shorts
-      if (direction === 'short') {
-        const lastOpen = ohlcv[ohlcv.length - 1][1];
-        const lastClose = ohlcv[ohlcv.length - 1][4];
-        if (lastClose >= lastOpen) return null; // skip if latest candle is green
-        signals.push('Bearish candle confirmed');
-      }
+      // Require candle confirmation matching direction
+      const lastOpen = ohlcv[ohlcv.length - 1][1];
+      const lastClose = ohlcv[ohlcv.length - 1][4];
+      if (direction === 'short' && lastClose >= lastOpen) return null;
+      if (direction === 'long' && lastClose <= lastOpen) return null;
+      signals.push(direction === 'long' ? 'Bullish candle confirmed' : 'Bearish candle confirmed');
 
       // Suppress signals during low-liquidity hours (04:00-06:00 UTC)
       const currentHourUTC = new Date().getUTCHours();
