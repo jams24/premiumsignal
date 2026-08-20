@@ -1500,8 +1500,6 @@ class TelegramBot {
     const size = t.maxPositionSize;
     const lev = t.defaultLeverage;
     const cap = t.maxLossPerTrade;
-    const notional = size * lev;
-
     // Check if max loss cap is set
     if (!cap || cap <= 0) {
       tips.push('⚠️ No per-trade loss cap — set one to protect against big drops');
@@ -1510,13 +1508,12 @@ class TelegramBot {
     // Check reward:risk ratio — TP1 partial (33%) vs max loss
     if (cap > 0) {
       const typicalTP1Pct = 7;
-      const tp1Profit = (typicalTP1Pct / 100) * (size * 0.33) * lev;
+      const tp1Profit = (typicalTP1Pct / 100) * (size * 0.33);
       const ratio = tp1Profit / cap;
       if (ratio < 0.5) {
         tips.push(`📐 Low R:R — TP1 earns ~$${tp1Profit.toFixed(2)} vs $${cap} risk (${ratio.toFixed(1)}:1). Increase leverage or size`);
       }
-      // Check if cap is too tight for leverage
-      const roomPct = (cap / (size * lev)) * 100;
+      const roomPct = (cap / size) * 100;
       if (roomPct < 1.5) {
         tips.push(`🔒 Loss cap too tight — only ${roomPct.toFixed(1)}% room, most trades will hit it. Increase cap or reduce size`);
       }
