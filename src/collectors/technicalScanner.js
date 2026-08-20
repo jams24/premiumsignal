@@ -129,12 +129,15 @@ class TechnicalScanner {
       if (currentEma20 > currentEma50) { score += 10; signals.push('EMA20>EMA50'); }
       else { score += 5; signals.push('EMA20<EMA50'); }
 
-      // RSI — block 80+ for longs (19% win rate), sweet spot is 50-70
+      // RSI — block extremes, penalize overbought longs / oversold shorts
       if (currentRSI > 90) { return null; }
       if (currentRSI > 80) { score += 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
       else if (currentRSI > 70) { score += 15; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
+      else if (currentRSI < 10) { return null; }
+      else if (currentRSI < 20) { score += 10; direction = 'long'; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI < 30) { score += 15; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI > 50 && currentRSI < 70) { score += 10; signals.push(`RSI bullish ${currentRSI.toFixed(0)}`); }
+      const rsiExtreme = currentRSI > 75 || currentRSI < 25;
 
       // Bollinger Band breakout
       if (currentBB && currentPrice > currentBB.upper) { score += 15; signals.push('BB upper breakout'); }
@@ -187,19 +190,23 @@ class TechnicalScanner {
         for (const s of smcResult.signals) signals.push(s);
 
         // SMC can override direction: ChoCH or BOS with structure bias
-        const bullishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BULLISH');
-        const bearishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BEARISH');
-        if (bullishChoch && direction === 'short') direction = 'long';
-        if (bearishChoch && direction === 'long') direction = 'short';
+        // BUT not when RSI is at extreme levels (>75 or <25) — RSI exhaustion takes priority
+        if (!rsiExtreme) {
+          const bullishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BULLISH');
+          const bearishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BEARISH');
+          if (bullishChoch && direction === 'short') direction = 'long';
+          if (bearishChoch && direction === 'long') direction = 'short';
 
-        // BOS with structure bias overrides direction — use the LATEST BOS event
-        const latestBos = smcResult.bosEvents?.length > 0 ? smcResult.bosEvents[smcResult.bosEvents.length - 1] : null;
-        if (latestBos && smcResult.structureBias === 'bullish' && latestBos.type === 'BOS_BULLISH' && direction === 'short') {
-          direction = 'long';
-          signals.push('SMC bullish BOS overrides short');
-        } else if (latestBos && smcResult.structureBias === 'bearish' && latestBos.type === 'BOS_BEARISH' && direction === 'long') {
-          direction = 'short';
-          signals.push('SMC bearish BOS overrides long');
+          const latestBos = smcResult.bosEvents?.length > 0 ? smcResult.bosEvents[smcResult.bosEvents.length - 1] : null;
+          if (latestBos && smcResult.structureBias === 'bullish' && latestBos.type === 'BOS_BULLISH' && direction === 'short') {
+            direction = 'long';
+            signals.push('SMC bullish BOS overrides short');
+          } else if (latestBos && smcResult.structureBias === 'bearish' && latestBos.type === 'BOS_BEARISH' && direction === 'long') {
+            direction = 'short';
+            signals.push('SMC bearish BOS overrides long');
+          }
+        } else {
+          signals.push(`RSI extreme (${currentRSI.toFixed(0)}) — SMC override blocked`);
         }
 
         // SMC structure confirmation bonus
