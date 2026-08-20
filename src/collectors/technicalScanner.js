@@ -20,6 +20,7 @@ class TechnicalScanner {
 
         const sorted = Object.entries(tickers)
           .filter(([, t]) => t.quoteVolume > 1500000)
+          .filter(([s]) => !s.includes('STOCK'))
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
           .slice(0, 100);
 
