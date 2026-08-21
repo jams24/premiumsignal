@@ -6,6 +6,7 @@ const config = require('./utils/config');
 const db = require('./db/database');
 const ListingMonitor = require('./collectors/listingMonitor');
 const TechnicalScanner = require('./collectors/technicalScanner');
+const { STOCK_TOKENS } = require('./collectors/technicalScanner');
 const OnchainTracker = require('./collectors/onchainTracker');
 const MarketIntel = require('./collectors/marketIntel');
 const SocialScanner = require('./collectors/socialScanner');
@@ -87,13 +88,25 @@ async function main() {
 
     setTimeout(async () => {
       try {
+        // Skip stock-based tokens — gap risk, limited hours
+        const sym = listing.symbol.toUpperCase();
+        if (sym.includes('STOCK') || STOCK_TOKENS.test(sym)) {
+          logger.info(`Skipping stock token listing: ${sym}`);
+          return;
+        }
         const exchange = listingMonitor.exchanges[listing.exchange];
         if (!exchange) return;
-        const ticker = await exchange.fetchTicker(listing.pair);
-        const signal = await signalEngine.processListingSignal(listing, { currentPrice: ticker.last });
-        if (signal) {
-          await bot.sendSignal(signal);
-          await tradeExecutor.executeSignal(signal);
+        // Run full technical analysis — don't blindly trade listings
+        const scan = await technicalScanner.analyzeSymbol(listing.symbol, listing.exchange);
+        if (scan && scan.score >= 70) {
+          const signal = await signalEngine.processBreakoutSignal(scan);
+          if (signal) {
+            signal.catalyst = `New ${listing.type} listing on ${listing.exchange.toUpperCase()} + technical confirmation`;
+            await bot.sendSignal(signal);
+            await tradeExecutor.executeSignal(signal);
+          }
+        } else {
+          logger.info(`Listing ${listing.symbol}: no technical confirmation (score: ${scan?.score || 0})`);
         }
       } catch (e) {
         logger.error(`Post-listing signal failed: ${e.message}`);

@@ -4,6 +4,8 @@ const logger = require('../utils/logger');
 const db = require('../db/database');
 const SMCAnalyzer = require('./smcAnalyzer');
 
+const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|DIS|BA|JPM|GS|WMT|PDD|JD|BABA|NIO|XPEV|LI|MRK|PFE|JNJ|ABBV|UNH|CVS|COIN|MSTR|GME|AMC|PLTR|SNOW|UBER|LYFT|ABNB|CVNA|RIVN|LCID)$/;
+
 class TechnicalScanner {
   constructor(exchanges) {
     this.exchanges = exchanges;
@@ -20,7 +22,7 @@ class TechnicalScanner {
 
         const sorted = Object.entries(tickers)
           .filter(([, t]) => t.quoteVolume > 1500000)
-          .filter(([s]) => !s.includes('STOCK'))
+          .filter(([s]) => !s.includes('STOCK') && !STOCK_TOKENS.test(s.split('/')[0]))
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
           .slice(0, 100);
 
@@ -88,6 +90,20 @@ class TechnicalScanner {
     }
 
     return score;
+  }
+
+  async analyzeSymbol(baseSymbol, exchangeId) {
+    const exchange = this.exchanges[exchangeId];
+    if (!exchange) return null;
+    const pair = `${baseSymbol}/USDT:USDT`;
+    if (!exchange.markets[pair]) return null;
+    try {
+      const ticker = await exchange.fetchTicker(pair);
+      return this.deepAnalyze(exchange, exchangeId, pair, ticker);
+    } catch (e) {
+      logger.error(`analyzeSymbol ${baseSymbol}: ${e.message}`);
+      return null;
+    }
   }
 
   async deepAnalyze(exchange, exchangeId, symbol, ticker) {
@@ -394,3 +410,4 @@ class TechnicalScanner {
 }
 
 module.exports = TechnicalScanner;
+module.exports.STOCK_TOKENS = STOCK_TOKENS;

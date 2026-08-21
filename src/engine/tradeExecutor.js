@@ -608,6 +608,14 @@ class TradeExecutor {
       return trade;
 
     } catch (err) {
+      // Bybit lists contracts before they're tradeable — retry after delay
+      if (err.message && err.message.includes('110074') && (!signal._listingRetries || signal._listingRetries < 3)) {
+        signal._listingRetries = (signal._listingRetries || 0) + 1;
+        const delaySec = signal._listingRetries * 30;
+        logger.info(`${signal.symbol}: contract not live yet, retry ${signal._listingRetries}/3 in ${delaySec}s`);
+        await new Promise(r => setTimeout(r, delaySec * 1000));
+        return this.executeLiveTrade(signal);
+      }
       const errMsg = `❌ <b>TRADE EXECUTION FAILED</b>\n\n$${escapeHtml(signal.symbol)} on ${signal.exchange}\nError: ${escapeHtml(err.message)}`;
       await this.notify(errMsg);
       logger.error(`Live trade failed for ${signal.symbol}: ${err.message}`);
