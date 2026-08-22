@@ -4,10 +4,18 @@ const db = require('../db/database');
 class SignalEngine {
   constructor() {
     this.recentSignals = new Map(); // dedup: symbol -> timestamp (cross-exchange)
-    this.rejects = new Map();       // rejection-reason counters for diagnosability
+    this.rejects = new Map();
     this.cooldownMs = 4 * 60 * 60 * 1000;
     this.slBackoffMs = 12 * 60 * 60 * 1000; // 12hr cooldown after SL hit
     this.slSymbols = new Map(); // symbol -> timestamp of last SL
+  }
+
+  rejectSummary() {
+    if (!this.rejects.size) return '';
+    const s = [...this.rejects.entries()].sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}:${v}`).join(' | ');
+    this.rejects = new Map();
+    return s;
   }
 
   markSLHit(symbol) {
