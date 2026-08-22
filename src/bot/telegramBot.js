@@ -48,10 +48,12 @@ class TelegramBot {
 
         let user = await db.getUser(from.id);
 
-        // Bootstrap: env-declared admins are auto-created/promoted on first contact
-        if (!user && config.telegram.adminIds.includes(from.id)) {
-          user = await db.createUser(from.id, from.username, 'admin', 'active');
-          logger.info(`Bootstrap admin registered: ${from.id}`);
+        // Bootstrap: env-declared admins are created/promoted on every contact
+        // (also rescues an existing pending/revoked row created before the env var was set)
+        if (config.telegram.adminIds.includes(from.id) && (!user || user.role !== 'admin' || user.status !== 'active')) {
+          user = (await db.grantUser(from.id, from.id, 'admin'))
+            || (await db.createUser(from.id, from.username, 'admin', 'active'));
+          logger.info(`Bootstrap admin registered/promoted: ${from.id}`);
         }
 
         if (!user) {
