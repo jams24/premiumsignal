@@ -31,6 +31,10 @@ class TradeExecutor {
     // Excluded symbols: skip signals for these tokens
     this.excludedSymbols = new Set(config.excludedSymbols || ['BTC', 'ETH', 'SOL']);
 
+    // DCA ladder: OFF by default — historically amplified losses (all 10 worst trades
+    // reached DCA stage 3 then max_loss). Opt in via config.dcaEnabled = true.
+    this.dcaEnabled = config.dcaEnabled === true;
+
     this.pnlResetDate = config.pnlResetDate || new Date().toISOString();
 
     // Cooldown: symbol → timestamp, prevents re-entry after invalidation/SL
@@ -260,6 +264,7 @@ class TradeExecutor {
       minConfidence: this.minConfidence,
       defaultLeverage: this.defaultLeverage,
       dynamicLeverage: this.dynamicLeverage,
+      dcaEnabled: this.dcaEnabled,
       signalFilter: [...this.signalFilter],
       excludedSymbols: [...this.excludedSymbols],
       pnlResetDate: this.pnlResetDate || null,
@@ -280,6 +285,7 @@ class TradeExecutor {
     if (cfg.minConfidence != null) this.minConfidence = cfg.minConfidence;
     if (cfg.defaultLeverage != null) this.defaultLeverage = cfg.defaultLeverage;
     if (cfg.dynamicLeverage != null) this.dynamicLeverage = cfg.dynamicLeverage;
+    if (cfg.dcaEnabled != null) this.dcaEnabled = cfg.dcaEnabled;
     if (cfg.signalFilter != null) this.signalFilter = new Set(cfg.signalFilter);
     if (cfg.excludedSymbols != null) this.excludedSymbols = new Set(cfg.excludedSymbols);
     if (cfg.pnlResetDate != null) this.pnlResetDate = cfg.pnlResetDate;
@@ -389,10 +395,11 @@ class TradeExecutor {
     const positionSize = await this.calcPositionSize(signal);
     const leverage = this.calcLeverage(signal);
 
-    // DCA: enter 1/3 at market, set limits for 2/3 and 3/3
-    const dcaQty1 = (positionSize / 3) / entryPrice;
-    const dcaQty2 = (positionSize / 3) / entryPrice;
-    const dcaQty3 = (positionSize / 3) / entryPrice;
+    // DCA: enter 1/3 at market, set limits for 2/3 and 3/3 (when enabled)
+    const entryQty = this.dcaEnabled ? positionSize / 3 : positionSize;
+    const dcaQty1 = entryQty / entryPrice;
+    const dcaQty2 = this.dcaEnabled ? (positionSize / 3) / entryPrice : 0;
+    const dcaQty3 = this.dcaEnabled ? (positionSize / 3) / entryPrice : 0;
     const { dcaPrice2, dcaPrice3 } = this.calcDCALevels(signal);
     const invalidation = this.calcInvalidation(signal);
     const tp4 = this.calcTP4(signal);
@@ -405,7 +412,7 @@ class TradeExecutor {
       mode: 'paper',
       entryPrice,
       quantity: dcaQty1,
-      positionSize: positionSize / 3,
+      positionSize: entryQty,
       leverage,
       tp1: signal.tp1,
       tp2: signal.tp2,
@@ -417,30 +424,31 @@ class TradeExecutor {
       atr: signal.atr || null,
       dcaQty2,
       dcaQty3,
-      dcaPrice2,
-      dcaPrice3,
+      dcaPrice2: this.dcaEnabled ? dcaPrice2 : null,
+      dcaPrice3: this.dcaEnabled ? dcaPrice3 : null,
       dcaStage: 1,
       status: 'open',
     };
 
     await db.saveTrade(trade);
-    this.paperBalance -= (positionSize / 3);
+    this.paperBalance -= entryQty;
     this.saveConfig();
 
+    const dcaLabel = this.dcaEnabled ? '(1/3 DCA)' : '(full entry — DCA off)';
     const msg = `📝 <b>PAPER TRADE OPENED</b>\n\n` +
       `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(signal.symbol)}</b>\n` +
       `Exchange: ${signal.exchange}\n` +
-      `Entry: $${entryPrice} (1/3 DCA)\n` +
-      `Size: $${(positionSize / 3).toFixed(2)} of $${positionSize} (${leverage}x)\n` +
-      `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}\n` +
+      `Entry: $${entryPrice} ${dcaLabel}\n` +
+      `Size: $${entryQty.toFixed(2)} (${leverage}x)\n` +
+      `${this.dcaEnabled ? `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}\n` : ''}` +
       `TP1: $${signal.tp1} | TP2: $${signal.tp2} | TP3: $${signal.tp3} | TP4: $${tp4.toPrecision(6)}\n` +
       `SL: $${signal.stopLoss} | Invalidation: $${invalidation.toPrecision(6)}\n\n` +
       `${signal.smc ? `SMC: ${signal.smc.structureBias} structure` + (signal.smc.orderBlocks?.length ? ` | ${signal.smc.orderBlocks.length} OB` : '') + (signal.smc.fvgs?.length ? ` | ${signal.smc.fvgs.length} FVG` : '') + '\n' : ''}` +
       `${this.riskPct > 0 ? `Risk: ${this.riskPct}% of balance\n` : ''}` +
-      `<i>Paper mode — trailing SL + DCA active</i>`;
+      `<i>Paper mode — trailing SL active</i>`;
 
     await this.notify(msg);
-    logger.info(`Paper trade opened: ${signal.direction} ${signal.symbol} @ $${entryPrice} (1/3 DCA)`);
+    logger.info(`Paper trade opened: ${signal.direction} ${signal.symbol} @ $${entryPrice} ${dcaLabel}`);
     return trade;
   }
 
@@ -480,9 +488,9 @@ class TradeExecutor {
         return null;
       }
 
-      // DCA: only enter 1/3 of position at market
+      // DCA: enter 1/3 of position at market when enabled, otherwise full position
       const fullQty = positionSize / entryPrice;
-      let dcaQty1 = fullQty / 3;
+      let dcaQty1 = this.dcaEnabled ? fullQty / 3 : fullQty;
 
       // Check minimum notional
       const notionalCheck = this.calcMinNotional(exchange, pair, dcaQty1, entryPrice);

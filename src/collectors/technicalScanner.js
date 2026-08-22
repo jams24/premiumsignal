@@ -99,9 +99,119 @@ class TechnicalScanner {
     if (!exchange.markets[pair]) return null;
     try {
       const ticker = await exchange.fetchTicker(pair);
-      return this.deepAnalyze(exchange, exchangeId, pair, ticker);
+      const deep = await this.deepAnalyze(exchange, exchangeId, pair, ticker);
+      if (deep) return deep;
+      // Momentum/breakout scan found nothing — check for a V-reversal setup
+      // (capitulation dump → oversold → reclaim). Catches early reversal moves
+      // that breakout-only logic structurally misses.
+      return await this.detectVReversal(exchange, exchangeId, pair, ticker);
     } catch (e) {
       logger.error(`analyzeSymbol ${baseSymbol}: ${e.message}`);
+      return null;
+    }
+  }
+
+  // V-Reversal detector: capitulation low + oversold RSI + fresh EMA20 reclaim
+  // on expanding volume. This is the "BLESS-style" early reversal catch.
+  async detectVReversal(exchange, exchangeId, symbol, ticker) {
+    try {
+      const ohlcv = await exchange.fetchOHLCV(symbol, '1h', undefined, 100);
+      if (ohlcv.length < 40) return null;
+
+      const closes = ohlcv.map(c => c[4]);
+      const highs = ohlcv.map(c => c[2]);
+      const lows = ohlcv.map(c => c[3]);
+      const volumes = ohlcv.map(c => c[5]);
+
+      const rsi = RSI.calculate({ values: closes, period: 14 });
+      const ema20 = EMA.calculate({ values: closes, period: 20 });
+      const atr = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+
+      const currentPrice = closes[closes.length - 1];
+      const currentRSI = rsi[rsi.length - 1];
+      const currentEma20 = ema20[ema20.length - 1];
+      const currentATR = atr[atr.length - 1];
+      if (!currentRSI || !currentEma20 || !currentATR) return null;
+
+      // 1) Capitulation: meaningful decline from the highest high of the last
+      //    28 candles to the lowest low AFTER that high (true top-to-trough)
+      const win = ohlcv.slice(-28);
+      let hi = -Infinity, hiIdx = -1;
+      win.forEach((cd, i) => { if (cd[2] > hi) { hi = cd[2]; hiIdx = i; } });
+      const recentLow = Math.min(...win.slice(hiIdx).map(cd => cd[3]));
+      const decline = ((hi - recentLow) / hi) * 100;
+      if (decline < 12) return null;
+
+      // 2) Oversold print within the last 8 candles
+      if (!rsi.slice(-8, -1).some(v => v < 32)) return null;
+
+      // 3) Fresh reclaim: last candle green AND closes above EMA20, with the
+      //    cross happening no earlier than 3 candles ago (older = stale, chasing)
+      const last = ohlcv[ohlcv.length - 1];
+      const recentCloses = closes.slice(-4);          // last 4 incl. current
+      const recentEmas = ema20.slice(-4);
+      let candlesAbove = 0;
+      for (let i = 0; i < 3; i++) {                   // the 3 closed candles before current
+        if (recentCloses[i] > recentEmas[i]) candlesAbove++;
+      }
+      if (last[4] <= last[1]) return null;            // must be a green candle
+      if (last[4] <= currentEma20) return null;       // must close above EMA20
+      if (candlesAbove === 3) return null;            // cross is stale (>3 candles old)
+
+      // 4) Volume confirmation: reclaim volume ≥1.5x the average of the prior 10 candles
+      const priorVols = volumes.slice(-11, -1);
+      const avgPriorVol = priorVols.reduce((a, b) => a + b, 0) / priorVols.length;
+      const volumeRatio = last[5] / avgPriorVol;
+      if (volumeRatio < 1.5) return null;
+
+      // Scoring — base 60 means it must earn confluence to clear the 70 gate
+      let score = 60;
+      const signals = ['V-Reversal: reclaim of EMA20 after capitulation'];
+      if (decline > 20) { score += 5; signals.push(`Deep capitulation -${decline.toFixed(0)}%`); }
+      if (currentRSI > 45 && currentRSI < 62) { score += 5; signals.push(`RSI recovering (${currentRSI.toFixed(0)})`); }
+      if (volumeRatio >= 2.5) { score += 5; signals.push(`Volume ${volumeRatio.toFixed(1)}x on reclaim`); }
+      // Bonus: reclaim also breaks the prior candle's high (strength confirmation)
+      if (last[4] > highs[highs.length - 2]) { score += 5; signals.push('Broke prior candle high'); }
+
+      const isLong = true; // V-reversals are long-only by design (fade-the-dump)
+      const entryLow = currentPrice * 0.995;
+      const entryHigh = currentPrice * 1.005;
+      // SL goes below the capitulation low — structural stop beats arbitrary ATR distance
+      const stopLoss = Math.min(recentLow * 0.997, currentPrice - currentATR * 2);
+      // Targets scale off SL distance so R:R stays >= 1.25 even when the
+      // structural stop is wide (deep capitulation low far below)
+      const slDist = Math.abs(currentPrice - stopLoss);
+      const tp1 = currentPrice + Math.max(currentATR * 2.5, slDist * 1.25);
+      const tp2 = currentPrice + Math.max(currentATR * 4.5, slDist * 2.25);
+      const tp3 = currentPrice + Math.max(currentATR * 7, slDist * 3.5);
+
+      return {
+        type: 'VREVERSAL',
+        symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),
+        pair: symbol,
+        exchange: exchangeId,
+        direction: 'long',
+        currentPrice,
+        change24h: ticker.percentage || 0,
+        volumeRatio,
+        rsi: currentRSI,
+        score,
+        signals,
+        atr: currentATR,
+        smc: null,
+        entryLow: parseFloat(entryLow.toPrecision(6)),
+        entryHigh: parseFloat(entryHigh.toPrecision(6)),
+        tp1: parseFloat(tp1.toPrecision(6)),
+        tp2: parseFloat(tp2.toPrecision(6)),
+        tp3: parseFloat(tp3.toPrecision(6)),
+        stopLoss: parseFloat(stopLoss.toPrecision(6)),
+        tp1Pct: ((Math.abs(tp1 - currentPrice) / currentPrice) * 100).toFixed(1),
+        tp2Pct: ((Math.abs(tp2 - currentPrice) / currentPrice) * 100).toFixed(1),
+        tp3Pct: ((Math.abs(tp3 - currentPrice) / currentPrice) * 100).toFixed(1),
+        slPct: ((Math.abs(stopLoss - currentPrice) / currentPrice) * 100).toFixed(1),
+      };
+    } catch (err) {
+      logger.error(`detectVReversal ${symbol}: ${err.message}`);
       return null;
     }
   }
@@ -160,9 +270,10 @@ class TechnicalScanner {
       if (currentBB && currentPrice > currentBB.upper) { score += 15; signals.push('BB upper breakout'); }
       else if (currentBB && currentPrice < currentBB.lower) { score += 15; signals.push('BB lower touch'); }
 
-      // MACD
+      // MACD — both cross types set direction explicitly (was asymmetric: only
+      // bearish crosses flipped to short, biasing everything else long)
       if (currentMACD && currentMACD.histogram > 0 && macd[macd.length - 2]?.histogram < 0) {
-        score += 15; signals.push('MACD bullish cross');
+        score += 15; direction = 'long'; signals.push('MACD bullish cross');
       } else if (currentMACD && currentMACD.histogram < 0 && macd[macd.length - 2]?.histogram > 0) {
         score += 10; direction = 'short'; signals.push('MACD bearish cross');
       }
@@ -189,7 +300,8 @@ class TechnicalScanner {
         signals.push(`Overextended ${recentMove.toFixed(0)}% in 6 candles`);
       }
 
-      // Pullback filter: for longs, reject if price is too far above EMA20 (chasing)
+      // Pullback filter: symmetric chase protection for BOTH directions
+      // (previously longs-only, so the bot would short into capitulation lows)
       const distFromEma20 = ((currentPrice - currentEma20) / currentEma20) * 100;
       if (direction === 'long' && distFromEma20 > 5) {
         return null;
@@ -197,6 +309,14 @@ class TechnicalScanner {
       if (direction === 'long' && distFromEma20 > 3) {
         score -= 10;
         signals.push(`Extended ${distFromEma20.toFixed(1)}% above EMA20`);
+      }
+      const distBelowEma20 = ((currentEma20 - currentPrice) / currentEma20) * 100;
+      if (direction === 'short' && distBelowEma20 > 5) {
+        return null;
+      }
+      if (direction === 'short' && distBelowEma20 > 3) {
+        score -= 10;
+        signals.push(`Extended ${distBelowEma20.toFixed(1)}% below EMA20`);
       }
 
       // SMC Analysis
@@ -303,6 +423,27 @@ class TechnicalScanner {
         };
       }
 
+      // Anti-chase / fade logic: overbought longs in a downtrend become SHORT
+      // candidates instead of blocked signals (fixes "shorts spotted as longs").
+      // A long above the upper BB with RSI>70 is a mean-reversion zone: only allow
+      // it as a long if the underlying trend is genuinely bullish, else fade it.
+      if (direction === 'long' && currentRSI > 70 && currentBB && currentPrice > currentBB.upper) {
+        const downtrend = currentEma20 < currentEma50 ||
+          (smcData && smcData.structureBias === 'bearish');
+        if (!downtrend) return null; // bullish structure + overbought = just late, skip
+        direction = 'short';
+        score -= 10; // fading strength costs conviction
+        signals.push('Fade: overbought rally in bearish structure → short');
+      }
+      if (direction === 'short' && currentRSI < 30 && currentBB && currentPrice < currentBB.lower) {
+        const uptrend = currentEma20 > currentEma50 ||
+          (smcData && smcData.structureBias === 'bullish');
+        if (!uptrend) return null;
+        direction = 'long';
+        score -= 10;
+        signals.push('Fade: oversold dump in bullish structure → long');
+      }
+
       if (score < 40) return null;
 
       // 4H trend filter: reject counter-trend entries
@@ -351,7 +492,9 @@ class TechnicalScanner {
       const tp1 = isLong ? currentPrice + atrValue * 2.5 : currentPrice - atrValue * 2.5;
       const tp2 = isLong ? currentPrice + atrValue * 4.5 : currentPrice - atrValue * 4.5;
       const tp3 = isLong ? currentPrice + atrValue * 7 : currentPrice - atrValue * 7;
-      const stopLoss = isLong ? currentPrice - atrValue * 3 : currentPrice + atrValue * 3;
+      // SL tightened to 2xATR: old 3xATR SL vs 2.5xATR TP1 gave negative expectancy
+      // (TP1 hit rate never exceeded ~57%, needing >54.5% at these distances to break even)
+      const stopLoss = isLong ? currentPrice - atrValue * 2 : currentPrice + atrValue * 2;
 
       return {
         symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),

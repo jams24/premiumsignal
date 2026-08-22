@@ -47,16 +47,23 @@ class SignalEngine {
     });
 
     this.markSent(listing.symbol);
-    await db.saveSignal(signal);
+    const saved = await db.saveSignal(signal);
+    signal.id = saved?.id ?? null;
     return signal;
   }
 
   async processBreakoutSignal(scan) {
     if (this.isOnCooldown(scan.symbol)) return null;
     if (scan.score < 70) return null;
-    // Volume spike type requires 5x+ (sweet spot is 5-7x at 50% WR)
-    const minVol = scan.volumeRatio > 3 ? 5 : 2;
-    if (scan.volumeRatio < minVol) return null;
+
+    // VOLUME_SPIKE signals disabled: 101 posted historically at ~39% TP1 / ~61% SL
+    // (negative expectancy). Only clean 2-3x volume breakouts are traded.
+    if (scan.type === 'VREVERSAL') {
+      if (scan.volumeRatio < 1.5) return null; // own reclaim-volume rule
+    } else {
+      if (scan.volumeRatio > 3) return null;
+      if (scan.volumeRatio < 2) return null;
+    }
 
     let confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
 
@@ -68,8 +75,11 @@ class SignalEngine {
       if ((hasChoch || (hasBos && hasOB)) && confidence < 5) confidence++;
     }
 
+    // 3★ signals historically hit SL 86-100% of the time — never post them
+    if (confidence < 4) return null;
+
     const signal = {
-      type: scan.volumeRatio > 3 ? 'VOLUME_SPIKE' : 'BREAKOUT',
+      type: scan.type || (scan.volumeRatio > 3 ? 'VOLUME_SPIKE' : 'BREAKOUT'),
       symbol: scan.symbol,
       exchange: scan.exchange,
       direction: scan.direction,
@@ -88,7 +98,8 @@ class SignalEngine {
     };
 
     this.markSent(scan.symbol);
-    await db.saveSignal(signal);
+    const saved = await db.saveSignal(signal);
+    signal.id = saved?.id ?? null;
     return signal;
   }
 

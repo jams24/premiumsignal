@@ -65,6 +65,7 @@ async function main() {
     riskPct: parseFloat(process.env.RISK_PCT) || 0,
     paperBalance: parseFloat(process.env.PAPER_BALANCE) || 1000,
     dynamicLeverage: process.env.DYNAMIC_LEVERAGE !== 'false',
+    dcaEnabled: process.env.DCA_ENABLED === 'true',
   });
 
   // Load persisted settings and today's PnL from DB
