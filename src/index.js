@@ -13,6 +13,7 @@ const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
 const SignalTracker = require('./engine/signalTracker');
 const TradeExecutor = require('./engine/tradeExecutor');
+const UserPaperEngine = require('./engine/userPaperEngine');
 const TelegramBot = require('./bot/telegramBot');
 
 let dbReady = false;
@@ -76,6 +77,10 @@ async function main() {
 
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor });
+
+  // Per-user virtual paper accounts
+  const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges);
+  bot.userPaperEngine = userPaperEngine;
 
   // Wire trade executor notifications to Telegram
   tradeExecutor.onTradeUpdate(async (msg) => {
@@ -179,6 +184,15 @@ async function main() {
       if (updates.length) logger.info(`Tracker: ${updates.length} signal updates`);
     } catch (err) {
       logger.error(`Signal tracker error: ${err.message}`);
+    }
+  });
+
+  // Evaluate per-user virtual paper trades every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      await userPaperEngine.checkAllTrades();
+    } catch (err) {
+      logger.error(`User paper engine error: ${err.message}`);
     }
   });
 

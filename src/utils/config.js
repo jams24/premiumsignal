@@ -4,6 +4,11 @@ module.exports = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN,
     channelId: process.env.TELEGRAM_CHANNEL_ID,
+    // Comma-separated Telegram user IDs that are auto-promoted to admin
+    adminIds: (process.env.ADMIN_TELEGRAM_IDS || '')
+      .split(',')
+      .map(s => parseInt(s.trim()))
+      .filter(n => !isNaN(n) && n > 0),
   },
   exchanges: {
     binance: { apiKey: process.env.BINANCE_API_KEY, secret: process.env.BINANCE_SECRET },

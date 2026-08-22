@@ -193,6 +193,43 @@ async function init(retries = 3) {
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       CHECK (id = 1)
     );
+
+    CREATE TABLE IF NOT EXISTS bot_users (
+      telegram_id BIGINT PRIMARY KEY,
+      username TEXT,
+      role TEXT DEFAULT 'trader',
+      status TEXT DEFAULT 'pending',
+      paper_follow BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      granted_at TIMESTAMPTZ,
+      granted_by BIGINT
+    );
+
+    CREATE TABLE IF NOT EXISTS user_paper_trades (
+      id SERIAL PRIMARY KEY,
+      telegram_id BIGINT NOT NULL,
+      signal_id BIGINT,
+      symbol TEXT NOT NULL,
+      exchange TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      entry_price DOUBLE PRECISION NOT NULL,
+      position_size DOUBLE PRECISION DEFAULT 100,
+      tp1 DOUBLE PRECISION, tp2 DOUBLE PRECISION, tp3 DOUBLE PRECISION,
+      stop_loss DOUBLE PRECISION,
+      original_stop_loss DOUBLE PRECISION,
+      hit_tp1 BOOLEAN DEFAULT FALSE,
+      hit_tp2 BOOLEAN DEFAULT FALSE,
+      exit_price DOUBLE PRECISION,
+      realized_pnl_usd DOUBLE PRECISION DEFAULT 0,
+      pnl_pct DOUBLE PRECISION,
+      pnl_usd DOUBLE PRECISION,
+      close_reason TEXT,
+      status TEXT DEFAULT 'open',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      closed_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_upt_status ON user_paper_trades(telegram_id, status);
+    CREATE INDEX IF NOT EXISTS idx_bot_users_status ON bot_users(status);
   `);
 
   // Add new columns to existing trades table (safe — IF NOT EXISTS not available for columns, so catch errors)
@@ -466,4 +503,119 @@ async function loadSettings() {
   return rows.length ? rows[0].config : null;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL };
+// ---------- Access control (bot_users) ----------
+
+async function getUser(telegramId) {
+  const { rows } = await query('SELECT * FROM bot_users WHERE telegram_id = $1', [telegramId]);
+  return rows[0] || null;
+}
+
+async function createUser(telegramId, username, role = 'trader', status = 'pending') {
+  const { rows } = await query(
+    `INSERT INTO bot_users (telegram_id, username, role, status)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username
+     RETURNING *`,
+    [telegramId, username || null, role, status]
+  );
+  return rows[0];
+}
+
+async function grantUser(telegramId, grantedBy, role = 'trader') {
+  const { rows } = await query(
+    `UPDATE bot_users SET status = 'active', role = $3, granted_at = NOW(), granted_by = $2
+     WHERE telegram_id = $1 RETURNING *`,
+    [telegramId, grantedBy, role]
+  );
+  return rows[0] || null;
+}
+
+async function revokeUser(telegramId) {
+  const { rows } = await query(
+    `UPDATE bot_users SET status = 'revoked', paper_follow = FALSE WHERE telegram_id = $1 RETURNING *`,
+    [telegramId]
+  );
+  return rows[0] || null;
+}
+
+async function listUsers(status) {
+  const sql = status
+    ? 'SELECT * FROM bot_users WHERE status = $1 ORDER BY created_at DESC'
+    : 'SELECT * FROM bot_users ORDER BY created_at DESC';
+  const { rows } = await query(sql, status ? [status] : []);
+  return rows;
+}
+
+async function getActiveUsers() {
+  const { rows } = await query("SELECT * FROM bot_users WHERE status = 'active'");
+  return rows;
+}
+
+async function setPaperFollow(telegramId, follow) {
+  await query('UPDATE bot_users SET paper_follow = $2 WHERE telegram_id = $1', [telegramId, follow]);
+}
+
+async function getFollowers() {
+  const { rows } = await query("SELECT * FROM bot_users WHERE status = 'active' AND paper_follow = TRUE");
+  return rows;
+}
+
+// ---------- Per-user virtual paper trades ----------
+
+async function saveUserPaperTrade(trade) {
+  const { rows } = await query(
+    `INSERT INTO user_paper_trades (telegram_id, signal_id, symbol, exchange, direction, entry_price, position_size, tp1, tp2, tp3, stop_loss, original_stop_loss)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [trade.telegramId, trade.signalId || null, trade.symbol, trade.exchange, trade.direction,
+     trade.entryPrice, trade.positionSize || 100, trade.tp1, trade.tp2, trade.tp3,
+     trade.stopLoss, trade.stopLoss]
+  );
+  return rows[0];
+}
+
+async function getOpenUserTrades(telegramId) {
+  if (telegramId) {
+    const { rows } = await query(
+      "SELECT * FROM user_paper_trades WHERE telegram_id = $1 AND status = 'open' ORDER BY created_at DESC",
+      [telegramId]
+    );
+    return rows;
+  }
+  const { rows } = await query("SELECT * FROM user_paper_trades WHERE status = 'open' ORDER BY created_at DESC");
+  return rows;
+}
+
+async function updateUserPaperTrade(id, fields) {
+  const sets = [];
+  const params = [];
+  for (const [key, val] of Object.entries(fields)) {
+    params.push(val);
+    sets.push(`${key} = $${params.length}`);
+  }
+  params.push(id);
+  await query(`UPDATE user_paper_trades SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+}
+
+async function closeUserPaperTrade(id, exitPrice, pnlPct, pnlUsd, reason) {
+  await query(
+    `UPDATE user_paper_trades SET status='closed', exit_price=$2, pnl_pct=$3, pnl_usd=$4,
+     close_reason=$5, closed_at=NOW() WHERE id=$1`,
+    [id, exitPrice, pnlPct, pnlUsd, reason]
+  );
+}
+
+async function getUserTradeStats(telegramId) {
+  const { rows } = await query(
+    `SELECT count(*) total,
+            count(*) FILTER (WHERE status='closed') closed,
+            count(*) FILTER (WHERE status='open') open,
+            count(*) FILTER (WHERE pnl_usd > 0) wins,
+            COALESCE(SUM(pnl_usd) FILTER (WHERE status='closed'), 0) total_pnl,
+            COALESCE(AVG(pnl_pct) FILTER (WHERE status='closed'), 0) avg_pnl_pct
+     FROM user_paper_trades WHERE telegram_id = $1`,
+    [telegramId]
+  );
+  return rows[0];
+}
+
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats };

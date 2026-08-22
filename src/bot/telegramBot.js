@@ -20,37 +20,137 @@ class TelegramBot {
     this.onchainTracker = onchainTracker;
     this.marketIntel = marketIntel;
     this.tradeExecutor = tradeExecutor;
+    this.userPaperEngine = null; // wired from index.js
+    // Access control MUST be registered before any command handlers
+    this.setupAccess();
     this.setupCommands();
     this.setupSettingsPanel();
   }
 
+  setupAccess() {
+    // Commands/actions reserved for the admin (trading control, settings, user mgmt)
+    const ADMIN_COMMANDS = new Set([
+      'trade', 'stop', 'trademode', 'setsize', 'setleverage', 'setloss', 'setmaxloss',
+      'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
+      'settings', 'users', 'grant', 'revoke',
+    ]);
+    const ADMIN_ACTIONS = /^cfg_/;
+    const PUBLIC_COMMANDS = new Set([
+      'start', 'menu', 'help', 'signals', 'scan', 'trending', 'funding', 'stats',
+      'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
+      'follow', 'unfollow', 'mypaper', 'myaccess',
+    ]);
+
+    this.bot.use(async (ctx, next) => {
+      try {
+        const from = ctx.from;
+        if (!from || !from.id) return next(); // channel posts / no user context
+
+        let user = await db.getUser(from.id);
+
+        // Bootstrap: env-declared admins are auto-created/promoted on first contact
+        if (!user && config.telegram.adminIds.includes(from.id)) {
+          user = await db.createUser(from.id, from.username, 'admin', 'active');
+          logger.info(`Bootstrap admin registered: ${from.id}`);
+        }
+
+        if (!user) {
+          // First contact — register as pending and alert admins
+          user = await db.createUser(from.id, from.username, 'trader', 'pending');
+          logger.info(`New access request from ${from.id} (@${from.username || '?'})`);
+          await ctx.replyWithHTML(
+            `🔒 <b>Access Request Submitted</b>\n\n` +
+            `Your Telegram ID: <code>${from.id}</code>\n\n` +
+            `An administrator has been notified. You'll be able to use the bot once your access is approved.`
+          );
+          const admins = (await db.listUsers()).filter(u => u.role === 'admin' && u.status === 'active');
+          for (const admin of admins) {
+            try {
+              await this.bot.telegram.sendMessage(
+                admin.telegram_id,
+                `🔔 <b>New Access Request</b>\n\n` +
+                `User: @${escapeHtml(from.username || String(from.id))}\n` +
+                `ID: <code>${from.id}</code>\n\n` +
+                `Approve with: <code>/grant ${from.id}</code>`
+              );
+            } catch (e) { logger.warn(`Admin notify failed (${admin.telegram_id}): ${e.message}`); }
+          }
+          return;
+        }
+
+        if (user.status !== 'active') {
+          if (ctx.updateType === 'message' && ctx.message?.text?.startsWith('/start')) {
+            await ctx.replyWithHTML(user.status === 'pending'
+              ? `⏳ Your access is still <b>pending approval</b>. You'll be notified once approved.`
+              : `🚫 Your access has been <b>revoked</b>. Contact an administrator.`);
+          }
+          return;
+        }
+
+        // Admin gating on commands and settings-panel callbacks
+        const isAdmin = user.role === 'admin';
+        if (!isAdmin) {
+          if (ctx.updateType === 'message' && ctx.message?.text?.startsWith('/')) {
+            const cmd = ctx.message.text.slice(1).split(/[\s@]/)[0];
+            if (ADMIN_COMMANDS.has(cmd)) {
+              await ctx.replyWithHTML(`🚫 <b>Admin only.</b> This command controls live trading and is restricted.`);
+              return;
+            }
+            if (cmd && !PUBLIC_COMMANDS.has(cmd)) {
+              await ctx.replyWithHTML(`❓ Unknown command. Try /help or /menu.`);
+              return;
+            }
+          }
+          if (ctx.updateType === 'callback_query' && ADMIN_ACTIONS.test(ctx.callbackQuery?.data || '')) {
+            await ctx.answerCbQuery('Admin only');
+            return;
+          }
+          // Block non-cfg inline actions that mutate trading state
+          const traderAllowedActions = new Set(['action_signals', 'action_scan', 'action_trending', 'action_funding', 'action_whale_info', 'action_stats', 'action_intel', 'action_dex', 'action_review', 'action_help']);
+          if (ctx.updateType === 'callback_query' && ctx.callbackQuery?.data?.startsWith('action_')) {
+            if (!traderAllowedActions.has(ctx.callbackQuery.data)) {
+              await ctx.answerCbQuery('Admin only');
+              return;
+            }
+          }
+        }
+
+        ctx.state.user = user;
+        return next();
+      } catch (e) {
+        logger.error(`Access control error: ${e.message}`);
+        // Fail closed on DB errors — never let an unknown user through
+        try { await ctx.replyWithHTML('⚠️ Temporary error verifying access. Try again shortly.'); } catch (_) {}
+      }
+    });
+  }
+
   setupCommands() {
     this.bot.command('start', (ctx) => {
+      const isAdmin = ctx.state.user?.role === 'admin';
       ctx.replyWithHTML(
         `<b>🤖 CryptoSignal Bot</b>\n\n` +
         `<b>📡 Signals &amp; Scanning:</b>\n` +
         `/menu — Interactive control panel\n` +
         `/signals — Active signals\n` +
         `/scan — Run market scan now\n` +
-        `/review — Past signal performance\n` +
         `/stats — Signal win rate stats\n` +
-        `/analyse &lt;days&gt; — Full analysis report\n\n` +
-        `<b>📊 Market Intel:</b>\n` +
-        `/intel — Market intelligence brief\n` +
-        `/trending — Social sentiment scan\n` +
-        `/funding — Funding rate extremes\n` +
-        `/dex — DEX trending tokens\n` +
-        `/whale &lt;token&gt; &lt;chain&gt; &lt;addr&gt; — Whale tracker\n\n` +
-        `<b>🤖 Auto-Trading:</b>\n` +
-        `/trade — Trading status &amp; config\n` +
-        `/settings — Interactive settings panel\n` +
-        `/positions — Open positions (DCA, trailing SL)\n` +
-        `/pnl — Trade P&amp;L performance\n` +
-        `/trademode paper|live — Switch mode\n` +
-        `/setsize &lt;USDT&gt; — Set position size\n` +
-        `/stop — Kill switch (close all)\n` +
-        `/help — Signal types explained\n\n` +
-        `Signals auto-posted to channel.`
+        `/review — Past signal performance\n\n` +
+        `<b>📝 Your Paper Portfolio:</b>\n` +
+        `/follow — Auto-paper every new signal ($100 each)\n` +
+        `/unfollow — Stop auto-papering\n` +
+        `/mypaper — Your virtual portfolio &amp; P&amp;L\n\n` +
+        (isAdmin
+          ? `<b>👑 Admin — Trading Control:</b>\n` +
+            `/trade — Trading status &amp; config\n` +
+            `/settings — Interactive settings panel\n` +
+            `/positions — Open positions\n` +
+            `/pnl — Trade P&amp;L\n` +
+            `/trademode paper|live — Switch mode\n` +
+            `/stop — Kill switch (close all)\n` +
+            `/users /grant &lt;id&gt; /revoke &lt;id&gt; — Access control\n\n`
+          : `<i>Paper trading only — live trading is admin-managed.</i>\n\n`) +
+        `Signals are delivered automatically.`
       );
     });
 
@@ -235,12 +335,93 @@ class TelegramBot {
       `<b>Signal Types:</b>\n` +
       `🆕 LISTING — New exchange listing detected\n` +
       `🚀 BREAKOUT — Technical breakout with volume\n` +
-      `📊 VOLUME_SPIKE — Unusual volume detected\n` +
+      `📈 VREVERSAL — Capitulation reversal reclaim\n` +
       `🐋 WHALE — Large on-chain movement\n` +
       `📉 FUNDING_SHORT — Extreme funding rate\n\n` +
       `<b>Confidence:</b> ⭐⭐⭐⭐⭐ (1-5 stars)\n` +
       `Higher confidence = stronger confluence of signals`
     ));
+
+    // ---------- User paper trading commands ----------
+
+    this.bot.command('follow', async (ctx) => {
+      await db.setPaperFollow(ctx.state.user.telegram_id, true);
+      ctx.replyWithHTML(
+        `✅ <b>Paper-follow enabled</b>\n\n` +
+        `Every new signal is now automatically paper-traded in your virtual account ($100 per signal, 1x).\n` +
+        `Track with /mypaper`
+      );
+    });
+
+    this.bot.command('unfollow', async (ctx) => {
+      await db.setPaperFollow(ctx.state.user.telegram_id, false);
+      ctx.replyWithHTML(`✅ <b>Paper-follow disabled.</b> Open virtual trades still run to completion.`);
+    });
+
+    this.bot.command('mypaper', async (ctx) => {
+      try {
+        const uid = ctx.state.user.telegram_id;
+        const stats = await db.getUserTradeStats(uid);
+        const open = await db.getOpenUserTrades(uid);
+        let msg = `📊 <b>Your Paper Portfolio</b>\n\n` +
+          `Closed: ${stats.closed} | Wins: ${stats.wins}\n` +
+          `Total P&L: <b>$${parseFloat(stats.total_pnl).toFixed(2)}</b>\n` +
+          `Avg trade: ${parseFloat(stats.avg_pnl_pct).toFixed(2)}%\n`;
+        if (open.length) {
+          msg += `\n<b>Open (${open.length}):</b>\n`;
+          for (const t of open.slice(0, 10)) {
+            const pct = ((t.direction === 'long' ? 1 : -1) * 100).toFixed(0);
+            const slTag = t.hit_tp1 ? ' 🟢BE' : '';
+            msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${parseFloat(t.entry_price).toPrecision(6)}${slTag}\n`;
+          }
+        } else {
+          msg += `\nNo open virtual trades. Use /follow to auto-trade new signals.`;
+        }
+        await ctx.replyWithHTML(msg);
+      } catch (e) {
+        logger.error(`/mypaper: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Could not load your portfolio.');
+      }
+    });
+
+    // ---------- Admin: user management ----------
+
+    this.bot.command('users', async (ctx) => {
+      const users = await db.listUsers();
+      let msg = `<b>👥 Bot Users</b>\n\n`;
+      for (const u of users.slice(0, 25)) {
+        const badge = u.role === 'admin' ? '👑' : u.status === 'active' ? '✅' : u.status === 'pending' ? '⏳' : '🚫';
+        msg += `${badge} @${escapeHtml(u.username || String(u.telegram_id))} <code>${u.telegram_id}</code> [${u.status}]${u.paper_follow ? ' 📝' : ''}\n`;
+      }
+      msg += `\nGrant: <code>/grant &lt;id&gt;</code> | Revoke: <code>/revoke &lt;id&gt;</code>`;
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('grant', async (ctx) => {
+      const parts = ctx.message.text.split(/\s+/);
+      const id = parseInt(parts[1]);
+      if (isNaN(id)) return ctx.replyWithHTML(`Usage: <code>/grant &lt;telegram_id&gt;</code>`);
+      const user = await db.grantUser(id, ctx.state.user.telegram_id);
+      if (!user) return ctx.replyWithHTML(`❌ No user <code>${id}</code> found. They must message the bot first.`);
+      try {
+        await this.bot.telegram.sendMessage(id,
+          `✅ <b>Access Approved!</b>\n\n` +
+          `You can now use the bot.\n` +
+          `/menu — control panel\n` +
+          `/follow — auto-paper every signal\n` +
+          `/mypaper — your virtual portfolio`);
+      } catch (e) { logger.warn(`Grant notify failed for ${id}: ${e.message}`); }
+      ctx.replyWithHTML(`✅ Granted access to <code>${id}</code>.`);
+    });
+
+    this.bot.command('revoke', async (ctx) => {
+      const parts = ctx.message.text.split(/\s+/);
+      const id = parseInt(parts[1]);
+      if (isNaN(id)) return ctx.replyWithHTML(`Usage: <code>/revoke &lt;telegram_id&gt;</code>`);
+      if (id === ctx.state.user.telegram_id) return ctx.replyWithHTML(`🚫 You can't revoke yourself.`);
+      await db.revokeUser(id);
+      ctx.replyWithHTML(`🚫 Revoked access for <code>${id}</code>.`);
+    });
 
     this.bot.command('signals', async (ctx) => {
       try {
@@ -1617,10 +1798,28 @@ class TelegramBot {
   }
 
   async sendSignal(signal) {
-    if (!this.channelId) return;
+    // Fan out: channel + every approved user's DM + virtual paper accounts
     try {
-      await this.bot.telegram.sendMessage(this.channelId, formatSignalMessage(signal), { parse_mode: 'HTML' });
-      logger.info(`Signal sent to channel: ${signal.type} ${signal.symbol}`);
+      if (this.channelId) {
+        await this.bot.telegram.sendMessage(this.channelId, formatSignalMessage(signal), { parse_mode: 'HTML' });
+      }
+      logger.info(`Signal sent: ${signal.type} ${signal.symbol}`);
+
+      // Open virtual paper trades for followers
+      if (this.userPaperEngine) {
+        await this.userPaperEngine.openForFollowers(signal);
+      }
+
+      // DM all active users
+      const users = await db.getActiveUsers();
+      for (const u of users) {
+        try {
+          await this.bot.telegram.sendMessage(u.telegram_id, formatSignalMessage(signal), { parse_mode: 'HTML' });
+        } catch (e) {
+          // Blocked bot or unreachable — ignore silently, don't spam logs
+          if (!String(e.message).includes('blocked')) logger.debug(`DM to ${u.telegram_id}: ${e.message}`);
+        }
+      }
     } catch (err) {
       logger.error(`Failed to send signal: ${err.message}`);
     }
