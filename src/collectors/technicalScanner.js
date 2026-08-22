@@ -9,11 +9,25 @@ const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|D
 class TechnicalScanner {
   constructor(exchanges) {
     this.exchanges = exchanges;
-    this.smc = new SMCAnalyzer();
+    // Rejection-reason counters, reset per scanAll() — visibility into why
+    // candidates die (e.g. "0 signals sent" days)
+    this.rejects = new Map();
+  }
+
+  reject(reason) {
+    this.rejects.set(reason, (this.rejects.get(reason) || 0) + 1);
+    return null;
+  }
+
+  rejectSummary() {
+    if (!this.rejects.size) return '';
+    return [...this.rejects.entries()].sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}:${v}`).join(' | ');
   }
 
   async scanAll() {
     const candidates = [];
+    this.rejects = new Map();
 
     for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
       try {
@@ -219,7 +233,7 @@ class TechnicalScanner {
   async deepAnalyze(exchange, exchangeId, symbol, ticker) {
     try {
       const ohlcv = await exchange.fetchOHLCV(symbol, '1h', undefined, 100);
-      if (ohlcv.length < 30) return null;
+      if (ohlcv.length < 30) return this.reject('insufficient_candles');
 
       const closes = ohlcv.map(c => c[4]);
       const highs = ohlcv.map(c => c[2]);
@@ -257,10 +271,10 @@ class TechnicalScanner {
       else { score += 5; signals.push('EMA20<EMA50'); }
 
       // RSI — block extremes, penalize overbought longs / oversold shorts
-      if (currentRSI > 90) { return null; }
+      if (currentRSI > 90) { return this.reject('rsi_extreme_high'); }
       if (currentRSI > 80) { score += 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
       else if (currentRSI > 70) { score += 15; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
-      else if (currentRSI < 10) { return null; }
+      else if (currentRSI < 10) { return this.reject('rsi_extreme_low'); }
       else if (currentRSI < 20) { score += 10; direction = 'long'; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI < 30) { score += 15; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI > 50 && currentRSI < 70) { score += 10; signals.push(`RSI bullish ${currentRSI.toFixed(0)}`); }
@@ -293,7 +307,7 @@ class TechnicalScanner {
       const recentHigh = Math.max(...recentCloses);
       const recentMove = ((recentHigh - recentLow) / recentLow) * 100;
       if (recentMove > 30) {
-        return null;
+        return this.reject('overextended_6candle');
       }
       if (recentMove > 15) {
         score -= 15;
@@ -304,7 +318,7 @@ class TechnicalScanner {
       // (previously longs-only, so the bot would short into capitulation lows)
       const distFromEma20 = ((currentPrice - currentEma20) / currentEma20) * 100;
       if (direction === 'long' && distFromEma20 > 5) {
-        return null;
+        return this.reject('chasing_long_ema20');
       }
       if (direction === 'long' && distFromEma20 > 3) {
         score -= 10;
@@ -312,7 +326,7 @@ class TechnicalScanner {
       }
       const distBelowEma20 = ((currentEma20 - currentPrice) / currentEma20) * 100;
       if (direction === 'short' && distBelowEma20 > 5) {
-        return null;
+        return this.reject('chasing_short_ema20');
       }
       if (direction === 'short' && distBelowEma20 > 3) {
         score -= 10;
@@ -356,7 +370,7 @@ class TechnicalScanner {
         // Hard block if SMC structure conflicts with direction (0% historical win rate)
         if ((smcResult.structureBias === 'bullish' && direction === 'short') ||
             (smcResult.structureBias === 'bearish' && direction === 'long')) {
-          return null;
+          return this.reject('smc_conflict');
         }
 
         // Resistance/support zone filter: block entries heading into nearby S/R
@@ -430,7 +444,7 @@ class TechnicalScanner {
       if (direction === 'long' && currentRSI > 70 && currentBB && currentPrice > currentBB.upper) {
         const downtrend = currentEma20 < currentEma50 ||
           (smcData && smcData.structureBias === 'bearish');
-        if (!downtrend) return null; // bullish structure + overbought = just late, skip
+        if (!downtrend) return this.reject('overbought_uptrend_late');
         direction = 'short';
         score -= 10; // fading strength costs conviction
         signals.push('Fade: overbought rally in bearish structure → short');
@@ -438,13 +452,13 @@ class TechnicalScanner {
       if (direction === 'short' && currentRSI < 30 && currentBB && currentPrice < currentBB.lower) {
         const uptrend = currentEma20 > currentEma50 ||
           (smcData && smcData.structureBias === 'bullish');
-        if (!uptrend) return null;
+        if (!uptrend) return this.reject('oversold_downtrend_late');
         direction = 'long';
         score -= 10;
         signals.push('Fade: oversold dump in bullish structure → long');
       }
 
-      if (score < 40) return null;
+      if (score < 40) return this.reject('score_below_40');
 
       // 4H trend filter: reject counter-trend entries
       try {
@@ -456,11 +470,11 @@ class TechnicalScanner {
           const price4h = closes4h[closes4h.length - 1];
           const trendGap = Math.abs((price4h - currentEma4h) / currentEma4h) * 100;
           if (direction === 'long' && price4h < currentEma4h) {
-            if (trendGap > 5) return null; // hard block: strong downtrend
+            if (trendGap > 5) return this.reject('counter_trend_4h_down');
             score -= 20;
             signals.push(`4H below EMA20 by ${trendGap.toFixed(1)}% (counter-trend)`);
           } else if (direction === 'short' && price4h > currentEma4h) {
-            if (trendGap > 5) return null; // hard block: strong uptrend
+            if (trendGap > 5) return this.reject('counter_trend_4h_up');
             score -= 20;
             signals.push(`4H above EMA20 by ${trendGap.toFixed(1)}% (counter-trend)`);
           } else {
@@ -470,18 +484,18 @@ class TechnicalScanner {
         }
       } catch (e) { /* 4H data unavailable, skip filter */ }
 
-      if (score < 40) return null;
+      if (score < 40) return this.reject('score_below_40');
 
       // Require candle confirmation matching direction
       const lastOpen = ohlcv[ohlcv.length - 1][1];
       const lastClose = ohlcv[ohlcv.length - 1][4];
-      if (direction === 'short' && lastClose >= lastOpen) return null;
-      if (direction === 'long' && lastClose <= lastOpen) return null;
+      if (direction === 'short' && lastClose >= lastOpen) return this.reject('no_red_candle_confirm');
+      if (direction === 'long' && lastClose <= lastOpen) return this.reject('no_green_candle_confirm');
       signals.push(direction === 'long' ? 'Bullish candle confirmed' : 'Bearish candle confirmed');
 
       // Suppress signals during low-liquidity hours (04:00-06:00 UTC)
       const currentHourUTC = new Date().getUTCHours();
-      if (currentHourUTC >= 4 && currentHourUTC <= 5) return null;
+      if (currentHourUTC >= 4 && currentHourUTC <= 5) return this.reject('dead_hours');
 
       // Calculate TP/SL using ATR
       const atrValue = currentATR || currentPrice * 0.02;

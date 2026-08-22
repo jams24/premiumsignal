@@ -167,7 +167,9 @@ async function main() {
         }
       }
 
-      logger.info(`Scan complete: ${results.length} candidates, ${signalCount} signals sent`);
+      const rejSummary = [technicalScanner.rejectSummary(), signalEngine.rejectSummary?.() || '']
+        .filter(Boolean).join(' || ');
+      logger.info(`Scan complete: ${results.length} candidates, ${signalCount} signals sent${signalCount === 0 ? ` [rejections: ${rejSummary || 'none recorded'}]` : ''}`);
     } catch (err) {
       logger.error(`Scheduled scan error: ${err.message}`);
     }

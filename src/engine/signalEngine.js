@@ -4,6 +4,7 @@ const db = require('../db/database');
 class SignalEngine {
   constructor() {
     this.recentSignals = new Map(); // dedup: symbol -> timestamp (cross-exchange)
+    this.rejects = new Map();       // rejection-reason counters for diagnosability
     this.cooldownMs = 4 * 60 * 60 * 1000;
     this.slBackoffMs = 12 * 60 * 60 * 1000; // 12hr cooldown after SL hit
     this.slSymbols = new Map(); // symbol -> timestamp of last SL
@@ -53,16 +54,20 @@ class SignalEngine {
   }
 
   async processBreakoutSignal(scan) {
-    if (this.isOnCooldown(scan.symbol)) return null;
-    if (scan.score < 70) return null;
+    const reject = (reason) => {
+      this.rejects.set(reason, (this.rejects.get(reason) || 0) + 1);
+      return null;
+    };
+    if (this.isOnCooldown(scan.symbol)) return reject('cooldown');
+    if (scan.score < 70) return reject('score_below_70');
 
     // VOLUME_SPIKE signals disabled: 101 posted historically at ~39% TP1 / ~61% SL
     // (negative expectancy). Only clean 2-3x volume breakouts are traded.
     if (scan.type === 'VREVERSAL') {
-      if (scan.volumeRatio < 1.5) return null; // own reclaim-volume rule
+      if (scan.volumeRatio < 1.5) return reject('vreversal_volume'); // own reclaim-volume rule
     } else {
-      if (scan.volumeRatio > 3) return null;
-      if (scan.volumeRatio < 2) return null;
+      if (scan.volumeRatio > 3) return reject('volume_above_3x_disabled');
+      if (scan.volumeRatio < 2) return reject('volume_below_2x');
     }
 
     let confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
@@ -76,7 +81,7 @@ class SignalEngine {
     }
 
     // 3★ signals historically hit SL 86-100% of the time — never post them
-    if (confidence < 4) return null;
+    if (confidence < 4) return reject('confidence_below_4');
 
     const signal = {
       type: scan.type || (scan.volumeRatio > 3 ? 'VOLUME_SPIKE' : 'BREAKOUT'),
