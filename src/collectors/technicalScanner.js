@@ -9,8 +9,7 @@ const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|D
 class TechnicalScanner {
   constructor(exchanges) {
     this.exchanges = exchanges;
-    // Rejection-reason counters, reset per scanAll() — visibility into why
-    // candidates die (e.g. "0 signals sent" days)
+    this.smc = new SMCAnalyzer();
     this.rejects = new Map();
   }
 
@@ -506,9 +505,7 @@ class TechnicalScanner {
       const tp1 = isLong ? currentPrice + atrValue * 2.5 : currentPrice - atrValue * 2.5;
       const tp2 = isLong ? currentPrice + atrValue * 4.5 : currentPrice - atrValue * 4.5;
       const tp3 = isLong ? currentPrice + atrValue * 7 : currentPrice - atrValue * 7;
-      // SL tightened to 2xATR: old 3xATR SL vs 2.5xATR TP1 gave negative expectancy
-      // (TP1 hit rate never exceeded ~57%, needing >54.5% at these distances to break even)
-      const stopLoss = isLong ? currentPrice - atrValue * 2 : currentPrice + atrValue * 2;
+      const stopLoss = isLong ? currentPrice - atrValue * 3 : currentPrice + atrValue * 3;
 
       return {
         symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),

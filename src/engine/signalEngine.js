@@ -61,13 +61,12 @@ class SignalEngine {
     if (this.isOnCooldown(scan.symbol)) return reject('cooldown');
     if (scan.score < 70) return reject('score_below_70');
 
-    // VOLUME_SPIKE signals disabled: 101 posted historically at ~39% TP1 / ~61% SL
-    // (negative expectancy). Only clean 2-3x volume breakouts are traded.
+    // Volume filter: spikes need 5x+, breakouts need 2x+, V-reversals need 1.5x
     if (scan.type === 'VREVERSAL') {
-      if (scan.volumeRatio < 1.5) return reject('vreversal_volume'); // own reclaim-volume rule
+      if (scan.volumeRatio < 1.5) return reject('vreversal_volume');
     } else {
-      if (scan.volumeRatio > 3) return reject('volume_above_3x_disabled');
-      if (scan.volumeRatio < 2) return reject('volume_below_2x');
+      const minVol = scan.volumeRatio > 3 ? 5 : 2;
+      if (scan.volumeRatio < minVol) return reject('volume_below_min');
     }
 
     let confidence = scan.score >= 80 ? 5 : scan.score >= 65 ? 4 : 3;
@@ -79,9 +78,6 @@ class SignalEngine {
       const hasOB = scan.smc.orderBlocks?.length > 0;
       if ((hasChoch || (hasBos && hasOB)) && confidence < 5) confidence++;
     }
-
-    // 3★ signals historically hit SL 86-100% of the time — never post them
-    if (confidence < 4) return reject('confidence_below_4');
 
     const signal = {
       type: scan.type || (scan.volumeRatio > 3 ? 'VOLUME_SPIKE' : 'BREAKOUT'),
