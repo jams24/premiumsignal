@@ -372,9 +372,11 @@ class TelegramBot {
         if (open.length) {
           msg += `\n<b>Open (${open.length}):</b>\n`;
           for (const t of open.slice(0, 10)) {
-            const pct = ((t.direction === 'long' ? 1 : -1) * 100).toFixed(0);
+            const entry = parseFloat(t.entry_price);
+            const realized = parseFloat(t.realized_pnl_usd || 0);
             const slTag = t.hit_tp1 ? ' 🟢BE' : '';
-            msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${parseFloat(t.entry_price).toPrecision(6)}${slTag}\n`;
+            const pnlStr = realized > 0 ? ` | banked $${realized.toFixed(2)}` : '';
+            msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${entry.toPrecision(6)}${pnlStr}${slTag}\n`;
           }
         } else {
           msg += `\nNo open virtual trades. Use /follow to auto-trade new signals.`;
