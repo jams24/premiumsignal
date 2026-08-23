@@ -36,7 +36,7 @@ class TelegramBot {
     ]);
     const ADMIN_ACTIONS = /^cfg_/;
     const PUBLIC_COMMANDS = new Set([
-      'start', 'menu', 'help', 'signals', 'scan', 'trending', 'funding', 'stats',
+      'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
       'follow', 'unfollow', 'mypaper', 'myaccess',
     ]);
@@ -139,6 +139,7 @@ class TelegramBot {
         `/stats — Signal win rate stats\n` +
         `/review — Past signal performance\n\n` +
         `<b>📝 Your Paper Portfolio:</b>\n` +
+        `/guide — How to start paper trading\n` +
         `/follow — Auto-paper every new signal ($100 each)\n` +
         `/unfollow — Stop auto-papering\n` +
         `/mypaper — Your virtual portfolio &amp; P&amp;L\n\n` +
@@ -342,6 +343,31 @@ class TelegramBot {
       `📉 FUNDING_SHORT — Extreme funding rate\n\n` +
       `<b>Confidence:</b> ⭐⭐⭐⭐⭐ (1-5 stars)\n` +
       `Higher confidence = stronger confluence of signals`
+    ));
+
+    this.bot.command('guide', (ctx) => ctx.replyWithHTML(
+      `<b>How to Start Paper Trading</b>\n\n` +
+
+      `<b>Step 1:</b> You're already here! If approved, you're good to go.\n` +
+      `<b>Step 2:</b> Send /follow to auto-trade every signal with a $100 virtual position.\n` +
+      `<b>Step 3:</b> Track your performance with /mypaper.\n\n` +
+
+      `<b>Your Commands:</b>\n` +
+      `/follow — Start auto-paper-trading every signal\n` +
+      `/unfollow — Stop auto-trading (open trades still run)\n` +
+      `/mypaper — View your portfolio, P&L, and open trades\n` +
+      `/help — Signal types explained\n` +
+      `/menu — All available commands\n\n` +
+
+      `<b>How Your Trades Work:</b>\n` +
+      `Each signal opens a $100 virtual position (1x, no leverage).\n\n` +
+      `TP1 hit — 50% closed for profit, SL moves to breakeven\n` +
+      `TP2 hit — remaining 50% closed for profit\n` +
+      `SL hit before TP1 — full position closed at loss\n` +
+      `SL hit after TP1 — closed at breakeven (TP1 profit already banked)\n\n` +
+
+      `Trades are checked every 2 minutes automatically. Every signal is also sent directly to your DMs.\n\n` +
+      `<i>This is virtual paper trading — no real money involved.</i>`
     ));
 
     // ---------- User paper trading commands ----------
