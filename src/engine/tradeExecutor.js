@@ -799,9 +799,9 @@ class TradeExecutor {
             action = 'profit_protect';
             logger.info(`${trade.symbol}: +${pnlPct.toFixed(1)}% — SL moved to breakeven for profit protection`);
           } else if (trade.atr) {
-            // Already at breakeven — trail SL using min of 2x ATR or 50% of profit from entry
+            // Already at breakeven — trail SL keeping 67% of profit (give back max 33%)
             const profitDist = Math.abs((trade.peak_price || currentPrice) - trade.entry_price);
-            const trailDist = Math.min(trade.atr * 2, profitDist * 0.5 || trade.atr * 2);
+            const trailDist = Math.min(trade.atr * 1.5, profitDist * 0.33 || trade.atr * 1.5);
             const peak = trade.peak_price || trade.entry_price;
             const newPeak = isLong ? Math.max(peak, currentPrice) : Math.min(peak, currentPrice);
             if (newPeak !== peak) {
@@ -834,9 +834,15 @@ class TradeExecutor {
         // --- SL CHECK ---
         else if (!action && trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {
           action = 'sl';
-          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'sl');
-          this.dailyPnL += pnlUsd;
-          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+          // Paper trades: use SL price as exit (not gap price) for realistic simulation
+          const slExitPrice = trade.mode === 'paper' ? trade.stop_loss : currentPrice;
+          const slPnlPct = isLong
+            ? ((slExitPrice - trade.entry_price) / trade.entry_price) * 100
+            : ((trade.entry_price - slExitPrice) / trade.entry_price) * 100;
+          const slPnlUsd = (slPnlPct / 100) * (trade.position_size || 0);
+          await db.closeTrade(trade.id, slExitPrice, slPnlPct, slPnlUsd, 'sl');
+          this.dailyPnL += slPnlUsd;
+          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + slPnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
         }
         // --- AUTO-CLOSE AFTER 48h ---
