@@ -190,51 +190,35 @@ class TradeExecutor {
   // Set leverage with fallback — tries requested, then halves until it works
   async setLeverageWithFallback(exchange, pair, desiredLeverage) {
     const market = exchange.markets[pair];
-    // Respect exchange max leverage limits if available
     const maxLev = market?.limits?.leverage?.max || 125;
-    let lev = Math.min(desiredLeverage, maxLev);
+    const attempts = [...new Set([Math.min(desiredLeverage, maxLev), 10, 5, 3, 2, 1])].filter(v => v >= 1).sort((a, b) => b - a);
 
-    while (lev >= 1) {
+    // Ensure margin mode is set first
+    try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
+
+    for (const lev of attempts) {
       try {
         await exchange.setLeverage(lev, pair);
         if (lev !== desiredLeverage) logger.info(`${pair}: leverage fallback ${desiredLeverage}x → ${lev}x`);
         return lev;
       } catch (e) {
         const msg = e.message || '';
-        if (msg.includes('leverage') || msg.includes('Leverage') || msg.includes('max')) {
-          // Try to parse max from error (e.g. "maxLeverage is 5")
-          const match = msg.match(/(\d+)/);
-          if (match) {
-            const parsed = parseInt(match[1]);
-            if (parsed > 0 && parsed < lev) { lev = parsed; continue; }
-          }
-          lev = Math.floor(lev / 2);
-          if (lev < 1) lev = 1;
-          if (lev === Math.floor(desiredLeverage / 2) || lev === 1) {
-            // Last attempt at 1x
+        // Parse max leverage from error if available
+        const match = msg.match(/max.*?(\d+)/i) || msg.match(/(\d+)x?.*max/i);
+        if (match) {
+          const parsed = parseInt(match[1]);
+          if (parsed > 0 && parsed < lev) {
             try {
-              await exchange.setLeverage(1, pair);
-              logger.warn(`${pair}: leverage fallback to 1x`);
-              return 1;
-            } catch (e2) {
-              logger.warn(`${pair}: could not set any leverage, using exchange default`);
-              return desiredLeverage;
-            }
-          }
-        } else {
-          // Retry once after setting margin mode (Bybit needs cross mode before leverage)
-          try {
-            await exchange.setMarginMode('cross', pair);
-            await exchange.setLeverage(lev, pair);
-            logger.info(`${pair}: leverage ${lev}x set after margin mode retry`);
-            return lev;
-          } catch (e2) {
-            logger.warn(`${pair}: setLeverage error (non-leverage): ${msg} | retry: ${e2.message}`);
-            return 1;
+              await exchange.setLeverage(parsed, pair);
+              logger.info(`${pair}: leverage set to exchange max ${parsed}x (wanted ${desiredLeverage}x)`);
+              return parsed;
+            } catch (e2) { /* continue to next attempt */ }
           }
         }
+        logger.debug(`${pair}: setLeverage ${lev}x failed: ${msg.slice(0, 100)}`);
       }
     }
+    logger.warn(`${pair}: all leverage attempts failed, using exchange default (assuming ${desiredLeverage}x)`);
     return desiredLeverage;
   }
 
