@@ -475,9 +475,27 @@ class TradeExecutor {
       const desiredLeverage = this.calcLeverage(signal);
       const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
 
-      const positionSize = await this.calcPositionSize(signal);
+      let positionSize = await this.calcPositionSize(signal);
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
+
+      // Check margin: scale down position if balance can't cover it
+      try {
+        const balances = await this.getAllBalances();
+        const bal = balances[signal.exchange];
+        const available = bal?.free || bal?.total || 0;
+        const requiredMargin = positionSize / leverage;
+        if (requiredMargin > available * 0.9) {
+          const maxSize = available * 0.9 * leverage;
+          if (maxSize < 5) {
+            const msg = `⚠️ <b>TRADE SKIPPED</b> $${signal.symbol}\n\nInsufficient margin: $${available.toFixed(2)} available, need $${requiredMargin.toFixed(2)} at ${leverage}x.`;
+            await this.notify(msg);
+            return null;
+          }
+          logger.info(`${pair}: margin cap — $${positionSize} → $${maxSize.toFixed(2)} (balance $${available.toFixed(2)} at ${leverage}x)`);
+          positionSize = maxSize;
+        }
+      } catch (e) { logger.warn(`Margin check failed: ${e.message}`); }
 
       // Stale entry check: reject if price moved >2% from signal price
       const drift = Math.abs(entryPrice - signal.currentPrice) / signal.currentPrice * 100;
