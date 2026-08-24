@@ -125,6 +125,17 @@ class TradeExecutor {
       return { ok: false, reason: `Already in position on ${signal.symbol} (${existing.exchange})` };
     }
 
+    // Cross-exchange duplicate: same token listed under different names (e.g. PUMP vs PUMPFUN)
+    // Check if any open position has a very similar entry price on the same direction
+    const priceTolerance = 0.02; // 2%
+    const priceMatch = openPositions.find(p =>
+      p.direction === signal.direction &&
+      Math.abs(p.entry_price - signal.currentPrice) / signal.currentPrice < priceTolerance
+    );
+    if (priceMatch) {
+      return { ok: false, reason: `Likely duplicate: ${signal.symbol} ≈ ${priceMatch.symbol} (same price $${signal.currentPrice.toPrecision(4)})` };
+    }
+
     return { ok: true };
   }
 
