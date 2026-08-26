@@ -269,12 +269,13 @@ class TechnicalScanner {
       if (currentEma20 > currentEma50) { score += 10; signals.push('EMA20>EMA50'); }
       else { score += 5; signals.push('EMA20<EMA50'); }
 
-      // RSI — block extremes, penalize overbought longs / oversold shorts
+      // RSI — block extremes, lock direction on overbought/oversold
+      let rsiLockedDirection = null;
       if (currentRSI > 90) { return this.reject('rsi_extreme_high'); }
-      if (currentRSI > 80) { score += 10; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
-      else if (currentRSI > 70) { score += 15; direction = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
+      if (currentRSI > 80) { score += 10; direction = 'short'; rsiLockedDirection = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
+      else if (currentRSI > 70) { score += 15; direction = 'short'; rsiLockedDirection = 'short'; signals.push(`RSI overbought ${currentRSI.toFixed(0)}`); }
       else if (currentRSI < 10) { return this.reject('rsi_extreme_low'); }
-      else if (currentRSI < 20) { score += 10; direction = 'long'; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
+      else if (currentRSI < 20) { score += 10; direction = 'long'; rsiLockedDirection = 'long'; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI < 30) { score += 15; signals.push(`RSI oversold ${currentRSI.toFixed(0)}`); }
       else if (currentRSI > 50 && currentRSI < 70) { score += 10; signals.push(`RSI bullish ${currentRSI.toFixed(0)}`); }
       const rsiExtreme = currentRSI > 75 || currentRSI < 25;
@@ -283,12 +284,15 @@ class TechnicalScanner {
       if (currentBB && currentPrice > currentBB.upper) { score += 15; signals.push('BB upper breakout'); }
       else if (currentBB && currentPrice < currentBB.lower) { score += 15; signals.push('BB lower touch'); }
 
-      // MACD — both cross types set direction explicitly (was asymmetric: only
-      // bearish crosses flipped to short, biasing everything else long)
+      // MACD — set direction only if RSI didn't lock it (prevents longing into overbought)
       if (currentMACD && currentMACD.histogram > 0 && macd[macd.length - 2]?.histogram < 0) {
-        score += 15; direction = 'long'; signals.push('MACD bullish cross');
+        score += 15;
+        if (!rsiLockedDirection) direction = 'long';
+        signals.push('MACD bullish cross');
       } else if (currentMACD && currentMACD.histogram < 0 && macd[macd.length - 2]?.histogram > 0) {
-        score += 10; direction = 'short'; signals.push('MACD bearish cross');
+        score += 10;
+        if (!rsiLockedDirection) direction = 'short';
+        signals.push('MACD bearish cross');
       }
 
       // Volume spike — confirms interest but high spikes mean move already happened
@@ -340,8 +344,8 @@ class TechnicalScanner {
         for (const s of smcResult.signals) signals.push(s);
 
         // SMC can override direction: ChoCH or BOS with structure bias
-        // BUT not when RSI is at extreme levels (>75 or <25) — RSI exhaustion takes priority
-        if (!rsiExtreme) {
+        // BUT not when RSI locked direction (>70 overbought or <20 oversold)
+        if (!rsiLockedDirection) {
           const bullishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BULLISH');
           const bearishChoch = smcResult.chochEvents.find(e => e.type === 'CHOCH_BEARISH');
           if (bullishChoch && direction === 'short') direction = 'long';
@@ -356,7 +360,7 @@ class TechnicalScanner {
             signals.push('SMC bearish BOS overrides long');
           }
         } else {
-          signals.push(`RSI extreme (${currentRSI.toFixed(0)}) — SMC override blocked`);
+          signals.push(`RSI ${rsiLockedDirection === 'short' ? 'overbought' : 'oversold'} (${currentRSI.toFixed(0)}) — direction locked`);
         }
 
         // SMC structure confirmation bonus
