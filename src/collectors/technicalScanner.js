@@ -316,15 +316,15 @@ class TechnicalScanner {
       // Pullback filter: symmetric chase protection for BOTH directions
       // (previously longs-only, so the bot would short into capitulation lows)
       const distFromEma20 = ((currentPrice - currentEma20) / currentEma20) * 100;
-      if (direction === 'long' && distFromEma20 > 5) {
+      if (direction === 'long' && distFromEma20 > 8) {
         return this.reject('chasing_long_ema20');
       }
-      if (direction === 'long' && distFromEma20 > 3) {
-        score -= 10;
+      if (direction === 'long' && distFromEma20 > 4) {
+        score -= 15;
         signals.push(`Extended ${distFromEma20.toFixed(1)}% above EMA20`);
       }
       const distBelowEma20 = ((currentEma20 - currentPrice) / currentEma20) * 100;
-      if (direction === 'short' && distBelowEma20 > 5) {
+      if (direction === 'short' && distBelowEma20 > 8) {
         return this.reject('chasing_short_ema20');
       }
       if (direction === 'short' && distBelowEma20 > 3) {
@@ -366,10 +366,11 @@ class TechnicalScanner {
           signals.push('SMC confirms direction');
         }
 
-        // Hard block if SMC structure conflicts with direction (0% historical win rate)
+        // Heavy penalty if SMC structure conflicts with direction
         if ((smcResult.structureBias === 'bullish' && direction === 'short') ||
             (smcResult.structureBias === 'bearish' && direction === 'long')) {
-          return this.reject('smc_conflict');
+          score -= 25;
+          signals.push(`SMC ${smcResult.structureBias} conflicts with ${direction}`);
         }
 
         // Resistance/support zone filter: block entries heading into nearby S/R
