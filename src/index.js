@@ -136,21 +136,11 @@ async function main() {
   }, config.signals.listingCheckInterval);
 
   cron.schedule('*/5 * * * *', async () => {
-    logger.info('Running scheduled technical scan...');
+    logger.info('Running scheduled zone scan...');
     try {
-      const results = await technicalScanner.scanAll();
       let signalCount = 0;
 
-      for (const scan of results.slice(0, 5)) {
-        const signal = await signalEngine.processBreakoutSignal(scan);
-        if (signal) {
-          await bot.sendSignal(signal);
-          await tradeExecutor.executeSignal(signal);
-          await db.logAlert('SIGNAL', signal.symbol, signal, `${signal.type} ${signal.direction} ${signal.symbol}`).catch(() => {});
-          signalCount++;
-        }
-      }
-
+      // Funding rate alerts (info only, no trades)
       for (const [id, exchange] of Object.entries(listingMonitor.exchanges)) {
         const fundingOpps = await technicalScanner.findFundingRateExtremes(exchange, id);
         for (const opp of fundingOpps.slice(0, 3)) {
@@ -167,7 +157,7 @@ async function main() {
         }
       }
 
-      // === Zone accumulation scanner (pre-breakout entries) ===
+      // === Zone accumulation scanner (Flams-style pre-breakout entries) ===
       try {
         const zoneResults = await technicalScanner.scanZoneAccumulation();
         for (const scan of zoneResults.slice(0, 3)) {
@@ -186,7 +176,7 @@ async function main() {
 
       const rejSummary = [technicalScanner.rejectSummary(), signalEngine.rejectSummary?.() || '']
         .filter(Boolean).join(' || ');
-      logger.info(`Scan complete: ${results.length} candidates, ${signalCount} signals sent${signalCount === 0 ? ` [rejections: ${rejSummary || 'none recorded'}]` : ''}`);
+      logger.info(`Zone scan complete: ${signalCount} signals sent${signalCount === 0 ? ` [rejections: ${rejSummary || 'none recorded'}]` : ''}`);
     } catch (err) {
       logger.error(`Scheduled scan error: ${err.message}`);
     }

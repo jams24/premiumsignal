@@ -180,7 +180,23 @@ class SMCAnalyzer {
       }
     }
 
-    return orderBlocks;
+    // Filter out mitigated OBs — if price revisited the zone after it formed, it's used up
+    const unmitigated = orderBlocks.filter(ob => {
+      const obTime = ob.time;
+      for (let i = 0; i < ohlcv.length; i++) {
+        if (ohlcv[i][0] <= obTime) continue; // skip candles before/at the OB
+        if (ob.type === 'OB_BULLISH') {
+          // If any later candle's low went below the OB low, the zone was swept
+          if (ohlcv[i][3] < ob.low) return false;
+        } else {
+          // If any later candle's high went above the OB high, the zone was swept
+          if (ohlcv[i][2] > ob.high) return false;
+        }
+      }
+      return true;
+    });
+
+    return unmitigated;
   }
 
   // FVG = Fair Value Gap (imbalance in price)

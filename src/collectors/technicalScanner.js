@@ -637,9 +637,9 @@ class TechnicalScanner {
       let bestSupplyOB = null;
 
       for (const ob of bullishOBs) {
-        // Price is at or slightly above the demand zone (within 3% of OB high)
+        // Price is at or slightly above the demand zone (within 1.5% of OB high)
         const distAboveOB = ((currentPrice - ob.high) / currentPrice) * 100;
-        if (distAboveOB >= -1 && distAboveOB <= 3) {
+        if (distAboveOB >= -0.5 && distAboveOB <= 1.5) {
           nearDemandZone = true;
           if (!bestDemandOB || distAboveOB < ((currentPrice - bestDemandOB.high) / currentPrice) * 100) {
             bestDemandOB = ob;
@@ -648,9 +648,9 @@ class TechnicalScanner {
       }
 
       for (const ob of bearishOBs) {
-        // Price is at or slightly below the supply zone (within 3% of OB low)
+        // Price is at or slightly below the supply zone (within 1.5% of OB low)
         const distBelowOB = ((ob.low - currentPrice) / currentPrice) * 100;
-        if (distBelowOB >= -1 && distBelowOB <= 3) {
+        if (distBelowOB >= -0.5 && distBelowOB <= 1.5) {
           nearSupplyZone = true;
           if (!bestSupplyOB || distBelowOB < ((bestSupplyOB.low - currentPrice) / currentPrice) * 100) {
             bestSupplyOB = ob;
@@ -664,7 +664,7 @@ class TechnicalScanner {
 
       for (const fvg of bullishFVGs) {
         const distToFVG = ((currentPrice - fvg.bottom) / currentPrice) * 100;
-        if (distToFVG >= 0 && distToFVG <= 3) {
+        if (distToFVG >= 0 && distToFVG <= 1.5) {
           nearDemandZone = true;
           if (!bestDemandOB) {
             bestDemandOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BULLISH' };
@@ -674,7 +674,7 @@ class TechnicalScanner {
 
       for (const fvg of bearishFVGs) {
         const distToFVG = ((fvg.top - currentPrice) / currentPrice) * 100;
-        if (distToFVG >= 0 && distToFVG <= 3) {
+        if (distToFVG >= 0 && distToFVG <= 1.5) {
           nearSupplyZone = true;
           if (!bestSupplyOB) {
             bestSupplyOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BEARISH' };
@@ -712,16 +712,17 @@ class TechnicalScanner {
         return null; // zone conflicts with structure
       }
 
-      // === VOLUME ACCUMULATION CHECK ===
-      // Look for rising volume on the last 5 candles vs prior 20 — accumulation signal
+      // === VOLUME ACCUMULATION CHECK (mandatory) ===
       const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
       const priorVol = volumes.slice(-25, -5).reduce((a, b) => a + b, 0) / 20;
       const volAccumRatio = recentVol / priorVol;
 
+      if (volAccumRatio < 1.5) return null; // hard filter: must have volume building
+
       if (volAccumRatio > 2) {
         score += 20;
         signals.push(`Volume accumulation ${volAccumRatio.toFixed(1)}x vs avg`);
-      } else if (volAccumRatio > 1.3) {
+      } else {
         score += 10;
         signals.push(`Volume building ${volAccumRatio.toFixed(1)}x vs avg`);
       }
@@ -783,7 +784,8 @@ class TechnicalScanner {
         signals.push('EMA20 < EMA50 trend aligned');
       }
 
-      // === 4H TREND CONFIRMATION ===
+      // === 4H TREND CONFIRMATION (mandatory) ===
+      let has4hTrend = false;
       try {
         const ohlcv4h = await exchange.fetchOHLCV(symbol, '4h', undefined, 30);
         if (ohlcv4h.length >= 25) {
@@ -792,20 +794,21 @@ class TechnicalScanner {
           const currentEma4h = ema20_4h[ema20_4h.length - 1];
           const price4h = closes4h[closes4h.length - 1];
           if (direction === 'long' && price4h > currentEma4h) {
+            has4hTrend = true;
             score += 10;
             signals.push('4H trend aligned');
           } else if (direction === 'short' && price4h < currentEma4h) {
+            has4hTrend = true;
             score += 10;
             signals.push('4H trend aligned');
-          } else {
-            score -= 10;
-            signals.push('4H counter-trend');
           }
         }
-      } catch (e) { /* skip */ }
+      } catch (e) { /* skip — let it pass without 4H data */ has4hTrend = true; }
+
+      if (!has4hTrend) return null; // hard filter: must align with 4H trend
 
       // === MINIMUM SCORE GATE ===
-      if (score < 50) return null;
+      if (score < 65) return null;
 
       // Suppress during dead hours
       const currentHourUTC = new Date().getUTCHours();
