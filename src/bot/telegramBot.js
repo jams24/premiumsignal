@@ -39,6 +39,7 @@ class TelegramBot {
       'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
       'follow', 'unfollow', 'mypaper', 'myaccess',
+      'setmysize', 'setmyleverage', 'buy', 'sell', 'closetrade', 'mypositions', 'mypnl',
     ]);
 
     this.bot.use(async (ctx, next) => {
@@ -140,9 +141,16 @@ class TelegramBot {
         `/review — Past signal performance\n\n` +
         `<b>📝 Your Paper Portfolio:</b>\n` +
         `/guide — How to start paper trading\n` +
-        `/follow — Auto-paper every new signal ($100 each)\n` +
+        `/follow — Auto-paper every new signal\n` +
         `/unfollow — Stop auto-papering\n` +
-        `/mypaper — Your virtual portfolio &amp; P&amp;L\n\n` +
+        `/buy &lt;SYMBOL&gt; — Open manual paper long\n` +
+        `/sell &lt;SYMBOL&gt; — Open manual paper short\n` +
+        `/closetrade &lt;SYMBOL&gt; — Close a position\n` +
+        `/mypositions — View open positions\n` +
+        `/mypaper — Your portfolio overview\n` +
+        `/mypnl — Your P&amp;L history\n` +
+        `/setmysize &lt;$&gt; — Set margin per trade\n` +
+        `/setmyleverage &lt;x&gt; — Set leverage\n\n` +
         (isAdmin
           ? `<b>👑 Admin — Trading Control:</b>\n` +
             `/trade — Trading status &amp; config\n` +
@@ -346,27 +354,34 @@ class TelegramBot {
     ));
 
     this.bot.command('guide', (ctx) => ctx.replyWithHTML(
-      `<b>How to Start Paper Trading</b>\n\n` +
+      `<b>How to Paper Trade</b>\n\n` +
 
-      `<b>Step 1:</b> You're already here! If approved, you're good to go.\n` +
-      `<b>Step 2:</b> Send /follow to auto-trade every signal with a $100 virtual position.\n` +
-      `<b>Step 3:</b> Track your performance with /mypaper.\n\n` +
+      `<b>Step 1:</b> Configure your setup:\n` +
+      `  /setmysize 100 — Set margin per trade ($10-$10k)\n` +
+      `  /setmyleverage 20 — Set leverage (1x-50x)\n\n` +
 
-      `<b>Your Commands:</b>\n` +
-      `/follow — Start auto-paper-trading every signal\n` +
-      `/unfollow — Stop auto-trading (open trades still run)\n` +
-      `/mypaper — View your portfolio, P&L, and open trades\n` +
-      `/help — Signal types explained\n` +
-      `/menu — All available commands\n\n` +
+      `<b>Step 2:</b> Start trading:\n` +
+      `  /follow — Auto-trade every signal\n` +
+      `  /buy BTC — Manual paper long\n` +
+      `  /sell ETH — Manual paper short\n\n` +
 
-      `<b>How Your Trades Work:</b>\n` +
-      `Each signal opens a $100 virtual position (1x, no leverage).\n\n` +
-      `TP1 hit — 50% closed for profit, SL moves to breakeven\n` +
-      `TP2 hit — remaining 50% closed for profit\n` +
-      `SL hit before TP1 — full position closed at loss\n` +
-      `SL hit after TP1 — closed at breakeven (TP1 profit already banked)\n\n` +
+      `<b>Step 3:</b> Track performance:\n` +
+      `  /mypositions — Open positions with live status\n` +
+      `  /mypaper — Portfolio overview\n` +
+      `  /mypnl — P&amp;L history\n` +
+      `  /closetrade BTC — Close a position early\n\n` +
 
-      `Trades are checked every 2 minutes automatically. Every signal is also sent directly to your DMs.\n\n` +
+      `<b>How Trades Work:</b>\n` +
+      `Your trades use the SAME logic as the bot:\n\n` +
+      `TP1 — 33% closed, SL moves to breakeven\n` +
+      `TP2 — 50% closed, SL moves to TP1\n` +
+      `TP3 — 50% closed, runner stays with wide trail\n` +
+      `TP4 — remaining closed for full profit\n\n` +
+      `+ Profit protection (SL to breakeven at +5%)\n` +
+      `+ ATR trailing stop after each TP\n` +
+      `+ Max loss cap per trade\n` +
+      `+ 48h auto-expiry\n\n` +
+
       `<i>This is virtual paper trading — no real money involved.</i>`
     ));
 
@@ -374,10 +389,14 @@ class TelegramBot {
 
     this.bot.command('follow', async (ctx) => {
       await db.setPaperFollow(ctx.state.user.telegram_id, true);
+      const user = await db.getUser(ctx.state.user.telegram_id);
+      const size = parseFloat(user.paper_size) || 100;
+      const lev = parseInt(user.paper_leverage) || 20;
       ctx.replyWithHTML(
         `✅ <b>Paper-follow enabled</b>\n\n` +
-        `Every new signal is now automatically paper-traded in your virtual account ($100 per signal, 1x).\n` +
-        `Track with /mypaper`
+        `Every new signal is auto-traded: $${size} margin × ${lev}x = $${(size * lev).toFixed(0)} notional\n` +
+        `Full TP1-4 partials, trailing SL, profit protection.\n\n` +
+        `Config: /setmysize, /setmyleverage\nTrack: /mypositions, /mypaper, /mypnl`
       );
     });
 
@@ -389,9 +408,13 @@ class TelegramBot {
     this.bot.command('mypaper', async (ctx) => {
       try {
         const uid = ctx.state.user.telegram_id;
+        const user = await db.getUser(uid);
         const stats = await db.getUserTradeStats(uid);
         const open = await db.getOpenUserTrades(uid);
+        const size = parseFloat(user.paper_size) || 100;
+        const lev = parseInt(user.paper_leverage) || 20;
         let msg = `📊 <b>Your Paper Portfolio</b>\n\n` +
+          `⚙️ Size: $${size} | Leverage: ${lev}x | Notional: $${(size * lev).toFixed(0)}\n\n` +
           `Closed: ${stats.closed} | Wins: ${stats.wins}\n` +
           `Total P&L: <b>$${parseFloat(stats.total_pnl).toFixed(2)}</b>\n` +
           `Avg trade: ${parseFloat(stats.avg_pnl_pct).toFixed(2)}%\n`;
@@ -400,17 +423,162 @@ class TelegramBot {
           for (const t of open.slice(0, 10)) {
             const entry = parseFloat(t.entry_price);
             const realized = parseFloat(t.realized_pnl_usd || 0);
-            const slTag = t.hit_tp1 ? ' 🟢BE' : '';
+            const tps = [t.hit_tp1 ? 'TP1' : '', t.hit_tp2 ? 'TP2' : '', t.hit_tp3 ? 'TP3' : ''].filter(Boolean).join(',');
             const pnlStr = realized > 0 ? ` | banked $${realized.toFixed(2)}` : '';
-            msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${entry.toPrecision(6)}${pnlStr}${slTag}\n`;
+            const src = t.source === 'manual' ? ' 🔧' : '';
+            msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${entry.toPrecision(6)}${pnlStr}${tps ? ` | ${tps}` : ''}${src}\n`;
           }
         } else {
-          msg += `\nNo open virtual trades. Use /follow to auto-trade new signals.`;
+          msg += `\nNo open trades. Use /follow or /buy <SYMBOL>`;
         }
         await ctx.replyWithHTML(msg);
       } catch (e) {
         logger.error(`/mypaper: ${e.message}`);
         ctx.replyWithHTML('⚠️ Could not load your portfolio.');
+      }
+    });
+
+    // --- Per-user paper config ---
+    this.bot.command('setmysize', async (ctx) => {
+      try {
+        const amount = parseFloat(ctx.message.text.split(' ')[1]);
+        if (!amount || amount < 10 || amount > 10000) {
+          return ctx.replyWithHTML('Usage: <code>/setmysize 200</code>\nRange: $10 — $10,000 (this is your margin per trade)');
+        }
+        await db.setUserPaperConfig(ctx.state.user.telegram_id, { paperSize: amount });
+        const lev = parseInt((await db.getUser(ctx.state.user.telegram_id)).paper_leverage) || 20;
+        ctx.replyWithHTML(`✅ Paper size set to <b>$${amount}</b>\nNotional per trade: $${(amount * lev).toFixed(0)} (${lev}x leverage)`);
+      } catch (e) {
+        logger.error(`/setmysize: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to update size.');
+      }
+    });
+
+    this.bot.command('setmyleverage', async (ctx) => {
+      try {
+        const lev = parseInt(ctx.message.text.split(' ')[1]);
+        if (!lev || lev < 1 || lev > 50) {
+          return ctx.replyWithHTML('Usage: <code>/setmyleverage 10</code>\nRange: 1x — 50x');
+        }
+        await db.setUserPaperConfig(ctx.state.user.telegram_id, { paperLeverage: lev });
+        const size = parseFloat((await db.getUser(ctx.state.user.telegram_id)).paper_size) || 100;
+        ctx.replyWithHTML(`✅ Paper leverage set to <b>${lev}x</b>\nNotional per trade: $${(size * lev).toFixed(0)} ($${size} margin)`);
+      } catch (e) {
+        logger.error(`/setmyleverage: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to update leverage.');
+      }
+    });
+
+    // --- Manual paper trading ---
+    this.bot.command('buy', async (ctx) => {
+      try {
+        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
+        if (!symbol) return ctx.replyWithHTML('Usage: <code>/buy BTC</code>');
+        if (!this.userPaperEngine) return ctx.replyWithHTML('⚠️ Paper engine not ready.');
+        const result = await this.userPaperEngine.openManualTrade(ctx.state.user.telegram_id, symbol, 'long');
+        ctx.replyWithHTML(
+          `🟢 <b>LONG opened</b> — $${escapeHtml(symbol)}\n\n` +
+          `Entry: $${result.currentPrice.toPrecision(6)}\n` +
+          `Size: $${result.notional.toFixed(0)} (${result.leverage}x)\n` +
+          `TP1: $${result.tp1.toPrecision(6)} | TP2: $${result.tp2.toPrecision(6)}\n` +
+          `TP3: $${result.tp3.toPrecision(6)} | TP4: $${result.tp4.toPrecision(6)}\n` +
+          `SL: $${result.stopLoss.toPrecision(6)}`
+        );
+      } catch (e) {
+        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
+      }
+    });
+
+    this.bot.command('sell', async (ctx) => {
+      try {
+        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
+        if (!symbol) return ctx.replyWithHTML('Usage: <code>/sell BTC</code>');
+        if (!this.userPaperEngine) return ctx.replyWithHTML('⚠️ Paper engine not ready.');
+        const result = await this.userPaperEngine.openManualTrade(ctx.state.user.telegram_id, symbol, 'short');
+        ctx.replyWithHTML(
+          `🔴 <b>SHORT opened</b> — $${escapeHtml(symbol)}\n\n` +
+          `Entry: $${result.currentPrice.toPrecision(6)}\n` +
+          `Size: $${result.notional.toFixed(0)} (${result.leverage}x)\n` +
+          `TP1: $${result.tp1.toPrecision(6)} | TP2: $${result.tp2.toPrecision(6)}\n` +
+          `TP3: $${result.tp3.toPrecision(6)} | TP4: $${result.tp4.toPrecision(6)}\n` +
+          `SL: $${result.stopLoss.toPrecision(6)}`
+        );
+      } catch (e) {
+        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
+      }
+    });
+
+    this.bot.command('closetrade', async (ctx) => {
+      try {
+        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
+        if (!symbol) return ctx.replyWithHTML('Usage: <code>/closetrade BTC</code>');
+        if (!this.userPaperEngine) return ctx.replyWithHTML('⚠️ Paper engine not ready.');
+        const result = await this.userPaperEngine.closeManualTrade(ctx.state.user.telegram_id, symbol);
+        const emoji = result.pnlUsd >= 0 ? '✅' : '❌';
+        ctx.replyWithHTML(
+          `${emoji} <b>Position closed</b> — $${escapeHtml(symbol)}\n\n` +
+          `${result.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'}\n` +
+          `Entry: $${result.entry.toPrecision(6)} → Exit: $${result.exit.toPrecision(6)}\n` +
+          `P&L: <b>$${result.pnlUsd.toFixed(2)}</b> (${result.pnlPct.toFixed(2)}%)`
+        );
+      } catch (e) {
+        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
+      }
+    });
+
+    this.bot.command('mypositions', async (ctx) => {
+      try {
+        if (!this.userPaperEngine) return ctx.replyWithHTML('⚠️ Paper engine not ready.');
+        const uid = ctx.state.user.telegram_id;
+        const open = await db.getOpenUserTrades(uid);
+        if (!open.length) return ctx.replyWithHTML('📭 No open positions.\n\nUse /buy <SYMBOL> or /follow to start trading.');
+
+        let msg = `📈 <b>Your Open Positions (${open.length})</b>\n\n`;
+        for (const t of open.slice(0, 15)) {
+          const entry = parseFloat(t.entry_price);
+          const posSize = parseFloat(t.position_size);
+          const realized = parseFloat(t.realized_pnl_usd || 0);
+          const tps = [t.hit_tp1 ? '✅TP1' : '', t.hit_tp2 ? '✅TP2' : '', t.hit_tp3 ? '✅TP3' : ''].filter(Boolean).join(' ');
+          const src = t.source === 'manual' ? '🔧' : '📡';
+          const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+          const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
+
+          msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src}\n`;
+          msg += `  Entry: $${entry.toPrecision(6)} | Size: $${posSize.toFixed(0)} | ${ageStr}\n`;
+          msg += `  SL: $${parseFloat(t.stop_loss).toPrecision(6)}`;
+          if (realized > 0) msg += ` | Banked: $${realized.toFixed(2)}`;
+          if (tps) msg += ` | ${tps}`;
+          msg += `\n\n`;
+        }
+        msg += `Close: <code>/closetrade SYMBOL</code>`;
+        await ctx.replyWithHTML(msg);
+      } catch (e) {
+        logger.error(`/mypositions: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Could not load positions.');
+      }
+    });
+
+    this.bot.command('mypnl', async (ctx) => {
+      try {
+        const uid = ctx.state.user.telegram_id;
+        const trades = await db.getUserClosedTrades(uid, 20);
+        if (!trades.length) return ctx.replyWithHTML('📭 No closed trades yet.');
+
+        const stats = await db.getUserTradeStats(uid);
+        let msg = `📊 <b>Your P&L History</b>\n\n` +
+          `Total: <b>$${parseFloat(stats.total_pnl).toFixed(2)}</b> | ` +
+          `WR: ${stats.closed > 0 ? ((stats.wins / stats.closed) * 100).toFixed(0) : 0}%\n\n`;
+
+        for (const t of trades) {
+          const pnl = parseFloat(t.pnl_usd || 0);
+          const emoji = pnl > 0 ? '✅' : pnl < 0 ? '❌' : '➖';
+          const date = new Date(t.closed_at).toISOString().slice(5, 16).replace('T', ' ');
+          msg += `${emoji} ${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} | $${pnl.toFixed(2)} | ${t.close_reason} | ${date}\n`;
+        }
+        await ctx.replyWithHTML(msg);
+      } catch (e) {
+        logger.error(`/mypnl: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Could not load P&L.');
       }
     });
 
@@ -436,10 +604,14 @@ class TelegramBot {
       try {
         await this.bot.telegram.sendMessage(id,
           `✅ <b>Access Approved!</b>\n\n` +
-          `You can now use the bot.\n` +
-          `/menu — control panel\n` +
-          `/follow — auto-paper every signal\n` +
-          `/mypaper — your virtual portfolio`);
+          `You can now paper trade with the same setup as the bot!\n\n` +
+          `/guide — How to get started\n` +
+          `/follow — Auto-trade every signal\n` +
+          `/buy BTC — Manual paper long\n` +
+          `/setmysize — Set your margin\n` +
+          `/setmyleverage — Set your leverage\n` +
+          `/mypositions — View open trades\n` +
+          `/mypnl — Your P&L history`);
       } catch (e) { logger.warn(`Grant notify failed for ${id}: ${e.message}`); }
       ctx.replyWithHTML(`✅ Granted access to <code>${id}</code>.`);
     });

@@ -253,6 +253,30 @@ async function init(retries = 3) {
     try { await p.query(`ALTER TABLE trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
   }
 
+  // Add new columns to bot_users for per-user paper config
+  const userCols = [
+    ['paper_size', 'DOUBLE PRECISION DEFAULT 100'],
+    ['paper_leverage', 'INTEGER DEFAULT 20'],
+  ];
+  for (const [col, type] of userCols) {
+    try { await p.query(`ALTER TABLE bot_users ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
+  }
+
+  // Add new columns to user_paper_trades for full trade management
+  const uptCols = [
+    ['tp4', 'DOUBLE PRECISION'],
+    ['hit_tp3', 'BOOLEAN DEFAULT FALSE'],
+    ['leverage', 'INTEGER DEFAULT 1'],
+    ['quantity', 'DOUBLE PRECISION'],
+    ['atr', 'DOUBLE PRECISION'],
+    ['invalidation', 'DOUBLE PRECISION'],
+    ['peak_price', 'DOUBLE PRECISION'],
+    ['source', "TEXT DEFAULT 'signal'"],
+  ];
+  for (const [col, type] of uptCols) {
+    try { await p.query(`ALTER TABLE user_paper_trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
+  }
+
   logger.info('Database tables ready');
 }
 
@@ -564,11 +588,13 @@ async function getFollowers() {
 
 async function saveUserPaperTrade(trade) {
   const { rows } = await query(
-    `INSERT INTO user_paper_trades (telegram_id, signal_id, symbol, exchange, direction, entry_price, position_size, tp1, tp2, tp3, stop_loss, original_stop_loss)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    `INSERT INTO user_paper_trades (telegram_id, signal_id, symbol, exchange, direction, entry_price, position_size, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, leverage, quantity, atr, invalidation, peak_price, source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
     [trade.telegramId, trade.signalId || null, trade.symbol, trade.exchange, trade.direction,
-     trade.entryPrice, trade.positionSize || 100, trade.tp1, trade.tp2, trade.tp3,
-     trade.stopLoss, trade.stopLoss]
+     trade.entryPrice, trade.positionSize || 100, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null,
+     trade.stopLoss, trade.stopLoss,
+     trade.leverage || 1, trade.quantity || null, trade.atr || null, trade.invalidation || null,
+     trade.entryPrice, trade.source || 'signal']
   );
   return rows[0];
 }
@@ -618,4 +644,20 @@ async function getUserTradeStats(telegramId) {
   return rows[0];
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats };
+async function setUserPaperConfig(telegramId, { paperSize, paperLeverage }) {
+  const sets = [];
+  const params = [telegramId];
+  if (paperSize != null) { params.push(paperSize); sets.push(`paper_size = $${params.length}`); }
+  if (paperLeverage != null) { params.push(paperLeverage); sets.push(`paper_leverage = $${params.length}`); }
+  if (sets.length) await query(`UPDATE bot_users SET ${sets.join(', ')} WHERE telegram_id = $1`, params);
+}
+
+async function getUserClosedTrades(telegramId, limit = 20) {
+  const { rows } = await query(
+    `SELECT * FROM user_paper_trades WHERE telegram_id = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT $2`,
+    [telegramId, limit]
+  );
+  return rows;
+}
+
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, setUserPaperConfig, getUserClosedTrades };

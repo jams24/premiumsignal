@@ -78,8 +78,8 @@ async function main() {
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor });
 
-  // Per-user virtual paper accounts
-  const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges);
+  // Per-user virtual paper accounts (pass bot for user notifications)
+  const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
   bot.userPaperEngine = userPaperEngine;
 
   // Wire trade executor notifications to Telegram
