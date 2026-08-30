@@ -354,35 +354,88 @@ class TelegramBot {
     ));
 
     this.bot.command('guide', (ctx) => ctx.replyWithHTML(
-      `<b>How to Paper Trade</b>\n\n` +
+      `<b>Welcome to Paper Trading!</b>\n` +
+      `Practice trading with virtual money using the same pro setup as our bot. Zero risk, real market data.\n\n` +
 
-      `<b>Step 1:</b> Configure your setup:\n` +
-      `  /setmysize 100 — Set margin per trade ($10-$10k)\n` +
-      `  /setmyleverage 20 — Set leverage (1x-50x)\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>STEP 1 — Set Up Your Account</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
 
-      `<b>Step 2:</b> Start trading:\n` +
-      `  /follow — Auto-trade every signal\n` +
-      `  /buy BTC — Manual paper long\n` +
-      `  /sell ETH — Manual paper short\n\n` +
+      `By default you start with $100 margin and 20x leverage. You can change this anytime:\n\n` +
+      `  /setmysize 200\n` +
+      `  Sets your margin (how much you risk per trade).\n` +
+      `  Range: $10 to $10,000\n\n` +
+      `  /setmyleverage 10\n` +
+      `  Sets your leverage multiplier.\n` +
+      `  Range: 1x to 50x\n\n` +
+      `  Example: $100 margin at 20x = $2,000 position size.\n` +
+      `  Higher leverage = bigger gains AND bigger losses.\n\n` +
 
-      `<b>Step 3:</b> Track performance:\n` +
-      `  /mypositions — Open positions with live status\n` +
-      `  /mypaper — Portfolio overview\n` +
-      `  /mypnl — P&amp;L history\n` +
-      `  /closetrade BTC — Close a position early\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>STEP 2 — Start Trading</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
 
-      `<b>How Trades Work:</b>\n` +
-      `Your trades use the SAME logic as the bot:\n\n` +
-      `TP1 — 33% closed, SL moves to breakeven\n` +
-      `TP2 — 50% closed, SL moves to TP1\n` +
-      `TP3 — 50% closed, runner stays with wide trail\n` +
-      `TP4 — remaining closed for full profit\n\n` +
-      `+ Profit protection (SL to breakeven at +5%)\n` +
-      `+ ATR trailing stop after each TP\n` +
-      `+ Max loss cap per trade\n` +
-      `+ 48h auto-expiry\n\n` +
+      `<b>Option A: Auto-Follow (hands-free)</b>\n` +
+      `Send /follow and the bot will automatically open a paper trade every time it finds a signal. You'll get notified on every entry, TP hit, and exit.\n\n` +
+      `Send /unfollow to stop (open trades still run to completion).\n\n` +
 
-      `<i>This is virtual paper trading — no real money involved.</i>`
+      `<b>Option B: Manual Trading</b>\n` +
+      `You pick the coin and direction:\n\n` +
+      `  /buy BTC — Open a long (betting price goes up)\n` +
+      `  /sell ETH — Open a short (betting price goes down)\n\n` +
+      `The bot calculates your TP targets, stop loss, and position size automatically based on market conditions.\n\n` +
+      `To close a trade early:\n` +
+      `  /closetrade BTC\n\n` +
+
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>STEP 3 — Track Your Performance</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+
+      `  /mypositions — See all your open trades\n` +
+      `  /mypaper — Portfolio overview (wins, losses, total P&amp;L)\n` +
+      `  /mypnl — Full history of your last 20 trades\n\n` +
+
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>HOW YOUR TRADES ARE MANAGED</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+
+      `Your trades run on autopilot with smart exits:\n\n` +
+
+      `<b>Taking Profit (4 stages):</b>\n` +
+      `  TP1 hit — 33% of your position is closed for profit.\n` +
+      `  Your stop loss moves to your entry price (breakeven).\n` +
+      `  You can't lose money on this trade anymore.\n\n` +
+
+      `  TP2 hit — Another 50% closed. SL moves up to TP1.\n` +
+      `  TP3 hit — Another 50% closed. A small "runner"\n` +
+      `  stays open with a wide trailing stop to ride big moves.\n` +
+      `  TP4 hit — Everything closed. Maximum profit taken.\n\n` +
+
+      `<b>Protection Features:</b>\n` +
+      `  Profit Protection — If your trade is up +5% before\n` +
+      `  hitting TP1, stop loss moves to breakeven early.\n\n` +
+
+      `  Trailing Stop — After each TP, your stop loss\n` +
+      `  follows the price up, locking in more profit.\n\n` +
+
+      `  Max Loss Cap — If a trade drops too fast, it's\n` +
+      `  auto-closed to limit your loss.\n\n` +
+
+      `  48h Expiry — Trades that go nowhere for 2 days\n` +
+      `  are auto-closed.\n\n` +
+
+      `<b>Notifications:</b>\n` +
+      `You'll receive a message for every trade event — entry, each TP hit, stop loss moves, and final close with your P&amp;L.\n\n` +
+
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>QUICK START</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+
+      `1. Send /follow to start auto-trading\n` +
+      `2. Or send /buy BTC to open your first trade\n` +
+      `3. Check /mypositions to see how it's going\n\n` +
+
+      `<i>This is 100% virtual — no real money, no real risk. Practice until you're confident!</i>`
     ));
 
     // ---------- User paper trading commands ----------
