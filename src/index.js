@@ -167,6 +167,23 @@ async function main() {
         }
       }
 
+      // === Zone accumulation scanner (pre-breakout entries) ===
+      try {
+        const zoneResults = await technicalScanner.scanZoneAccumulation();
+        for (const scan of zoneResults.slice(0, 3)) {
+          const signal = await signalEngine.processBreakoutSignal(scan);
+          if (signal) {
+            signal.type = 'ZONE_ENTRY';
+            await bot.sendSignal(signal);
+            await tradeExecutor.executeSignal(signal);
+            await db.logAlert('SIGNAL', signal.symbol, signal, `ZONE ${signal.direction} ${signal.symbol}`).catch(() => {});
+            signalCount++;
+          }
+        }
+      } catch (err) {
+        logger.error(`Zone scan error: ${err.message}`);
+      }
+
       const rejSummary = [technicalScanner.rejectSummary(), signalEngine.rejectSummary?.() || '']
         .filter(Boolean).join(' || ');
       logger.info(`Scan complete: ${results.length} candidates, ${signalCount} signals sent${signalCount === 0 ? ` [rejections: ${rejSummary || 'none recorded'}]` : ''}`);

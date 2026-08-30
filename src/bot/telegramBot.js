@@ -945,7 +945,7 @@ class TelegramBot {
           : 'All types (no filter)';
         return ctx.replyWithHTML(
           `🔍 <b>Signal Filter:</b> ${current}\n\n` +
-          `<b>Available types:</b>\nBREAKOUT, VOLUME_SPIKE, LISTING, FUNDING_SHORT\n\n` +
+          `<b>Available types:</b>\nBREAKOUT, VOLUME_SPIKE, LISTING, FUNDING_SHORT, ZONE_ENTRY\n\n` +
           `Usage:\n/filter BREAKOUT,VOLUME_SPIKE — Only trade these\n/filter off — Trade all types`
         );
       }
@@ -1392,7 +1392,7 @@ class TelegramBot {
       await ctx.answerCbQuery();
       await this.showFilterPanel(ctx);
     });
-    const signalTypes = ['BREAKOUT', 'VOLUME_SPIKE', 'LISTING', 'FUNDING_SHORT'];
+    const signalTypes = ['BREAKOUT', 'VOLUME_SPIKE', 'LISTING', 'FUNDING_SHORT', 'ZONE_ENTRY'];
     for (const type of signalTypes) {
       this.bot.action(`cfg_filt_${type}`, async (ctx) => {
         const t = te();
@@ -1763,7 +1763,7 @@ class TelegramBot {
   // Render the signal filter panel
   async showFilterPanel(ctx) {
     const t = this.tradeExecutor;
-    const types = ['BREAKOUT', 'VOLUME_SPIKE', 'LISTING', 'FUNDING_SHORT'];
+    const types = ['BREAKOUT', 'VOLUME_SPIKE', 'LISTING', 'FUNDING_SHORT', 'ZONE_ENTRY'];
     const noFilter = t.signalFilter.size === 0;
 
     const typeDescriptions = {

@@ -10,6 +10,7 @@ function formatSignalMessage(signal) {
     WHALE_ALERT: '🐋',
     FUNDING_SHORT: '📉',
     NARRATIVE: '🔥',
+    ZONE_ENTRY: '🎯',
   };
 
   const icon = emoji[signal.type] || '📡';

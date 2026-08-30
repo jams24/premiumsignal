@@ -541,6 +541,331 @@ class TechnicalScanner {
     }
   }
 
+  // Pre-breakout zone scanner: find coins accumulating near demand zones
+  // before the breakout happens. This is the "Flams-style" entry.
+  async scanZoneAccumulation() {
+    const candidates = [];
+    this.zoneRejects = new Map();
+
+    for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
+      try {
+        const perpMarkets = Object.values(exchange.markets).filter(m => m.swap && m.quote === 'USDT' && m.active);
+        const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
+
+        // Filter: decent volume, NOT already pumping hard (that's the breakout scanner's job)
+        const filtered = Object.entries(tickers)
+          .filter(([, t]) => t.quoteVolume > 1500000)
+          .filter(([s]) => !s.includes('STOCK') && !STOCK_TOKENS.test(s.split('/')[0]))
+          .filter(([, t]) => {
+            const chg = Math.abs(t.percentage || 0);
+            return chg < 15; // skip coins already pumped/dumped >15%
+          })
+          .sort((a, b) => (b[1].quoteVolume || 0) - (a[1].quoteVolume || 0))
+          .slice(0, 80);
+
+        for (const [symbol, ticker] of filtered) {
+          try {
+            const result = await this.analyzeZoneEntry(exchange, exchangeId, symbol, ticker);
+            if (result) {
+              result.quoteVolume = ticker.quoteVolume || 0;
+              result.hasApiKey = !!(exchange.apiKey && exchange.secret);
+              candidates.push(result);
+            }
+          } catch (e) { /* skip individual failures */ }
+        }
+      } catch (err) {
+        logger.error(`Zone scan failed for ${exchangeId}: ${err.message}`);
+      }
+    }
+
+    // Deduplicate: keep best exchange per symbol
+    const bestBySymbol = new Map();
+    for (const c of candidates) {
+      const existing = bestBySymbol.get(c.symbol);
+      if (!existing || this.preferExchange(c, existing)) {
+        bestBySymbol.set(c.symbol, c);
+      }
+    }
+
+    return [...bestBySymbol.values()].sort((a, b) => b.score - a.score);
+  }
+
+  // Analyze a single coin for zone accumulation entry
+  async analyzeZoneEntry(exchange, exchangeId, symbol, ticker) {
+    try {
+      const ohlcv = await exchange.fetchOHLCV(symbol, '1h', undefined, 100);
+      if (ohlcv.length < 40) return null;
+
+      const closes = ohlcv.map(c => c[4]);
+      const highs = ohlcv.map(c => c[2]);
+      const lows = ohlcv.map(c => c[3]);
+      const volumes = ohlcv.map(c => c[5]);
+      const currentPrice = closes[closes.length - 1];
+
+      // Run SMC analysis to find zones
+      const smcResult = this.smc.analyze(ohlcv);
+      if (!smcResult) return null;
+
+      // Calculate indicators
+      const rsi = RSI.calculate({ values: closes, period: 14 });
+      const ema20 = EMA.calculate({ values: closes, period: 20 });
+      const ema50 = EMA.calculate({ values: closes, period: 50 });
+      const bb = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
+      const atr = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+
+      const currentRSI = rsi[rsi.length - 1];
+      const currentEma20 = ema20[ema20.length - 1];
+      const currentEma50 = ema50[ema50.length - 1];
+      const currentBB = bb[bb.length - 1];
+      const currentATR = atr[atr.length - 1];
+
+      if (!currentRSI || !currentATR || !currentBB) return null;
+
+      let score = 0;
+      const signals = [];
+      let direction = null;
+      let zonePrice = null; // the demand/supply zone price for SL placement
+
+      // === ZONE PROXIMITY CHECK ===
+      // Find bullish OBs (demand zones) near current price
+      const bullishOBs = smcResult.orderBlocks.filter(ob => ob.type === 'OB_BULLISH');
+      const bearishOBs = smcResult.orderBlocks.filter(ob => ob.type === 'OB_BEARISH');
+
+      let nearDemandZone = false;
+      let nearSupplyZone = false;
+      let bestDemandOB = null;
+      let bestSupplyOB = null;
+
+      for (const ob of bullishOBs) {
+        // Price is at or slightly above the demand zone (within 3% of OB high)
+        const distAboveOB = ((currentPrice - ob.high) / currentPrice) * 100;
+        if (distAboveOB >= -1 && distAboveOB <= 3) {
+          nearDemandZone = true;
+          if (!bestDemandOB || distAboveOB < ((currentPrice - bestDemandOB.high) / currentPrice) * 100) {
+            bestDemandOB = ob;
+          }
+        }
+      }
+
+      for (const ob of bearishOBs) {
+        // Price is at or slightly below the supply zone (within 3% of OB low)
+        const distBelowOB = ((ob.low - currentPrice) / currentPrice) * 100;
+        if (distBelowOB >= -1 && distBelowOB <= 3) {
+          nearSupplyZone = true;
+          if (!bestSupplyOB || distBelowOB < ((bestSupplyOB.low - currentPrice) / currentPrice) * 100) {
+            bestSupplyOB = ob;
+          }
+        }
+      }
+
+      // Also check unfilled FVGs as zones
+      const bullishFVGs = smcResult.fvgs.filter(f => f.type === 'FVG_BULLISH');
+      const bearishFVGs = smcResult.fvgs.filter(f => f.type === 'FVG_BEARISH');
+
+      for (const fvg of bullishFVGs) {
+        const distToFVG = ((currentPrice - fvg.bottom) / currentPrice) * 100;
+        if (distToFVG >= 0 && distToFVG <= 3) {
+          nearDemandZone = true;
+          if (!bestDemandOB) {
+            bestDemandOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BULLISH' };
+          }
+        }
+      }
+
+      for (const fvg of bearishFVGs) {
+        const distToFVG = ((fvg.top - currentPrice) / currentPrice) * 100;
+        if (distToFVG >= 0 && distToFVG <= 3) {
+          nearSupplyZone = true;
+          if (!bestSupplyOB) {
+            bestSupplyOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BEARISH' };
+          }
+        }
+      }
+
+      // Must be near at least one zone
+      if (!nearDemandZone && !nearSupplyZone) return null;
+
+      // === DETERMINE DIRECTION FROM STRUCTURE ===
+      if (nearDemandZone && smcResult.structureBias === 'bullish') {
+        direction = 'long';
+        zonePrice = bestDemandOB.low;
+        score += 30;
+        signals.push(`At demand zone $${bestDemandOB.low.toPrecision(5)}–$${bestDemandOB.high.toPrecision(5)}`);
+        signals.push('Bullish market structure');
+      } else if (nearSupplyZone && smcResult.structureBias === 'bearish') {
+        direction = 'short';
+        zonePrice = bestSupplyOB.high;
+        score += 30;
+        signals.push(`At supply zone $${bestSupplyOB.low.toPrecision(5)}–$${bestSupplyOB.high.toPrecision(5)}`);
+        signals.push('Bearish market structure');
+      } else if (nearDemandZone && smcResult.structureBias !== 'bearish') {
+        direction = 'long';
+        zonePrice = bestDemandOB.low;
+        score += 20;
+        signals.push(`At demand zone (neutral structure)`);
+      } else if (nearSupplyZone && smcResult.structureBias !== 'bullish') {
+        direction = 'short';
+        zonePrice = bestSupplyOB.high;
+        score += 20;
+        signals.push(`At supply zone (neutral structure)`);
+      } else {
+        return null; // zone conflicts with structure
+      }
+
+      // === VOLUME ACCUMULATION CHECK ===
+      // Look for rising volume on the last 5 candles vs prior 20 — accumulation signal
+      const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+      const priorVol = volumes.slice(-25, -5).reduce((a, b) => a + b, 0) / 20;
+      const volAccumRatio = recentVol / priorVol;
+
+      if (volAccumRatio > 2) {
+        score += 20;
+        signals.push(`Volume accumulation ${volAccumRatio.toFixed(1)}x vs avg`);
+      } else if (volAccumRatio > 1.3) {
+        score += 10;
+        signals.push(`Volume building ${volAccumRatio.toFixed(1)}x vs avg`);
+      }
+
+      // === BOLLINGER BAND SQUEEZE ===
+      // Tightening BBs = compression = energy building for breakout
+      if (bb.length >= 10) {
+        const recentBBWidth = bb.slice(-3).reduce((s, b) => s + (b.upper - b.lower) / b.middle, 0) / 3;
+        const priorBBWidth = bb.slice(-10, -3).reduce((s, b) => s + (b.upper - b.lower) / b.middle, 0) / 7;
+        if (recentBBWidth < priorBBWidth * 0.7) {
+          score += 15;
+          signals.push('BB squeeze — compression before breakout');
+        }
+      }
+
+      // === RSI ALIGNMENT ===
+      if (direction === 'long') {
+        if (currentRSI > 70) return null; // overbought, not accumulating
+        if (currentRSI >= 40 && currentRSI <= 60) {
+          score += 10;
+          signals.push(`RSI neutral ${currentRSI.toFixed(0)} — room to run`);
+        } else if (currentRSI < 40) {
+          score += 5;
+          signals.push(`RSI low ${currentRSI.toFixed(0)} — potential reversal`);
+        }
+      } else {
+        if (currentRSI < 30) return null; // oversold, not distributing
+        if (currentRSI >= 40 && currentRSI <= 60) {
+          score += 10;
+          signals.push(`RSI neutral ${currentRSI.toFixed(0)} — room to fall`);
+        } else if (currentRSI > 60) {
+          score += 5;
+          signals.push(`RSI high ${currentRSI.toFixed(0)} — potential rejection`);
+        }
+      }
+
+      // === HIGHER LOWS / LOWER HIGHS (ascending/descending support) ===
+      if (smcResult.swingLows.length >= 3 && direction === 'long') {
+        const lastThreeLows = smcResult.swingLows.slice(-3);
+        if (lastThreeLows[2].price > lastThreeLows[1].price && lastThreeLows[1].price > lastThreeLows[0].price) {
+          score += 15;
+          signals.push('Higher lows forming — ascending support');
+        }
+      }
+      if (smcResult.swingHighs.length >= 3 && direction === 'short') {
+        const lastThreeHighs = smcResult.swingHighs.slice(-3);
+        if (lastThreeHighs[2].price < lastThreeHighs[1].price && lastThreeHighs[1].price < lastThreeHighs[0].price) {
+          score += 15;
+          signals.push('Lower highs forming — descending resistance');
+        }
+      }
+
+      // === EMA ALIGNMENT ===
+      if (direction === 'long' && currentEma20 > currentEma50) {
+        score += 10;
+        signals.push('EMA20 > EMA50 trend aligned');
+      } else if (direction === 'short' && currentEma20 < currentEma50) {
+        score += 10;
+        signals.push('EMA20 < EMA50 trend aligned');
+      }
+
+      // === 4H TREND CONFIRMATION ===
+      try {
+        const ohlcv4h = await exchange.fetchOHLCV(symbol, '4h', undefined, 30);
+        if (ohlcv4h.length >= 25) {
+          const closes4h = ohlcv4h.map(c => c[4]);
+          const ema20_4h = EMA.calculate({ values: closes4h, period: 20 });
+          const currentEma4h = ema20_4h[ema20_4h.length - 1];
+          const price4h = closes4h[closes4h.length - 1];
+          if (direction === 'long' && price4h > currentEma4h) {
+            score += 10;
+            signals.push('4H trend aligned');
+          } else if (direction === 'short' && price4h < currentEma4h) {
+            score += 10;
+            signals.push('4H trend aligned');
+          } else {
+            score -= 10;
+            signals.push('4H counter-trend');
+          }
+        }
+      } catch (e) { /* skip */ }
+
+      // === MINIMUM SCORE GATE ===
+      if (score < 50) return null;
+
+      // Suppress during dead hours
+      const currentHourUTC = new Date().getUTCHours();
+      if (currentHourUTC >= 4 && currentHourUTC <= 5) return null;
+
+      // === CALCULATE TP/SL ===
+      // SL placed just below the zone (tight, like Flams)
+      const isLong = direction === 'long';
+      const zoneDist = Math.abs(currentPrice - zonePrice);
+      // SL = below zone by 0.5x ATR (tight, zone-based)
+      const slBuffer = currentATR * 0.5;
+      const stopLoss = isLong
+        ? zonePrice - slBuffer
+        : zonePrice + slBuffer;
+
+      // TPs wider than breakout scanner — zone entries have better R:R
+      const tp1 = isLong ? currentPrice + currentATR * 3 : currentPrice - currentATR * 3;
+      const tp2 = isLong ? currentPrice + currentATR * 6 : currentPrice - currentATR * 6;
+      const tp3 = isLong ? currentPrice + currentATR * 10 : currentPrice - currentATR * 10;
+
+      const entryLow = isLong ? currentPrice * 0.998 : currentPrice * 1.002;
+      const entryHigh = isLong ? currentPrice * 1.002 : currentPrice * 0.998;
+
+      return {
+        type: 'ZONE_ENTRY',
+        symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),
+        pair: symbol,
+        exchange: exchangeId,
+        direction,
+        currentPrice,
+        change24h: ticker.percentage || 0,
+        volumeRatio: volAccumRatio,
+        rsi: currentRSI,
+        score,
+        signals,
+        atr: currentATR,
+        smc: {
+          structureBias: smcResult.structureBias,
+          orderBlocks: smcResult.orderBlocks,
+          fvgs: smcResult.fvgs,
+          bosEvents: smcResult.bosEvents,
+          chochEvents: smcResult.chochEvents,
+        },
+        zonePrice,
+        entryLow: parseFloat(entryLow.toPrecision(6)),
+        entryHigh: parseFloat(entryHigh.toPrecision(6)),
+        tp1: parseFloat(tp1.toPrecision(6)),
+        tp2: parseFloat(tp2.toPrecision(6)),
+        tp3: parseFloat(tp3.toPrecision(6)),
+        stopLoss: parseFloat(stopLoss.toPrecision(6)),
+        tp1Pct: ((Math.abs(tp1 - currentPrice) / currentPrice) * 100).toFixed(1),
+        tp2Pct: ((Math.abs(tp2 - currentPrice) / currentPrice) * 100).toFixed(1),
+        tp3Pct: ((Math.abs(tp3 - currentPrice) / currentPrice) * 100).toFixed(1),
+        slPct: ((Math.abs(stopLoss - currentPrice) / currentPrice) * 100).toFixed(1),
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+
   async findFundingRateExtremes(exchange, exchangeId) {
     const opportunities = [];
     try {

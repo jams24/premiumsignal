@@ -735,7 +735,7 @@ class TradeExecutor {
           }
         }
 
-        // --- TP4 CHECK ---
+        // --- TP4 CHECK: close remaining runner ---
         if (!action && trade.tp4 && (isLong ? currentPrice >= trade.tp4 : currentPrice <= trade.tp4)) {
           action = 'tp4';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp4');
@@ -743,7 +743,7 @@ class TradeExecutor {
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
         }
-        // --- TP3 CHECK: close 34% (remaining), trail SL to TP2 ---
+        // --- TP3 CHECK: close 50% remaining, keep ~25% original as runner, SL to TP2 ---
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
           action = 'tp3';
           await db.updateTradeHit(trade.id, 'hit_tp3');
@@ -751,7 +751,7 @@ class TradeExecutor {
           const newSL = trade.tp2;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP3 hit, closed 50% remaining (+$${partialPnl.toFixed(2)}), SL to TP2`);
+          logger.info(`${trade.symbol}: TP3 hit, closed 50% (+$${partialPnl.toFixed(2)}), runner remains — SL to TP2`);
         }
         // --- TP2 CHECK: close 33% of original, trail SL to TP1 ---
         else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
@@ -773,9 +773,11 @@ class TradeExecutor {
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP1 hit, closed 33% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
         }
-        // --- TRAILING STOP: after TP1, trail SL at 1.5x ATR below peak price ---
+        // --- TRAILING STOP: after TP1, trail SL below peak price ---
+        // Post-TP3 runner uses 3x ATR trail (wide, lets it ride big moves)
+        // Pre-TP3 uses 1.5x ATR trail (tighter, locks in gains)
         if (!action && trade.hit_tp1 && trade.atr) {
-          const trailDist = trade.atr * 1.5;
+          const trailDist = trade.hit_tp3 ? trade.atr * 3 : trade.atr * 1.5;
           const peak = trade.peak_price || trade.entry_price;
           const newPeak = isLong
             ? Math.max(peak, currentPrice)
@@ -1140,7 +1142,7 @@ class TradeExecutor {
       return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed another 50% — more profit locked</b>\n🔒 SL trailed to TP1 ($${trade.tp1})\n🚀 34% riding to TP3/TP4...`;
     }
     if (action === 'tp3') {
-      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed 50% remaining</b>\n🔒 SL trailed to TP2 ($${trade.tp2})\n🚀 17% riding to TP4...`;
+      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed 50% — runner stays open</b>\n🔒 SL trailed to TP2 ($${trade.tp2})\n🏃 Runner riding with wide trail (3x ATR)`;
     }
     if (action === 'tp4') {
       return `${modeTag} 🏆 <b>TP4 FULL TARGET!</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 Extended target hit. Maximum profit captured.`;
