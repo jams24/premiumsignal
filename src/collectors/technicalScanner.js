@@ -11,6 +11,7 @@ class TechnicalScanner {
     this.exchanges = exchanges;
     this.smc = new SMCAnalyzer();
     this.rejects = new Map();
+    this.zoneSignalHistory = new Map(); // symbol → timestamp of last zone signal
   }
 
   reject(reason) {
@@ -545,7 +546,7 @@ class TechnicalScanner {
   // before the breakout happens. This is the "Flams-style" entry.
   async scanZoneAccumulation() {
     const candidates = [];
-    this.zoneRejects = new Map();
+    this.rejects = new Map();
 
     for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
       try {
@@ -565,11 +566,18 @@ class TechnicalScanner {
 
         for (const [symbol, ticker] of filtered) {
           try {
+            const sym = symbol.split('/')[0];
+            const lastSignal = this.zoneSignalHistory.get(sym);
+            if (lastSignal && Date.now() - lastSignal < 4 * 60 * 60 * 1000) {
+              this.reject('cooldown');
+              continue;
+            }
             const result = await this.analyzeZoneEntry(exchange, exchangeId, symbol, ticker);
             if (result) {
               result.quoteVolume = ticker.quoteVolume || 0;
               result.hasApiKey = !!(exchange.apiKey && exchange.secret);
               candidates.push(result);
+              this.zoneSignalHistory.set(sym, Date.now());
             }
           } catch (e) { /* skip individual failures */ }
         }
@@ -698,18 +706,8 @@ class TechnicalScanner {
         score += 30;
         signals.push(`At supply zone $${bestSupplyOB.low.toPrecision(5)}–$${bestSupplyOB.high.toPrecision(5)}`);
         signals.push('Bearish market structure');
-      } else if (nearDemandZone && smcResult.structureBias !== 'bearish') {
-        direction = 'long';
-        zonePrice = bestDemandOB.low;
-        score += 20;
-        signals.push(`At demand zone (neutral structure)`);
-      } else if (nearSupplyZone && smcResult.structureBias !== 'bullish') {
-        direction = 'short';
-        zonePrice = bestSupplyOB.high;
-        score += 20;
-        signals.push(`At supply zone (neutral structure)`);
       } else {
-        return null; // zone conflicts with structure
+        return null; // require clear bullish/bearish structure — no neutral entries
       }
 
       // === VOLUME ACCUMULATION CHECK (mandatory) ===
@@ -759,10 +757,12 @@ class TechnicalScanner {
         }
       }
 
-      // === HIGHER LOWS / LOWER HIGHS (ascending/descending support) ===
+      // === HIGHER LOWS / LOWER HIGHS (mandatory — confirms trending structure) ===
+      let hasStructureTrend = false;
       if (smcResult.swingLows.length >= 3 && direction === 'long') {
         const lastThreeLows = smcResult.swingLows.slice(-3);
         if (lastThreeLows[2].price > lastThreeLows[1].price && lastThreeLows[1].price > lastThreeLows[0].price) {
+          hasStructureTrend = true;
           score += 15;
           signals.push('Higher lows forming — ascending support');
         }
@@ -770,10 +770,12 @@ class TechnicalScanner {
       if (smcResult.swingHighs.length >= 3 && direction === 'short') {
         const lastThreeHighs = smcResult.swingHighs.slice(-3);
         if (lastThreeHighs[2].price < lastThreeHighs[1].price && lastThreeHighs[1].price < lastThreeHighs[0].price) {
+          hasStructureTrend = true;
           score += 15;
           signals.push('Lower highs forming — descending resistance');
         }
       }
+      if (!hasStructureTrend) return null;
 
       // === EMA ALIGNMENT ===
       if (direction === 'long' && currentEma20 > currentEma50) {
@@ -808,7 +810,7 @@ class TechnicalScanner {
       if (!has4hTrend) return null; // hard filter: must align with 4H trend
 
       // === MINIMUM SCORE GATE ===
-      if (score < 65) return null;
+      if (score < 75) return null;
 
       // Suppress during dead hours
       const currentHourUTC = new Date().getUTCHours();
