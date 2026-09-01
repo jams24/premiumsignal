@@ -4,7 +4,7 @@ const logger = require('../utils/logger');
 const db = require('../db/database');
 const SMCAnalyzer = require('./smcAnalyzer');
 
-const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|DIS|BA|JPM|GS|WMT|PDD|JD|BABA|NIO|XPEV|LI|MRK|PFE|JNJ|ABBV|UNH|CVS|COIN|MSTR|GME|AMC|PLTR|SNOW|UBER|LYFT|ABNB|CVNA|RIVN|LCID)$/;
+const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|DIS|BA|JPM|GS|WMT|PDD|JD|BABA|NIO|XPEV|LI|MRK|PFE|JNJ|ABBV|UNH|CVS|COIN|MSTR|GME|AMC|PLTR|SNOW|UBER|LYFT|ABNB|CVNA|RIVN|LCID|SPX|SPY|NAS100|PAXG|XAUUSD|BZ|AAOI|SKHYSTOCK)$/;
 
 class TechnicalScanner {
   constructor(exchanges) {
@@ -710,28 +710,26 @@ class TechnicalScanner {
         return null; // require clear bullish/bearish structure — no neutral entries
       }
 
-      // === SHORT QUALITY FILTERS ===
+      // === SHORT VOLATILITY FILTER (blocks stock tokens, commodities, majors) ===
       const atrPct = (currentATR / currentPrice) * 100;
       if (direction === 'short') {
-        if (atrPct < 1.5) return null; // skip low-volatility assets (stocks, majors)
+        if (atrPct < 1.5) return null;
         const tp1Dist = (currentATR * 3 / currentPrice) * 100;
-        if (tp1Dist < 3) return null; // TP1 too close — not worth the risk
+        if (tp1Dist < 3) return null;
       }
 
-      // === BOUNCE CANDLE CONFIRMATION ===
-      const lastCandle = ohlcv[ohlcv.length - 1];
+      // === BOUNCE CANDLE CONFIRMATION (use previous COMPLETED candle, not current) ===
       const prevCandle = ohlcv[ohlcv.length - 2];
-      const lastOpen = lastCandle[1], lastClose = lastCandle[4];
-      const lastHigh = lastCandle[2], lastLow = lastCandle[3];
-      const lastBody = Math.abs(lastClose - lastOpen);
-      const lastRange = lastHigh - lastLow;
+      const prevOpen = prevCandle[1], prevClose = prevCandle[4];
+      const prevHigh = prevCandle[2], prevLow = prevCandle[3];
+      const prevBody = Math.abs(prevClose - prevOpen);
       if (direction === 'long') {
-        const isBullishCandle = lastClose > lastOpen;
-        const hasLowerWick = (Math.min(lastOpen, lastClose) - lastLow) > lastBody * 0.5;
+        const isBullishCandle = prevClose > prevOpen;
+        const hasLowerWick = (Math.min(prevOpen, prevClose) - prevLow) > prevBody * 0.5;
         if (!isBullishCandle && !hasLowerWick) return null;
       } else {
-        const isBearishCandle = lastClose < lastOpen;
-        const hasUpperWick = (lastHigh - Math.max(lastOpen, lastClose)) > lastBody * 0.5;
+        const isBearishCandle = prevClose < prevOpen;
+        const hasUpperWick = (prevHigh - Math.max(prevOpen, prevClose)) > prevBody * 0.5;
         if (!isBearishCandle && !hasUpperWick) return null;
       }
 
