@@ -710,6 +710,31 @@ class TechnicalScanner {
         return null; // require clear bullish/bearish structure — no neutral entries
       }
 
+      // === SHORT QUALITY FILTERS ===
+      const atrPct = (currentATR / currentPrice) * 100;
+      if (direction === 'short') {
+        if (atrPct < 1.5) return null; // skip low-volatility assets (stocks, majors)
+        const tp1Dist = (currentATR * 3 / currentPrice) * 100;
+        if (tp1Dist < 3) return null; // TP1 too close — not worth the risk
+      }
+
+      // === BOUNCE CANDLE CONFIRMATION ===
+      const lastCandle = ohlcv[ohlcv.length - 1];
+      const prevCandle = ohlcv[ohlcv.length - 2];
+      const lastOpen = lastCandle[1], lastClose = lastCandle[4];
+      const lastHigh = lastCandle[2], lastLow = lastCandle[3];
+      const lastBody = Math.abs(lastClose - lastOpen);
+      const lastRange = lastHigh - lastLow;
+      if (direction === 'long') {
+        const isBullishCandle = lastClose > lastOpen;
+        const hasLowerWick = (Math.min(lastOpen, lastClose) - lastLow) > lastBody * 0.5;
+        if (!isBullishCandle && !hasLowerWick) return null;
+      } else {
+        const isBearishCandle = lastClose < lastOpen;
+        const hasUpperWick = (lastHigh - Math.max(lastOpen, lastClose)) > lastBody * 0.5;
+        if (!isBearishCandle && !hasUpperWick) return null;
+      }
+
       // === VOLUME ACCUMULATION CHECK (mandatory) ===
       const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
       const priorVol = volumes.slice(-25, -5).reduce((a, b) => a + b, 0) / 20;
@@ -812,9 +837,10 @@ class TechnicalScanner {
       // === MINIMUM SCORE GATE ===
       if (score < 75) return null;
 
-      // Suppress during dead hours
+      // Suppress during dead/losing hours (03-05 UTC, 16-22 UTC consistently negative)
       const currentHourUTC = new Date().getUTCHours();
-      if (currentHourUTC >= 4 && currentHourUTC <= 5) return null;
+      if (currentHourUTC >= 3 && currentHourUTC <= 5) return null;
+      if (currentHourUTC >= 16 && currentHourUTC <= 22) return null;
 
       // === CALCULATE TP/SL ===
       // SL placed just below the zone (tight, like Flams)
