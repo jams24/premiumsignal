@@ -178,7 +178,8 @@ class TradeExecutor {
     return results;
   }
 
-  // Calculate position size based on risk % or fixed amount
+  // Calculate position size so ATR-based SL = max loss cap
+  // This ensures the stop loss has room to breathe instead of max_loss killing trades early
   async calcPositionSize(signal) {
     if (this.riskPct > 0) {
       const balance = await this.getBalance();
@@ -186,6 +187,22 @@ class TradeExecutor {
       if (this.maxLossPerTrade > 0) size = Math.min(size, this.maxLossPerTrade);
       return Math.min(size, balance * 0.2);
     }
+
+    // Risk-fit sizing: if we have a SL distance and a max loss cap, size the position
+    // so hitting the SL = losing exactly maxLossPerTrade (not more)
+    if (this.maxLossPerTrade > 0 && signal.stopLoss && signal.currentPrice) {
+      const slDistPct = Math.abs((signal.currentPrice - signal.stopLoss) / signal.currentPrice) * 100;
+      if (slDistPct > 0) {
+        // positionSize * (slDistPct/100) = maxLossPerTrade
+        const riskFitSize = this.maxLossPerTrade / (slDistPct / 100);
+        const capped = Math.min(riskFitSize, this.maxPositionSize);
+        if (capped < this.maxPositionSize) {
+          logger.info(`Risk-fit sizing: $${capped.toFixed(0)} (SL ${slDistPct.toFixed(1)}% → $${this.maxLossPerTrade} max loss) vs max $${this.maxPositionSize}`);
+        }
+        return capped;
+      }
+    }
+
     return this.maxPositionSize;
   }
 

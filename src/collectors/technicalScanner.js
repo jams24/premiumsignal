@@ -4,7 +4,13 @@ const logger = require('../utils/logger');
 const db = require('../db/database');
 const SMCAnalyzer = require('./smcAnalyzer');
 
-const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|DIS|BA|JPM|GS|WMT|PDD|JD|BABA|NIO|XPEV|LI|MRK|PFE|JNJ|ABBV|UNH|CVS|COIN|MSTR|GME|AMC|PLTR|SNOW|UBER|LYFT|ABNB|CVNA|RIVN|LCID|SPX|SPY|NAS100|PAXG|XAUUSD|BZ|AAOI|SKHYSTOCK)$/;
+const STOCK_TOKENS = /^(AAPL|MSFT|GOOG|GOOGL|AMZN|TSLA|META|NVDA|AMD|INTC|NFLX|DIS|BA|JPM|GS|WMT|PDD|JD|BABA|NIO|XPEV|LI|MRK|PFE|JNJ|ABBV|UNH|CVS|COIN|MSTR|GME|AMC|PLTR|SNOW|UBER|LYFT|ABNB|CVNA|RIVN|LCID|SPX|SPY|NAS100|PAXG|XAUUSD|BZ|AAOI|SKHYSTOCK|SOXS|SOXL|TQQQ|SQQQ|SPXS|SPXL|UVXY|SVXY|QQQ|IWM|DIA|VOO|VTI|ARKK|CRCL|KORU|SNXX|SKHY|BSP|SPCX|US|MON|XPIN|ACE|VVV)$/;
+function isStockToken(symbol) {
+  if (STOCK_TOKENS.test(symbol)) return true;
+  if (/STOCK$/i.test(symbol)) return true;
+  if (/^(1000)?[A-Z]{1,6}(LONG|SHORT|BULL|BEAR|UP|DOWN|3L|3S|2L|2S|5L|5S)$/i.test(symbol)) return true;
+  return false;
+}
 
 class TechnicalScanner {
   constructor(exchanges) {
@@ -36,7 +42,7 @@ class TechnicalScanner {
 
         const sorted = Object.entries(tickers)
           .filter(([, t]) => t.quoteVolume > 1500000)
-          .filter(([s]) => !s.includes('STOCK') && !STOCK_TOKENS.test(s.split('/')[0]))
+          .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
           .slice(0, 100);
 
@@ -556,7 +562,7 @@ class TechnicalScanner {
         // Filter: decent volume, NOT already pumping hard (that's the breakout scanner's job)
         const filtered = Object.entries(tickers)
           .filter(([, t]) => t.quoteVolume > 1500000)
-          .filter(([s]) => !s.includes('STOCK') && !STOCK_TOKENS.test(s.split('/')[0]))
+          .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .filter(([, t]) => {
             const chg = Math.abs(t.percentage || 0);
             return chg < 15; // skip coins already pumped/dumped >15%
@@ -710,8 +716,9 @@ class TechnicalScanner {
         return null; // require clear bullish/bearish structure — no neutral entries
       }
 
-      // === SHORT VOLATILITY FILTER (blocks stock tokens, commodities, majors) ===
+      // === VOLATILITY FILTER: skip low-ATR assets where TPs can't be reached ===
       const atrPct = (currentATR / currentPrice) * 100;
+      if (atrPct < 1.0) return null; // need at least 1% ATR for any direction
       if (direction === 'short') {
         if (atrPct < 1.5) return null;
         const tp1Dist = (currentATR * 3 / currentPrice) * 100;
@@ -800,6 +807,18 @@ class TechnicalScanner {
       }
       if (!hasStructureTrend) return null;
 
+      // === EXTRA SHORT FILTER: require MACD histogram negative or declining RSI ===
+      if (direction === 'short') {
+        const macd = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+        const currentMACD = macd[macd.length - 1];
+        const prevMACD = macd[macd.length - 2];
+        const macdBearish = currentMACD && currentMACD.histogram < 0;
+        const rsiDeclining = rsi.length >= 3 && rsi[rsi.length - 1] < rsi[rsi.length - 3];
+        if (!macdBearish && !rsiDeclining) return null;
+        if (macdBearish) signals.push('MACD histogram negative');
+        if (rsiDeclining) signals.push('RSI declining');
+      }
+
       // === EMA ALIGNMENT ===
       if (direction === 'long' && currentEma20 > currentEma50) {
         score += 10;
@@ -833,12 +852,15 @@ class TechnicalScanner {
       if (!has4hTrend) return null; // hard filter: must align with 4H trend
 
       // === MINIMUM SCORE GATE ===
-      if (score < 75) return null;
+      // Shorts need higher conviction — they've been losing badly (35% win rate)
+      const minScore = direction === 'short' ? 85 : 75;
+      if (score < minScore) return null;
 
-      // Suppress during dead/losing hours (03-05 UTC, 16-22 UTC consistently negative)
+      // Suppress during dead/losing hours (statistically negative P&L)
       const currentHourUTC = new Date().getUTCHours();
-      if (currentHourUTC >= 3 && currentHourUTC <= 5) return null;
-      if (currentHourUTC >= 16 && currentHourUTC <= 22) return null;
+      if (currentHourUTC >= 1 && currentHourUTC <= 5) return null;  // 01-05 UTC: -$57 total
+      if (currentHourUTC === 9) return null;                        // 09 UTC: -$42
+      if (currentHourUTC >= 16 && currentHourUTC <= 22) return null; // 16-22 UTC: -$157
 
       // === CALCULATE TP/SL ===
       // SL placed just below the zone (tight, like Flams)

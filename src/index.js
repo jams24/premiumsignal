@@ -207,14 +207,10 @@ async function main() {
 
   cron.schedule('*/15 * * * *', async () => {
     try {
-      const [twitter, gecko] = await Promise.all([
-        socialScanner.scanTwitterTrending(),
-        socialScanner.getCoingeckoTrending(),
-      ]);
-
-      const surging = twitter.filter(t => t.velocity === 'SURGING');
-      if (surging.length > 0) {
-        const msg = socialScanner.formatTrending(surging, gecko.slice(0, 5));
+      const tokens = await socialScanner.scanTrending();
+      const notable = tokens.filter(t => t.sources.length > 1 || t.score > 80);
+      if (notable.length > 0) {
+        const msg = socialScanner.formatTrending(notable.slice(0, 10));
         await bot.sendRaw(msg);
       }
     } catch (err) {

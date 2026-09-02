@@ -202,11 +202,8 @@ class TelegramBot {
 
     this.bot.action('action_trending', async (ctx) => {
       await ctx.answerCbQuery('Checking sentiment...');
-      const [twitter, gecko] = await Promise.all([
-        this.socialScanner.scanTwitterTrending(),
-        this.socialScanner.getCoingeckoTrending(),
-      ]);
-      ctx.replyWithHTML(this.socialScanner.formatTrending(twitter, gecko));
+      const tokens = await this.socialScanner.scanTrending();
+      ctx.replyWithHTML(this.socialScanner.formatTrending(tokens));
     });
 
     this.bot.action('action_funding', async (ctx) => {
@@ -713,11 +710,8 @@ class TelegramBot {
     this.bot.command('trending', async (ctx) => {
       ctx.reply('🔍 Checking social sentiment...');
       try {
-        const [twitter, gecko] = await Promise.all([
-          this.socialScanner.scanTwitterTrending(),
-          this.socialScanner.getCoingeckoTrending(),
-        ]);
-        const msg = this.socialScanner.formatTrending(twitter, gecko);
+        const tokens = await this.socialScanner.scanTrending();
+        const msg = this.socialScanner.formatTrending(tokens);
         ctx.replyWithHTML(msg);
       } catch (err) {
         ctx.reply('Social scan failed.');
