@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const config = require('../utils/config');
 const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
+const { generateSignalChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
   constructor({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor }) {
@@ -1664,6 +1665,27 @@ class TelegramBot {
       await this.showExcludePanel(ctx);
     });
 
+    // ── EXCHANGES TOGGLE ──
+    this.bot.action('cfg_exchanges', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.showExchangesPanel(ctx);
+    });
+    const exchangeIds = ['binance', 'bybit', 'mexc'];
+    for (const exId of exchangeIds) {
+      this.bot.action(`cfg_ex_${exId}`, async (ctx) => {
+        const t = te();
+        if (!t.disabledExchanges) t.disabledExchanges = new Set();
+        if (t.disabledExchanges.has(exId)) {
+          t.disabledExchanges.delete(exId);
+        } else {
+          t.disabledExchanges.add(exId);
+        }
+        t.saveConfig();
+        await ctx.answerCbQuery(`${exId}: ${t.disabledExchanges.has(exId) ? 'disabled' : 'enabled'}`);
+        await this.showExchangesPanel(ctx);
+      });
+    }
+
     // ── BALANCE ──
     this.bot.action('cfg_balance', async (ctx) => {
       await ctx.answerCbQuery('Fetching balances...');
@@ -1913,6 +1935,7 @@ class TelegramBot {
        Markup.button.callback(`⭐ Confidence: ${t.minConfidence}/5`, 'cfg_conf')],
       [Markup.button.callback(`🔍 Signal Filter`, 'cfg_filter'),
        Markup.button.callback(`🚫 Excluded (${t.excludedSymbols?.size || 0})`, 'cfg_exclude')],
+      [Markup.button.callback(`🏦 Exchanges${t.disabledExchanges?.size ? ` (${t.disabledExchanges.size} off)` : ''}`, 'cfg_exchanges')],
       [Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades'),
        Markup.button.callback('🔄 Refresh', 'cfg_main')],
       [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
@@ -2046,11 +2069,70 @@ class TelegramBot {
     });
   }
 
+  async showExchangesPanel(ctx) {
+    const t = this.tradeExecutor;
+    const exchanges = ['binance', 'bybit', 'mexc'];
+    let desc = `🏦 <b>EXCHANGE TOGGLE</b>\n\n`;
+    desc += `Enable/disable exchanges for auto-trading.\n`;
+    desc += `Disabled exchanges won't receive new trades.\n\n`;
+    for (const ex of exchanges) {
+      const disabled = t.disabledExchanges?.has(ex);
+      const hasKey = !!(this.tradeExecutor.exchanges[ex]?.apiKey);
+      desc += `${disabled ? '❌' : '✅'} <b>${ex}</b>${hasKey ? '' : ' (no API key)'}\n`;
+    }
+
+    ctx.editMessageText(desc, {
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard([
+        exchanges.map(ex => {
+          const disabled = t.disabledExchanges?.has(ex);
+          return Markup.button.callback(`${disabled ? '❌' : '✅'} ${ex}`, `cfg_ex_${ex}`);
+        }),
+        [Markup.button.callback('⬅️ Back', 'cfg_main')],
+      ]).reply_markup,
+    });
+  }
+
   async sendSignal(signal) {
     // Fan out: channel + every approved user's DM + virtual paper accounts
     try {
+      // Generate chart snapshot
+      let chartBuf = null;
+      try {
+        const exchange = this.tradeExecutor.exchanges[signal.exchange];
+        if (exchange) {
+          const pair = signal.pair || `${signal.symbol}/USDT:USDT`;
+          const ohlcv = await exchange.fetchOHLCV(pair, '1h', undefined, 60);
+          if (ohlcv && ohlcv.length >= 10) {
+            chartBuf = generateSignalChart(ohlcv, signal);
+          }
+        }
+      } catch (e) {
+        logger.debug(`Chart generation skipped: ${e.message}`);
+      }
+
+      const msgText = formatSignalMessage(signal);
+      const sendToChat = async (chatId) => {
+        if (chartBuf) {
+          try {
+            await this.bot.telegram.sendPhoto(chatId, { source: chartBuf }, {
+              caption: msgText.length <= 1024 ? msgText : `🎯 ${signal.symbol} ${signal.direction.toUpperCase()} — Score ${signal.score}`,
+              parse_mode: 'HTML',
+            });
+            if (msgText.length > 1024) {
+              await this.bot.telegram.sendMessage(chatId, msgText, { parse_mode: 'HTML' });
+            }
+          } catch (photoErr) {
+            logger.debug(`Photo send failed, falling back to text: ${photoErr.message}`);
+            await this.bot.telegram.sendMessage(chatId, msgText, { parse_mode: 'HTML' });
+          }
+        } else {
+          await this.bot.telegram.sendMessage(chatId, msgText, { parse_mode: 'HTML' });
+        }
+      };
+
       if (this.channelId) {
-        await this.bot.telegram.sendMessage(this.channelId, formatSignalMessage(signal), { parse_mode: 'HTML' });
+        await sendToChat(this.channelId);
       }
       logger.info(`Signal sent: ${signal.type} ${signal.symbol}`);
 
@@ -2063,9 +2145,8 @@ class TelegramBot {
       const users = await db.getActiveUsers();
       for (const u of users) {
         try {
-          await this.bot.telegram.sendMessage(u.telegram_id, formatSignalMessage(signal), { parse_mode: 'HTML' });
+          await sendToChat(u.telegram_id);
         } catch (e) {
-          // Blocked bot or unreachable — ignore silently, don't spam logs
           if (!String(e.message).includes('blocked')) logger.debug(`DM to ${u.telegram_id}: ${e.message}`);
         }
       }

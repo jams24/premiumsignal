@@ -41,7 +41,7 @@ class TechnicalScanner {
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const sorted = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 1500000)
+          .filter(([, t]) => t.quoteVolume > 5000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
           .slice(0, 100);
@@ -561,7 +561,7 @@ class TechnicalScanner {
 
         // Filter: decent volume, NOT already pumping hard (that's the breakout scanner's job)
         const filtered = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 1500000)
+          .filter(([, t]) => t.quoteVolume > 5000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .filter(([, t]) => {
             const chg = Math.abs(t.percentage || 0);
@@ -605,128 +605,142 @@ class TechnicalScanner {
   }
 
   // Analyze a single coin for zone accumulation entry
+  // MTF: 4H for structure (SMC, swing points, BOS/ChoCH, zones, trend), 1H for entry timing
   async analyzeZoneEntry(exchange, exchangeId, symbol, ticker) {
     try {
-      const ohlcv = await exchange.fetchOHLCV(symbol, '1h', undefined, 100);
-      if (ohlcv.length < 40) return null;
+      // === FETCH BOTH TIMEFRAMES ===
+      const [ohlcv4h, ohlcv1h] = await Promise.all([
+        exchange.fetchOHLCV(symbol, '4h', undefined, 60),
+        exchange.fetchOHLCV(symbol, '1h', undefined, 100),
+      ]);
+      if (ohlcv4h.length < 30 || ohlcv1h.length < 40) return null;
 
-      const closes = ohlcv.map(c => c[4]);
-      const highs = ohlcv.map(c => c[2]);
-      const lows = ohlcv.map(c => c[3]);
-      const volumes = ohlcv.map(c => c[5]);
-      const currentPrice = closes[closes.length - 1];
+      const currentPrice = ohlcv1h[ohlcv1h.length - 1][4];
 
-      // Run SMC analysis to find zones
-      const smcResult = this.smc.analyze(ohlcv);
-      if (!smcResult) return null;
+      // === 4H STRUCTURE ANALYSIS (direction, zones, trend bias) ===
+      const smc4h = this.smc.analyze(ohlcv4h, 5); // lookback=5 on 4H = 20h each side
+      if (!smc4h) return null;
 
-      // Calculate indicators
-      const rsi = RSI.calculate({ values: closes, period: 14 });
-      const ema20 = EMA.calculate({ values: closes, period: 20 });
-      const ema50 = EMA.calculate({ values: closes, period: 50 });
-      const bb = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
-      const atr = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+      // 4H indicators for trend
+      const closes4h = ohlcv4h.map(c => c[4]);
+      const highs4h = ohlcv4h.map(c => c[2]);
+      const lows4h = ohlcv4h.map(c => c[3]);
+      const ema20_4h = EMA.calculate({ values: closes4h, period: 20 });
+      const ema50_4h = EMA.calculate({ values: closes4h, period: 50 });
+      const atr4h = ATR.calculate({ high: highs4h, low: lows4h, close: closes4h, period: 14 });
+      const currentEma20_4h = ema20_4h[ema20_4h.length - 1];
+      const currentEma50_4h = ema50_4h[ema50_4h.length - 1];
+      const currentATR4h = atr4h[atr4h.length - 1];
+      if (!currentEma20_4h || !currentATR4h) return null;
+
+      // 4H trend must be clear — EMA alignment required
+      let htfDirection = null;
+      if (smc4h.structureBias === 'bullish' && currentEma20_4h > currentEma50_4h) {
+        htfDirection = 'long';
+      } else if (smc4h.structureBias === 'bearish' && currentEma20_4h < currentEma50_4h) {
+        htfDirection = 'short';
+      }
+      if (!htfDirection) return null;
+
+      // 4H higher lows (long) or lower highs (short) — mandatory structure trend
+      let has4hStructureTrend = false;
+      if (htfDirection === 'long' && smc4h.swingLows.length >= 3) {
+        const last3 = smc4h.swingLows.slice(-3);
+        if (last3[2].price > last3[1].price && last3[1].price > last3[0].price) has4hStructureTrend = true;
+      }
+      if (htfDirection === 'short' && smc4h.swingHighs.length >= 3) {
+        const last3 = smc4h.swingHighs.slice(-3);
+        if (last3[2].price < last3[1].price && last3[1].price < last3[0].price) has4hStructureTrend = true;
+      }
+      if (!has4hStructureTrend) return null;
+
+      // === 4H ZONE PROXIMITY CHECK ===
+      const bullishOBs = smc4h.orderBlocks.filter(ob => ob.type === 'OB_BULLISH');
+      const bearishOBs = smc4h.orderBlocks.filter(ob => ob.type === 'OB_BEARISH');
+      const bullishFVGs = smc4h.fvgs.filter(f => f.type === 'FVG_BULLISH');
+      const bearishFVGs = smc4h.fvgs.filter(f => f.type === 'FVG_BEARISH');
+
+      let nearDemandZone = false, nearSupplyZone = false;
+      let bestDemandOB = null, bestSupplyOB = null;
+
+      for (const ob of bullishOBs) {
+        const dist = ((currentPrice - ob.high) / currentPrice) * 100;
+        if (dist >= -0.5 && dist <= 2.0) {
+          nearDemandZone = true;
+          if (!bestDemandOB || dist < ((currentPrice - bestDemandOB.high) / currentPrice) * 100) bestDemandOB = ob;
+        }
+      }
+      for (const ob of bearishOBs) {
+        const dist = ((ob.low - currentPrice) / currentPrice) * 100;
+        if (dist >= -0.5 && dist <= 2.0) {
+          nearSupplyZone = true;
+          if (!bestSupplyOB || dist < ((bestSupplyOB.low - currentPrice) / currentPrice) * 100) bestSupplyOB = ob;
+        }
+      }
+      for (const fvg of bullishFVGs) {
+        const dist = ((currentPrice - fvg.bottom) / currentPrice) * 100;
+        if (dist >= 0 && dist <= 2.0 && !bestDemandOB) {
+          nearDemandZone = true;
+          bestDemandOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BULLISH' };
+        }
+      }
+      for (const fvg of bearishFVGs) {
+        const dist = ((fvg.top - currentPrice) / currentPrice) * 100;
+        if (dist >= 0 && dist <= 2.0 && !bestSupplyOB) {
+          nearSupplyZone = true;
+          bestSupplyOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BEARISH' };
+        }
+      }
+
+      // Direction must match 4H bias AND be near the right zone type
+      let direction = null;
+      let zonePrice = null;
+      let score = 0;
+      const signals = [];
+
+      if (htfDirection === 'long' && nearDemandZone) {
+        direction = 'long';
+        zonePrice = bestDemandOB.low;
+        score += 30;
+        signals.push(`4H demand zone $${bestDemandOB.low.toPrecision(5)}–$${bestDemandOB.high.toPrecision(5)}`);
+        signals.push('4H bullish structure (HH+HL)');
+      } else if (htfDirection === 'short' && nearSupplyZone) {
+        direction = 'short';
+        zonePrice = bestSupplyOB.high;
+        score += 30;
+        signals.push(`4H supply zone $${bestSupplyOB.low.toPrecision(5)}–$${bestSupplyOB.high.toPrecision(5)}`);
+        signals.push('4H bearish structure (LH+LL)');
+      } else {
+        return null;
+      }
+
+      // === 1H ENTRY TIMING (indicators, bounce candle, volume) ===
+      const closes1h = ohlcv1h.map(c => c[4]);
+      const highs1h = ohlcv1h.map(c => c[2]);
+      const lows1h = ohlcv1h.map(c => c[3]);
+      const volumes1h = ohlcv1h.map(c => c[5]);
+
+      const rsi = RSI.calculate({ values: closes1h, period: 14 });
+      const ema20 = EMA.calculate({ values: closes1h, period: 20 });
+      const ema50 = EMA.calculate({ values: closes1h, period: 50 });
+      const bb = BollingerBands.calculate({ values: closes1h, period: 20, stdDev: 2 });
+      const atr1h = ATR.calculate({ high: highs1h, low: lows1h, close: closes1h, period: 14 });
 
       const currentRSI = rsi[rsi.length - 1];
       const currentEma20 = ema20[ema20.length - 1];
       const currentEma50 = ema50[ema50.length - 1];
       const currentBB = bb[bb.length - 1];
-      const currentATR = atr[atr.length - 1];
+      const currentATR = atr1h[atr1h.length - 1];
 
       if (!currentRSI || !currentATR || !currentBB) return null;
 
-      let score = 0;
-      const signals = [];
-      let direction = null;
-      let zonePrice = null; // the demand/supply zone price for SL placement
-
-      // === ZONE PROXIMITY CHECK ===
-      // Find bullish OBs (demand zones) near current price
-      const bullishOBs = smcResult.orderBlocks.filter(ob => ob.type === 'OB_BULLISH');
-      const bearishOBs = smcResult.orderBlocks.filter(ob => ob.type === 'OB_BEARISH');
-
-      let nearDemandZone = false;
-      let nearSupplyZone = false;
-      let bestDemandOB = null;
-      let bestSupplyOB = null;
-
-      for (const ob of bullishOBs) {
-        // Price is at or slightly above the demand zone (within 1.5% of OB high)
-        const distAboveOB = ((currentPrice - ob.high) / currentPrice) * 100;
-        if (distAboveOB >= -0.5 && distAboveOB <= 1.5) {
-          nearDemandZone = true;
-          if (!bestDemandOB || distAboveOB < ((currentPrice - bestDemandOB.high) / currentPrice) * 100) {
-            bestDemandOB = ob;
-          }
-        }
-      }
-
-      for (const ob of bearishOBs) {
-        // Price is at or slightly below the supply zone (within 1.5% of OB low)
-        const distBelowOB = ((ob.low - currentPrice) / currentPrice) * 100;
-        if (distBelowOB >= -0.5 && distBelowOB <= 1.5) {
-          nearSupplyZone = true;
-          if (!bestSupplyOB || distBelowOB < ((bestSupplyOB.low - currentPrice) / currentPrice) * 100) {
-            bestSupplyOB = ob;
-          }
-        }
-      }
-
-      // Also check unfilled FVGs as zones
-      const bullishFVGs = smcResult.fvgs.filter(f => f.type === 'FVG_BULLISH');
-      const bearishFVGs = smcResult.fvgs.filter(f => f.type === 'FVG_BEARISH');
-
-      for (const fvg of bullishFVGs) {
-        const distToFVG = ((currentPrice - fvg.bottom) / currentPrice) * 100;
-        if (distToFVG >= 0 && distToFVG <= 1.5) {
-          nearDemandZone = true;
-          if (!bestDemandOB) {
-            bestDemandOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BULLISH' };
-          }
-        }
-      }
-
-      for (const fvg of bearishFVGs) {
-        const distToFVG = ((fvg.top - currentPrice) / currentPrice) * 100;
-        if (distToFVG >= 0 && distToFVG <= 1.5) {
-          nearSupplyZone = true;
-          if (!bestSupplyOB) {
-            bestSupplyOB = { high: fvg.top, low: fvg.bottom, type: 'FVG_BEARISH' };
-          }
-        }
-      }
-
-      // Must be near at least one zone
-      if (!nearDemandZone && !nearSupplyZone) return null;
-
-      // === DETERMINE DIRECTION FROM STRUCTURE ===
-      if (nearDemandZone && smcResult.structureBias === 'bullish') {
-        direction = 'long';
-        zonePrice = bestDemandOB.low;
-        score += 30;
-        signals.push(`At demand zone $${bestDemandOB.low.toPrecision(5)}–$${bestDemandOB.high.toPrecision(5)}`);
-        signals.push('Bullish market structure');
-      } else if (nearSupplyZone && smcResult.structureBias === 'bearish') {
-        direction = 'short';
-        zonePrice = bestSupplyOB.high;
-        score += 30;
-        signals.push(`At supply zone $${bestSupplyOB.low.toPrecision(5)}–$${bestSupplyOB.high.toPrecision(5)}`);
-        signals.push('Bearish market structure');
-      } else {
-        return null; // require clear bullish/bearish structure — no neutral entries
-      }
-
-      // === VOLATILITY FILTER: skip low-ATR assets where TPs can't be reached ===
+      // === VOLATILITY FILTER ===
       const atrPct = (currentATR / currentPrice) * 100;
-      if (atrPct < 1.0) return null; // need at least 1% ATR for any direction
-      if (direction === 'short') {
-        if (atrPct < 1.5) return null;
-        const tp1Dist = (currentATR * 3 / currentPrice) * 100;
-        if (tp1Dist < 3) return null;
-      }
+      if (atrPct < 1.0) return null;
+      if (direction === 'short' && atrPct < 1.5) return null;
 
-      // === BOUNCE CANDLE CONFIRMATION (use previous COMPLETED candle, not current) ===
-      const prevCandle = ohlcv[ohlcv.length - 2];
+      // === 1H BOUNCE CANDLE CONFIRMATION (previous completed candle) ===
+      const prevCandle = ohlcv1h[ohlcv1h.length - 2];
       const prevOpen = prevCandle[1], prevClose = prevCandle[4];
       const prevHigh = prevCandle[2], prevLow = prevCandle[3];
       const prevBody = Math.abs(prevClose - prevOpen);
@@ -740,12 +754,11 @@ class TechnicalScanner {
         if (!isBearishCandle && !hasUpperWick) return null;
       }
 
-      // === VOLUME ACCUMULATION CHECK (mandatory) ===
-      const recentVol = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
-      const priorVol = volumes.slice(-25, -5).reduce((a, b) => a + b, 0) / 20;
+      // === 1H VOLUME ACCUMULATION (mandatory) ===
+      const recentVol = volumes1h.slice(-5).reduce((a, b) => a + b, 0) / 5;
+      const priorVol = volumes1h.slice(-25, -5).reduce((a, b) => a + b, 0) / 20;
       const volAccumRatio = recentVol / priorVol;
-
-      if (volAccumRatio < 1.5) return null; // hard filter: must have volume building
+      if (volAccumRatio < 1.5) return null;
 
       if (volAccumRatio > 2) {
         score += 20;
@@ -755,8 +768,7 @@ class TechnicalScanner {
         signals.push(`Volume building ${volAccumRatio.toFixed(1)}x vs avg`);
       }
 
-      // === BOLLINGER BAND SQUEEZE ===
-      // Tightening BBs = compression = energy building for breakout
+      // === BB SQUEEZE ===
       if (bb.length >= 10) {
         const recentBBWidth = bb.slice(-3).reduce((s, b) => s + (b.upper - b.lower) / b.middle, 0) / 3;
         const priorBBWidth = bb.slice(-10, -3).reduce((s, b) => s + (b.upper - b.lower) / b.middle, 0) / 7;
@@ -766,9 +778,9 @@ class TechnicalScanner {
         }
       }
 
-      // === RSI ALIGNMENT ===
+      // === 1H RSI ALIGNMENT ===
       if (direction === 'long') {
-        if (currentRSI > 70) return null; // overbought, not accumulating
+        if (currentRSI > 70) return null;
         if (currentRSI >= 40 && currentRSI <= 60) {
           score += 10;
           signals.push(`RSI neutral ${currentRSI.toFixed(0)} — room to run`);
@@ -777,7 +789,7 @@ class TechnicalScanner {
           signals.push(`RSI low ${currentRSI.toFixed(0)} — potential reversal`);
         }
       } else {
-        if (currentRSI < 30) return null; // oversold, not distributing
+        if (currentRSI < 30) return null;
         if (currentRSI >= 40 && currentRSI <= 60) {
           score += 10;
           signals.push(`RSI neutral ${currentRSI.toFixed(0)} — room to fall`);
@@ -787,31 +799,10 @@ class TechnicalScanner {
         }
       }
 
-      // === HIGHER LOWS / LOWER HIGHS (mandatory — confirms trending structure) ===
-      let hasStructureTrend = false;
-      if (smcResult.swingLows.length >= 3 && direction === 'long') {
-        const lastThreeLows = smcResult.swingLows.slice(-3);
-        if (lastThreeLows[2].price > lastThreeLows[1].price && lastThreeLows[1].price > lastThreeLows[0].price) {
-          hasStructureTrend = true;
-          score += 15;
-          signals.push('Higher lows forming — ascending support');
-        }
-      }
-      if (smcResult.swingHighs.length >= 3 && direction === 'short') {
-        const lastThreeHighs = smcResult.swingHighs.slice(-3);
-        if (lastThreeHighs[2].price < lastThreeHighs[1].price && lastThreeHighs[1].price < lastThreeHighs[0].price) {
-          hasStructureTrend = true;
-          score += 15;
-          signals.push('Lower highs forming — descending resistance');
-        }
-      }
-      if (!hasStructureTrend) return null;
-
-      // === EXTRA SHORT FILTER: require MACD histogram negative or declining RSI ===
+      // === EXTRA SHORT FILTER: MACD histogram negative or declining RSI ===
       if (direction === 'short') {
-        const macd = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+        const macd = MACD.calculate({ values: closes1h, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
         const currentMACD = macd[macd.length - 1];
-        const prevMACD = macd[macd.length - 2];
         const macdBearish = currentMACD && currentMACD.histogram < 0;
         const rsiDeclining = rsi.length >= 3 && rsi[rsi.length - 1] < rsi[rsi.length - 3];
         if (!macdBearish && !rsiDeclining) return null;
@@ -819,64 +810,42 @@ class TechnicalScanner {
         if (rsiDeclining) signals.push('RSI declining');
       }
 
-      // === EMA ALIGNMENT ===
+      // === 1H EMA ALIGNMENT ===
       if (direction === 'long' && currentEma20 > currentEma50) {
         score += 10;
-        signals.push('EMA20 > EMA50 trend aligned');
+        signals.push('1H EMA20 > EMA50 trend aligned');
       } else if (direction === 'short' && currentEma20 < currentEma50) {
         score += 10;
-        signals.push('EMA20 < EMA50 trend aligned');
+        signals.push('1H EMA20 < EMA50 trend aligned');
       }
 
-      // === 4H TREND CONFIRMATION (mandatory) ===
-      let has4hTrend = false;
-      try {
-        const ohlcv4h = await exchange.fetchOHLCV(symbol, '4h', undefined, 30);
-        if (ohlcv4h.length >= 25) {
-          const closes4h = ohlcv4h.map(c => c[4]);
-          const ema20_4h = EMA.calculate({ values: closes4h, period: 20 });
-          const currentEma4h = ema20_4h[ema20_4h.length - 1];
-          const price4h = closes4h[closes4h.length - 1];
-          if (direction === 'long' && price4h > currentEma4h) {
-            has4hTrend = true;
-            score += 10;
-            signals.push('4H trend aligned');
-          } else if (direction === 'short' && price4h < currentEma4h) {
-            has4hTrend = true;
-            score += 10;
-            signals.push('4H trend aligned');
-          }
-        }
-      } catch (e) { /* skip — let it pass without 4H data */ has4hTrend = true; }
-
-      if (!has4hTrend) return null; // hard filter: must align with 4H trend
+      // === 4H BOS/ChoCH bonus ===
+      if (smc4h.bosEvents.some(e => e.type === (direction === 'long' ? 'BOS_BULLISH' : 'BOS_BEARISH'))) {
+        score += 10;
+        signals.push('4H BOS confirmed');
+      }
+      if (smc4h.chochEvents.some(e => e.type === (direction === 'long' ? 'CHOCH_BULLISH' : 'CHOCH_BEARISH'))) {
+        score += 10;
+        signals.push('4H ChoCH reversal');
+      }
 
       // === MINIMUM SCORE GATE ===
-      // Shorts need higher conviction — they've been losing badly (35% win rate)
       const minScore = direction === 'short' ? 85 : 75;
       if (score < minScore) return null;
 
-      // Suppress during dead/losing hours (statistically negative P&L)
+      // Suppress during dead/losing hours
       const currentHourUTC = new Date().getUTCHours();
-      if (currentHourUTC >= 1 && currentHourUTC <= 5) return null;  // 01-05 UTC: -$57 total
-      if (currentHourUTC === 9) return null;                        // 09 UTC: -$42
-      if (currentHourUTC >= 16 && currentHourUTC <= 22) return null; // 16-22 UTC: -$157
+      if (currentHourUTC >= 1 && currentHourUTC <= 5) return null;
+      if (currentHourUTC === 9) return null;
+      if (currentHourUTC >= 16 && currentHourUTC <= 22) return null;
 
       // === CALCULATE TP/SL ===
-      // SL placed just below the zone (tight, like Flams)
       const isLong = direction === 'long';
-      const zoneDist = Math.abs(currentPrice - zonePrice);
-      // SL = below zone by 0.5x ATR (tight, zone-based)
       const slBuffer = currentATR * 0.5;
-      const stopLoss = isLong
-        ? zonePrice - slBuffer
-        : zonePrice + slBuffer;
-
-      // TPs wider than breakout scanner — zone entries have better R:R
+      const stopLoss = isLong ? zonePrice - slBuffer : zonePrice + slBuffer;
       const tp1 = isLong ? currentPrice + currentATR * 3 : currentPrice - currentATR * 3;
       const tp2 = isLong ? currentPrice + currentATR * 6 : currentPrice - currentATR * 6;
       const tp3 = isLong ? currentPrice + currentATR * 10 : currentPrice - currentATR * 10;
-
       const entryLow = isLong ? currentPrice * 0.998 : currentPrice * 1.002;
       const entryHigh = isLong ? currentPrice * 1.002 : currentPrice * 0.998;
 
@@ -894,11 +863,11 @@ class TechnicalScanner {
         signals,
         atr: currentATR,
         smc: {
-          structureBias: smcResult.structureBias,
-          orderBlocks: smcResult.orderBlocks,
-          fvgs: smcResult.fvgs,
-          bosEvents: smcResult.bosEvents,
-          chochEvents: smcResult.chochEvents,
+          structureBias: smc4h.structureBias,
+          orderBlocks: smc4h.orderBlocks,
+          fvgs: smc4h.fvgs,
+          bosEvents: smc4h.bosEvents,
+          chochEvents: smc4h.chochEvents,
         },
         zonePrice,
         entryLow: parseFloat(entryLow.toPrecision(6)),

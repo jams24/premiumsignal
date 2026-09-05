@@ -31,6 +31,9 @@ class TradeExecutor {
     // Excluded symbols: skip signals for these tokens
     this.excludedSymbols = new Set(config.excludedSymbols || ['BTC', 'ETH', 'SOL']);
 
+    // Disabled exchanges: skip signals from these exchanges (admin toggle)
+    this.disabledExchanges = new Set(config.disabledExchanges || []);
+
     // DCA ladder: OFF by default — historically amplified losses (all 10 worst trades
     // reached DCA stage 3 then max_loss). Opt in via config.dcaEnabled = true.
     this.dcaEnabled = config.dcaEnabled === true;
@@ -87,6 +90,10 @@ class TradeExecutor {
 
     if (this.excludedSymbols.size > 0 && this.excludedSymbols.has(signal.symbol?.toUpperCase())) {
       return { ok: false, reason: `${signal.symbol} is in excluded list` };
+    }
+
+    if (this.disabledExchanges.size > 0 && this.disabledExchanges.has(signal.exchange?.toLowerCase())) {
+      return { ok: false, reason: `Exchange ${signal.exchange} is disabled` };
     }
 
     // Losing streak circuit breaker: pause 2h after 3 consecutive losses
@@ -279,6 +286,7 @@ class TradeExecutor {
       dcaEnabled: this.dcaEnabled,
       signalFilter: [...this.signalFilter],
       excludedSymbols: [...this.excludedSymbols],
+      disabledExchanges: [...this.disabledExchanges],
       pnlResetDate: this.pnlResetDate || null,
       dailyPnL: this.dailyPnL,
     };
@@ -300,6 +308,7 @@ class TradeExecutor {
     if (cfg.dcaEnabled != null) this.dcaEnabled = cfg.dcaEnabled;
     if (cfg.signalFilter != null) this.signalFilter = new Set(cfg.signalFilter);
     if (cfg.excludedSymbols != null) this.excludedSymbols = new Set(cfg.excludedSymbols);
+    if (cfg.disabledExchanges != null) this.disabledExchanges = new Set(cfg.disabledExchanges);
     if (cfg.pnlResetDate != null) this.pnlResetDate = cfg.pnlResetDate;
   }
 

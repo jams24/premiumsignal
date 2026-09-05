@@ -86,11 +86,13 @@ class ListingMonitor {
   }
 
   async checkAnnouncementPages() {
+    if (!this.seenAnnouncements) this.seenAnnouncements = new Set();
+
     const sources = [
       {
         name: 'binance',
         url: 'https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=48&pageNo=1&pageSize=5',
-        parse: (data) => (data?.data?.catalogs?.[0]?.articles || []).map(a => ({ title: a.title, url: `https://www.binance.com/en/support/announcement/${a.code}` })),
+        parse: (data) => (data?.data?.catalogs?.[0]?.articles || []).map(a => ({ title: a.title, url: `https://www.binance.com/en/support/announcement/${a.code}`, code: a.code })),
       },
     ];
 
@@ -99,8 +101,11 @@ class ListingMonitor {
         const { data } = await axios.get(source.url, { timeout: 10000 });
         const articles = source.parse(data);
         for (const article of articles) {
+          const key = article.code || article.url;
+          if (this.seenAnnouncements.has(key)) continue;
           const listingMatch = article.title.match(/(?:will list|lists?)\s+(\w+)/i);
           if (listingMatch) {
+            this.seenAnnouncements.add(key);
             logger.info(`Announcement: ${article.title} — ${article.url}`);
           }
         }

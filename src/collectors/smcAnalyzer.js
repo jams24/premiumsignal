@@ -273,11 +273,11 @@ class SMCAnalyzer {
   }
 
   // Full SMC analysis on OHLCV data
-  analyze(ohlcv) {
+  analyze(ohlcv, lookback) {
     if (!ohlcv || ohlcv.length < 20) return null;
 
     try {
-      const { swingHighs, swingLows } = this.findSwingPoints(ohlcv);
+      const { swingHighs, swingLows } = this.findSwingPoints(ohlcv, lookback);
       const bosEvents = this.detectBOS(ohlcv, swingHighs, swingLows);
       const chochEvents = this.detectChoCH(ohlcv, swingHighs, swingLows);
       const orderBlocks = this.findOrderBlocks(ohlcv, bosEvents);
