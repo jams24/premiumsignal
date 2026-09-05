@@ -22,6 +22,8 @@ class OnchainTracker {
   constructor() {
     this.callbacks = [];
     this.knownTxHashes = new Set();
+    this.contractCache = new Map(); // symbol → { address, chain, timestamp }
+    this.flowCache = new Map(); // symbol → { timestamp, data }
   }
 
   onWhaleAlert(callback) {
@@ -225,6 +227,209 @@ class OnchainTracker {
     if (alert.type === 'transfer_out') return '🟢 Withdrawn from exchange — possible accumulation / cold storage';
     if (alert.type === 'transfer_in') return '🔴 Deposited to exchange — possible sell pressure incoming';
     return '🔄 Wallet-to-wallet transfer';
+  }
+
+  // ═══════════════════════════════════════════════
+  // AUTOMATED EXCHANGE FLOW DETECTION via Etherscan
+  // ═══════════════════════════════════════════════
+
+  async resolveContractAddress(symbol) {
+    const key = symbol.toUpperCase();
+    const cached = this.contractCache.get(key);
+    if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return cached;
+
+    try {
+      const { data } = await axios.get('https://api.coingecko.com/api/v3/search', {
+        params: { query: symbol },
+        timeout: 10000,
+      });
+
+      const coin = data?.coins?.find(c =>
+        c.symbol?.toUpperCase() === key ||
+        c.id?.toUpperCase() === key
+      );
+      if (!coin?.id) return null;
+
+      await new Promise(r => setTimeout(r, 1200));
+
+      const { data: detail } = await axios.get(`https://api.coingecko.com/api/v3/coins/${coin.id}`, {
+        params: { localization: false, tickers: false, market_data: false, community_data: false, developer_data: false },
+        timeout: 10000,
+      });
+
+      const platforms = detail?.platforms || {};
+      let address = null;
+      let chain = null;
+
+      // Prefer Ethereum, then BSC, then others
+      if (platforms['ethereum']) { address = platforms['ethereum']; chain = 'ethereum'; }
+      else if (platforms['binance-smart-chain']) { address = platforms['binance-smart-chain']; chain = 'bsc'; }
+      else if (platforms['polygon-pos']) { address = platforms['polygon-pos']; chain = 'polygon'; }
+      else if (platforms['arbitrum-one']) { address = platforms['arbitrum-one']; chain = 'arbitrum'; }
+      else if (platforms['base']) { address = platforms['base']; chain = 'base'; }
+      else {
+        const first = Object.entries(platforms).find(([, v]) => v && v.startsWith('0x'));
+        if (first) { address = first[1]; chain = first[0]; }
+      }
+
+      if (!address) return null;
+
+      const result = { address, chain, symbol: key, name: detail.name, timestamp: Date.now() };
+      this.contractCache.set(key, result);
+      logger.debug(`Resolved ${key} → ${chain}:${address.slice(0, 10)}...`);
+      return result;
+    } catch (err) {
+      if (err.response?.status === 429) {
+        logger.debug('CoinGecko rate limited — skipping contract resolve');
+      } else {
+        logger.debug(`Contract resolve failed for ${symbol}: ${err.message}`);
+      }
+      return null;
+    }
+  }
+
+  async analyzeExchangeFlows(tokenAddress, symbol, chainName = 'ethereum') {
+    const chain = CHAIN_CONFIG[chainName.toLowerCase()];
+    if (!chain) return null;
+
+    const apiKey = config.onchain.etherscanKey;
+    const isBsc = chain.id === 56;
+    if (!apiKey && !(isBsc && config.onchain.bscscanKey)) return null;
+
+    // Check flow cache (5 min TTL)
+    const cacheKey = `${symbol}_${chainName}`;
+    const cached = this.flowCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) return cached.data;
+
+    let txData = null;
+
+    try {
+      if (apiKey) {
+        const { data } = await axios.get('https://api.etherscan.io/v2/api', {
+          params: {
+            chainid: chain.id,
+            module: 'account',
+            action: 'tokentx',
+            contractaddress: tokenAddress,
+            page: 1,
+            offset: 50,
+            sort: 'desc',
+            apikey: apiKey,
+          },
+          timeout: 10000,
+        });
+        if (data.status === '1' && Array.isArray(data.result)) {
+          txData = data.result;
+        } else if (isBsc && data.result?.includes?.('not supported')) {
+          txData = null;
+        }
+      }
+
+      if (!txData && isBsc && config.onchain.bscscanKey) {
+        const { data } = await axios.get('https://api.bscscan.com/api', {
+          params: {
+            module: 'account',
+            action: 'tokentx',
+            contractaddress: tokenAddress,
+            page: 1,
+            offset: 50,
+            sort: 'desc',
+            apikey: config.onchain.bscscanKey,
+          },
+          timeout: 10000,
+        });
+        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
+      }
+
+      if (!txData || !txData.length) return null;
+
+      let outflowCount = 0;
+      let inflowCount = 0;
+      let outflowAmount = 0;
+      let inflowAmount = 0;
+      const exchangeNames = new Set();
+
+      for (const tx of txData) {
+        const decimals = parseInt(tx.tokenDecimal) || 18;
+        const amount = parseFloat(tx.value) / Math.pow(10, decimals);
+        const fromLower = tx.from.toLowerCase();
+        const toLower = tx.to.toLowerCase();
+        const fromExchange = OnchainTracker.EXCHANGE_ADDRESSES.has(fromLower);
+        const toExchange = OnchainTracker.EXCHANGE_ADDRESSES.has(toLower);
+
+        if (fromExchange && !toExchange) {
+          outflowCount++;
+          outflowAmount += amount;
+          exchangeNames.add(this.identifyExchange(fromLower));
+        } else if (!fromExchange && toExchange) {
+          inflowCount++;
+          inflowAmount += amount;
+          exchangeNames.add(this.identifyExchange(toLower));
+        }
+      }
+
+      const netFlow = outflowAmount - inflowAmount;
+      const totalTxs = txData.length;
+
+      const result = {
+        symbol,
+        chain: chainName,
+        outflowCount,
+        inflowCount,
+        outflowAmount,
+        inflowAmount,
+        netFlow,
+        totalTxs,
+        exchanges: [...exchangeNames].filter(Boolean),
+        bias: netFlow > 0 ? 'bullish' : netFlow < 0 ? 'bearish' : 'neutral',
+        timestamp: Date.now(),
+      };
+
+      this.flowCache.set(cacheKey, { timestamp: Date.now(), data: result });
+      return result;
+    } catch (err) {
+      logger.error(`Exchange flow analysis failed for ${symbol}: ${err.message}`);
+      return null;
+    }
+  }
+
+  identifyExchange(address) {
+    const addr = address.toLowerCase();
+    const map = {
+      '0x28c6c06298d514db089934071355e5743bf21d60': 'Binance',
+      '0x21a31ee1afc51d94c2efccaa2092ad1028285549': 'Binance',
+      '0xdfd5293d8e347dfe59e90efd55b2956a1343963d': 'Binance',
+      '0xf977814e90da44bfa03b6295a0616a897441acec': 'Binance',
+      '0x5a52e96bacdabb82fd05763e25335261b270efcb': 'Binance',
+      '0x56eddb7aa87536c09ccc2793473599fd21a8b17f': 'Binance',
+      '0x3c783c21a0383057d128bae431894a5c19f9cf06': 'Binance',
+      '0xbe0eb53f46cd790cd13851d5eff43d12404d33e8': 'Binance',
+      '0x5041ed759dd4afc3a72b8192c143f72f4724081a': 'OKX',
+      '0x6cc5f688a315f3dc28a7781717a9a798a59fda7b': 'OKX',
+      '0x98ec059dc3adfbdd63429227d09cb8473b089906': 'OKX',
+      '0x75e89d5979e4f6fba9f97c104c2f0afb3f1dcb88': 'MEXC',
+      '0x3cc936b795a188f0e246cbb2d74c5bd190aecf18': 'MEXC',
+      '0x1ab87cd2a58efc7aa98a6700f2a495a3c0b7af18': 'Bybit',
+      '0xf89d7b9c864f589bbf53a82105107622b35eaa40': 'Bybit',
+      '0x0d0707963952f2fba59dd06f2b425ace40b492fe': 'Gate',
+      '0x1c4b70a3968436b9a0a9cf5205c787eb81bb558c': 'Gate',
+      '0xd6216fc19db775df9774a6e33526131da7d19a2c': 'KuCoin',
+      '0xf16e9b0d03470827a95cdfd0cb8a8a3b46969b91': 'KuCoin',
+      '0x71660c4005ba85c37ccec55d0c4493e66fe775d3': 'Coinbase',
+      '0x503828976d22510aad0201ac7ec88293211d23da': 'Coinbase',
+      '0xa9d1e08c7793af67e9d92fe308d5697fb81d3e43': 'Coinbase',
+      '0x2910543af39aba0cd09dbb2d50200b3e800a63d2': 'Kraken',
+      '0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0': 'Kraken',
+      '0x97b9d2e1a5ec63395c4b0b1b5da6fdb999686203': 'Bitget',
+      '0x6262998ced04146fa42253a5c0af90ca02dfd2a3': 'Crypto.com',
+      '0x46340b20830761efd32832a74d7169b29feb9758': 'Crypto.com',
+      '0xab5c66752a9e8167967685f1450532fb96d5d24f': 'HTX',
+      '0x6748f50f686bfbca6fe8ad62b22228b87f31ff2b': 'HTX',
+      '0x18709e89bd403f470088abdacebe86cc60dda12e': 'HTX',
+      '0x1151314c646ce4e0efd76d1af4760ae66a9fe30f': 'Bitfinex',
+      '0x742d35cc6634c0532925a3b844bc9e7595f2bd3e': 'Bitfinex',
+    };
+    return map[addr] || null;
   }
 
   // ═══════════════════════════════════════════════

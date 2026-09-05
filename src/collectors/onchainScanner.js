@@ -9,9 +9,10 @@ function isStockToken(symbol) {
 }
 
 class OnchainScanner {
-  constructor(exchanges) {
+  constructor(exchanges, onchainTracker) {
     this.exchanges = exchanges;
-    this.oiCache = new Map(); // symbol → { timestamp, data[] }
+    this.onchainTracker = onchainTracker;
+    this.oiCache = new Map();
     this.alerts = [];
     this.lastScan = null;
   }
@@ -70,6 +71,43 @@ class OnchainScanner {
     }
 
     const sorted = [...best.values()].sort((a, b) => b.score - a.score);
+
+    // Phase 2: Check exchange flows for top tokens via Etherscan
+    if (this.onchainTracker) {
+      const topForFlows = sorted.filter(r => r.score >= 15).slice(0, 8);
+      for (const token of topForFlows) {
+        try {
+          const contract = await this.onchainTracker.resolveContractAddress(token.symbol);
+          if (!contract) continue;
+
+          const chainKey = this.mapCoinGeckoChain(contract.chain);
+          if (!chainKey) continue;
+
+          const flow = await this.onchainTracker.analyzeExchangeFlows(contract.address, token.symbol, chainKey);
+          if (!flow) continue;
+
+          token.exchangeFlow = flow;
+
+          // Score exchange flows
+          if (flow.outflowCount > flow.inflowCount && flow.outflowCount >= 3) {
+            const flowBoost = flow.outflowCount >= 8 ? 20 : flow.outflowCount >= 5 ? 15 : 10;
+            token.score += flowBoost;
+            token.signals.push(`🏦 Exchange outflow: ${flow.outflowCount} withdrawals from ${flow.exchanges.join(', ')}`);
+          }
+          if (flow.inflowCount > flow.outflowCount && flow.inflowCount >= 5) {
+            token.signals.push(`⚠️ Exchange inflow: ${flow.inflowCount} deposits — potential sell pressure`);
+          }
+
+          // Rate limit: Etherscan 5 req/sec free tier
+          await new Promise(r => setTimeout(r, 1500));
+        } catch (e) {
+          logger.debug(`Flow check failed for ${token.symbol}: ${e.message}`);
+        }
+      }
+      // Re-sort after flow boosts
+      sorted.sort((a, b) => b.score - a.score);
+    }
+
     this.lastScan = { timestamp: Date.now(), count: sorted.length, topAlerts: sorted.slice(0, 5) };
 
     logger.info(`Onchain scan: ${sorted.length} tokens scored, ${this.alerts.length} alerts`);
@@ -208,6 +246,13 @@ class OnchainScanner {
       signals.push(`OI +${cached.oiChange4h.toFixed(1)}% 4h`);
     }
 
+    // Check for exchange flow boost from last scan
+    const lastScan = this.lastScan?.topAlerts?.find(t => t.symbol === symbol || t.pair?.startsWith(symbol));
+    if (lastScan?.exchangeFlow?.outflowCount > lastScan?.exchangeFlow?.inflowCount && lastScan?.exchangeFlow?.outflowCount >= 3) {
+      boost += 10;
+      signals.push(`Exchange outflows detected (${lastScan.exchangeFlow.exchanges.join(', ')})`);
+    }
+
     return { boost, signals };
   }
 
@@ -254,6 +299,19 @@ class OnchainScanner {
         }
       }
 
+      // Exchange flow explanation
+      if (r.exchangeFlow) {
+        const f = r.exchangeFlow;
+        if (f.outflowCount > f.inflowCount && f.outflowCount >= 3) {
+          msg += `   🏦 <b>EXCHANGE OUTFLOW</b>: ${f.outflowCount} withdrawals vs ${f.inflowCount} deposits\n`;
+          msg += `      Exchanges: ${f.exchanges.join(', ') || 'Unknown'}\n`;
+          msg += `      <i>Tokens leaving exchanges = accumulation. Smart money moving to cold storage, reducing sell-side supply. This is the leading indicator — outflows often precede pumps.</i>\n`;
+        } else if (f.inflowCount > f.outflowCount && f.inflowCount >= 3) {
+          msg += `   ⚠️ <b>EXCHANGE INFLOW</b>: ${f.inflowCount} deposits vs ${f.outflowCount} withdrawals\n`;
+          msg += `      <i>Tokens entering exchanges = potential sell pressure. Holders may be preparing to dump.</i>\n`;
+        }
+      }
+
       // Combined signal explanation
       for (const sig of r.signals) {
         if (sig.includes('aligned LONG')) {
@@ -278,6 +336,8 @@ class OnchainScanner {
     msg += '💰 <b>Funding +</b> = Longs paying to hold (bullish bias)\n';
     msg += '💰 <b>Funding -</b> = Shorts paying to hold (bearish/squeeze)\n';
     msg += '🎯 <b>COMBO</b> = Multiple signals confirm same direction\n';
+    msg += '🏦 <b>OUTFLOW</b> = Tokens leaving exchanges (accumulation)\n';
+    msg += '⚠️ <b>INFLOW</b> = Tokens entering exchanges (sell pressure)\n';
     msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;
     return msg;
   }
@@ -287,6 +347,14 @@ class OnchainScanner {
     if (score >= 35) return { icon: '⚡', label: 'NOTABLE ACTIVITY', meaning: 'Significant positioning shift — monitor closely for entry' };
     if (score >= 20) return { icon: '👀', label: 'EARLY SIGNAL', meaning: 'One indicator flagged — keep on watchlist' };
     return { icon: '📊', label: 'LOW ACTIVITY', meaning: 'Minor signal — not actionable yet' };
+  }
+
+  mapCoinGeckoChain(cgChain) {
+    const map = {
+      'ethereum': 'ethereum', 'binance-smart-chain': 'bsc', 'polygon-pos': 'polygon',
+      'arbitrum-one': 'arbitrum', 'base': 'base', 'optimism': 'optimism', 'avalanche': 'avalanche',
+    };
+    return map[cgChain] || null;
   }
 
   getLastScan() {

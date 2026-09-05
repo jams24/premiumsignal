@@ -50,7 +50,7 @@ async function main() {
 
   const technicalScanner = new TechnicalScanner(listingMonitor.exchanges);
   const onchainTracker = new OnchainTracker();
-  const onchainScanner = new OnchainScanner(listingMonitor.exchanges);
+  const onchainScanner = new OnchainScanner(listingMonitor.exchanges, onchainTracker);
   technicalScanner.onchainScanner = onchainScanner;
   const marketIntel = new MarketIntel(listingMonitor.exchanges);
   const socialScanner = new SocialScanner();
