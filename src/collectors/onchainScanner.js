@@ -216,20 +216,77 @@ class OnchainScanner {
     if (!results.length) return null;
 
     const top = results.slice(0, limit);
-    let msg = '🔗 <b>ONCHAIN SCANNER</b>\n\n';
+    let msg = '🔗 <b>ONCHAIN SCANNER</b>\n';
+    msg += '<i>Tracks Open Interest surges, funding rate shifts, and combined signals to detect smart money positioning before major moves.</i>\n\n';
 
     for (const r of top) {
       const arrow = r.priceChange >= 0 ? '🟢' : '🔴';
-      msg += `${arrow} <b>${r.symbol}</b> — Score: ${r.score}\n`;
-      msg += `   Price: ${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}% | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
-      for (const sig of r.signals) {
-        msg += `   • ${sig}\n`;
+      const tier = this.getScoreTier(r.score);
+      msg += `${arrow} <b>${r.symbol}</b> — Score: ${r.score}/100 ${tier.icon}\n`;
+      msg += `   <b>${tier.label}</b> — ${tier.meaning}\n`;
+      msg += `   💰 Price: ${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}% | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
+
+      // OI explanation
+      if (r.oiChange4h !== null && r.oiChange4h !== undefined) {
+        const oiDir = r.oiChange4h > 0 ? '📈' : '📉';
+        msg += `   ${oiDir} OI 4h: ${r.oiChange4h > 0 ? '+' : ''}${r.oiChange4h.toFixed(1)}%`;
+        if (r.oiChange4h > 25) msg += ' — <b>Heavy new positions opening, big move likely incoming</b>';
+        else if (r.oiChange4h > 15) msg += ' — Fresh money entering, momentum building';
+        else if (r.oiChange4h > 10) msg += ' — Moderate interest increase';
+        else if (r.oiChange4h < -20) msg += ' — <b>Mass liquidations/closures, potential reversal zone</b>';
+        msg += '\n';
       }
-      msg += '\n';
+      if (r.oiChange1h !== null && r.oiChange1h > 10) {
+        msg += `   ⚡ OI 1h spike: +${r.oiChange1h.toFixed(1)}% — Sudden rush of new positions in last hour\n`;
+      }
+
+      // Funding explanation
+      if (r.fundingRate !== null && r.fundingRate !== undefined) {
+        const fAbs = Math.abs(r.fundingRate * 100);
+        if (fAbs > 0.03) {
+          const fDir = r.fundingRate > 0 ? '🟢' : '🔴';
+          msg += `   ${fDir} Funding: ${r.fundingRate > 0 ? '+' : ''}${(r.fundingRate * 100).toFixed(4)}%`;
+          if (r.fundingRate > 0.001) msg += ' — <b>Longs paying shorts heavily, crowded long but bullish bias</b>';
+          else if (r.fundingRate > 0.0003) msg += ' — Longs dominant, bulls in control';
+          else if (r.fundingRate < -0.001) msg += ' — <b>Shorts paying longs, crowded short — squeeze risk</b>';
+          else if (r.fundingRate < -0.0003) msg += ' — Shorts dominant, bears in control';
+          msg += '\n';
+        }
+      }
+
+      // Combined signal explanation
+      for (const sig of r.signals) {
+        if (sig.includes('aligned LONG')) {
+          msg += `   🎯 <b>COMBO:</b> OI rising + price up + positive funding = Strong bullish momentum. New money is entering AND price is confirming direction. Watch for pullback entries.\n`;
+        } else if (sig.includes('SHORT squeeze')) {
+          msg += `   🎯 <b>COMBO:</b> OI rising + price falling + negative funding = Short squeeze setup. Shorts are piling in but OI is rising — forced liquidations could send price sharply higher.\n`;
+        } else if (sig.includes('accumulation')) {
+          msg += `   🎯 <b>COMBO:</b> OI rising but price flat = Smart money accumulating. Positions being built quietly before a move — watch for breakout direction.\n`;
+        }
+      }
+
+      msg += `   📊 ${r.exchange.toUpperCase()}\n\n`;
     }
 
-    msg += `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
+    msg += '━━━━━━━━━━━━━━━━━━━━\n';
+    msg += '<b>Score Guide:</b>\n';
+    msg += '🔥 50+ = High conviction — multiple signals aligned\n';
+    msg += '⚡ 30-49 = Notable activity — worth monitoring\n';
+    msg += '👀 15-29 = Early signal — one indicator flagged\n';
+    msg += '\n<b>What the signals mean:</b>\n';
+    msg += '📈 <b>OI Rising</b> = New positions opening (fresh money)\n';
+    msg += '💰 <b>Funding +</b> = Longs paying to hold (bullish bias)\n';
+    msg += '💰 <b>Funding -</b> = Shorts paying to hold (bearish/squeeze)\n';
+    msg += '🎯 <b>COMBO</b> = Multiple signals confirm same direction\n';
+    msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;
     return msg;
+  }
+
+  getScoreTier(score) {
+    if (score >= 50) return { icon: '🔥', label: 'HIGH CONVICTION', meaning: 'Multiple onchain signals aligned — strong positioning detected' };
+    if (score >= 35) return { icon: '⚡', label: 'NOTABLE ACTIVITY', meaning: 'Significant positioning shift — monitor closely for entry' };
+    if (score >= 20) return { icon: '👀', label: 'EARLY SIGNAL', meaning: 'One indicator flagged — keep on watchlist' };
+    return { icon: '📊', label: 'LOW ACTIVITY', meaning: 'Minor signal — not actionable yet' };
   }
 
   getLastScan() {

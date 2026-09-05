@@ -21,6 +21,7 @@ module.exports = {
     solscanKey: process.env.SOLSCAN_API_KEY,
     alchemyKey: process.env.ALCHEMY_API_KEY,
     moralisKey: process.env.MORALIS_API_KEY,
+    arkhamKey: process.env.ARKHAM_API_KEY,
   },
   twitter: {
     bearerToken: process.env.TWITTER_BEARER_TOKEN,

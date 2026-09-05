@@ -1249,6 +1249,33 @@ class TelegramBot {
         logger.error(`/whale error: ${err.message}`);
       }
     });
+
+    this.bot.command('flows', async (ctx) => {
+      const args = ctx.message.text.split(' ').slice(1);
+      if (args.length < 2) {
+        return ctx.replyWithHTML(
+          '🔗 <b>Exchange Flow Check</b>\n\n' +
+          'Usage: <code>/flows TOKEN CONTRACT_ADDRESS [chain]</code>\n\n' +
+          'Example:\n<code>/flows BULLA 0x1234...abcd ethereum</code>\n' +
+          '<code>/flows KOMA 0x5678...efgh bsc</code>\n\n' +
+          'Chains: ethereum, bsc, base, arbitrum\n\n' +
+          '<i>Requires Arkham API key. Tracks token movements in/out of exchanges — the edge Flams uses to spot accumulation before pumps.</i>'
+        );
+      }
+      const [symbol, address, chain] = args;
+      ctx.reply(`🔗 Checking exchange flows for $${symbol.toUpperCase()} via Arkham...`);
+      try {
+        const alerts = await this.onchainTracker.checkArkhamTokenTransfers(symbol, address, chain || 'ethereum');
+        if (!alerts.length) return ctx.reply(`No significant exchange flows detected for $${symbol.toUpperCase()}.`);
+        for (const alert of alerts) {
+          const msg = this.onchainTracker.formatArkhamAlert(alert);
+          if (msg) await ctx.replyWithHTML(msg);
+        }
+      } catch (err) {
+        ctx.reply('Flow check failed. Make sure ARKHAM_API_KEY is set.');
+        logger.error(`/flows error: ${err.message}`);
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════
@@ -2184,7 +2211,10 @@ class TelegramBot {
   async sendWhaleAlert(alert) {
     if (!this.channelId) return;
     try {
-      await this.bot.telegram.sendMessage(this.channelId, formatWhaleAlert(alert), { parse_mode: 'HTML' });
+      const msg = alert.type === 'arkham_flow'
+        ? this.onchainTracker.formatArkhamAlert(alert)
+        : formatWhaleAlert(alert);
+      if (msg) await this.bot.telegram.sendMessage(this.channelId, msg, { parse_mode: 'HTML' });
     } catch (err) {
       logger.error(`Failed to send whale alert: ${err.message}`);
     }

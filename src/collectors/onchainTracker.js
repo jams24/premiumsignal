@@ -182,6 +182,152 @@ class OnchainTracker {
     if (alert.type === 'transfer_in') return '🔴 Deposited to exchange — possible sell pressure incoming';
     return '🔄 Wallet-to-wallet transfer';
   }
+
+  // ═══════════════════════════════════════════════
+  // ARKHAM INTELLIGENCE API — Exchange flow & entity tracking
+  // ═══════════════════════════════════════════════
+
+  async arkhamRequest(endpoint, params = {}) {
+    if (!config.onchain.arkhamKey) return null;
+    try {
+      const { data } = await axios.get(`https://api.arkm.com${endpoint}`, {
+        params,
+        headers: { 'API-Key': config.onchain.arkhamKey },
+        timeout: 15000,
+      });
+      return data;
+    } catch (err) {
+      if (err.response?.status === 429) {
+        logger.debug('Arkham rate limited');
+      } else {
+        logger.debug(`Arkham API error: ${err.message}`);
+      }
+      return null;
+    }
+  }
+
+  // Get token transfers — detects exchange outflows like Flams' BULLA call
+  async checkArkhamTokenTransfers(symbol, tokenAddress, chain = 'ethereum') {
+    if (!config.onchain.arkhamKey) return [];
+
+    const data = await this.arkhamRequest('/transfers', {
+      base: tokenAddress,
+      chain,
+      limit: 30,
+      sortKey: 'time',
+      sortDir: 'desc',
+    });
+
+    if (!data?.transfers) return [];
+
+    const alerts = [];
+    let exchangeOutflowTotal = 0;
+    let exchangeInflowTotal = 0;
+    let largeTransfers = 0;
+
+    for (const tx of data.transfers) {
+      const usdValue = tx.unitPrice ? tx.tokenQuantity * tx.unitPrice : 0;
+      const fromEntity = tx.fromAddress?.arkhamEntity?.name || '';
+      const toEntity = tx.toAddress?.arkhamEntity?.name || '';
+
+      // Arkham labels entities — detect exchange flows directly
+      const fromIsExchange = this.isExchangeEntity(fromEntity);
+      const toIsExchange = this.isExchangeEntity(toEntity);
+
+      if (fromIsExchange && !toIsExchange && usdValue > 10000) {
+        exchangeOutflowTotal += usdValue;
+        largeTransfers++;
+      } else if (!fromIsExchange && toIsExchange && usdValue > 10000) {
+        exchangeInflowTotal += usdValue;
+      }
+    }
+
+    // Generate flow summary alert
+    if (exchangeOutflowTotal > 50000 || exchangeInflowTotal > 50000) {
+      const netFlow = exchangeOutflowTotal - exchangeInflowTotal;
+      const alert = {
+        type: 'arkham_flow',
+        symbol: symbol.toUpperCase(),
+        chain,
+        exchangeOutflow: exchangeOutflowTotal,
+        exchangeInflow: exchangeInflowTotal,
+        netFlow,
+        largeTransfers,
+        bias: netFlow > 0 ? 'bullish' : 'bearish',
+        interpretation: this.interpretFlow(netFlow, exchangeOutflowTotal, exchangeInflowTotal, symbol),
+      };
+      alerts.push(alert);
+
+      for (const cb of this.callbacks) {
+        try { await cb(alert); } catch (e) { logger.error(`Arkham callback error: ${e.message}`); }
+      }
+    }
+
+    return alerts;
+  }
+
+  // Check entity holdings for a token — see which big players hold it
+  async checkArkhamEntityHoldings(entityName) {
+    const data = await this.arkhamRequest(`/portfolio/entity/${encodeURIComponent(entityName)}`);
+    if (!data) return null;
+    return data;
+  }
+
+  // Scan multiple tokens for exchange flow activity
+  async scanExchangeFlows(tokenList) {
+    if (!config.onchain.arkhamKey) {
+      logger.debug('Arkham API key not set — skipping exchange flow scan');
+      return [];
+    }
+
+    const results = [];
+    for (const token of tokenList) {
+      try {
+        const alerts = await this.checkArkhamTokenTransfers(
+          token.symbol,
+          token.contractAddress,
+          token.chain || 'ethereum'
+        );
+        results.push(...alerts);
+        // Rate limit: 1 req/sec for /transfers
+        await new Promise(r => setTimeout(r, 1100));
+      } catch (e) {
+        logger.debug(`Arkham flow check failed for ${token.symbol}: ${e.message}`);
+      }
+    }
+    return results;
+  }
+
+  isExchangeEntity(name) {
+    if (!name) return false;
+    const n = name.toLowerCase();
+    return ['binance', 'mexc', 'bybit', 'okx', 'gate.io', 'kucoin', 'huobi', 'htx', 'bitget', 'coinbase', 'kraken', 'bitfinex', 'gemini', 'crypto.com']
+      .some(ex => n.includes(ex));
+  }
+
+  interpretFlow(netFlow, outflow, inflow, symbol) {
+    const fmt = (v) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${(v / 1e3).toFixed(0)}K`;
+    if (netFlow > 100000) {
+      return `🟢 <b>NET OUTFLOW</b> ${fmt(netFlow)} of $${symbol} leaving exchanges\n` +
+        `   Outflow: ${fmt(outflow)} | Inflow: ${fmt(inflow)}\n` +
+        `   <i>Tokens leaving exchanges = accumulation. Holders moving to cold storage, reducing sell pressure. Bullish signal — similar to BULLA before its 1000%+ move.</i>`;
+    } else if (netFlow < -100000) {
+      return `🔴 <b>NET INFLOW</b> ${fmt(Math.abs(netFlow))} of $${symbol} flowing into exchanges\n` +
+        `   Outflow: ${fmt(outflow)} | Inflow: ${fmt(inflow)}\n` +
+        `   <i>Tokens entering exchanges = potential sell pressure. Holders may be preparing to dump. Bearish signal — exercise caution on longs.</i>`;
+    }
+    return `🔄 Balanced flow — Outflow: ${fmt(outflow)} | Inflow: ${fmt(inflow)}`;
+  }
+
+  formatArkhamAlert(alert) {
+    if (alert.type !== 'arkham_flow') return null;
+    let msg = '🔗 <b>EXCHANGE FLOW ALERT</b>\n\n';
+    msg += `<b>$${alert.symbol}</b> on ${alert.chain}\n`;
+    msg += alert.interpretation + '\n\n';
+    msg += `Large transfers: ${alert.largeTransfers}\n`;
+    msg += `<i>Data: Arkham Intelligence</i>`;
+    return msg;
+  }
 }
 
 module.exports = OnchainTracker;
