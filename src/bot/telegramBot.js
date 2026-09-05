@@ -1208,10 +1208,24 @@ class TelegramBot {
 
     this.bot.command('onchain', async (ctx) => {
       if (!this.onchainScanner) return ctx.reply('Onchain scanner not initialized.');
-      ctx.reply('🔗 Running onchain scan (OI + Funding)...');
+      ctx.reply('🔗 Running onchain scan (OI + Funding across all perps)...');
       try {
         const results = await this.onchainScanner.scan();
-        if (!results.length) return ctx.reply('No notable onchain activity detected.');
+        if (!results.length) {
+          return ctx.replyWithHTML(
+            '🔗 <b>ONCHAIN SCANNER</b>\n\n' +
+            'No notable onchain activity detected right now.\n\n' +
+            '<b>What this scans:</b>\n' +
+            '• <b>Open Interest (OI)</b> — new positions opening/closing on Binance & Bybit perps\n' +
+            '• <b>Funding Rates</b> — who\'s paying whom (longs vs shorts dominance)\n' +
+            '• <b>Combined signals</b> — OI + price + funding aligned = high conviction\n\n' +
+            '<b>Runs automatically every 10 min.</b> Alerts sent when score >= 40.\n\n' +
+            '<b>Related commands:</b>\n' +
+            '• /whale — Track large token transfers on Ethereum/BSC/Solana\n' +
+            '• /flows — Check exchange inflow/outflow for a specific token\n\n' +
+            '<i>Scans futures perps on Binance & Bybit only (MEXC doesn\'t expose OI via API).</i>'
+          );
+        }
         const msg = this.onchainScanner.formatAlerts(results, 8);
         if (msg) await ctx.replyWithHTML(msg);
         else ctx.reply('No tokens scored high enough to alert.');
@@ -1222,30 +1236,75 @@ class TelegramBot {
     });
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
-      if (args.length < 3) return ctx.reply('Usage: /whale <TOKEN> <chain> <contract_address>\nExample: /whale TUT ethereum 0x123...');
+      if (args.length < 3) {
+        return ctx.replyWithHTML(
+          '🐋 <b>WHALE TRACKER</b>\n\n' +
+          '<b>What it does:</b>\n' +
+          'Monitors large token transfers on-chain. Detects when tokens move in/out of exchange wallets — the same activity Flams watches before calling coins like BULLA.\n\n' +
+          '<b>Usage:</b>\n' +
+          '<code>/whale TOKEN CHAIN CONTRACT_ADDRESS</code>\n\n' +
+          '<b>Examples:</b>\n' +
+          '<code>/whale BULLA ethereum 0x1234...abcd</code>\n' +
+          '<code>/whale KOMA bsc 0x5678...efgh</code>\n' +
+          '<code>/whale BONK solana So11111...mint</code>\n\n' +
+          '<b>Supported Chains:</b>\n' +
+          '• <code>ethereum</code> / <code>eth</code> — ERC-20 tokens (requires ETHERSCAN_API_KEY)\n' +
+          '• <code>bsc</code> / <code>bnb</code> — BEP-20 tokens (requires BSCSCAN_API_KEY)\n' +
+          '• <code>solana</code> / <code>sol</code> — SPL tokens (requires SOLSCAN_API_KEY)\n\n' +
+          '<b>NOT supported yet:</b> Base, Arbitrum, Polygon, Avalanche, Robinhood chain\n\n' +
+          '<b>How to read results:</b>\n' +
+          '📤 <b>WITHDRAWAL</b> = Tokens leaving exchange → Bullish (accumulation)\n' +
+          '📥 <b>DEPOSIT</b> = Tokens entering exchange → Bearish (sell pressure)\n' +
+          '🔄 <b>TRANSFER</b> = Wallet-to-wallet move\n\n' +
+          '<b>Where to find contract addresses:</b>\n' +
+          '• CoinGecko → token page → Contract field\n' +
+          '• CoinMarketCap → token page → Contracts section\n' +
+          '• DEXScreener → pair page → token address\n\n' +
+          '<b>API Keys needed (all free):</b>\n' +
+          '• Etherscan: etherscan.io/apis (free, no card)\n' +
+          '• BSCScan: bscscan.com/apis (free, no card)\n' +
+          '• Solscan: pro-api.solscan.io (free tier available)\n\n' +
+          '<i>Note: This tracks on-chain activity only. Our bot trades futures perps on Binance/Bybit/MEXC — it does NOT trade spot, DEX, Solana, or other L1/L2 chains directly.</i>'
+        );
+        return;
+      }
 
       const [symbol, chain, address] = args;
       ctx.reply(`🐋 Checking whale activity for $${symbol.toUpperCase()} on ${chain}...`);
 
       try {
         let alerts = [];
-        if (chain.toLowerCase() === 'ethereum' || chain.toLowerCase() === 'eth') {
+        const c = chain.toLowerCase();
+        if (c === 'ethereum' || c === 'eth') {
           alerts = await this.onchainTracker.checkEthWhales(address, symbol.toUpperCase());
-        } else if (chain.toLowerCase() === 'bsc' || chain.toLowerCase() === 'bnb') {
+        } else if (c === 'bsc' || c === 'bnb') {
           alerts = await this.onchainTracker.checkBscWhales(address, symbol.toUpperCase());
-        } else if (chain.toLowerCase() === 'solana' || chain.toLowerCase() === 'sol') {
+        } else if (c === 'solana' || c === 'sol') {
           alerts = await this.onchainTracker.checkSolanaWhales(address, symbol.toUpperCase());
         } else {
-          return ctx.reply('Supported chains: ethereum, bsc, solana');
+          return ctx.replyWithHTML(
+            `❌ Chain <b>${chain}</b> is not supported.\n\n` +
+            '<b>Supported:</b> ethereum, bsc, solana\n' +
+            '<b>Not yet:</b> Base, Arbitrum, Polygon, Avalanche, Robinhood chain\n\n' +
+            'Use <code>/whale</code> without args for full guide.'
+          );
         }
 
-        if (!alerts.length) return ctx.reply('No recent whale transactions found.');
+        if (!alerts.length) {
+          return ctx.replyWithHTML(
+            `🐋 No recent whale transactions found for <b>$${symbol.toUpperCase()}</b> on ${chain}.\n\n` +
+            '<i>This could mean:\n' +
+            '• The contract address is wrong\n' +
+            '• No large transfers in recent blocks\n' +
+            '• The API key for this chain is not set</i>'
+          );
+        }
 
         for (const alert of alerts.slice(0, 5)) {
           ctx.replyWithHTML(formatWhaleAlert(alert));
         }
       } catch (err) {
-        ctx.reply('Whale check failed.');
+        ctx.reply(`Whale check failed: ${err.message}`);
         logger.error(`/whale error: ${err.message}`);
       }
     });
@@ -1254,25 +1313,57 @@ class TelegramBot {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 2) {
         return ctx.replyWithHTML(
-          '🔗 <b>Exchange Flow Check</b>\n\n' +
-          'Usage: <code>/flows TOKEN CONTRACT_ADDRESS [chain]</code>\n\n' +
-          'Example:\n<code>/flows BULLA 0x1234...abcd ethereum</code>\n' +
+          '🔗 <b>EXCHANGE FLOW TRACKER</b>\n\n' +
+          '<b>What it does:</b>\n' +
+          'Analyzes net token flow in/out of major exchanges. This is the #1 edge Flams uses — he spotted 160M $BULLA leaving MEXC before the 1000%+ pump.\n\n' +
+          '<b>How it works:</b>\n' +
+          '• Scans recent token transfers on-chain\n' +
+          '• Identifies transfers from/to known exchange wallets (Binance, MEXC, Bybit, OKX, Gate, Coinbase, Kraken)\n' +
+          '• Calculates net flow: outflow vs inflow\n\n' +
+          '<b>What the results mean:</b>\n' +
+          '🟢 <b>NET OUTFLOW</b> = More tokens leaving exchanges than entering\n' +
+          '   → Accumulation signal — holders moving to cold storage\n' +
+          '   → Reduces available sell supply on exchanges\n' +
+          '   → Bullish — watch for price breakout\n\n' +
+          '🔴 <b>NET INFLOW</b> = More tokens entering exchanges than leaving\n' +
+          '   → Distribution signal — holders preparing to sell\n' +
+          '   → Increases sell supply on exchanges\n' +
+          '   → Bearish — be cautious on longs\n\n' +
+          '<b>Usage:</b>\n' +
+          '<code>/flows TOKEN CONTRACT_ADDRESS [chain]</code>\n\n' +
+          '<b>Examples:</b>\n' +
+          '<code>/flows BULLA 0x1234...abcd ethereum</code>\n' +
           '<code>/flows KOMA 0x5678...efgh bsc</code>\n\n' +
-          'Chains: ethereum, bsc, base, arbitrum\n\n' +
-          '<i>Requires Arkham API key. Tracks token movements in/out of exchanges — the edge Flams uses to spot accumulation before pumps.</i>'
+          '<b>Supported chains:</b> ethereum (default), bsc, arbitrum, base\n' +
+          '<b>Requires:</b> ARKHAM_API_KEY in env (arkm.com)\n\n' +
+          '<b>Free alternative:</b> Use <code>/whale</code> instead — works with free Etherscan/BSCScan/Solscan API keys and detects the same exchange transfers.\n\n' +
+          '<i>Note: This is an onchain analysis tool — it monitors token movements, not futures. Use alongside /onchain (OI + funding) for the full picture.</i>'
         );
+        return;
       }
       const [symbol, address, chain] = args;
       ctx.reply(`🔗 Checking exchange flows for $${symbol.toUpperCase()} via Arkham...`);
       try {
         const alerts = await this.onchainTracker.checkArkhamTokenTransfers(symbol, address, chain || 'ethereum');
-        if (!alerts.length) return ctx.reply(`No significant exchange flows detected for $${symbol.toUpperCase()}.`);
+        if (!alerts.length) {
+          return ctx.replyWithHTML(
+            `🔗 No significant exchange flows detected for <b>$${symbol.toUpperCase()}</b>.\n\n` +
+            '<i>This means either:\n' +
+            '• No large transfers (&gt;$10K) to/from exchanges recently\n' +
+            '• The contract address may be incorrect\n' +
+            '• ARKHAM_API_KEY is not set (try /whale instead — free)</i>'
+          );
+        }
         for (const alert of alerts) {
           const msg = this.onchainTracker.formatArkhamAlert(alert);
           if (msg) await ctx.replyWithHTML(msg);
         }
       } catch (err) {
-        ctx.reply('Flow check failed. Make sure ARKHAM_API_KEY is set.');
+        ctx.replyWithHTML(
+          `❌ Flow check failed.\n\n` +
+          `<i>Error: ${err.message}\n\n` +
+          'If ARKHAM_API_KEY is not set, use /whale instead — it works with free Etherscan/BSCScan keys.</i>'
+        );
         logger.error(`/flows error: ${err.message}`);
       }
     });
