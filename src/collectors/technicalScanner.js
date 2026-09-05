@@ -849,6 +849,15 @@ class TechnicalScanner {
       const entryLow = isLong ? currentPrice * 0.998 : currentPrice * 1.002;
       const entryHigh = isLong ? currentPrice * 1.002 : currentPrice * 0.998;
 
+
+      // Onchain boost — OI surge from onchainScanner
+      if (this.onchainScanner) {
+        const { boost, signals: oSignals } = this.onchainScanner.getOnchainBoost(symbol);
+        if (boost > 0) {
+          score += boost;
+          signals.push(...oSignals.map(s => `🔗 ${s}`));
+        }
+      }
       return {
         type: 'ZONE_ENTRY',
         symbol: symbol.replace('/USDT:USDT', '').replace('/USDT', ''),

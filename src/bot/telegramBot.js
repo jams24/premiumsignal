@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, marketIntel, tradeExecutor }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.bot.catch((err) => {
       const msg = err?.message || String(err);
@@ -19,6 +19,7 @@ class TelegramBot {
     this.technicalScanner = technicalScanner;
     this.socialScanner = socialScanner;
     this.onchainTracker = onchainTracker;
+    this.onchainScanner = onchainScanner;
     this.marketIntel = marketIntel;
     this.tradeExecutor = tradeExecutor;
     this.userPaperEngine = null; // wired from index.js
@@ -1204,6 +1205,21 @@ class TelegramBot {
       ctx.replyWithHTML(msg);
     });
 
+
+    this.bot.command('onchain', async (ctx) => {
+      if (!this.onchainScanner) return ctx.reply('Onchain scanner not initialized.');
+      ctx.reply('🔗 Running onchain scan (OI + Funding)...');
+      try {
+        const results = await this.onchainScanner.scan();
+        if (!results.length) return ctx.reply('No notable onchain activity detected.');
+        const msg = this.onchainScanner.formatAlerts(results, 8);
+        if (msg) await ctx.replyWithHTML(msg);
+        else ctx.reply('No tokens scored high enough to alert.');
+      } catch (err) {
+        ctx.reply('Onchain scan failed.');
+        logger.error(`/onchain error: ${err.message}`);
+      }
+    });
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 3) return ctx.reply('Usage: /whale <TOKEN> <chain> <contract_address>\nExample: /whale TUT ethereum 0x123...');

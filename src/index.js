@@ -8,6 +8,7 @@ const ListingMonitor = require('./collectors/listingMonitor');
 const TechnicalScanner = require('./collectors/technicalScanner');
 const { STOCK_TOKENS } = require('./collectors/technicalScanner');
 const OnchainTracker = require('./collectors/onchainTracker');
+const OnchainScanner = require('./collectors/onchainScanner');
 const MarketIntel = require('./collectors/marketIntel');
 const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
@@ -49,6 +50,8 @@ async function main() {
 
   const technicalScanner = new TechnicalScanner(listingMonitor.exchanges);
   const onchainTracker = new OnchainTracker();
+  const onchainScanner = new OnchainScanner(listingMonitor.exchanges);
+  technicalScanner.onchainScanner = onchainScanner;
   const marketIntel = new MarketIntel(listingMonitor.exchanges);
   const socialScanner = new SocialScanner();
   const signalEngine = new SignalEngine();
@@ -76,7 +79,7 @@ async function main() {
   }
 
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, marketIntel, tradeExecutor });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, marketIntel, tradeExecutor });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -236,6 +239,23 @@ async function main() {
     }
   });
 
+
+  // === Onchain Scanner — OI + Funding rate analysis every 10 min ===
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const results = await onchainScanner.scan();
+      const hotTokens = results.filter(r => r.score >= 40);
+      if (hotTokens.length > 0) {
+        const msg = onchainScanner.formatAlerts(hotTokens, 5);
+        if (msg) await bot.sendRaw(msg);
+      }
+      if (results.length) {
+        logger.info(`Onchain: top=${results[0]?.symbol} score=${results[0]?.score}, ${hotTokens.length} hot tokens`);
+      }
+    } catch (err) {
+      logger.error(`Onchain scan error: ${err.message}`);
+    }
+  });
   // Full market intel brief every 4 hours
   cron.schedule('0 */4 * * *', async () => {
     try {
@@ -301,6 +321,7 @@ async function main() {
     `Auto-Trade: ${tradeExecutor.mode.toUpperCase()} mode | $${tradeExecutor.maxPositionSize}/trade | ${tradeExecutor.defaultLeverage}x\n` +
     `Listing check: every ${config.signals.listingCheckInterval / 1000}s\n` +
     `Technical scan: every 5 min\n` +
+    `Onchain scan: every 10 min\n` +
     `Social scan: every 15 min\n\n` +
     `<i>${new Date().toUTCString()}</i>`
   );
