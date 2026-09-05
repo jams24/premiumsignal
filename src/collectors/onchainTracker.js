@@ -3,6 +3,21 @@ const logger = require('../utils/logger');
 const db = require('../db/database');
 const config = require('../utils/config');
 
+// Etherscan V2 multi-chain — one API key covers 60+ EVM chains
+// Free tier: Ethereum (1), Polygon (137), Arbitrum (42161)
+// BSC (56), Base (8453), Optimism (10) need paid or separate BSCScan key
+const CHAIN_CONFIG = {
+  ethereum: { id: 1, explorer: 'etherscan.io', name: 'Ethereum' },
+  eth: { id: 1, explorer: 'etherscan.io', name: 'Ethereum' },
+  bsc: { id: 56, explorer: 'bscscan.com', name: 'BSC' },
+  bnb: { id: 56, explorer: 'bscscan.com', name: 'BSC' },
+  polygon: { id: 137, explorer: 'polygonscan.com', name: 'Polygon' },
+  arbitrum: { id: 42161, explorer: 'arbiscan.io', name: 'Arbitrum' },
+  base: { id: 8453, explorer: 'basescan.org', name: 'Base' },
+  optimism: { id: 10, explorer: 'optimistic.etherscan.io', name: 'Optimism' },
+  avalanche: { id: 43114, explorer: 'snowscan.xyz', name: 'Avalanche' },
+};
+
 class OnchainTracker {
   constructor() {
     this.callbacks = [];
@@ -13,48 +28,82 @@ class OnchainTracker {
     this.callbacks.push(callback);
   }
 
-  async checkEthWhales(tokenAddress, symbol, minUsdValue = 50000) {
-    if (!config.onchain.etherscanKey) return [];
+  // Unified EVM whale check via Etherscan V2 API (one key, any chain)
+  async checkEvmWhales(tokenAddress, symbol, chainName = 'ethereum') {
+    const chain = CHAIN_CONFIG[chainName.toLowerCase()];
+    if (!chain) return [];
+
+    // BSC: try V2 first, fall back to bscscan.com with separate key
+    const isBsc = chain.id === 56;
+    const apiKey = config.onchain.etherscanKey;
+    if (!apiKey && !(isBsc && config.onchain.bscscanKey)) return [];
+
     const alerts = [];
+    let txData;
 
     try {
-      const { data } = await axios.get('https://api.etherscan.io/api', {
-        params: {
-          module: 'account',
-          action: 'tokentx',
-          contractaddress: tokenAddress,
-          page: 1,
-          offset: 20,
-          sort: 'desc',
-          apikey: config.onchain.etherscanKey,
-        },
-        timeout: 10000,
-      });
+      // Try Etherscan V2 unified endpoint first
+      if (apiKey) {
+        const { data } = await axios.get('https://api.etherscan.io/v2/api', {
+          params: {
+            chainid: chain.id,
+            module: 'account',
+            action: 'tokentx',
+            contractaddress: tokenAddress,
+            page: 1,
+            offset: 20,
+            sort: 'desc',
+            apikey: apiKey,
+          },
+          timeout: 10000,
+        });
+        if (data.status === '1' && Array.isArray(data.result)) {
+          txData = data.result;
+        } else if (isBsc && data.result?.includes?.('not supported')) {
+          // BSC not on free tier — fall back to bscscan.com
+          txData = null;
+        }
+      }
 
-      if (data.status !== '1' || !data.result) return alerts;
+      // BSC fallback: use bscscan.com directly if V2 failed
+      if (!txData && isBsc && config.onchain.bscscanKey) {
+        const { data } = await axios.get('https://api.bscscan.com/api', {
+          params: {
+            module: 'account',
+            action: 'tokentx',
+            contractaddress: tokenAddress,
+            page: 1,
+            offset: 20,
+            sort: 'desc',
+            apikey: config.onchain.bscscanKey,
+          },
+          timeout: 10000,
+        });
+        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
+      }
 
-      for (const tx of data.result) {
+      if (!txData || !txData.length) return alerts;
+
+      for (const tx of txData) {
         if (this.knownTxHashes.has(tx.hash)) continue;
         this.knownTxHashes.add(tx.hash);
 
         const decimals = parseInt(tx.tokenDecimal) || 18;
         const amount = parseFloat(tx.value) / Math.pow(10, decimals);
 
-        // Rough USD estimate — you'd want a price feed for accuracy
         const alert = {
-          chain: 'ethereum',
+          chain: chain.name.toLowerCase(),
           txHash: tx.hash,
           symbol,
           amount,
-          usdValue: `~$${(amount).toLocaleString()}`, // placeholder
+          usdValue: `~$${amount.toLocaleString()}`,
           from: tx.from,
           to: tx.to,
-          txUrl: `https://etherscan.io/tx/${tx.hash}`,
+          txUrl: `https://${chain.explorer}/tx/${tx.hash}`,
           type: this.classifyTransfer(tx.from, tx.to),
           interpretation: '',
         };
 
-        // Detect exchange deposits/withdrawals
         alert.interpretation = this.interpretTransfer(alert);
         alerts.push(alert);
 
@@ -64,59 +113,18 @@ class OnchainTracker {
         }
       }
     } catch (err) {
-      logger.error(`Etherscan whale check failed: ${err.message}`);
+      logger.error(`EVM whale check failed (${chain.name}): ${err.message}`);
     }
 
     return alerts;
   }
 
+  // Backward-compatible aliases
+  async checkEthWhales(tokenAddress, symbol) {
+    return this.checkEvmWhales(tokenAddress, symbol, 'ethereum');
+  }
   async checkBscWhales(tokenAddress, symbol) {
-    if (!config.onchain.bscscanKey) return [];
-
-    try {
-      const { data } = await axios.get('https://api.bscscan.com/api', {
-        params: {
-          module: 'account',
-          action: 'tokentx',
-          contractaddress: tokenAddress,
-          page: 1,
-          offset: 20,
-          sort: 'desc',
-          apikey: config.onchain.bscscanKey,
-        },
-        timeout: 10000,
-      });
-
-      if (data.status !== '1' || !data.result) return [];
-
-      const alerts = [];
-      for (const tx of data.result) {
-        if (this.knownTxHashes.has(tx.hash)) continue;
-        this.knownTxHashes.add(tx.hash);
-
-        const decimals = parseInt(tx.tokenDecimal) || 18;
-        const amount = parseFloat(tx.value) / Math.pow(10, decimals);
-
-        const alert = {
-          chain: 'bsc',
-          txHash: tx.hash,
-          symbol,
-          amount,
-          usdValue: `~$${amount.toLocaleString()}`,
-          from: tx.from,
-          to: tx.to,
-          txUrl: `https://bscscan.com/tx/${tx.hash}`,
-          type: this.classifyTransfer(tx.from, tx.to),
-        };
-        alert.interpretation = this.interpretTransfer(alert);
-        alerts.push(alert);
-        await db.saveWhaleTx(alert);
-      }
-      return alerts;
-    } catch (err) {
-      logger.error(`BscScan whale check failed: ${err.message}`);
-      return [];
-    }
+    return this.checkEvmWhales(tokenAddress, symbol, 'bsc');
   }
 
   async checkSolanaWhales(tokenMint, symbol) {
@@ -158,15 +166,51 @@ class OnchainTracker {
     }
   }
 
-  // Known exchange hot wallets (subset — expand as needed)
   static EXCHANGE_ADDRESSES = new Set([
-    '0x28c6c06298d514db089934071355e5743bf21d60', // Binance 14
-    '0x21a31ee1afc51d94c2efccaa2092ad1028285549', // Binance 7
-    '0xdfd5293d8e347dfe59e90efd55b2956a1343963d', // Binance 8
-    '0x5041ed759dd4afc3a72b8192c143f72f4724081a', // OKX
-    '0x75e89d5979e4f6fba9f97c104c2f0afb3f1dcb88', // MEXC
-    '0x0d0707963952f2fba59dd06f2b425ace40b492fe', // Gate.io
-    '0x1ab87cd2a58efc7aa98a6700f2a495a3c0b7af18', // Bybit
+    // Binance
+    '0x28c6c06298d514db089934071355e5743bf21d60',
+    '0x21a31ee1afc51d94c2efccaa2092ad1028285549',
+    '0xdfd5293d8e347dfe59e90efd55b2956a1343963d',
+    '0xf977814e90da44bfa03b6295a0616a897441acec',
+    '0x5a52e96bacdabb82fd05763e25335261b270efcb',
+    '0x56eddb7aa87536c09ccc2793473599fd21a8b17f',
+    '0x3c783c21a0383057d128bae431894a5c19f9cf06',
+    '0xbe0eb53f46cd790cd13851d5eff43d12404d33e8',
+    // OKX
+    '0x5041ed759dd4afc3a72b8192c143f72f4724081a',
+    '0x6cc5f688a315f3dc28a7781717a9a798a59fda7b',
+    '0x98ec059dc3adfbdd63429227d09cb8473b089906',
+    // MEXC
+    '0x75e89d5979e4f6fba9f97c104c2f0afb3f1dcb88',
+    '0x3cc936b795a188f0e246cbb2d74c5bd190aecf18',
+    // Bybit
+    '0x1ab87cd2a58efc7aa98a6700f2a495a3c0b7af18',
+    '0xf89d7b9c864f589bbf53a82105107622b35eaa40',
+    // Gate.io
+    '0x0d0707963952f2fba59dd06f2b425ace40b492fe',
+    '0x1c4b70a3968436b9a0a9cf5205c787eb81bb558c',
+    // KuCoin
+    '0xd6216fc19db775df9774a6e33526131da7d19a2c',
+    '0xf16e9b0d03470827a95cdfd0cb8a8a3b46969b91',
+    // Coinbase
+    '0x71660c4005ba85c37ccec55d0c4493e66fe775d3',
+    '0x503828976d22510aad0201ac7ec88293211d23da',
+    '0xa9d1e08c7793af67e9d92fe308d5697fb81d3e43',
+    // Kraken
+    '0x2910543af39aba0cd09dbb2d50200b3e800a63d2',
+    '0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0',
+    // Bitget
+    '0x97b9d2e1a5ec63395c4b0b1b5da6fdb999686203',
+    // Crypto.com
+    '0x6262998ced04146fa42253a5c0af90ca02dfd2a3',
+    '0x46340b20830761efd32832a74d7169b29feb9758',
+    // HTX (Huobi)
+    '0xab5c66752a9e8167967685f1450532fb96d5d24f',
+    '0x6748f50f686bfbca6fe8ad62b22228b87f31ff2b',
+    '0x18709e89bd403f470088abdacebe86cc60dda12e',
+    // Bitfinex
+    '0x1151314c646ce4e0efd76d1af4760ae66a9fe30f',
+    '0x742d35cc6634c0532925a3b844bc9e7595f2bd3e',
   ].map(a => a.toLowerCase()));
 
   classifyTransfer(from, to) {

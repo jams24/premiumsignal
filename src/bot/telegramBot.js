@@ -1247,11 +1247,16 @@ class TelegramBot {
           '<code>/whale BULLA ethereum 0x1234...abcd</code>\n' +
           '<code>/whale KOMA bsc 0x5678...efgh</code>\n' +
           '<code>/whale BONK solana So11111...mint</code>\n\n' +
-          '<b>Supported Chains:</b>\n' +
-          '• <code>ethereum</code> / <code>eth</code> — ERC-20 tokens (requires ETHERSCAN_API_KEY)\n' +
-          '• <code>bsc</code> / <code>bnb</code> — BEP-20 tokens (requires BSCSCAN_API_KEY)\n' +
+          '<b>Supported Chains (Etherscan V2 — one API key):</b>\n' +
+          '• <code>ethereum</code> / <code>eth</code> — ERC-20 tokens ✅ Free\n' +
+          '• <code>polygon</code> — Polygon tokens ✅ Free\n' +
+          '• <code>arbitrum</code> — Arbitrum tokens ✅ Free\n' +
+          '• <code>bsc</code> / <code>bnb</code> — BEP-20 tokens (needs separate BSCSCAN key or paid Etherscan)\n' +
+          '• <code>base</code> — Base tokens (needs paid Etherscan plan)\n' +
+          '• <code>optimism</code> — Optimism tokens (needs paid Etherscan plan)\n' +
+          '• <code>avalanche</code> — Avalanche tokens (needs paid Etherscan plan)\n' +
           '• <code>solana</code> / <code>sol</code> — SPL tokens (requires SOLSCAN_API_KEY)\n\n' +
-          '<b>NOT supported yet:</b> Base, Arbitrum, Polygon, Avalanche, Robinhood chain\n\n' +
+          '<b>NOT supported:</b> Robinhood chain, Sui, Aptos, TON\n\n' +
           '<b>How to read results:</b>\n' +
           '📤 <b>WITHDRAWAL</b> = Tokens leaving exchange → Bullish (accumulation)\n' +
           '📥 <b>DEPOSIT</b> = Tokens entering exchange → Bearish (sell pressure)\n' +
@@ -1275,17 +1280,17 @@ class TelegramBot {
       try {
         let alerts = [];
         const c = chain.toLowerCase();
-        if (c === 'ethereum' || c === 'eth') {
-          alerts = await this.onchainTracker.checkEthWhales(address, symbol.toUpperCase());
-        } else if (c === 'bsc' || c === 'bnb') {
-          alerts = await this.onchainTracker.checkBscWhales(address, symbol.toUpperCase());
+        const evmChains = ['ethereum', 'eth', 'bsc', 'bnb', 'polygon', 'arbitrum', 'base', 'optimism', 'avalanche'];
+        if (evmChains.includes(c)) {
+          alerts = await this.onchainTracker.checkEvmWhales(address, symbol.toUpperCase(), c);
         } else if (c === 'solana' || c === 'sol') {
           alerts = await this.onchainTracker.checkSolanaWhales(address, symbol.toUpperCase());
         } else {
           return ctx.replyWithHTML(
             `❌ Chain <b>${chain}</b> is not supported.\n\n` +
-            '<b>Supported:</b> ethereum, bsc, solana\n' +
-            '<b>Not yet:</b> Base, Arbitrum, Polygon, Avalanche, Robinhood chain\n\n' +
+            '<b>Supported EVM:</b> ethereum, bsc, polygon, arbitrum, base, optimism, avalanche\n' +
+            '<b>Supported non-EVM:</b> solana\n' +
+            '<b>Not supported:</b> Robinhood chain, Sui, Aptos, TON\n\n' +
             'Use <code>/whale</code> without args for full guide.'
           );
         }
