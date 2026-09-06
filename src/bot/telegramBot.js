@@ -35,7 +35,7 @@ class TelegramBot {
     const ADMIN_COMMANDS = new Set([
       'trade', 'stop', 'trademode', 'setsize', 'setleverage', 'setloss', 'setmaxloss',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
-      'settings', 'users', 'grant', 'revoke',
+      'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
     const ADMIN_ACTIONS = /^cfg_/;
     const PUBLIC_COMMANDS = new Set([
@@ -1312,6 +1312,68 @@ class TelegramBot {
       } catch (err) {
         ctx.reply(`Whale check failed: ${err.message}`);
         logger.error(`/whale error: ${err.message}`);
+      }
+    });
+
+
+    // Test chart generation — /testchart BTC or /testchart ETH long
+    this.bot.command('testchart', async (ctx) => {
+      const args = ctx.message.text.split(' ').slice(1);
+      const symbol = (args[0] || 'BTC').toUpperCase();
+      const direction = (args[1] || 'long').toLowerCase();
+
+      await ctx.replyWithHTML(`📊 Generating test chart for <b>${symbol}</b>...`);
+
+      try {
+        const exchange = Object.values(this.tradeExecutor.exchanges)[0];
+        if (!exchange) return ctx.replyWithHTML('❌ No exchange available');
+
+        const pair = `${symbol}/USDT:USDT`;
+        const ohlcv = await exchange.fetchOHLCV(pair, '1h', undefined, 60);
+        if (!ohlcv || ohlcv.length < 10) return ctx.replyWithHTML('❌ Not enough candle data');
+
+        const lastCandle = ohlcv[ohlcv.length - 1];
+        const price = lastCandle[4];
+        const atr = ohlcv.slice(-14).reduce((sum, c) => sum + (c[2] - c[3]), 0) / 14;
+        const isLong = direction === 'long';
+
+        const mockSignal = {
+          symbol,
+          pair,
+          exchange: Object.keys(this.tradeExecutor.exchanges)[0],
+          direction,
+          score: 82,
+          currentPrice: price,
+          tp1: isLong ? price + atr * 3 : price - atr * 3,
+          tp2: isLong ? price + atr * 6 : price - atr * 6,
+          tp3: isLong ? price + atr * 10 : price - atr * 10,
+          stopLoss: isLong ? price - atr * 3 : price + atr * 3,
+        };
+
+        const chartBuf = generateSignalChart(ohlcv, mockSignal);
+        if (!chartBuf) return ctx.replyWithHTML('❌ Chart generation failed — canvas may not be installed');
+
+        const fmtP = (p) => p >= 1000 ? p.toFixed(1) : p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(4) : p.toPrecision(4);
+        const caption =
+          `🎯 <b>TEST CHART — ${symbol}/USDT ${direction.toUpperCase()}</b>
+
+` +
+          `Entry: ${fmtP(price)}
+` +
+          `TP1: ${fmtP(mockSignal.tp1)}
+` +
+          `TP2: ${fmtP(mockSignal.tp2)}
+` +
+          `TP3: ${fmtP(mockSignal.tp3)}
+` +
+          `SL: ${fmtP(mockSignal.stopLoss)}
+
+` +
+          `<i>Mock signal — levels based on ATR. This is what real signal charts look like.</i>`;
+
+        await ctx.replyWithPhoto({ source: chartBuf }, { caption, parse_mode: 'HTML' });
+      } catch (err) {
+        await ctx.replyWithHTML(`❌ Error: ${err.message}`);
       }
     });
 
