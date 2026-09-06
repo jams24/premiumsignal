@@ -1281,17 +1281,16 @@ class TelegramBot {
       try {
         let alerts = [];
         const c = chain.toLowerCase();
-        const evmChains = ['ethereum', 'eth', 'bsc', 'bnb', 'polygon', 'arbitrum', 'base', 'optimism', 'avalanche', 'robinhood', 'rhood'];
-        if (evmChains.includes(c)) {
+        const evmChains = ['ethereum', 'eth', 'bsc', 'bnb', 'polygon', 'arbitrum', 'base', 'optimism', 'avalanche', 'robinhood', 'rhood', 'solana', 'sol'];
+        if (c === 'solana' || c === 'sol') {
           alerts = await this.onchainTracker.checkEvmWhales(address, symbol.toUpperCase(), c);
-        } else if (c === 'solana' || c === 'sol') {
-          alerts = await this.onchainTracker.checkSolanaWhales(address, symbol.toUpperCase());
+        } else if (evmChains.includes(c)) {
+          alerts = await this.onchainTracker.checkEvmWhales(address, symbol.toUpperCase(), c);
         } else {
           return ctx.replyWithHTML(
             `❌ Chain <b>${chain}</b> is not supported.\n\n` +
             '<b>Supported EVM:</b> ethereum, bsc, polygon, arbitrum, base, optimism, avalanche, robinhood\n' +
-            '<b>Supported non-EVM:</b> solana\n' +
-            '<b>Not supported:</b> Robinhood chain, Sui, Aptos, TON\n\n' +
+            '<b>Supported non-EVM:</b> solana\n\n' +
             'Use <code>/whale</code> without args for full guide.'
           );
         }

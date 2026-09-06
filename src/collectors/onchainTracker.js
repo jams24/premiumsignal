@@ -8,17 +8,19 @@ const config = require('../utils/config');
 // BSC (56), Base (8453), Optimism (10) need paid or separate BSCScan key
 // Robinhood Chain uses Blockscout API (separate free key from dev.blockscout.com)
 const CHAIN_CONFIG = {
-  ethereum: { id: 1, explorer: 'etherscan.io', name: 'Ethereum' },
-  eth: { id: 1, explorer: 'etherscan.io', name: 'Ethereum' },
-  bsc: { id: 56, explorer: 'bscscan.com', name: 'BSC' },
-  bnb: { id: 56, explorer: 'bscscan.com', name: 'BSC' },
-  polygon: { id: 137, explorer: 'polygonscan.com', name: 'Polygon' },
-  arbitrum: { id: 42161, explorer: 'arbiscan.io', name: 'Arbitrum' },
-  base: { id: 8453, explorer: 'basescan.org', name: 'Base' },
-  optimism: { id: 10, explorer: 'optimistic.etherscan.io', name: 'Optimism' },
-  avalanche: { id: 43114, explorer: 'snowscan.xyz', name: 'Avalanche' },
+  ethereum: { id: 1, explorer: 'etherscan.io', name: 'Ethereum', rpcs: ['https://ethereum-rpc.publicnode.com', 'https://rpc.ankr.com/eth'], blockTime: 12 },
+  eth: { id: 1, explorer: 'etherscan.io', name: 'Ethereum', rpcs: ['https://ethereum-rpc.publicnode.com', 'https://rpc.ankr.com/eth'], blockTime: 12 },
+  bsc: { id: 56, explorer: 'bscscan.com', name: 'BSC', rpcs: ['https://bsc-rpc.publicnode.com', 'https://rpc.ankr.com/bsc'], blockTime: 3 },
+  bnb: { id: 56, explorer: 'bscscan.com', name: 'BSC', rpcs: ['https://bsc-rpc.publicnode.com', 'https://rpc.ankr.com/bsc'], blockTime: 3 },
+  polygon: { id: 137, explorer: 'polygonscan.com', name: 'Polygon', rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://rpc.ankr.com/polygon'], blockTime: 2 },
+  arbitrum: { id: 42161, explorer: 'arbiscan.io', name: 'Arbitrum', rpcs: ['https://arbitrum-one-rpc.publicnode.com', 'https://rpc.ankr.com/arbitrum'], blockTime: 0.25 },
+  base: { id: 8453, explorer: 'basescan.org', name: 'Base', rpcs: ['https://base-rpc.publicnode.com', 'https://rpc.ankr.com/base'], blockTime: 2 },
+  optimism: { id: 10, explorer: 'optimistic.etherscan.io', name: 'Optimism', rpcs: ['https://optimism-rpc.publicnode.com', 'https://rpc.ankr.com/optimism'], blockTime: 2 },
+  avalanche: { id: 43114, explorer: 'snowscan.xyz', name: 'Avalanche', rpcs: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://rpc.ankr.com/avalanche'], blockTime: 2 },
   robinhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', blockscout: true },
   rhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', blockscout: true },
+  solana: { id: 0, explorer: 'solscan.io', name: 'Solana', solana: true, rpcs: ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'] },
+  sol: { id: 0, explorer: 'solscan.io', name: 'Solana', solana: true, rpcs: ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'] },
 };
 
 class OnchainTracker {
@@ -82,32 +84,32 @@ class OnchainTracker {
       if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
     }
 
-    // 4. BSC RPC fallback — no API key needed, query Transfer events directly
-    if (!txData && isBsc) {
-      txData = await this.fetchBscRpcTransfers(tokenAddress, limit);
+    // 4. Solana RPC — SPL token transfers
+    if (!txData && chain.solana) {
+      txData = await this.fetchSolanaTransfers(tokenAddress, chain, limit);
+    }
+
+    // 5. EVM RPC fallback — no API key needed, query Transfer events directly
+    if (!txData && chain.rpcs && chain.rpcs.length > 0) {
+      txData = await this.fetchEvmRpcTransfers(tokenAddress, chain, limit);
     }
 
     return txData;
   }
 
-  // BSC RPC: query ERC-20 Transfer events directly from the blockchain (free, no key)
-  async fetchBscRpcTransfers(tokenAddress, limit = 20) {
-    const BSC_RPCS = [
-      'https://bsc-rpc.publicnode.com',
-      'https://bsc-dataseed.bnbchain.org',
-      'https://bsc-dataseed1.defibit.io',
-    ];
-
+  // EVM RPC: query ERC-20 Transfer events directly from any EVM chain (free, no key)
+  async fetchEvmRpcTransfers(tokenAddress, chain, limit = 20) {
     const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+    // Scan ~25 min of blocks, capped at 500 for public RPC limits
+    const blockRange = Math.min(500, Math.floor(25 * 60 / (chain.blockTime || 3)));
 
-    for (const rpc of BSC_RPCS) {
+    for (const rpc of chain.rpcs) {
       try {
         const { data: blockData } = await axios.post(rpc, {
           jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [],
         }, { timeout: 8000 });
         const latestBlock = parseInt(blockData.result, 16);
-        // Scan last 500 blocks (~25 min on BSC at 3s/block) — public RPCs limit range
-        const fromBlock = '0x' + Math.max(latestBlock - 500, 0).toString(16);
+        const fromBlock = '0x' + Math.max(latestBlock - blockRange, 0).toString(16);
 
         const { data: logData } = await axios.post(rpc, {
           jsonrpc: '2.0', id: 2, method: 'eth_getLogs',
@@ -121,7 +123,6 @@ class OnchainTracker {
 
         if (!logData.result || !Array.isArray(logData.result)) continue;
 
-        // Parse Transfer logs into Etherscan-compatible format
         const logs = logData.result.slice(-limit).reverse();
         return logs.map(log => ({
           hash: log.transactionHash,
@@ -132,7 +133,70 @@ class OnchainTracker {
           blockNumber: parseInt(log.blockNumber, 16).toString(),
         }));
       } catch (err) {
-        logger.debug(`BSC RPC ${rpc} failed: ${err.message}`);
+        logger.debug(`${chain.name} RPC ${rpc} failed: ${err.message}`);
+      }
+    }
+    return null;
+  }
+
+  // Solana RPC: get recent SPL token transfers for a mint address (free, no key)
+  async fetchSolanaTransfers(mintAddress, chain, limit = 20) {
+    for (const rpc of chain.rpcs) {
+      try {
+        // Get recent signatures for the token mint
+        const { data: sigData } = await axios.post(rpc, {
+          jsonrpc: '2.0', id: 1, method: 'getSignaturesForAddress',
+          params: [mintAddress, { limit: Math.min(limit, 50) }],
+        }, { timeout: 10000 });
+
+        if (!sigData.result || !sigData.result.length) continue;
+
+        const transfers = [];
+        // Batch fetch transactions (max 5 at a time to avoid rate limits)
+        const sigs = sigData.result.slice(0, limit);
+        for (let i = 0; i < sigs.length; i += 5) {
+          const batch = sigs.slice(i, i + 5);
+          const txPromises = batch.map((sig, idx) =>
+            axios.post(rpc, {
+              jsonrpc: '2.0', id: idx, method: 'getTransaction',
+              params: [sig.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+            }, { timeout: 10000 }).catch(() => null)
+          );
+
+          const txResults = await Promise.all(txPromises);
+          for (const res of txResults) {
+            if (!res?.data?.result) continue;
+            const tx = res.data.result;
+            const innerIxs = tx.meta?.innerInstructions || [];
+            const allIxs = [
+              ...(tx.transaction?.message?.instructions || []),
+              ...innerIxs.flatMap(i => i.instructions || []),
+            ];
+
+            for (const ix of allIxs) {
+              const parsed = ix.parsed;
+              if (!parsed) continue;
+              if (parsed.type !== 'transfer' && parsed.type !== 'transferChecked') continue;
+              const info = parsed.info;
+              if (!info) continue;
+              // For transferChecked, verify it's our mint
+              if (parsed.type === 'transferChecked' && info.mint && info.mint !== mintAddress) continue;
+
+              transfers.push({
+                hash: tx.transaction?.signatures?.[0] || '',
+                from: info.source || info.authority || '',
+                to: info.destination || '',
+                value: info.tokenAmount?.amount || info.amount || '0',
+                tokenDecimal: String(info.tokenAmount?.decimals || info.decimals || 9),
+                blockNumber: String(tx.slot || 0),
+              });
+            }
+          }
+          if (i + 5 < sigs.length) await new Promise(r => setTimeout(r, 500));
+        }
+        if (transfers.length) return transfers.slice(0, limit);
+      } catch (err) {
+        logger.debug(`Solana RPC ${rpc} failed: ${err.message}`);
       }
     }
     return null;
@@ -287,6 +351,27 @@ class OnchainTracker {
     // Bitfinex
     '0x1151314c646ce4e0efd76d1af4760ae66a9fe30f',
     '0x742d35cc6634c0532925a3b844bc9e7595f2bd3e',
+    // Solana — Binance
+    '5tzFN1JMeANcp2YRfx23T55fhNXU67doj3dpwGx2MpXJVu',
+    '9WfFYzJ2N8YMFrj5dGBBaYX25ceSAH6g5kCe2dLkr4Jl6',
+    '2ojv9BAX19jGVDULMpDFoN1aINK8zQ4oIv7RHjKkLxdPiP',
+    // Solana — OKX
+    'AC5RDRZdKz2YDBhsnoVHPZeE1rjrskHKz6dR6NFy2wnBPt',
+    '5VsFR5wd6SNzrfGpxAEL8GvrRExkBtMV4V7YCRt2wljfJ',
+    // Solana — Bybit
+    '6UhKXMaJHzTZzX7BgIvZ9PGV8RGMbDzTjKX3oC3GrcSGxf',
+    'BWpURYmHd56BEX1sQKRWKSkTVRsufYKtLF45U5NwqZECswW',
+    // Solana — MEXC
+    'HPBeDjNfTKTK5K8dMvzwGGtcGPKq4SsHpK8gqXqvQBs4KA',
+    '3agFWIQd4PDg4xELxg3U4DDbs45OiKExBu2RwP3Tx1Ns6p',
+    // Solana — KuCoin
+    'AHDFCdEDBJLf7CyYHdKW5yJTJknrB3GnkvJ1zpkxDQpUMP',
+    // Solana — Gate
+    '2AvDx4PU1HmocwDdMQCGEkuRUoQcxWfDwmviVvzQb7hJ4P3',
+    // Solana — Kraken
+    'H4jhyRDSeCWpFYvhwcETa29KUaDxOQ3MhAYkejEQRGxRWxm',
+    // Solana — Coinbase
+    'EWvxJXjJWfhJGKwMBxvhQeVHxLHh47P7az9z1TCRxaxoRbb',
   ].map(a => a.toLowerCase()));
 
   classifyTransfer(from, to) {
@@ -341,8 +426,9 @@ class OnchainTracker {
       else if (platforms['polygon-pos']) { address = platforms['polygon-pos']; chain = 'polygon'; }
       else if (platforms['arbitrum-one']) { address = platforms['arbitrum-one']; chain = 'arbitrum'; }
       else if (platforms['base']) { address = platforms['base']; chain = 'base'; }
+      else if (platforms['solana']) { address = platforms['solana']; chain = 'solana'; }
       else {
-        const first = Object.entries(platforms).find(([, v]) => v && v.startsWith('0x'));
+        const first = Object.entries(platforms).find(([, v]) => v && v.length > 10);
         if (first) { address = first[1]; chain = first[0]; }
       }
 
@@ -469,7 +555,24 @@ class OnchainTracker {
       '0x1151314c646ce4e0efd76d1af4760ae66a9fe30f': 'Bitfinex',
       '0x742d35cc6634c0532925a3b844bc9e7595f2bd3e': 'Bitfinex',
     };
-    return map[addr] || null;
+    if (map[addr]) return map[addr];
+    // Solana exchange addresses (base58, not lowercased)
+    const solMap = {
+      '5tzfn1jmeancp2yrfx23t55fhnxu67doj3dpwgx2mpxjvu': 'Binance',
+      '9wffyzj2n8ymfrj5dgbbayx25cesah6g5kce2dlkr4jl6': 'Binance',
+      '2ojv9bax19jgvdulmpdfon1aink8zq4oiv7rhjkklxdpip': 'Binance',
+      'ac5rdrzdkz2ydbhsnovhpzee1rjrskhkz6dr6nfy2wnbpt': 'OKX',
+      '5vsfr5wd6snzrfgpxael8gvrrexkbtmv4v7yycrt2wljfj': 'OKX',
+      '6uhkxmajhztzzx7bgivz9pgv8rgmbdztjkx3oc3grcsgxf': 'Bybit',
+      'bwpurymhd56bex1sqkrwksktvrsufyktlf45u5nwqzecsww': 'Bybit',
+      'hpbedjnftktk5k8dmvzwggtcgpkq4sshpk8gqxqvqbs4ka': 'MEXC',
+      '3agfwiqd4pdg4xelxg3u4ddbss45oikexbu2rwp3tx1ns6p': 'MEXC',
+      'ahdfcdedbjlf7cyyhdkw5yjtjknrb3gnkvj1zpkxdqpump': 'KuCoin',
+      '2avdx4pu1hmocwdhmqcgekuruoqcxwfdwmvivvzqb7hj4p3': 'Gate',
+      'h4jhyrdsecwpfyvhwceta29kuadxoq3mhaykejeqrgxrwxm': 'Kraken',
+      'ewvxjxjjwfhjgkwmbxvhqevhxlhh47p7az9z1tcrxaxorbb': 'Coinbase',
+    };
+    return solMap[addr] || null;
   }
 
   // ═══════════════════════════════════════════════

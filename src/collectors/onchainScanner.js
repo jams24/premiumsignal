@@ -353,7 +353,7 @@ class OnchainScanner {
     const map = {
       'ethereum': 'ethereum', 'binance-smart-chain': 'bsc', 'polygon-pos': 'polygon',
       'arbitrum-one': 'arbitrum', 'base': 'base', 'optimism': 'optimism', 'avalanche': 'avalanche',
-      'robinhood-chain': 'robinhood',
+      'robinhood-chain': 'robinhood', 'solana': 'solana',
     };
     return map[cgChain] || null;
   }
