@@ -6,6 +6,7 @@ const config = require('../utils/config');
 // Etherscan V2 multi-chain — one API key covers 60+ EVM chains
 // Free tier: Ethereum (1), Polygon (137), Arbitrum (42161)
 // BSC (56), Base (8453), Optimism (10) need paid or separate BSCScan key
+// Robinhood Chain uses Blockscout API (separate free key from dev.blockscout.com)
 const CHAIN_CONFIG = {
   ethereum: { id: 1, explorer: 'etherscan.io', name: 'Ethereum' },
   eth: { id: 1, explorer: 'etherscan.io', name: 'Ethereum' },
@@ -16,6 +17,8 @@ const CHAIN_CONFIG = {
   base: { id: 8453, explorer: 'basescan.org', name: 'Base' },
   optimism: { id: 10, explorer: 'optimistic.etherscan.io', name: 'Optimism' },
   avalanche: { id: 43114, explorer: 'snowscan.xyz', name: 'Avalanche' },
+  robinhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', blockscout: true },
+  rhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', blockscout: true },
 };
 
 class OnchainTracker {
@@ -35,17 +38,35 @@ class OnchainTracker {
     const chain = CHAIN_CONFIG[chainName.toLowerCase()];
     if (!chain) return [];
 
-    // BSC: try V2 first, fall back to bscscan.com with separate key
     const isBsc = chain.id === 56;
+    const isBlockscout = chain.blockscout === true;
     const apiKey = config.onchain.etherscanKey;
-    if (!apiKey && !(isBsc && config.onchain.bscscanKey)) return [];
+    if (!apiKey && !(isBsc && config.onchain.bscscanKey) && !isBlockscout) return [];
 
     const alerts = [];
     let txData;
 
     try {
-      // Try Etherscan V2 unified endpoint first
-      if (apiKey) {
+      // Blockscout chains (Robinhood etc) — Etherscan-compatible API
+      if (isBlockscout) {
+        const blockscoutKey = config.onchain.blockscoutKey || '';
+        const { data } = await axios.get(`https://${chain.explorer}/api`, {
+          params: {
+            module: 'account',
+            action: 'tokentx',
+            contractaddress: tokenAddress,
+            page: 1,
+            offset: 20,
+            sort: 'desc',
+            ...(blockscoutKey ? { apikey: blockscoutKey } : {}),
+          },
+          timeout: 10000,
+        });
+        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
+      }
+
+      // Try Etherscan V2 unified endpoint
+      if (!txData && apiKey && !isBlockscout) {
         const { data } = await axios.get('https://api.etherscan.io/v2/api', {
           params: {
             chainid: chain.id,
@@ -62,7 +83,6 @@ class OnchainTracker {
         if (data.status === '1' && Array.isArray(data.result)) {
           txData = data.result;
         } else if (isBsc && data.result?.includes?.('not supported')) {
-          // BSC not on free tier — fall back to bscscan.com
           txData = null;
         }
       }
@@ -294,7 +314,8 @@ class OnchainTracker {
 
     const apiKey = config.onchain.etherscanKey;
     const isBsc = chain.id === 56;
-    if (!apiKey && !(isBsc && config.onchain.bscscanKey)) return null;
+    const isBlockscout = chain.blockscout === true;
+    if (!apiKey && !(isBsc && config.onchain.bscscanKey) && !isBlockscout) return null;
 
     // Check flow cache (5 min TTL)
     const cacheKey = `${symbol}_${chainName}`;
@@ -304,7 +325,25 @@ class OnchainTracker {
     let txData = null;
 
     try {
-      if (apiKey) {
+      // Blockscout chains
+      if (isBlockscout) {
+        const blockscoutKey = config.onchain.blockscoutKey || '';
+        const { data } = await axios.get(`https://${chain.explorer}/api`, {
+          params: {
+            module: 'account',
+            action: 'tokentx',
+            contractaddress: tokenAddress,
+            page: 1,
+            offset: 50,
+            sort: 'desc',
+            ...(blockscoutKey ? { apikey: blockscoutKey } : {}),
+          },
+          timeout: 10000,
+        });
+        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
+      }
+
+      if (!txData && apiKey && !isBlockscout) {
         const { data } = await axios.get('https://api.etherscan.io/v2/api', {
           params: {
             chainid: chain.id,

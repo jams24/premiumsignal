@@ -1280,7 +1280,7 @@ class TelegramBot {
       try {
         let alerts = [];
         const c = chain.toLowerCase();
-        const evmChains = ['ethereum', 'eth', 'bsc', 'bnb', 'polygon', 'arbitrum', 'base', 'optimism', 'avalanche'];
+        const evmChains = ['ethereum', 'eth', 'bsc', 'bnb', 'polygon', 'arbitrum', 'base', 'optimism', 'avalanche', 'robinhood', 'rhood'];
         if (evmChains.includes(c)) {
           alerts = await this.onchainTracker.checkEvmWhales(address, symbol.toUpperCase(), c);
         } else if (c === 'solana' || c === 'sol') {
@@ -1288,7 +1288,7 @@ class TelegramBot {
         } else {
           return ctx.replyWithHTML(
             `❌ Chain <b>${chain}</b> is not supported.\n\n` +
-            '<b>Supported EVM:</b> ethereum, bsc, polygon, arbitrum, base, optimism, avalanche\n' +
+            '<b>Supported EVM:</b> ethereum, bsc, polygon, arbitrum, base, optimism, avalanche, robinhood\n' +
             '<b>Supported non-EVM:</b> solana\n' +
             '<b>Not supported:</b> Robinhood chain, Sui, Aptos, TON\n\n' +
             'Use <code>/whale</code> without args for full guide.'
@@ -1339,7 +1339,7 @@ class TelegramBot {
           '<b>Examples:</b>\n' +
           '<code>/flows BULLA 0x1234...abcd ethereum</code>\n' +
           '<code>/flows KOMA 0x5678...efgh bsc</code>\n\n' +
-          '<b>Supported chains:</b> ethereum (default), bsc, arbitrum, base\n' +
+          '<b>Supported chains:</b> ethereum (default), bsc, arbitrum, base, robinhood\n' +
           '<b>Requires:</b> ARKHAM_API_KEY in env (arkm.com)\n\n' +
           '<b>Free alternative:</b> Use <code>/whale</code> instead — works with free Etherscan/BSCScan/Solscan API keys and detects the same exchange transfers.\n\n' +
           '<i>Note: This is an onchain analysis tool — it monitors token movements, not futures. Use alongside /onchain (OI + funding) for the full picture.</i>'

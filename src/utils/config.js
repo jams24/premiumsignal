@@ -22,6 +22,7 @@ module.exports = {
     alchemyKey: process.env.ALCHEMY_API_KEY,
     moralisKey: process.env.MORALIS_API_KEY,
     arkhamKey: process.env.ARKHAM_API_KEY,
+    blockscoutKey: process.env.BLOCKSCOUT_API_KEY,
   },
   twitter: {
     bearerToken: process.env.TWITTER_BEARER_TOKEN,
