@@ -88,7 +88,7 @@ class FlowScanner {
         }
 
         if (flow && (flow.outflowCount >= 1 || flow.inflowCount >= 1)) {
-          results.push({ ...token, flow });
+          results.push({ ...token, flow, contractAddress: resolved?.address, tokenChain: resolved?.chain });
         }
 
         await new Promise(r => setTimeout(r, 1200));
@@ -269,9 +269,16 @@ class FlowScanner {
       const tier = this.getTier(r.flowScore);
       const arrow = r.flowScore >= 30 ? '🟢' : r.flowScore >= 15 ? '🟡' : '👀';
 
-      msg += `${arrow} <b>${r.symbol}</b> — Score: ${r.flowScore} ${tier.icon}\n`;
+      const chainLabel = r.tokenChain || f.chain || 'unknown';
+      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.flowScore} ${tier.icon}\n`;
       msg += `   <b>${tier.label}</b>\n`;
-      msg += `   💰 Price: ${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}% | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
+      const priceStr = r.price ? `$${r.price >= 1 ? r.price.toFixed(2) : r.price.toPrecision(4)}` : '—';
+      const changeStr = `${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}%`;
+      const changeIcon = r.priceChange > 5 ? ' 🚀' : r.priceChange < -5 ? ' 📉' : '';
+      msg += `   💰 Price: ${priceStr} (${changeStr}${changeIcon}) | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
+      if (r.contractAddress) {
+        msg += `   📋 <code>${r.contractAddress}</code>  ·  ⛓ ${chainLabel}\n`;
+      }
 
       // Current scan data
       if (f.outflowCount > 0 || f.inflowCount > 0) {
@@ -302,7 +309,7 @@ class FlowScanner {
         }
       }
 
-      msg += `   ⛓ ${f.chain || 'unknown'} | ${r.exchange.toUpperCase()}${r.fromMemory ? ' (from memory)' : ''}\n\n`;
+      msg += `   ⛓ ${chainLabel} | ${r.exchange.toUpperCase()}${r.fromMemory ? ' (from memory)' : ''}\n\n`;
     }
 
     msg += '━━━━━━━━━━━━━━━━━━━━\n';
@@ -327,25 +334,28 @@ class FlowScanner {
     const score = this.scoreCumulative(mem);
     const exchanges = [...mem.exchanges].join(', ') || 'unknown';
 
+    const resolved = this.resolvedTokens.get(symbol);
+    const addrLine = resolved?.address ? `\n📋 <code>${resolved.address}</code>\n⛓ ${resolved.chain || 'unknown'}` : '';
+
     if (tier === 'heavy') {
       return `🔥🏦 <b>HEAVY ACCUMULATION ALERT</b>\n\n` +
-        `<b>$${symbol}</b> — Cumulative Score: ${score}\n` +
+        `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
         `Sustained exchange outflows over <b>${hours} hours</b>\n` +
         `📤 ${mem.totalOutflows} withdrawals across ${mem.scansWithOutflow} scans\n` +
         `🏛 Exchanges: ${exchanges}\n\n` +
-        `<i>This is the pattern Flams catches — consistent accumulation over hours signals smart money positioning before a major move. ` +
+        `<i>Consistent accumulation over hours signals smart money positioning before a major move. ` +
         `Price at first signal: $${mem.priceAtFirst?.toFixed(6) || '?'}</i>`;
     }
     if (tier === 'notable') {
       return `⚡🏦 <b>ACCUMULATION BUILDING</b>\n\n` +
-        `<b>$${symbol}</b> — Cumulative Score: ${score}\n` +
+        `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
         `Exchange outflows repeating over <b>${hours} hours</b>\n` +
         `📤 ${mem.totalOutflows} withdrawals across ${mem.scansWithOutflow} scans\n` +
         `🏛 Exchanges: ${exchanges}\n\n` +
         `<i>Outflow pattern is strengthening. Monitor for continuation — if this keeps building, it's a high-conviction setup.</i>`;
     }
     return `👀🏦 <b>EARLY FLOW SIGNAL</b>\n\n` +
-      `<b>$${symbol}</b> — Cumulative Score: ${score}\n` +
+      `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
       `Exchange outflows detected\n` +
       `📤 ${mem.totalOutflows} withdrawals\n` +
       `🏛 Exchanges: ${exchanges}\n\n` +

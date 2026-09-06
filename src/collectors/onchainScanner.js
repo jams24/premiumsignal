@@ -87,6 +87,8 @@ class OnchainScanner {
           if (!flow) continue;
 
           token.exchangeFlow = flow;
+          token.contractAddress = contract.address;
+          token.chain = contract.chain;
 
           // Score exchange flows
           if (flow.outflowCount > flow.inflowCount && flow.outflowCount >= 3) {
@@ -267,9 +269,15 @@ class OnchainScanner {
     for (const r of top) {
       const arrow = r.priceChange >= 0 ? '🟢' : '🔴';
       const tier = this.getScoreTier(r.score);
-      msg += `${arrow} <b>${r.symbol}</b> — Score: ${r.score}/100 ${tier.icon}\n`;
+      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.score}/100 ${tier.icon}\n`;
       msg += `   <b>${tier.label}</b> — ${tier.meaning}\n`;
-      msg += `   💰 Price: ${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}% | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
+      const priceStr = r.price ? `$${r.price >= 1 ? r.price.toFixed(2) : r.price.toPrecision(4)}` : '—';
+      const changeStr = `${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}%`;
+      const changeIcon = r.priceChange > 5 ? ' 🚀' : r.priceChange < -5 ? ' 📉' : '';
+      msg += `   💰 Price: ${priceStr} (${changeStr}${changeIcon}) | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
+      if (r.contractAddress) {
+        msg += `   📋 <code>${r.contractAddress}</code>  ·  ⛓ ${r.chain || 'unknown'}\n`;
+      }
 
       // OI explanation
       if (r.oiChange4h !== null && r.oiChange4h !== undefined) {

@@ -19,7 +19,7 @@ function formatSignalMessage(signal) {
 
   return `${icon} <b>${signal.type} SIGNAL</b> ${icon}
 
-<b>Token:</b> $${signal.symbol}
+<b>Token:</b> <code>${signal.symbol}</code>
 <b>Exchange:</b> ${signal.exchange}
 <b>Direction:</b> ${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'}
 <b>Confidence:</b> ${confidence} (${signal.confidence}/5)
@@ -41,7 +41,7 @@ function formatSignalMessage(signal) {
 function formatListingAlert(listing) {
   return `🆕 <b>NEW LISTING DETECTED</b> 🆕
 
-<b>Token:</b> $${listing.symbol}
+<b>Token:</b> <code>${listing.symbol}</code>
 <b>Exchange:</b> ${listing.exchange}
 <b>Type:</b> ${listing.type} (${listing.marketType || 'spot'})
 <b>Detected:</b> ${new Date().toUTCString()}
@@ -55,7 +55,7 @@ function formatWhaleAlert(alert) {
   const action = alert.type === 'transfer_in' ? '📥 DEPOSIT' : alert.type === 'transfer_out' ? '📤 WITHDRAWAL' : '🔄 TRANSFER';
   return `🐋 <b>WHALE ${action}</b>
 
-<b>Token:</b> $${alert.symbol}
+<b>Token:</b> <code>${alert.symbol}</code>
 <b>Amount:</b> ${alert.amount} (${alert.usdValue})
 <b>From:</b> <code>${alert.from}</code>
 <b>To:</b> <code>${alert.to}</code>

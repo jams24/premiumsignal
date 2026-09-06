@@ -110,7 +110,7 @@ class SocialScanner {
         : 'N/A';
       const srcTag = t.sources.length > 1 ? '🔥' : t.sources[0] === 'trending' ? '📈' : '💹';
       const vol = t.volume24h ? ` | Vol $${(t.volume24h / 1e6).toFixed(0)}M` : '';
-      msg += `${srcTag} <b>${t.symbol}</b> (${t.name}) — 24h: ${change}${vol}\n`;
+      msg += `${srcTag} <b><code>${t.symbol}</code></b> (${t.name}) — 24h: ${change}${vol}\n`;
     }
 
     msg += '\n<i>📈 = CoinGecko trending | 💹 = Top mover | 🔥 = Both</i>';

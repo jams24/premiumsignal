@@ -730,7 +730,7 @@ class OnchainTracker {
   formatArkhamAlert(alert) {
     if (alert.type !== 'arkham_flow') return null;
     let msg = '🔗 <b>EXCHANGE FLOW ALERT</b>\n\n';
-    msg += `<b>$${alert.symbol}</b> on ${alert.chain}\n`;
+    msg += `<b><code>${alert.symbol}</code></b> on ${alert.chain}\n`;
     msg += alert.interpretation + '\n\n';
     msg += `Large transfers: ${alert.largeTransfers}\n`;
     msg += `<i>Data: Arkham Intelligence</i>`;
