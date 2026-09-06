@@ -17,8 +17,8 @@ const CHAIN_CONFIG = {
   base: { id: 8453, explorer: 'basescan.org', name: 'Base', rpcs: ['https://base-rpc.publicnode.com', 'https://rpc.ankr.com/base'], blockTime: 2 },
   optimism: { id: 10, explorer: 'optimistic.etherscan.io', name: 'Optimism', rpcs: ['https://optimism-rpc.publicnode.com', 'https://rpc.ankr.com/optimism'], blockTime: 2 },
   avalanche: { id: 43114, explorer: 'snowscan.xyz', name: 'Avalanche', rpcs: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://rpc.ankr.com/avalanche'], blockTime: 2 },
-  robinhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', blockscout: true },
-  rhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', blockscout: true },
+  robinhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', rpcs: ['https://rpc.mainnet.chain.robinhood.com'], blockTime: 0.25 },
+  rhood: { id: 4663, explorer: 'robinhoodchain.blockscout.com', name: 'Robinhood', rpcs: ['https://rpc.mainnet.chain.robinhood.com'], blockTime: 0.25 },
   solana: { id: 0, explorer: 'solscan.io', name: 'Solana', solana: true, rpcs: ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'] },
   sol: { id: 0, explorer: 'solscan.io', name: 'Solana', solana: true, rpcs: ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'] },
 };
