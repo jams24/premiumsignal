@@ -132,6 +132,19 @@ class FlowScanner {
     }
 
     results.sort((a, b) => b.flowScore - a.flowScore);
+
+    // Fetch order book data for top flow tokens
+    if (this.liquidationScanner) {
+      const topForSetup = results.filter(r => r.flowScore >= 15).slice(0, 5);
+      for (const token of topForSetup) {
+        try {
+          token.setupData = await this.liquidationScanner.getSetupData(token.symbol, token.pair, token.exchange);
+        } catch (e) {
+          logger.debug(`Flow setup data failed for ${token.symbol}: ${e.message}`);
+        }
+      }
+    }
+
     this.lastScan = { timestamp: Date.now(), count: results.length, results: results.slice(0, 10) };
     logger.info(`FlowScanner: ${results.length} tokens with flows, ${this.flowMemory.size} in memory`);
 
@@ -309,6 +322,18 @@ class FlowScanner {
         }
       }
 
+      // Order book depth
+      if (r.setupData?.orderBook) {
+        const ob = r.setupData.orderBook;
+        const imbalanceLabel = ob.imbalance === 'buy_heavy' ? '🟢 Buy-heavy' : ob.imbalance === 'sell_heavy' ? '🔴 Sell-heavy' : '🟡 Balanced';
+        msg += `   📖 Order Book: ${imbalanceLabel} (Bid $${(ob.bidDepth / 1e6).toFixed(1)}M / Ask $${(ob.askDepth / 1e6).toFixed(1)}M)\n`;
+      }
+
+      // Setup snapshot
+      if (this.liquidationScanner && r.flowScore >= 15) {
+        msg += this.liquidationScanner.formatFlowSnapshot(r);
+      }
+
       msg += `   ⛓ ${chainLabel} | ${r.exchange.toUpperCase()}${r.fromMemory ? ' (from memory)' : ''}\n\n`;
     }
 
@@ -321,6 +346,7 @@ class FlowScanner {
     msg += '🔥 40+ = Sustained heavy accumulation (hours of outflows)\n';
     msg += '⚡ 20-39 = Building accumulation pattern\n';
     msg += '👀 10-19 = Early signal — monitoring\n';
+    msg += '📸 <b>SNAPSHOT</b> = AI-generated trade setup with direction + thesis\n';
     msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;
 
     return msg;

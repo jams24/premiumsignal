@@ -110,6 +110,18 @@ class OnchainScanner {
       sorted.sort((a, b) => b.score - a.score);
     }
 
+    // Fetch setup data (order book + liquidations) for top tokens
+    if (this.liquidationScanner) {
+      const topForSetup = sorted.filter(r => r.score >= 20).slice(0, 5);
+      for (const token of topForSetup) {
+        try {
+          token.setupData = await this.liquidationScanner.getSetupData(token.symbol, token.pair, token.exchange);
+        } catch (e) {
+          logger.debug(`Setup data failed for ${token.symbol}: ${e.message}`);
+        }
+      }
+    }
+
     this.lastScan = { timestamp: Date.now(), count: sorted.length, topAlerts: sorted.slice(0, 5) };
 
     logger.info(`Onchain scan: ${sorted.length} tokens scored, ${this.alerts.length} alerts`);
@@ -331,6 +343,41 @@ class OnchainScanner {
         }
       }
 
+      // Liquidation data
+      if (r.setupData?.liquidations) {
+        const liq = r.setupData.liquidations;
+        if (liq.totalLiqs > 0) {
+          const longPct = liq.totalLiqs > 0 ? ((liq.longLiqs / liq.totalLiqs) * 100).toFixed(0) : 50;
+          msg += `   💥 Liquidations 24h: $${(liq.totalLiqs / 1e6).toFixed(1)}M (${longPct}% longs, ${100 - longPct}% shorts)\n`;
+          if (liq.longLiqs > liq.shortLiqs * 2) {
+            msg += `      <i>Longs getting wiped — potential bottom forming as weak hands flushed</i>\n`;
+          } else if (liq.shortLiqs > liq.longLiqs * 2) {
+            msg += `      <i>Shorts getting squeezed — forced buying pushing price up</i>\n`;
+          }
+        }
+      }
+
+      // Order book depth
+      if (r.setupData?.orderBook) {
+        const ob = r.setupData.orderBook;
+        const imbalanceLabel = ob.imbalance === 'buy_heavy' ? '🟢 Buy-heavy' : ob.imbalance === 'sell_heavy' ? '🔴 Sell-heavy' : '🟡 Balanced';
+        msg += `   📖 Order Book: ${imbalanceLabel} (Bid $${(ob.bidDepth / 1e6).toFixed(1)}M / Ask $${(ob.askDepth / 1e6).toFixed(1)}M)\n`;
+        for (const w of (ob.bidWalls || []).slice(0, 1)) {
+          const usd = w.usdValue >= 1e6 ? `$${(w.usdValue / 1e6).toFixed(1)}M` : `$${(w.usdValue / 1e3).toFixed(0)}K`;
+          msg += `      🟢 Support wall: $${w.price >= 1 ? w.price.toFixed(2) : w.price.toPrecision(4)} (${usd}, ${w.multiple}x avg size)\n`;
+        }
+        for (const w of (ob.askWalls || []).slice(0, 1)) {
+          const usd = w.usdValue >= 1e6 ? `$${(w.usdValue / 1e6).toFixed(1)}M` : `$${(w.usdValue / 1e3).toFixed(0)}K`;
+          msg += `      🔴 Resistance wall: $${w.price >= 1 ? w.price.toFixed(2) : w.price.toPrecision(4)} (${usd}, ${w.multiple}x avg size)\n`;
+        }
+      }
+
+      // Setup snapshot
+      if (this.liquidationScanner && r.score >= 20) {
+        const snap = this.liquidationScanner.generateSetupSnapshot(r);
+        msg += this.liquidationScanner.formatSnapshot(snap, r.symbol);
+      }
+
       msg += `   📊 ${r.exchange.toUpperCase()}\n\n`;
     }
 
@@ -346,6 +393,7 @@ class OnchainScanner {
     msg += '🎯 <b>COMBO</b> = Multiple signals confirm same direction\n';
     msg += '🏦 <b>OUTFLOW</b> = Tokens leaving exchanges (accumulation)\n';
     msg += '⚠️ <b>INFLOW</b> = Tokens entering exchanges (sell pressure)\n';
+    msg += '📸 <b>SNAPSHOT</b> = AI-generated trade setup based on all signals\n';
     msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;
     return msg;
   }
