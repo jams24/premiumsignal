@@ -3,7 +3,7 @@ const logger = require('../utils/logger');
 const config = require('../utils/config');
 const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
-const { generateSignalChart } = require('../utils/chartGenerator');
+const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
   constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor }) {
@@ -1230,6 +1230,37 @@ class TelegramBot {
         const msg = this.onchainScanner.formatAlerts(results, 8);
         if (msg) await ctx.replyWithHTML(msg);
         else ctx.reply('No tokens scored high enough to alert.');
+
+        // Send setup chart images for top tokens
+        const charted = results.filter(r => r.score >= 20).slice(0, 3);
+        for (const token of charted) {
+          try {
+            const exchange = this.tradeExecutor?.exchanges?.[token.exchange];
+            if (!exchange) continue;
+            const ohlcv = await exchange.fetchOHLCV(token.pair, '1h', undefined, 60);
+            if (!ohlcv || ohlcv.length < 10) continue;
+            const liqScanner = this.onchainScanner.liquidationScanner;
+            const snap = liqScanner ? liqScanner.generateSetupSnapshot(token) : { direction: 'neutral', confidence: 'low' };
+            const chartInfo = {
+              symbol: token.symbol, exchange: token.exchange,
+              direction: snap.direction, confidence: snap.confidence,
+              bidWalls: token.setupData?.orderBook?.bidWalls || [],
+              askWalls: token.setupData?.orderBook?.askWalls || [],
+              bidDepth: token.setupData?.orderBook?.bidDepth,
+              askDepth: token.setupData?.orderBook?.askDepth,
+              liquidations: token.setupData?.liquidations,
+            };
+            const chartBuf = generateSetupChart(ohlcv, chartInfo);
+            if (chartBuf) {
+              await ctx.replyWithPhoto({ source: chartBuf }, {
+                caption: `📸 <b>${token.symbol}</b> Setup Snapshot — Score: ${token.score}/100`,
+                parse_mode: 'HTML',
+              });
+            }
+          } catch (e) {
+            logger.debug(`/onchain chart failed for ${token.symbol}: ${e.message}`);
+          }
+        }
       } catch (err) {
         ctx.reply('Onchain scan failed.');
         logger.error(`/onchain error: ${err.message}`);
@@ -1395,7 +1426,39 @@ class TelegramBot {
             );
           }
           const msg = this.flowScanner.formatAlerts(results, 8);
-          if (msg) return ctx.replyWithHTML(msg);
+          if (msg) await ctx.replyWithHTML(msg);
+
+          // Send setup chart images for top flow tokens
+          const charted = results.filter(r => r.flowScore >= 15).slice(0, 3);
+          for (const token of charted) {
+            try {
+              const exchange = this.tradeExecutor?.exchanges?.[token.exchange];
+              if (!exchange) continue;
+              const ohlcv = await exchange.fetchOHLCV(token.pair, '1h', undefined, 60);
+              if (!ohlcv || ohlcv.length < 10) continue;
+              const dir = token.flow.outflowCount > token.flow.inflowCount ? 'long' : token.flow.inflowCount > token.flow.outflowCount ? 'short' : 'neutral';
+              const chartInfo = {
+                symbol: token.symbol, exchange: token.exchange,
+                direction: dir,
+                confidence: token.flowScore >= 40 ? 'high' : token.flowScore >= 20 ? 'medium' : 'low',
+                bidWalls: token.setupData?.orderBook?.bidWalls || [],
+                askWalls: token.setupData?.orderBook?.askWalls || [],
+                bidDepth: token.setupData?.orderBook?.bidDepth,
+                askDepth: token.setupData?.orderBook?.askDepth,
+                liquidations: token.setupData?.liquidations,
+              };
+              const chartBuf = generateSetupChart(ohlcv, chartInfo);
+              if (chartBuf) {
+                await ctx.replyWithPhoto({ source: chartBuf }, {
+                  caption: `📸 <b>${token.symbol}</b> Flow Snapshot — Score: ${token.flowScore}`,
+                  parse_mode: 'HTML',
+                });
+              }
+            } catch (e) {
+              logger.debug(`/flows chart failed for ${token.symbol}: ${e.message}`);
+            }
+          }
+          return;
         } catch (err) {
           ctx.replyWithHTML(`❌ Flow scan failed: ${err.message}`);
           logger.error(`/flows error: ${err.message}`);
@@ -2428,6 +2491,18 @@ class TelegramBot {
       await this.bot.telegram.sendMessage(this.channelId, message, { parse_mode: 'HTML' });
     } catch (err) {
       logger.error(`Failed to send message: ${err.message}`);
+    }
+  }
+
+  async sendRawPhoto(photoBuf, caption) {
+    if (!this.channelId) return;
+    try {
+      await this.bot.telegram.sendPhoto(this.channelId, { source: photoBuf }, {
+        caption: caption && caption.length <= 1024 ? caption : undefined,
+        parse_mode: 'HTML',
+      });
+    } catch (err) {
+      logger.error(`Failed to send photo: ${err.message}`);
     }
   }
 

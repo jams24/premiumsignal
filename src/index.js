@@ -18,6 +18,7 @@ const SignalTracker = require('./engine/signalTracker');
 const TradeExecutor = require('./engine/tradeExecutor');
 const UserPaperEngine = require('./engine/userPaperEngine');
 const TelegramBot = require('./bot/telegramBot');
+const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
 
@@ -254,6 +255,34 @@ async function main() {
       if (hotTokens.length > 0) {
         const msg = onchainScanner.formatAlerts(hotTokens, 5);
         if (msg) await bot.sendRaw(msg);
+
+        // Send setup chart images for top tokens
+        for (const token of hotTokens.slice(0, 3)) {
+          try {
+            const exchange = listingMonitor.exchanges[token.exchange];
+            if (!exchange) continue;
+            const ohlcv = await exchange.fetchOHLCV(token.pair, '1h', undefined, 60);
+            if (!ohlcv || ohlcv.length < 10) continue;
+            const snap = liquidationScanner.generateSetupSnapshot(token);
+            const chartInfo = {
+              symbol: token.symbol,
+              exchange: token.exchange,
+              direction: snap.direction,
+              confidence: snap.confidence,
+              bidWalls: token.setupData?.orderBook?.bidWalls || [],
+              askWalls: token.setupData?.orderBook?.askWalls || [],
+              bidDepth: token.setupData?.orderBook?.bidDepth,
+              askDepth: token.setupData?.orderBook?.askDepth,
+              liquidations: token.setupData?.liquidations,
+            };
+            const chartBuf = generateSetupChart(ohlcv, chartInfo);
+            if (chartBuf) {
+              await bot.sendRawPhoto(chartBuf, `📸 <b>${token.symbol}</b> Setup Snapshot — Score: ${token.score}/100`);
+            }
+          } catch (e) {
+            logger.debug(`Setup chart failed for ${token.symbol}: ${e.message}`);
+          }
+        }
       }
       if (results.length) {
         logger.info(`Onchain: top=${results[0]?.symbol} score=${results[0]?.score}, ${hotTokens.length} hot tokens`);
@@ -270,6 +299,35 @@ async function main() {
       if (significant.length > 0) {
         const msg = flowScanner.formatAlerts(significant, 5);
         if (msg) await bot.sendRaw(msg);
+
+        // Send setup chart images for top flow tokens
+        for (const token of significant.slice(0, 3)) {
+          try {
+            const exchange = listingMonitor.exchanges[token.exchange];
+            if (!exchange) continue;
+            const ohlcv = await exchange.fetchOHLCV(token.pair, '1h', undefined, 60);
+            if (!ohlcv || ohlcv.length < 10) continue;
+            const snap = liquidationScanner.formatFlowSnapshot(token);
+            const dir = token.flow.outflowCount > token.flow.inflowCount ? 'long' : token.flow.inflowCount > token.flow.outflowCount ? 'short' : 'neutral';
+            const chartInfo = {
+              symbol: token.symbol,
+              exchange: token.exchange,
+              direction: dir,
+              confidence: token.flowScore >= 40 ? 'high' : token.flowScore >= 20 ? 'medium' : 'low',
+              bidWalls: token.setupData?.orderBook?.bidWalls || [],
+              askWalls: token.setupData?.orderBook?.askWalls || [],
+              bidDepth: token.setupData?.orderBook?.bidDepth,
+              askDepth: token.setupData?.orderBook?.askDepth,
+              liquidations: token.setupData?.liquidations,
+            };
+            const chartBuf = generateSetupChart(ohlcv, chartInfo);
+            if (chartBuf) {
+              await bot.sendRawPhoto(chartBuf, `📸 <b>${token.symbol}</b> Flow Snapshot — Score: ${token.flowScore}`);
+            }
+          } catch (e) {
+            logger.debug(`Flow chart failed for ${token.symbol}: ${e.message}`);
+          }
+        }
       }
       // Send escalation alerts when tokens cross new cumulative tiers
       for (const r of results) {
