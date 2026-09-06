@@ -196,7 +196,7 @@ class LiquidationScanner {
       // Calculate average trade size
       const sizes = trades.map(t => t.cost || t.price * t.amount);
       const avgSize = sizes.reduce((s, v) => s + v, 0) / sizes.length;
-      const largeThreshold = Math.max(avgSize * 10, 10000); // 10x avg or $10K minimum
+      const largeThreshold = Math.max(avgSize * 5, 2000); // 5x avg or $2K minimum
 
       const largeTrades = [];
       for (const t of trades) {

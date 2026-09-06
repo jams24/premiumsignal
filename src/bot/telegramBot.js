@@ -1252,6 +1252,7 @@ class TelegramBot {
               whaleOrders: token.setupData?.orderBook?.whaleOrders || [],
               persistentWalls: token.setupData?.orderBook?.persistentWalls || [],
               largeTrades: token.setupData?.largeTrades || [],
+              liqLevels: token.setupData?.liqLevels,
             };
             const chartBuf = generateSetupChart(ohlcv, chartInfo);
             if (chartBuf) {

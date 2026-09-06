@@ -199,7 +199,7 @@ function generateSetupChart(ohlcv, setupInfo) {
 
     // High-res canvas (2x for retina clarity)
     const S = 2;
-    const hasWhaleData = (setupInfo.whaleOrders?.length || setupInfo.persistentWalls?.length || setupInfo.largeTrades?.length);
+    const hasWhaleData = (setupInfo.whaleOrders?.length || setupInfo.persistentWalls?.length || setupInfo.largeTrades?.length || setupInfo.liqLevels?.levels?.length);
     const panelW = hasWhaleData ? 280 : 0;
     const CW = 1200 + panelW;
     const CH = 800;
@@ -611,6 +611,31 @@ function generateSetupChart(ohlcv, setupInfo) {
           ctx.fillStyle = '#c9d1d9';
           ctx.textAlign = 'right';
           ctx.fillText(fmtUsd(t.usdValue), pX + pW - 4, rowY + 11);
+          rowY += rowH;
+        }
+        rowY += 6;
+      }
+
+      // Estimated liquidation levels
+      const levels = setupInfo.liqLevels?.levels;
+      if (levels?.length && rowY < CH - 120) {
+        ctx.fillStyle = '#e040fb';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('💧 LIQ LEVELS', pX, rowY);
+        rowY += rowH - 4;
+        const show = [5, 10, 25, 50].map(l => levels.find(v => v.leverage === l)).filter(Boolean);
+        for (const lv of show) {
+          if (rowY > CH - 100) break;
+          ctx.fillStyle = 'rgba(224, 64, 251, 0.06)';
+          ctx.fillRect(pX, rowY - 2, pW, rowH - 4);
+          ctx.fillStyle = '#26a69a';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(`${lv.leverage}x L:${formatPrice(lv.longLiqPrice)}`, pX + 4, rowY + 11);
+          ctx.fillStyle = '#ef5350';
+          ctx.textAlign = 'right';
+          ctx.fillText(`S:${formatPrice(lv.shortLiqPrice)}`, pX + pW - 4, rowY + 11);
           rowY += rowH;
         }
       }
