@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, marketIntel, tradeExecutor }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.bot.catch((err) => {
       const msg = err?.message || String(err);
@@ -20,6 +20,7 @@ class TelegramBot {
     this.socialScanner = socialScanner;
     this.onchainTracker = onchainTracker;
     this.onchainScanner = onchainScanner;
+    this.flowScanner = flowScanner;
     this.marketIntel = marketIntel;
     this.tradeExecutor = tradeExecutor;
     this.userPaperEngine = null; // wired from index.js
@@ -1316,59 +1317,78 @@ class TelegramBot {
 
     this.bot.command('flows', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
-      if (args.length < 2) {
-        return ctx.replyWithHTML(
-          '🔗 <b>EXCHANGE FLOW TRACKER</b>\n\n' +
-          '<b>What it does:</b>\n' +
-          'Analyzes net token flow in/out of major exchanges. This is the #1 edge Flams uses — he spotted 160M $BULLA leaving MEXC before the 1000%+ pump.\n\n' +
-          '<b>How it works:</b>\n' +
-          '• Scans recent token transfers on-chain\n' +
-          '• Identifies transfers from/to known exchange wallets (Binance, MEXC, Bybit, OKX, Gate, Coinbase, Kraken)\n' +
-          '• Calculates net flow: outflow vs inflow\n\n' +
-          '<b>What the results mean:</b>\n' +
-          '🟢 <b>NET OUTFLOW</b> = More tokens leaving exchanges than entering\n' +
-          '   → Accumulation signal — holders moving to cold storage\n' +
-          '   → Reduces available sell supply on exchanges\n' +
-          '   → Bullish — watch for price breakout\n\n' +
-          '🔴 <b>NET INFLOW</b> = More tokens entering exchanges than leaving\n' +
-          '   → Distribution signal — holders preparing to sell\n' +
-          '   → Increases sell supply on exchanges\n' +
-          '   → Bearish — be cautious on longs\n\n' +
-          '<b>Usage:</b>\n' +
-          '<code>/flows TOKEN CONTRACT_ADDRESS [chain]</code>\n\n' +
-          '<b>Examples:</b>\n' +
-          '<code>/flows BULLA 0x1234...abcd ethereum</code>\n' +
-          '<code>/flows KOMA 0x5678...efgh bsc</code>\n\n' +
-          '<b>Supported chains:</b> ethereum (default), bsc, arbitrum, base, robinhood\n' +
-          '<b>Requires:</b> ARKHAM_API_KEY in env (arkm.com)\n\n' +
-          '<b>Free alternative:</b> Use <code>/whale</code> instead — works with free Etherscan/BSCScan/Solscan API keys and detects the same exchange transfers.\n\n' +
-          '<i>Note: This is an onchain analysis tool — it monitors token movements, not futures. Use alongside /onchain (OI + funding) for the full picture.</i>'
-        );
+
+      // No args: run full flow scanner across all perp tokens
+      if (args.length === 0) {
+        if (!this.flowScanner) {
+          return ctx.replyWithHTML('❌ Flow scanner not initialized.');
+        }
+        ctx.replyWithHTML('🏦 Scanning all perp tokens for exchange flows... this takes 1-2 min.');
+        try {
+          const results = await this.flowScanner.scan();
+          if (!results.length) {
+            return ctx.replyWithHTML(
+              '🏦 No significant exchange flows detected across perp tokens.\n\n' +
+              '<i>This means no major exchange withdrawals/deposits in recent blocks. ' +
+              'The scanner checks the top 30 perp tokens by volume for transfers to/from 35+ known exchange wallets.</i>'
+            );
+          }
+          const msg = this.flowScanner.formatAlerts(results, 8);
+          if (msg) return ctx.replyWithHTML(msg);
+        } catch (err) {
+          ctx.replyWithHTML(`❌ Flow scan failed: ${err.message}`);
+          logger.error(`/flows error: ${err.message}`);
+        }
         return;
       }
+
+      // With args: check specific token
+      if (args.length === 1) {
+        // Just symbol — auto-resolve contract address
+        const symbol = args[0].toUpperCase();
+        ctx.replyWithHTML(`🏦 Resolving contract and checking flows for <b>$${symbol}</b>...`);
+        try {
+          const contract = await this.onchainTracker.resolveContractAddress(symbol);
+          if (!contract) {
+            return ctx.replyWithHTML(
+              `❌ Could not find contract address for <b>$${symbol}</b> on CoinGecko.\n\n` +
+              'Try with explicit contract address:\n' +
+              `<code>/flows ${symbol} 0xcontract... chain</code>`
+            );
+          }
+          const chainKey = this.flowScanner?.mapChain(contract.chain) || contract.chain;
+          const flow = await this.onchainTracker.analyzeExchangeFlows(contract.address, symbol, chainKey);
+          if (!flow) {
+            return ctx.replyWithHTML(
+              `🏦 No exchange flow data for <b>$${symbol}</b> on ${contract.chain}.\n\n` +
+              `<i>Contract: ${contract.address}\nChain: ${contract.chain}\n` +
+              'No recent transfers detected involving known exchange wallets.</i>'
+            );
+          }
+          return ctx.replyWithHTML(this.formatFlowResult(symbol, flow, contract));
+        } catch (err) {
+          ctx.replyWithHTML(`❌ Flow check failed: ${err.message}`);
+          logger.error(`/flows ${symbol} error: ${err.message}`);
+        }
+        return;
+      }
+
+      // With symbol + contract address + optional chain
       const [symbol, address, chain] = args;
-      ctx.reply(`🔗 Checking exchange flows for $${symbol.toUpperCase()} via Arkham...`);
+      ctx.replyWithHTML(`🏦 Checking exchange flows for <b>$${symbol.toUpperCase()}</b>...`);
       try {
-        const alerts = await this.onchainTracker.checkArkhamTokenTransfers(symbol, address, chain || 'ethereum');
-        if (!alerts.length) {
+        const chainName = chain || 'ethereum';
+        const flow = await this.onchainTracker.analyzeExchangeFlows(address, symbol.toUpperCase(), chainName);
+        if (!flow) {
           return ctx.replyWithHTML(
-            `🔗 No significant exchange flows detected for <b>$${symbol.toUpperCase()}</b>.\n\n` +
-            '<i>This means either:\n' +
-            '• No large transfers (&gt;$10K) to/from exchanges recently\n' +
-            '• The contract address may be incorrect\n' +
-            '• ARKHAM_API_KEY is not set (try /whale instead — free)</i>'
+            `🏦 No exchange flow data for <b>$${symbol.toUpperCase()}</b>.\n\n` +
+            '<i>No recent transfers involving known exchange wallets. ' +
+            'Check the contract address is correct.</i>'
           );
         }
-        for (const alert of alerts) {
-          const msg = this.onchainTracker.formatArkhamAlert(alert);
-          if (msg) await ctx.replyWithHTML(msg);
-        }
+        return ctx.replyWithHTML(this.formatFlowResult(symbol.toUpperCase(), flow, { chain: chainName, address }));
       } catch (err) {
-        ctx.replyWithHTML(
-          `❌ Flow check failed.\n\n` +
-          `<i>Error: ${err.message}\n\n` +
-          'If ARKHAM_API_KEY is not set, use /whale instead — it works with free Etherscan/BSCScan keys.</i>'
-        );
+        ctx.replyWithHTML(`❌ Flow check failed: ${err.message}`);
         logger.error(`/flows error: ${err.message}`);
       }
     });
@@ -2302,6 +2322,31 @@ class TelegramBot {
     } catch (err) {
       logger.error(`Failed to send listing alert: ${err.message}`);
     }
+  }
+
+  formatFlowResult(symbol, flow, contract) {
+    const arrow = flow.bias === 'bullish' ? '🟢' : flow.bias === 'bearish' ? '🔴' : '🔄';
+    let msg = `🏦 <b>EXCHANGE FLOW — $${symbol}</b>\n\n`;
+    msg += `${arrow} <b>Bias: ${flow.bias.toUpperCase()}</b>\n`;
+    msg += `📤 Withdrawals (outflow): ${flow.outflowCount}\n`;
+    msg += `📥 Deposits (inflow): ${flow.inflowCount}\n`;
+    if (flow.exchanges.length) msg += `🏛 Exchanges: ${flow.exchanges.join(', ')}\n`;
+    msg += `📊 Total transfers scanned: ${flow.totalTxs}\n`;
+    msg += `⛓ Chain: ${contract.chain}\n\n`;
+
+    if (flow.outflowCount > flow.inflowCount && flow.outflowCount >= 3) {
+      msg += '🟢 <b>ACCUMULATION DETECTED</b>\n';
+      msg += '<i>More tokens leaving exchanges than entering. Smart money is withdrawing to cold storage — reducing sell-side supply. This is the leading indicator before major moves.</i>\n';
+    } else if (flow.inflowCount > flow.outflowCount && flow.inflowCount >= 3) {
+      msg += '🔴 <b>DISTRIBUTION WARNING</b>\n';
+      msg += '<i>More tokens entering exchanges than leaving. Holders may be preparing to sell. Exercise caution on long positions.</i>\n';
+    } else {
+      msg += '🔄 <b>BALANCED FLOW</b>\n';
+      msg += '<i>Roughly equal inflow and outflow — no strong directional signal.</i>\n';
+    }
+
+    msg += `\n<i>Contract: ${contract.address.slice(0, 20)}...</i>`;
+    return msg;
   }
 
   async sendWhaleAlert(alert) {

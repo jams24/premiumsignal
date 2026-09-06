@@ -9,6 +9,7 @@ const TechnicalScanner = require('./collectors/technicalScanner');
 const { STOCK_TOKENS } = require('./collectors/technicalScanner');
 const OnchainTracker = require('./collectors/onchainTracker');
 const OnchainScanner = require('./collectors/onchainScanner');
+const FlowScanner = require('./collectors/flowScanner');
 const MarketIntel = require('./collectors/marketIntel');
 const SocialScanner = require('./collectors/socialScanner');
 const SignalEngine = require('./engine/signalEngine');
@@ -51,6 +52,7 @@ async function main() {
   const technicalScanner = new TechnicalScanner(listingMonitor.exchanges);
   const onchainTracker = new OnchainTracker();
   const onchainScanner = new OnchainScanner(listingMonitor.exchanges, onchainTracker);
+  const flowScanner = new FlowScanner(listingMonitor.exchanges, onchainTracker);
   technicalScanner.onchainScanner = onchainScanner;
   const marketIntel = new MarketIntel(listingMonitor.exchanges);
   const socialScanner = new SocialScanner();
@@ -79,7 +81,7 @@ async function main() {
   }
 
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, marketIntel, tradeExecutor });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -256,6 +258,23 @@ async function main() {
       logger.error(`Onchain scan error: ${err.message}`);
     }
   });
+  // === Flow Scanner — standalone exchange flow detection every 15 min (Flams edge) ===
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const results = await flowScanner.scan();
+      const significant = results.filter(r => r.flowScore >= 15);
+      if (significant.length > 0) {
+        const msg = flowScanner.formatAlerts(significant, 5);
+        if (msg) await bot.sendRaw(msg);
+      }
+      if (results.length) {
+        logger.info(`FlowScanner: top=${results[0]?.symbol} score=${results[0]?.flowScore}, ${significant.length} significant`);
+      }
+    } catch (err) {
+      logger.error(`Flow scanner error: ${err.message}`);
+    }
+  });
+
   // Full market intel brief every 4 hours
   cron.schedule('0 */4 * * *', async () => {
     try {
@@ -322,6 +341,7 @@ async function main() {
     `Listing check: every ${config.signals.listingCheckInterval / 1000}s\n` +
     `Technical scan: every 5 min\n` +
     `Onchain scan: every 10 min\n` +
+    `Flow scanner: every 15 min\n` +
     `Social scan: every 15 min\n\n` +
     `<i>${new Date().toUTCString()}</i>`
   );

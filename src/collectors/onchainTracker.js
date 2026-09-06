@@ -33,6 +33,111 @@ class OnchainTracker {
     this.callbacks.push(callback);
   }
 
+  // Shared method: fetch recent token transfers using best available source
+  async fetchTokenTransfers(tokenAddress, chain, limit = 20) {
+    const isBsc = chain.id === 56;
+    const isBlockscout = chain.blockscout === true;
+    const apiKey = config.onchain.etherscanKey;
+    let txData = null;
+
+    // 1. Blockscout chains (Robinhood etc)
+    if (isBlockscout) {
+      const blockscoutKey = config.onchain.blockscoutKey || '';
+      const { data } = await axios.get(`https://${chain.explorer}/api`, {
+        params: {
+          module: 'account', action: 'tokentx', contractaddress: tokenAddress,
+          page: 1, offset: limit, sort: 'desc',
+          ...(blockscoutKey ? { apikey: blockscoutKey } : {}),
+        },
+        timeout: 10000,
+      });
+      if (data.status === '1' && Array.isArray(data.result)) return data.result;
+    }
+
+    // 2. Etherscan V2 unified endpoint
+    if (apiKey && !isBlockscout) {
+      const { data } = await axios.get('https://api.etherscan.io/v2/api', {
+        params: {
+          chainid: chain.id, module: 'account', action: 'tokentx',
+          contractaddress: tokenAddress, page: 1, offset: limit, sort: 'desc', apikey: apiKey,
+        },
+        timeout: 10000,
+      });
+      if (data.status === '1' && Array.isArray(data.result)) {
+        txData = data.result;
+      } else if (isBsc && data.result?.includes?.('not supported')) {
+        txData = null;
+      }
+    }
+
+    // 3. BSCScan direct API fallback
+    if (!txData && isBsc && config.onchain.bscscanKey) {
+      const { data } = await axios.get('https://api.bscscan.com/api', {
+        params: {
+          module: 'account', action: 'tokentx', contractaddress: tokenAddress,
+          page: 1, offset: limit, sort: 'desc', apikey: config.onchain.bscscanKey,
+        },
+        timeout: 10000,
+      });
+      if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
+    }
+
+    // 4. BSC RPC fallback — no API key needed, query Transfer events directly
+    if (!txData && isBsc) {
+      txData = await this.fetchBscRpcTransfers(tokenAddress, limit);
+    }
+
+    return txData;
+  }
+
+  // BSC RPC: query ERC-20 Transfer events directly from the blockchain (free, no key)
+  async fetchBscRpcTransfers(tokenAddress, limit = 20) {
+    const BSC_RPCS = [
+      'https://bsc-rpc.publicnode.com',
+      'https://bsc-dataseed.bnbchain.org',
+      'https://bsc-dataseed1.defibit.io',
+    ];
+
+    const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+    for (const rpc of BSC_RPCS) {
+      try {
+        const { data: blockData } = await axios.post(rpc, {
+          jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [],
+        }, { timeout: 8000 });
+        const latestBlock = parseInt(blockData.result, 16);
+        // Scan last 500 blocks (~25 min on BSC at 3s/block) — public RPCs limit range
+        const fromBlock = '0x' + Math.max(latestBlock - 500, 0).toString(16);
+
+        const { data: logData } = await axios.post(rpc, {
+          jsonrpc: '2.0', id: 2, method: 'eth_getLogs',
+          params: [{
+            address: tokenAddress,
+            fromBlock,
+            toBlock: 'latest',
+            topics: [TRANSFER_TOPIC],
+          }],
+        }, { timeout: 15000 });
+
+        if (!logData.result || !Array.isArray(logData.result)) continue;
+
+        // Parse Transfer logs into Etherscan-compatible format
+        const logs = logData.result.slice(-limit).reverse();
+        return logs.map(log => ({
+          hash: log.transactionHash,
+          from: '0x' + (log.topics[1] || '').slice(26),
+          to: '0x' + (log.topics[2] || '').slice(26),
+          value: BigInt(log.data || '0x0').toString(),
+          tokenDecimal: '18',
+          blockNumber: parseInt(log.blockNumber, 16).toString(),
+        }));
+      } catch (err) {
+        logger.debug(`BSC RPC ${rpc} failed: ${err.message}`);
+      }
+    }
+    return null;
+  }
+
   // Unified EVM whale check via Etherscan V2 API (one key, any chain)
   async checkEvmWhales(tokenAddress, symbol, chainName = 'ethereum') {
     const chain = CHAIN_CONFIG[chainName.toLowerCase()];
@@ -41,68 +146,12 @@ class OnchainTracker {
     const isBsc = chain.id === 56;
     const isBlockscout = chain.blockscout === true;
     const apiKey = config.onchain.etherscanKey;
-    if (!apiKey && !(isBsc && config.onchain.bscscanKey) && !isBlockscout) return [];
 
     const alerts = [];
     let txData;
 
     try {
-      // Blockscout chains (Robinhood etc) — Etherscan-compatible API
-      if (isBlockscout) {
-        const blockscoutKey = config.onchain.blockscoutKey || '';
-        const { data } = await axios.get(`https://${chain.explorer}/api`, {
-          params: {
-            module: 'account',
-            action: 'tokentx',
-            contractaddress: tokenAddress,
-            page: 1,
-            offset: 20,
-            sort: 'desc',
-            ...(blockscoutKey ? { apikey: blockscoutKey } : {}),
-          },
-          timeout: 10000,
-        });
-        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
-      }
-
-      // Try Etherscan V2 unified endpoint
-      if (!txData && apiKey && !isBlockscout) {
-        const { data } = await axios.get('https://api.etherscan.io/v2/api', {
-          params: {
-            chainid: chain.id,
-            module: 'account',
-            action: 'tokentx',
-            contractaddress: tokenAddress,
-            page: 1,
-            offset: 20,
-            sort: 'desc',
-            apikey: apiKey,
-          },
-          timeout: 10000,
-        });
-        if (data.status === '1' && Array.isArray(data.result)) {
-          txData = data.result;
-        } else if (isBsc && data.result?.includes?.('not supported')) {
-          txData = null;
-        }
-      }
-
-      // BSC fallback: use bscscan.com directly if V2 failed
-      if (!txData && isBsc && config.onchain.bscscanKey) {
-        const { data } = await axios.get('https://api.bscscan.com/api', {
-          params: {
-            module: 'account',
-            action: 'tokentx',
-            contractaddress: tokenAddress,
-            page: 1,
-            offset: 20,
-            sort: 'desc',
-            apikey: config.onchain.bscscanKey,
-          },
-          timeout: 10000,
-        });
-        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
-      }
+      txData = await this.fetchTokenTransfers(tokenAddress, chain, 20);
 
       if (!txData || !txData.length) return alerts;
 
@@ -312,11 +361,6 @@ class OnchainTracker {
     const chain = CHAIN_CONFIG[chainName.toLowerCase()];
     if (!chain) return null;
 
-    const apiKey = config.onchain.etherscanKey;
-    const isBsc = chain.id === 56;
-    const isBlockscout = chain.blockscout === true;
-    if (!apiKey && !(isBsc && config.onchain.bscscanKey) && !isBlockscout) return null;
-
     // Check flow cache (5 min TTL)
     const cacheKey = `${symbol}_${chainName}`;
     const cached = this.flowCache.get(cacheKey);
@@ -325,60 +369,7 @@ class OnchainTracker {
     let txData = null;
 
     try {
-      // Blockscout chains
-      if (isBlockscout) {
-        const blockscoutKey = config.onchain.blockscoutKey || '';
-        const { data } = await axios.get(`https://${chain.explorer}/api`, {
-          params: {
-            module: 'account',
-            action: 'tokentx',
-            contractaddress: tokenAddress,
-            page: 1,
-            offset: 50,
-            sort: 'desc',
-            ...(blockscoutKey ? { apikey: blockscoutKey } : {}),
-          },
-          timeout: 10000,
-        });
-        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
-      }
-
-      if (!txData && apiKey && !isBlockscout) {
-        const { data } = await axios.get('https://api.etherscan.io/v2/api', {
-          params: {
-            chainid: chain.id,
-            module: 'account',
-            action: 'tokentx',
-            contractaddress: tokenAddress,
-            page: 1,
-            offset: 50,
-            sort: 'desc',
-            apikey: apiKey,
-          },
-          timeout: 10000,
-        });
-        if (data.status === '1' && Array.isArray(data.result)) {
-          txData = data.result;
-        } else if (isBsc && data.result?.includes?.('not supported')) {
-          txData = null;
-        }
-      }
-
-      if (!txData && isBsc && config.onchain.bscscanKey) {
-        const { data } = await axios.get('https://api.bscscan.com/api', {
-          params: {
-            module: 'account',
-            action: 'tokentx',
-            contractaddress: tokenAddress,
-            page: 1,
-            offset: 50,
-            sort: 'desc',
-            apikey: config.onchain.bscscanKey,
-          },
-          timeout: 10000,
-        });
-        if (data.status === '1' && Array.isArray(data.result)) txData = data.result;
-      }
+      txData = await this.fetchTokenTransfers(tokenAddress, chain, 50);
 
       if (!txData || !txData.length) return null;
 
