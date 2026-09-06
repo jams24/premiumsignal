@@ -238,7 +238,7 @@ class OnchainTracker {
   }
 
   static EXCHANGE_ADDRESSES = new Set([
-    // Binance
+    // Binance (hot wallets + proxies + DEX router)
     '0x28c6c06298d514db089934071355e5743bf21d60',
     '0x21a31ee1afc51d94c2efccaa2092ad1028285549',
     '0xdfd5293d8e347dfe59e90efd55b2956a1343963d',
@@ -247,13 +247,18 @@ class OnchainTracker {
     '0x56eddb7aa87536c09ccc2793473599fd21a8b17f',
     '0x3c783c21a0383057d128bae431894a5c19f9cf06',
     '0xbe0eb53f46cd790cd13851d5eff43d12404d33e8',
+    '0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be',
+    '0x9696f59e4d72e237be84ffd425dcad154bf96976',
     // OKX
     '0x5041ed759dd4afc3a72b8192c143f72f4724081a',
     '0x6cc5f688a315f3dc28a7781717a9a798a59fda7b',
     '0x98ec059dc3adfbdd63429227d09cb8473b089906',
-    // MEXC
+    // MEXC (hot wallets + deposit addresses from Etherscan labels)
     '0x75e89d5979e4f6fba9f97c104c2f0afb3f1dcb88',
     '0x3cc936b795a188f0e246cbb2d74c5bd190aecf18',
+    '0x0211f3cedbef3143223d3acf0e589747933e8527',
+    '0x9642b23ed1e01df1092b92641051881a322f5d4e',
+    '0x469afe803c54a36674c55231489cf4b61da8c1bc',
     // Bybit
     '0x1ab87cd2a58efc7aa98a6700f2a495a3c0b7af18',
     '0xf89d7b9c864f589bbf53a82105107622b35eaa40',
@@ -434,11 +439,16 @@ class OnchainTracker {
       '0x56eddb7aa87536c09ccc2793473599fd21a8b17f': 'Binance',
       '0x3c783c21a0383057d128bae431894a5c19f9cf06': 'Binance',
       '0xbe0eb53f46cd790cd13851d5eff43d12404d33e8': 'Binance',
+      '0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be': 'Binance',
+      '0x9696f59e4d72e237be84ffd425dcad154bf96976': 'Binance',
       '0x5041ed759dd4afc3a72b8192c143f72f4724081a': 'OKX',
       '0x6cc5f688a315f3dc28a7781717a9a798a59fda7b': 'OKX',
       '0x98ec059dc3adfbdd63429227d09cb8473b089906': 'OKX',
       '0x75e89d5979e4f6fba9f97c104c2f0afb3f1dcb88': 'MEXC',
       '0x3cc936b795a188f0e246cbb2d74c5bd190aecf18': 'MEXC',
+      '0x0211f3cedbef3143223d3acf0e589747933e8527': 'MEXC',
+      '0x9642b23ed1e01df1092b92641051881a322f5d4e': 'MEXC',
+      '0x469afe803c54a36674c55231489cf4b61da8c1bc': 'MEXC',
       '0x1ab87cd2a58efc7aa98a6700f2a495a3c0b7af18': 'Bybit',
       '0xf89d7b9c864f589bbf53a82105107622b35eaa40': 'Bybit',
       '0x0d0707963952f2fba59dd06f2b425ace40b492fe': 'Gate',

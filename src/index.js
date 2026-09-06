@@ -267,6 +267,14 @@ async function main() {
         const msg = flowScanner.formatAlerts(significant, 5);
         if (msg) await bot.sendRaw(msg);
       }
+      // Send escalation alerts when tokens cross new cumulative tiers
+      for (const r of results) {
+        const tier = flowScanner.checkAlertEscalation(r.symbol);
+        if (tier) {
+          const escMsg = flowScanner.formatEscalationAlert(r.symbol, tier);
+          if (escMsg) await bot.sendRaw(escMsg);
+        }
+      }
       if (results.length) {
         logger.info(`FlowScanner: top=${results[0]?.symbol} score=${results[0]?.flowScore}, ${significant.length} significant`);
       }
