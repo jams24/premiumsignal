@@ -362,14 +362,12 @@ class OnchainScanner {
         const ob = r.setupData.orderBook;
         const imbalanceLabel = ob.imbalance === 'buy_heavy' ? '🟢 Buy-heavy' : ob.imbalance === 'sell_heavy' ? '🔴 Sell-heavy' : '🟡 Balanced';
         msg += `   📖 Order Book: ${imbalanceLabel} (Bid $${(ob.bidDepth / 1e6).toFixed(1)}M / Ask $${(ob.askDepth / 1e6).toFixed(1)}M)\n`;
-        for (const w of (ob.bidWalls || []).slice(0, 1)) {
-          const usd = w.usdValue >= 1e6 ? `$${(w.usdValue / 1e6).toFixed(1)}M` : `$${(w.usdValue / 1e3).toFixed(0)}K`;
-          msg += `      🟢 Support wall: $${w.price >= 1 ? w.price.toFixed(2) : w.price.toPrecision(4)} (${usd}, ${w.multiple}x avg size)\n`;
-        }
-        for (const w of (ob.askWalls || []).slice(0, 1)) {
-          const usd = w.usdValue >= 1e6 ? `$${(w.usdValue / 1e6).toFixed(1)}M` : `$${(w.usdValue / 1e3).toFixed(0)}K`;
-          msg += `      🔴 Resistance wall: $${w.price >= 1 ? w.price.toFixed(2) : w.price.toPrecision(4)} (${usd}, ${w.multiple}x avg size)\n`;
-        }
+      }
+
+      // Whale orders + large trades + liq levels
+      if (this.liquidationScanner && r.setupData) {
+        msg += this.liquidationScanner.formatWhaleOrders(r.setupData, r.symbol);
+        msg += this.liquidationScanner.formatLiqLevels(r.setupData);
       }
 
       // Setup snapshot

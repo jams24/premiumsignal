@@ -199,13 +199,15 @@ function generateSetupChart(ohlcv, setupInfo) {
 
     // High-res canvas (2x for retina clarity)
     const S = 2;
-    const CW = 1200;
+    const hasWhaleData = (setupInfo.whaleOrders?.length || setupInfo.persistentWalls?.length || setupInfo.largeTrades?.length);
+    const panelW = hasWhaleData ? 280 : 0;
+    const CW = 1200 + panelW;
     const CH = 800;
     const canvas = createCanvas(CW * S, CH * S);
     const ctx = canvas.getContext('2d');
     ctx.scale(S, S);
 
-    const pad = { top: 70, right: 100, bottom: 90, left: 20 };
+    const pad = { top: 70, right: 100 + panelW, bottom: 90, left: 20 };
     const chartW = CW - pad.left - pad.right;
     const chartH = CH - pad.top - pad.bottom - 80;
     const volH = 60;
@@ -485,6 +487,133 @@ function generateSetupChart(ohlcv, setupInfo) {
       ctx.fillText(`L:${longPct}%`, liqX + 180, liqY + 13);
       ctx.fillStyle = '#ef5350';
       ctx.fillText(`S:${100 - longPct}%`, liqX + 230, liqY + 13);
+    }
+
+    // === WHALE ORDERS PANEL (right side) ===
+    if (hasWhaleData) {
+      const pX = CW - panelW + 10;
+      const pW = panelW - 20;
+      const pTop = pad.top;
+
+      // Panel background
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(pX - 8, 0, pW + 16, CH);
+      ctx.strokeStyle = '#21262d';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pX - 8, 0);
+      ctx.lineTo(pX - 8, CH);
+      ctx.stroke();
+
+      // Panel title
+      ctx.fillStyle = '#ffa726';
+      ctx.font = 'bold 13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('WHALE ORDERS', pX + pW / 2, pTop - 30);
+      ctx.fillStyle = '#484f58';
+      ctx.font = '10px monospace';
+      ctx.fillText('& LARGE TRADES', pX + pW / 2, pTop - 16);
+
+      let rowY = pTop;
+      const rowH = 22;
+      const fmtUsd = (v) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${v.toFixed(0)}`;
+
+      // Sell walls (ask whales)
+      const askWhales = (setupInfo.whaleOrders || []).filter(w => w.side === 'ask').slice(0, 4);
+      if (askWhales.length) {
+        ctx.fillStyle = '#ef5350';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('▼ SELL WALLS', pX, rowY);
+        rowY += rowH - 4;
+        for (const w of askWhales) {
+          ctx.fillStyle = 'rgba(239, 83, 80, 0.1)';
+          ctx.fillRect(pX, rowY - 2, pW, rowH - 4);
+          ctx.fillStyle = '#c9d1d9';
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(formatPrice(w.price), pX + 4, rowY + 11);
+          ctx.fillStyle = '#ef5350';
+          ctx.textAlign = 'right';
+          ctx.fillText(fmtUsd(w.usdValue), pX + pW - 4, rowY + 11);
+          rowY += rowH;
+        }
+        rowY += 6;
+      }
+
+      // Buy walls (bid whales)
+      const bidWhales = (setupInfo.whaleOrders || []).filter(w => w.side === 'bid').slice(0, 4);
+      if (bidWhales.length) {
+        ctx.fillStyle = '#26a69a';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('▲ BUY WALLS', pX, rowY);
+        rowY += rowH - 4;
+        for (const w of bidWhales) {
+          ctx.fillStyle = 'rgba(38, 166, 154, 0.1)';
+          ctx.fillRect(pX, rowY - 2, pW, rowH - 4);
+          ctx.fillStyle = '#c9d1d9';
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(formatPrice(w.price), pX + 4, rowY + 11);
+          ctx.fillStyle = '#26a69a';
+          ctx.textAlign = 'right';
+          ctx.fillText(fmtUsd(w.usdValue), pX + pW - 4, rowY + 11);
+          rowY += rowH;
+        }
+        rowY += 6;
+      }
+
+      // Persistent walls
+      const persistent = (setupInfo.persistentWalls || []).slice(0, 4);
+      if (persistent.length) {
+        ctx.fillStyle = '#bb86fc';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('🔒 PERSISTENT', pX, rowY);
+        rowY += rowH - 4;
+        for (const w of persistent) {
+          const sideColor = w.side === 'bid' ? '#26a69a' : '#ef5350';
+          ctx.fillStyle = 'rgba(187, 134, 252, 0.08)';
+          ctx.fillRect(pX, rowY - 2, pW, rowH - 4);
+          ctx.fillStyle = sideColor;
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(formatPrice(w.price), pX + 4, rowY + 11);
+          ctx.fillStyle = '#8b949e';
+          ctx.textAlign = 'center';
+          ctx.fillText(w.ageLabel || `${w.hitCount}x`, pX + pW / 2 + 20, rowY + 11);
+          ctx.fillStyle = sideColor;
+          ctx.textAlign = 'right';
+          ctx.fillText(fmtUsd(w.usdValue), pX + pW - 4, rowY + 11);
+          rowY += rowH;
+        }
+        rowY += 6;
+      }
+
+      // Large trades
+      const trades = (setupInfo.largeTrades || []).slice(0, 5);
+      if (trades.length) {
+        ctx.fillStyle = '#f0b90b';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('⚡ LARGE TRADES', pX, rowY);
+        rowY += rowH - 4;
+        for (const t of trades) {
+          const sideColor = t.side === 'buy' ? '#26a69a' : '#ef5350';
+          ctx.fillStyle = 'rgba(240, 185, 11, 0.06)';
+          ctx.fillRect(pX, rowY - 2, pW, rowH - 4);
+          ctx.fillStyle = sideColor;
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'left';
+          const arrow = t.side === 'buy' ? '▲' : '▼';
+          ctx.fillText(`${arrow} ${formatPrice(t.price)}`, pX + 4, rowY + 11);
+          ctx.fillStyle = '#c9d1d9';
+          ctx.textAlign = 'right';
+          ctx.fillText(fmtUsd(t.usdValue), pX + pW - 4, rowY + 11);
+          rowY += rowH;
+        }
+      }
     }
 
     // Timestamp + branding

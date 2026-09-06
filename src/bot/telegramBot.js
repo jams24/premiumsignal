@@ -1249,6 +1249,9 @@ class TelegramBot {
               bidDepth: token.setupData?.orderBook?.bidDepth,
               askDepth: token.setupData?.orderBook?.askDepth,
               liquidations: token.setupData?.liquidations,
+              whaleOrders: token.setupData?.orderBook?.whaleOrders || [],
+              persistentWalls: token.setupData?.orderBook?.persistentWalls || [],
+              largeTrades: token.setupData?.largeTrades || [],
             };
             const chartBuf = generateSetupChart(ohlcv, chartInfo);
             if (chartBuf) {
@@ -1446,6 +1449,9 @@ class TelegramBot {
                 bidDepth: token.setupData?.orderBook?.bidDepth,
                 askDepth: token.setupData?.orderBook?.askDepth,
                 liquidations: token.setupData?.liquidations,
+                whaleOrders: token.setupData?.orderBook?.whaleOrders || [],
+                persistentWalls: token.setupData?.orderBook?.persistentWalls || [],
+                largeTrades: token.setupData?.largeTrades || [],
               };
               const chartBuf = generateSetupChart(ohlcv, chartInfo);
               if (chartBuf) {
