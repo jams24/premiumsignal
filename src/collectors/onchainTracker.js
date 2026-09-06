@@ -13,7 +13,7 @@ const CHAIN_CONFIG = {
   bsc: { id: 56, explorer: 'bscscan.com', name: 'BSC', rpcs: ['https://bsc-rpc.publicnode.com', 'https://rpc.ankr.com/bsc'], blockTime: 3 },
   bnb: { id: 56, explorer: 'bscscan.com', name: 'BSC', rpcs: ['https://bsc-rpc.publicnode.com', 'https://rpc.ankr.com/bsc'], blockTime: 3 },
   polygon: { id: 137, explorer: 'polygonscan.com', name: 'Polygon', rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://rpc.ankr.com/polygon'], blockTime: 2 },
-  arbitrum: { id: 42161, explorer: 'arbiscan.io', name: 'Arbitrum', rpcs: ['https://arbitrum-one-rpc.publicnode.com', 'https://rpc.ankr.com/arbitrum'], blockTime: 0.25 },
+  arbitrum: { id: 42161, explorer: 'arbiscan.io', name: 'Arbitrum', rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum.drpc.org'], blockTime: 0.25 },
   base: { id: 8453, explorer: 'basescan.org', name: 'Base', rpcs: ['https://base-rpc.publicnode.com', 'https://rpc.ankr.com/base'], blockTime: 2 },
   optimism: { id: 10, explorer: 'optimistic.etherscan.io', name: 'Optimism', rpcs: ['https://optimism-rpc.publicnode.com', 'https://rpc.ankr.com/optimism'], blockTime: 2 },
   avalanche: { id: 43114, explorer: 'snowscan.xyz', name: 'Avalanche', rpcs: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://rpc.ankr.com/avalanche'], blockTime: 2 },
@@ -100,8 +100,7 @@ class OnchainTracker {
   // EVM RPC: query ERC-20 Transfer events directly from any EVM chain (free, no key)
   async fetchEvmRpcTransfers(tokenAddress, chain, limit = 20) {
     const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-    // Scan ~25 min of blocks, capped at 500 for public RPC limits
-    const blockRange = Math.min(500, Math.floor(25 * 60 / (chain.blockTime || 3)));
+    const maxRange = Math.min(500, Math.floor(25 * 60 / (chain.blockTime || 3)));
 
     for (const rpc of chain.rpcs) {
       try {
@@ -109,29 +108,46 @@ class OnchainTracker {
           jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [],
         }, { timeout: 8000 });
         const latestBlock = parseInt(blockData.result, 16);
-        const fromBlock = '0x' + Math.max(latestBlock - blockRange, 0).toString(16);
 
-        const { data: logData } = await axios.post(rpc, {
-          jsonrpc: '2.0', id: 2, method: 'eth_getLogs',
-          params: [{
-            address: tokenAddress,
-            fromBlock,
-            toBlock: 'latest',
-            topics: [TRANSFER_TOPIC],
-          }],
-        }, { timeout: 15000 });
+        // Try full range first, shrink if RPC says too many results or returns 403
+        let range = maxRange;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const fromBlock = '0x' + Math.max(latestBlock - range, 0).toString(16);
+          let logData;
+          try {
+            const resp = await axios.post(rpc, {
+              jsonrpc: '2.0', id: 2, method: 'eth_getLogs',
+              params: [{ address: tokenAddress, fromBlock, toBlock: 'latest', topics: [TRANSFER_TOPIC] }],
+            }, { timeout: 15000 });
+            logData = resp.data;
+          } catch (reqErr) {
+            if (reqErr.response?.status === 403 || reqErr.response?.status === 413) {
+              range = Math.floor(range / 4);
+              if (range < 5) break;
+              continue;
+            }
+            throw reqErr;
+          }
 
-        if (!logData.result || !Array.isArray(logData.result)) continue;
+          if (logData.error && logData.error.message &&
+              (logData.error.message.includes('max results') || logData.error.message.includes('exceed') || logData.error.message.includes('too large'))) {
+            range = Math.floor(range / 4);
+            if (range < 5) break;
+            continue;
+          }
 
-        const logs = logData.result.slice(-limit).reverse();
-        return logs.map(log => ({
-          hash: log.transactionHash,
-          from: '0x' + (log.topics[1] || '').slice(26),
-          to: '0x' + (log.topics[2] || '').slice(26),
-          value: BigInt(log.data || '0x0').toString(),
-          tokenDecimal: '18',
-          blockNumber: parseInt(log.blockNumber, 16).toString(),
-        }));
+          if (!logData.result || !Array.isArray(logData.result)) break;
+
+          const logs = logData.result.slice(-limit).reverse();
+          return logs.map(log => ({
+            hash: log.transactionHash,
+            from: '0x' + (log.topics[1] || '').slice(26),
+            to: '0x' + (log.topics[2] || '').slice(26),
+            value: BigInt(log.data || '0x0').toString(),
+            tokenDecimal: '18',
+            blockNumber: parseInt(log.blockNumber, 16).toString(),
+          }));
+        }
       } catch (err) {
         logger.debug(`${chain.name} RPC ${rpc} failed: ${err.message}`);
       }
