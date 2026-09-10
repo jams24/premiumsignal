@@ -687,14 +687,44 @@ class TradeExecutor {
           if (exchange.markets?.[pair]) {
             const ticker = await exchange.fetchTicker(pair);
             currentPrice = ticker.last;
-            // Fetch 4H candle for invalidation check
             try {
               ohlcv = await exchange.fetchOHLCV(pair, '4h', undefined, 2);
             } catch (e) { /* ok — invalidation check will be skipped */ }
             break;
           }
         }
-        if (!currentPrice) continue;
+        // If pair not found, try reloading markets (may have been added/suspended)
+        if (!currentPrice) {
+          try {
+            await exchange.loadMarkets(true);
+            for (const pair of pairs) {
+              if (exchange.markets?.[pair]) {
+                const ticker = await exchange.fetchTicker(pair);
+                currentPrice = ticker.last;
+                break;
+              }
+            }
+          } catch (e) { /* reload failed */ }
+        }
+        if (!currentPrice) {
+          // Orphan trade: can't find market — warn once per hour
+          const orphanKey = `orphan:${trade.symbol}:${trade.exchange}`;
+          const lastWarn = this._orphanWarnings?.get(orphanKey) || 0;
+          if (Date.now() - lastWarn > 60 * 60 * 1000) {
+            if (!this._orphanWarnings) this._orphanWarnings = new Map();
+            this._orphanWarnings.set(orphanKey, Date.now());
+            const ageH = ((Date.now() - new Date(trade.created_at).getTime()) / 3600000).toFixed(1);
+            await this.notify(
+              `⚠️ <b>ORPHAN TRADE</b>\n\n` +
+              `$${escapeHtml(trade.symbol)} on ${trade.exchange} — can't fetch price.\n` +
+              `Trade open for ${ageH}h, mode: ${trade.mode}\n` +
+              `Entry: $${trade.entry_price} | Direction: ${trade.direction}\n\n` +
+              `<i>Market may be delisted or suspended. Check manually!</i>`
+            );
+            logger.warn(`Orphan trade: ${trade.symbol} on ${trade.exchange} — market not found`);
+          }
+          continue;
+        }
 
         const isLong = trade.direction === 'long';
 
