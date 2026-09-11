@@ -22,6 +22,17 @@ const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
 
+// Alert cooldown — skip duplicate symbol+direction within 30 min
+const alertCooldowns = new Map();
+const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+function shouldLogAlert(type, symbol, direction) {
+  const key = `${type}:${symbol}:${direction}`;
+  const last = alertCooldowns.get(key);
+  if (last && Date.now() - last < ALERT_COOLDOWN_MS) return false;
+  alertCooldowns.set(key, Date.now());
+  return true;
+}
+
 async function main() {
   logger.info('=== CryptoSignal Bot Starting ===');
 
@@ -252,6 +263,8 @@ async function main() {
     try {
       const spikes = await onchainScanner.quickOIScan();
       for (const spike of spikes.slice(0, 3)) {
+        const dir = spike.direction.toLowerCase();
+        if (!shouldLogAlert('OI_SPIKE', spike.symbol, dir)) continue;
         const msg = onchainScanner.formatOISpike(spike);
         await bot.sendRaw(msg);
         await db.logAlert('OI_SPIKE', spike.symbol, {
@@ -276,6 +289,7 @@ async function main() {
 
         for (const token of hotTokens) {
           const dir = (token.fundingBias === 'bullish' || token.priceChange > 0) ? 'long' : 'short';
+          if (!shouldLogAlert('ONCHAIN', token.symbol, dir)) continue;
           await db.logAlert('ONCHAIN', token.symbol, {
             score: token.score, price: token.price, direction: dir,
             exchange: token.exchange, pair: token.pair,
@@ -336,6 +350,7 @@ async function main() {
 
         for (const token of significant) {
           const dir = token.flow?.outflowCount > token.flow?.inflowCount ? 'long' : 'short';
+          if (!shouldLogAlert('FLOW', token.symbol, dir)) continue;
           await db.logAlert('FLOW', token.symbol, {
             flowScore: token.flowScore, price: token.price, direction: dir,
             exchange: token.exchange, pair: token.pair,
@@ -446,6 +461,50 @@ async function main() {
       }
     } catch (err) {
       logger.error(`Alert performance tracker error: ${err.message}`);
+    }
+  });
+
+  // === Alert Invalidation Checker — every 10 min, checks if active alerts flipped ===
+  cron.schedule('3,13,23,33,43,53 * * * *', async () => {
+    try {
+      const activeAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE'], 2);
+      if (!activeAlerts.length) return;
+
+      for (const alert of activeAlerts) {
+        try {
+          const pair = alert.data?.pair;
+          const exchangeId = alert.data?.exchange;
+          const alertPrice = parseFloat(alert.data?.price);
+          const origDir = alert.data?.direction;
+          if (!pair || !exchangeId || !alertPrice || !origDir) continue;
+
+          const exchange = listingMonitor.exchanges[exchangeId];
+          if (!exchange) continue;
+          const ticker = await exchange.fetchTicker(pair);
+          if (!ticker?.last) continue;
+
+          const currentPrice = ticker.last;
+          const pricePnl = ((currentPrice - alertPrice) / alertPrice) * 100;
+          const dirPnl = origDir === 'short' ? -pricePnl : pricePnl;
+
+          // Invalidate if price moved >3% against the direction
+          if (dirPnl < -3) {
+            await db.updateAlertPerformance(alert.id, { invalidated: true, invalidated_at: new Date().toISOString(), invalidation_pnl: parseFloat(dirPnl.toFixed(2)) });
+
+            const emoji = origDir === 'long' ? '📉' : '📈';
+            const msg = `⚠️ <b>ALERT INVALIDATED</b>\n\n` +
+              `${emoji} <b>${alert.symbol}</b> — ${alert.alert_type} ${origDir.toUpperCase()} bias invalidated\n` +
+              `Entry: $${alertPrice.toPrecision(4)} → Now: $${currentPrice.toPrecision(4)} (${dirPnl.toFixed(1)}%)\n` +
+              `Price moved against the call — consider exiting if in position.\n\n` +
+              `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
+            await bot.sendRaw(msg);
+          }
+        } catch (e) {
+          logger.debug(`Invalidation check failed for ${alert.symbol}: ${e.message}`);
+        }
+      }
+    } catch (err) {
+      logger.error(`Alert invalidation checker error: ${err.message}`);
     }
   });
 

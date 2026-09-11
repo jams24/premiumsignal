@@ -673,6 +673,25 @@ async function getUncheckedAlerts(alertTypes, minAgeMinutes) {
   return rows;
 }
 
+async function getActiveAlerts(alertTypes, maxAgeHours = 2) {
+  const { rows } = await query(
+    `SELECT * FROM alert_log
+     WHERE alert_type = ANY($1)
+       AND created_at > NOW() - ($2 || ' hours')::interval
+       AND (data->>'invalidated') IS NULL
+       AND (data->>'price') IS NOT NULL
+       AND (data->>'direction') IS NOT NULL
+     ORDER BY created_at DESC`,
+    [alertTypes, String(maxAgeHours)]
+  );
+  const seen = new Set();
+  return rows.filter(r => {
+    if (seen.has(r.symbol)) return false;
+    seen.add(r.symbol);
+    return true;
+  });
+}
+
 async function updateAlertPerformance(alertId, updates) {
   await query(
     `UPDATE alert_log SET data = data || $2::jsonb WHERE id = $1`,
@@ -723,4 +742,4 @@ async function getAlertPerformanceBySymbol(alertTypes, days = 7, limit = 15) {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol };
