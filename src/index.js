@@ -69,7 +69,7 @@ async function main() {
     mode: process.env.TRADE_MODE || 'paper',
     maxPositionSize: parseFloat(process.env.TRADE_SIZE) || 50,
     maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS) || 200,
-    maxLossPerTrade: parseFloat(process.env.MAX_LOSS_PER_TRADE) || 6,
+    maxLossPerTrade: parseFloat(process.env.MAX_LOSS_PER_TRADE) || 0,
     maxConcurrentPositions: parseInt(process.env.MAX_POSITIONS) || 5,
     defaultLeverage: parseInt(process.env.DEFAULT_LEVERAGE) || 5,
     minConfidence: parseInt(process.env.MIN_CONFIDENCE) || 4,

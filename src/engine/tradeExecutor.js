@@ -572,7 +572,16 @@ class TradeExecutor {
       try {
         const slPrice = exchange.priceToPrecision(pair, effectiveSL);
         await this.placeStopOrder(exchange, signal.exchange, pair, closeSide, roundedQty, slPrice);
-      } catch (e) { logger.warn(`SL order failed for ${pair}: ${e.message}`); }
+      } catch (e) {
+        logger.error(`SL order failed for ${pair}: ${e.message} — closing position for safety`);
+        try {
+          await exchange.createOrder(pair, 'market', closeSide, roundedQty, undefined, { reduceOnly: true });
+          await this.notify(`⚠️ <b>SL ORDER FAILED</b> — $${escapeHtml(signal.symbol)}\n\nClosed position immediately for safety.\nError: ${escapeHtml(e.message)}`);
+          return null;
+        } catch (closeErr) {
+          await this.notify(`🚨 <b>CRITICAL</b> — $${escapeHtml(signal.symbol)}\n\nSL order failed AND close failed!\nPosition is UNPROTECTED on ${signal.exchange}.\nClose manually NOW!\nError: ${escapeHtml(closeErr.message)}`);
+        }
+      }
 
       // Place DCA limit orders for parts 2 and 3 (skip if we used full position above)
       const { dcaPrice2, dcaPrice3 } = this.calcDCALevels(signal);
