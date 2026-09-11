@@ -244,6 +244,81 @@ class OnchainScanner {
     };
   }
 
+  /**
+   * Fast OI spike check — runs every 2 min, only looks at 1h OI change
+   * on top volume tokens. Returns tokens with extreme OI spikes that
+   * haven't been alerted in the last 30 min.
+   */
+  async quickOIScan() {
+    const spikes = [];
+    if (!this._spikeAlerted) this._spikeAlerted = new Map();
+
+    for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
+      if (!exchange.has.fetchOpenInterestHistory) continue;
+      try {
+        const perpMarkets = Object.values(exchange.markets)
+          .filter(m => m.swap && m.quote === 'USDT' && m.active);
+        const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
+
+        const top = Object.entries(tickers)
+          .filter(([, t]) => t.quoteVolume > 5000000)
+          .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
+          .sort((a, b) => (b[1].quoteVolume || 0) - (a[1].quoteVolume || 0))
+          .slice(0, 30);
+
+        for (const [symbol, ticker] of top) {
+          try {
+            const lastAlerted = this._spikeAlerted.get(symbol);
+            if (lastAlerted && Date.now() - lastAlerted < 30 * 60 * 1000) continue;
+
+            const oiHist = await exchange.fetchOpenInterestHistory(symbol, '1h', undefined, 3);
+            if (!oiHist || oiHist.length < 2) continue;
+
+            const latest = oiHist[oiHist.length - 1];
+            const prev = oiHist[oiHist.length - 2];
+            const oiNow = latest.openInterestValue || (latest.openInterestAmount * (ticker.last || 1));
+            const oiPrev = prev.openInterestValue || (prev.openInterestAmount * (ticker.last || 1));
+            if (!oiPrev) continue;
+
+            const change1h = ((oiNow - oiPrev) / oiPrev) * 100;
+            if (change1h < 20) continue;
+
+            const base = symbol.split('/')[0];
+            const priceChange = ticker.percentage || 0;
+            const dir = priceChange > 0 ? 'LONG' : priceChange < -1 ? 'SHORT' : 'NEUTRAL';
+
+            spikes.push({
+              symbol: base, pair: symbol, exchange: exchangeId,
+              oiChange1h: change1h, price: ticker.last, priceChange,
+              volume: ticker.quoteVolume, direction: dir,
+            });
+            this._spikeAlerted.set(symbol, Date.now());
+          } catch {}
+        }
+      } catch (err) {
+        logger.debug(`Quick OI scan failed for ${exchangeId}: ${err.message}`);
+      }
+    }
+
+    // Clean old entries
+    for (const [k, v] of this._spikeAlerted) {
+      if (Date.now() - v > 60 * 60 * 1000) this._spikeAlerted.delete(k);
+    }
+
+    return spikes;
+  }
+
+  formatOISpike(spike) {
+    const arrow = spike.priceChange > 0 ? '🟢' : spike.priceChange < -1 ? '🔴' : '⚪';
+    const priceStr = spike.price >= 1 ? spike.price.toFixed(4) : spike.price.toPrecision(4);
+    return `⚡ <b>OI SPIKE DETECTED</b>\n\n` +
+      `${arrow} <b><code>${spike.symbol}</code></b> — OI +${spike.oiChange1h.toFixed(1)}% in 1h\n` +
+      `💰 Price: $${priceStr} (${spike.priceChange >= 0 ? '+' : ''}${spike.priceChange.toFixed(1)}%)\n` +
+      `📊 Vol: $${(spike.volume / 1e6).toFixed(1)}M\n` +
+      `🎯 Bias: ${spike.direction}\n\n` +
+      `<i>Massive new positions opening — big move incoming. Full scan in next cycle.</i>`;
+  }
+
   // Get onchain boost for a symbol being evaluated by the zone scanner
   getOnchainBoost(symbol) {
     const cached = this.oiCache.get(symbol);

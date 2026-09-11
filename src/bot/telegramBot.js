@@ -768,8 +768,8 @@ class TelegramBot {
       try {
         const days = parseInt(ctx.message.text.split(' ')[1]) || 7;
         const [overall, bySymbol] = await Promise.all([
-          db.getAlertPerformance(['ONCHAIN', 'FLOW'], days),
-          db.getAlertPerformanceBySymbol(['ONCHAIN', 'FLOW'], days, 10),
+          db.getAlertPerformance(['ONCHAIN', 'FLOW', 'OI_SPIKE'], days),
+          db.getAlertPerformanceBySymbol(['ONCHAIN', 'FLOW', 'OI_SPIKE'], days, 10),
         ]);
 
         if (!overall.length) {

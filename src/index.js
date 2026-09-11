@@ -247,11 +247,29 @@ async function main() {
   });
 
 
-  // === Onchain Scanner — OI + Funding rate analysis every 10 min ===
-  cron.schedule('*/10 * * * *', async () => {
+  // === Fast OI Spike Detector — every 2 min, lightweight ===
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      const spikes = await onchainScanner.quickOIScan();
+      for (const spike of spikes.slice(0, 3)) {
+        const msg = onchainScanner.formatOISpike(spike);
+        await bot.sendRaw(msg);
+        await db.logAlert('OI_SPIKE', spike.symbol, {
+          price: spike.price, direction: spike.direction.toLowerCase(),
+          oiChange1h: spike.oiChange1h, priceChange: spike.priceChange,
+          exchange: spike.exchange, pair: spike.pair, volume: spike.volume,
+        }, `OI_SPIKE ${spike.direction} ${spike.symbol} +${spike.oiChange1h.toFixed(0)}%`).catch(() => {});
+      }
+    } catch (err) {
+      logger.error(`OI spike scan error: ${err.message}`);
+    }
+  });
+
+  // === Onchain Scanner — OI + Funding rate analysis every 5 min ===
+  cron.schedule('*/5 * * * *', async () => {
     try {
       const results = await onchainScanner.scan();
-      const hotTokens = results.filter(r => r.score >= 40);
+      const hotTokens = results.filter(r => r.score >= 30);
       if (hotTokens.length > 0) {
         const msg = onchainScanner.formatAlerts(hotTokens, 5);
         if (msg) await bot.sendRaw(msg);
@@ -307,8 +325,8 @@ async function main() {
       logger.error(`Onchain scan error: ${err.message}`);
     }
   });
-  // === Flow Scanner — standalone exchange flow detection every 15 min (Flams edge) ===
-  cron.schedule('*/15 * * * *', async () => {
+  // === Flow Scanner — standalone exchange flow detection every 10 min ===
+  cron.schedule('*/10 * * * *', async () => {
     try {
       const results = await flowScanner.scan();
       const significant = results.filter(r => r.flowScore >= 15);
@@ -379,7 +397,7 @@ async function main() {
   // === Alert Performance Tracker — check prices for past alerts every 10 min ===
   cron.schedule('*/10 * * * *', async () => {
     try {
-      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW'], 65);
+      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE'], 65);
       if (!unchecked.length) return;
 
       for (const alert of unchecked) {
@@ -496,7 +514,7 @@ async function main() {
     `Auto-Trade: ${tradeExecutor.mode.toUpperCase()} mode | $${tradeExecutor.maxPositionSize}/trade | ${tradeExecutor.defaultLeverage}x\n` +
     `Listing check: every ${config.signals.listingCheckInterval / 1000}s\n` +
     `Technical scan: every 5 min\n` +
-    `Onchain scan: every 10 min\n` +
+    `OI spike: every 2 min | Onchain scan: every 5 min\n` +
     `Flow scanner: every 15 min\n` +
     `Social scan: every 15 min\n\n` +
     `<i>${new Date().toUTCString()}</i>`
