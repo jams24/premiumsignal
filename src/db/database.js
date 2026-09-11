@@ -668,7 +668,7 @@ async function getUncheckedAlerts(alertTypes, minAgeMinutes) {
      WHERE alert_type = ANY($1)
        AND created_at < NOW() - ($2 || ' minutes')::interval
        AND (data->>'price') IS NOT NULL
-       AND (data->>'checked_1h') IS NULL
+       AND ((data->>'checked_1h') IS NULL OR (data->>'checked_4h') IS NULL OR (data->>'checked_24h') IS NULL)
      ORDER BY created_at ASC LIMIT 50`,
     [alertTypes, String(minAgeMinutes)]
   );
