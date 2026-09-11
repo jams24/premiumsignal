@@ -451,6 +451,11 @@ class OnchainScanner {
         msg += this.liquidationScanner.formatSnapshot(snap, r.symbol);
       }
 
+      // Trade setup with entry/TP/SL for score 45+
+      if (r._tradeSetup) {
+        msg += this.formatTradeSetup(r._tradeSetup);
+      }
+
       msg += `   📊 ${r.exchange.toUpperCase()}\n\n`;
     }
 
@@ -476,6 +481,82 @@ class OnchainScanner {
     if (score >= 35) return { icon: '⚡', label: 'NOTABLE ACTIVITY', meaning: 'Significant positioning shift — monitor closely for entry' };
     if (score >= 20) return { icon: '👀', label: 'EARLY SIGNAL', meaning: 'One indicator flagged — keep on watchlist' };
     return { icon: '📊', label: 'LOW ACTIVITY', meaning: 'Minor signal — not actionable yet' };
+  }
+
+  async buildTradeSetup(token, exchanges, type = 'ONCHAIN_SETUP') {
+    try {
+      const exchange = exchanges[token.exchange];
+      if (!exchange) return null;
+
+      const ohlcv = await exchange.fetchOHLCV(token.pair, '1h', undefined, 20);
+      if (!ohlcv || ohlcv.length < 14) return null;
+
+      // ATR(14)
+      let atrSum = 0;
+      for (let i = ohlcv.length - 14; i < ohlcv.length; i++) {
+        const [, , h, l] = ohlcv[i];
+        atrSum += h - l;
+      }
+      const atr = atrSum / 14;
+      if (!atr || atr <= 0) return null;
+
+      const snap = this.liquidationScanner
+        ? this.liquidationScanner.generateSetupSnapshot(token)
+        : { direction: token.priceChange > 0 ? 'long' : 'short' };
+
+      const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : 'long';
+      const price = token.price;
+      const mult = direction === 'long' ? 1 : -1;
+
+      const tp1 = price + mult * atr * 2.0;
+      const tp2 = price + mult * atr * 4.0;
+      const tp3 = price + mult * atr * 6.0;
+      const sl = price - mult * atr * 2.0;
+
+      const confidence = token.score >= 60 ? 5 : token.score >= 45 ? 4 : 3;
+
+      const catalystParts = [];
+      if (token.oiChange4h) catalystParts.push(`OI ${token.oiChange4h > 0 ? '+' : ''}${token.oiChange4h.toFixed(1)}% 4h`);
+      if (token.exchangeFlow?.outflowCount >= 3) catalystParts.push(`${token.exchangeFlow.outflowCount} outflows`);
+      if (token.exchangeFlow?.inflowCount >= 3) catalystParts.push(`${token.exchangeFlow.inflowCount} inflows`);
+      if (token.fundingRate) catalystParts.push(`funding ${(token.fundingRate * 100).toFixed(4)}%`);
+
+      return {
+        type,
+        symbol: token.symbol,
+        exchange: token.exchange,
+        pair: token.pair,
+        direction,
+        currentPrice: price,
+        entryLow: price,
+        entryHigh: price,
+        tp1, tp2, tp3,
+        stopLoss: sl,
+        atr,
+        confidence,
+        catalyst: `${type}: ${catalystParts.join(', ')}`,
+        suggestedLeverage: 20,
+        volumeInfo: `Vol $${(token.volume / 1e6).toFixed(1)}M`,
+        onchainScore: token.score,
+      };
+    } catch (err) {
+      logger.debug(`buildTradeSetup failed for ${token.symbol}: ${err.message}`);
+      return null;
+    }
+  }
+
+  formatTradeSetup(setup) {
+    if (!setup) return '';
+    const fmt = (p) => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
+    const pct = (from, to) => (((to - from) / from) * 100).toFixed(1);
+    const dir = setup.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+    let msg = `\n   🎯 <b>Trade Setup (${dir})</b>\n`;
+    msg += `   Entry: ${fmt(setup.currentPrice)}\n`;
+    msg += `   📈 TP1: ${fmt(setup.tp1)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp1)}%)\n`;
+    msg += `   📈 TP2: ${fmt(setup.tp2)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp2)}%)\n`;
+    msg += `   📈 TP3: ${fmt(setup.tp3)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp3)}%)\n`;
+    msg += `   🛑 SL: ${fmt(setup.stopLoss)} (${pct(setup.currentPrice, setup.stopLoss)}%)\n`;
+    return msg;
   }
 
   mapCoinGeckoChain(cgChain) {

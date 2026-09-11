@@ -90,14 +90,32 @@ async function main() {
     dcaEnabled: process.env.DCA_ENABLED === 'true',
   });
 
+  // Init onchain trade executor — separate settings, independent from main engine
+  const onchainTradeExecutor = new TradeExecutor(listingMonitor.exchanges, {
+    settingsKey: 'onchain',
+    mode: 'paper',
+    maxPositionSize: 20,
+    maxDailyLoss: 30,
+    maxLossPerTrade: 6,
+    maxConcurrentPositions: 3,
+    defaultLeverage: 20,
+    minConfidence: 4,
+    paperBalance: 500,
+    dynamicLeverage: false,
+    dcaEnabled: false,
+    signalFilter: new Set(['ONCHAIN_SETUP', 'FLOW_SETUP']),
+  });
+
   // Load persisted settings and today's PnL from DB
   if (dbReady) {
     await tradeExecutor.loadConfig();
     await tradeExecutor.recalcDailyPnL();
+    await onchainTradeExecutor.loadConfig();
+    await onchainTradeExecutor.recalcDailyPnL();
   }
 
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -106,6 +124,11 @@ async function main() {
   // Wire trade executor notifications to Telegram
   tradeExecutor.onTradeUpdate(async (msg) => {
     await bot.sendRaw(msg);
+  });
+
+  // Wire onchain trade executor notifications
+  onchainTradeExecutor.onTradeUpdate(async (msg) => {
+    await bot.sendRaw(`🔗 <b>[ONCHAIN]</b> ${msg}`);
   });
 
   // Wire up listing alerts
@@ -300,6 +323,17 @@ async function main() {
           }, `ONCHAIN ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
         }
 
+        // Auto-trade onchain signals via onchain executor
+        for (const token of hotTokens) {
+          if (token.score < 45 || !onchainTradeExecutor.enabled) continue;
+          try {
+            const setup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP');
+            if (setup) await onchainTradeExecutor.executeSignal(setup);
+          } catch (e) {
+            logger.debug(`Onchain auto-trade failed for ${token.symbol}: ${e.message}`);
+          }
+        }
+
         // Send large transfer alerts for tokens with heavy supply movement
         for (const token of hotTokens.slice(0, 3)) {
           if (!token.exchangeFlow?.largeTransfers?.length) continue;
@@ -378,6 +412,17 @@ async function main() {
             outflowCount: token.flow?.outflowCount, inflowCount: token.flow?.inflowCount,
             netFlow: token.flow?.netFlow,
           }, `FLOW ${dir} ${token.symbol} score=${token.flowScore}`).catch(() => {});
+        }
+
+        // Auto-trade flow signals via onchain executor
+        for (const token of significant) {
+          if (token.flowScore < 45 || !onchainTradeExecutor.enabled) continue;
+          try {
+            const setup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP');
+            if (setup) await onchainTradeExecutor.executeSignal(setup);
+          } catch (e) {
+            logger.debug(`Flow auto-trade failed for ${token.symbol}: ${e.message}`);
+          }
         }
 
         // Send setup chart images for top flow tokens
@@ -572,6 +617,11 @@ async function main() {
     } catch (err) {
       logger.error(`Trade tracker error: ${err.message}`);
     }
+    try {
+      await onchainTradeExecutor.checkOpenTrades();
+    } catch (err) {
+      logger.error(`Onchain trade tracker error: ${err.message}`);
+    }
   });
 
   cron.schedule('*/2 * * * *', async () => {
@@ -591,6 +641,7 @@ async function main() {
     `Monitoring: ${Object.keys(listingMonitor.exchanges).join(', ')}\n` +
     `Database: ${dbReady ? '✅ Connected' : '⚠️ Unavailable'}\n` +
     `Auto-Trade: ${tradeExecutor.mode.toUpperCase()} mode | $${tradeExecutor.maxPositionSize}/trade | ${tradeExecutor.defaultLeverage}x\n` +
+    `Onchain Trade: ${onchainTradeExecutor.mode.toUpperCase()} mode | $${onchainTradeExecutor.maxPositionSize}/trade | ${onchainTradeExecutor.defaultLeverage}x | ${onchainTradeExecutor.enabled ? 'ON' : 'OFF'}\n` +
     `Listing check: every ${config.signals.listingCheckInterval / 1000}s\n` +
     `Technical scan: every 5 min\n` +
     `OI spike: every 2 min | Onchain scan: every 5 min\n` +

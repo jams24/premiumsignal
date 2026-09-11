@@ -513,17 +513,19 @@ async function getAllTimePnL(since, mode) {
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
 
-async function saveSettings(config) {
+async function saveSettings(config, key = 'main') {
+  const id = key === 'main' ? 1 : key === 'onchain' ? 2 : 1;
   const json = JSON.stringify(config);
   await query(
-    `INSERT INTO bot_settings (id, config, updated_at) VALUES (1, $1, NOW())
-     ON CONFLICT (id) DO UPDATE SET config = $1, updated_at = NOW()`,
-    [json]
+    `INSERT INTO bot_settings (id, config, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (id) DO UPDATE SET config = $2, updated_at = NOW()`,
+    [id, json]
   );
 }
 
-async function loadSettings() {
-  const { rows } = await query('SELECT config FROM bot_settings WHERE id = 1');
+async function loadSettings(key = 'main') {
+  const id = key === 'main' ? 1 : key === 'onchain' ? 2 : 1;
+  const { rows } = await query('SELECT config FROM bot_settings WHERE id = $1', [id]);
   return rows.length ? rows[0].config : null;
 }
 

@@ -40,6 +40,9 @@ class TradeExecutor {
 
     this.pnlResetDate = config.pnlResetDate || new Date().toISOString();
 
+    // Settings persistence key (default 'main', onchain executor uses 'onchain')
+    this.settingsKey = config.settingsKey || 'main';
+
     // Cooldown: symbol → timestamp, prevents re-entry after invalidation/SL
     this.cooldowns = new Map();
   }
@@ -313,13 +316,13 @@ class TradeExecutor {
   }
 
   async saveConfig() {
-    try { await db.saveSettings(this.getConfig()); } catch (e) { logger.warn(`Failed to save settings: ${e.message}`); }
+    try { await db.saveSettings(this.getConfig(), this.settingsKey); } catch (e) { logger.warn(`Failed to save settings: ${e.message}`); }
   }
 
   async loadConfig() {
     try {
-      const cfg = await db.loadSettings();
-      if (cfg) { this.applyConfig(cfg); logger.info('Settings loaded from database'); }
+      const cfg = await db.loadSettings(this.settingsKey);
+      if (cfg) { this.applyConfig(cfg); logger.info(`Settings loaded from database (${this.settingsKey})`); }
     } catch (e) { logger.warn(`Failed to load settings: ${e.message}`); }
   }
 

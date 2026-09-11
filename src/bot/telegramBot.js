@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.bot.catch((err) => {
       const msg = err?.message || String(err);
@@ -23,6 +23,7 @@ class TelegramBot {
     this.flowScanner = flowScanner;
     this.marketIntel = marketIntel;
     this.tradeExecutor = tradeExecutor;
+    this.onchainTradeExecutor = onchainTradeExecutor;
     this.userPaperEngine = null; // wired from index.js
     // Access control MUST be registered before any command handlers
     this.setupAccess();
@@ -34,6 +35,8 @@ class TelegramBot {
     // Commands/actions reserved for the admin (trading control, settings, user mgmt)
     const ADMIN_COMMANDS = new Set([
       'trade', 'stop', 'trademode', 'setsize', 'setleverage', 'setloss', 'setmaxloss',
+      'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
+      'onchainpositions', 'onchainminscore', 'onchainstats',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
@@ -163,7 +166,10 @@ class TelegramBot {
             `/pnl — Trade P&amp;L\n` +
             `/trademode paper|live — Switch mode\n` +
             `/stop — Kill switch (close all)\n` +
-            `/users /grant &lt;id&gt; /revoke &lt;id&gt; — Access control\n\n`
+            `/users /grant &lt;id&gt; /revoke &lt;id&gt; — Access control\n\n` +
+            `<b>🔗 Onchain Auto-Trade:</b>\n` +
+            `/onchaintrade — Status &amp; control\n` +
+            `/onchainstats — Onchain P&amp;L\n\n`
           : `<i>Paper trading only — live trading is admin-managed.</i>\n\n`) +
         `Signals are delivered automatically.`
       );
@@ -1246,6 +1252,132 @@ class TelegramBot {
     });
 
 
+
+    // === ONCHAIN AUTO-TRADE COMMANDS ===
+
+    this.bot.command('onchaintrade', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Onchain trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const mode = args[0]?.toLowerCase();
+      if (mode === 'on' || mode === 'paper' || mode === 'live') {
+        if (mode === 'on') {
+          this.onchainTradeExecutor.enabled = true;
+        } else {
+          this.onchainTradeExecutor.mode = mode;
+          this.onchainTradeExecutor.enabled = true;
+        }
+        this.onchainTradeExecutor.saveConfig();
+        ctx.replyWithHTML(`✅ Onchain trading: <b>${this.onchainTradeExecutor.mode.toUpperCase()}</b> | ${this.onchainTradeExecutor.enabled ? 'ON' : 'OFF'}${mode === 'live' ? '\n\n⚠️ Real funds will be used!' : ''}`);
+      } else if (mode === 'off') {
+        this.onchainTradeExecutor.enabled = false;
+        this.onchainTradeExecutor.saveConfig();
+        ctx.replyWithHTML('❌ Onchain auto-trading <b>disabled</b>.');
+      } else {
+        const te = this.onchainTradeExecutor;
+        const balance = await te.getBalance();
+        ctx.replyWithHTML(
+          `🔗 <b>ONCHAIN AUTO-TRADING</b>\n\n` +
+          `Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+          `Balance: $${balance.toFixed(2)} | Size: $${te.maxPositionSize} | ${te.defaultLeverage}x\n` +
+          `Min Score: ${te.minConfidence === 5 ? 60 : te.minConfidence === 4 ? 45 : 30}+\n` +
+          `Max Positions: ${te.maxConcurrentPositions}\n` +
+          `Daily Loss: $${te.maxDailyLoss} | Per-Trade: $${te.maxLossPerTrade}\n` +
+          `Today P\&L: $${te.dailyPnL.toFixed(2)}\n\n` +
+          `<b>Commands:</b>\n` +
+          `/onchaintrade on|off|paper|live\n` +
+          `/onchainsize <$> | /onchainlev <x>\n` +
+          `/onchainloss <$> | /onchainmaxloss <$>\n` +
+          `/onchainpositions <n> | /onchainminscore <30-100>\n` +
+          `/onchainstats — P\&L stats`
+        );
+      }
+    });
+
+    this.bot.command('onchainsize', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      const size = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!size || size < 5 || size > 10000) return ctx.reply('Usage: /onchainsize <5-10000>');
+      this.onchainTradeExecutor.maxPositionSize = size;
+      this.onchainTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`✅ Onchain position size: <b>$${size}</b>`);
+    });
+
+    this.bot.command('onchainlev', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      const lev = parseInt(ctx.message.text.split(' ')[1]);
+      if (!lev || lev < 1 || lev > 50) return ctx.reply('Usage: /onchainlev <1-50>');
+      this.onchainTradeExecutor.defaultLeverage = lev;
+      this.onchainTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`✅ Onchain leverage: <b>${lev}x</b>`);
+    });
+
+    this.bot.command('onchainloss', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      const loss = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!loss || loss < 5 || loss > 50000) return ctx.reply('Usage: /onchainloss <daily limit $>');
+      this.onchainTradeExecutor.maxDailyLoss = loss;
+      this.onchainTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`✅ Onchain daily loss limit: <b>$${loss}</b>`);
+    });
+
+    this.bot.command('onchainmaxloss', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      if (args[0] === '0' || args[0] === 'off') {
+        this.onchainTradeExecutor.maxLossPerTrade = 0;
+        this.onchainTradeExecutor.saveConfig();
+        return ctx.replyWithHTML('✅ Onchain per-trade loss cap <b>disabled</b>.');
+      }
+      const loss = parseFloat(args[0]);
+      if (!loss || loss < 1 || loss > 10000) return ctx.reply('Usage: /onchainmaxloss <$ per trade> or off');
+      this.onchainTradeExecutor.maxLossPerTrade = loss;
+      this.onchainTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`✅ Onchain max loss per trade: <b>$${loss}</b>`);
+    });
+
+    this.bot.command('onchainpositions', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      const max = parseInt(ctx.message.text.split(' ')[1]);
+      if (!max || max < 1 || max > 10) return ctx.reply('Usage: /onchainpositions <1-10>');
+      this.onchainTradeExecutor.maxConcurrentPositions = max;
+      this.onchainTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`✅ Onchain max positions: <b>${max}</b>`);
+    });
+
+    this.bot.command('onchainminscore', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      const score = parseInt(ctx.message.text.split(' ')[1]);
+      if (!score || score < 30 || score > 100) return ctx.reply('Usage: /onchainminscore <30-100>\n45 = most signals, 60 = high conviction only');
+      const conf = score >= 60 ? 5 : score >= 45 ? 4 : 3;
+      this.onchainTradeExecutor.minConfidence = conf;
+      this.onchainTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`✅ Onchain min score: <b>${score}+</b> (confidence ${conf}/5)`);
+    });
+
+    this.bot.command('onchainstats', async (ctx) => {
+      if (!this.onchainTradeExecutor) return ctx.reply('Not initialized.');
+      try {
+        const te = this.onchainTradeExecutor;
+        const balance = await te.getBalance();
+        const trades = await db.getOpenTrades();
+        const onchainTrades = trades.filter(t => t.signal_type === 'ONCHAIN_SETUP' || t.signal_type === 'FLOW_SETUP');
+        const stats = await db.getTradeStats();
+        let msg = `🔗 <b>ONCHAIN TRADING STATS</b>\n\n`;
+        msg += `Mode: ${te.mode.toUpperCase()} | ${te.enabled ? 'ON' : 'OFF'}\n`;
+        msg += `Balance: $${balance.toFixed(2)} | Size: $${te.maxPositionSize} | ${te.defaultLeverage}x\n`;
+        msg += `Today P\&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit\n`;
+        msg += `Open positions: ${onchainTrades.length}\n\n`;
+        if (onchainTrades.length) {
+          for (const t of onchainTrades) {
+            const dir = t.direction === 'long' ? '🟢' : '🔴';
+            msg += `${dir} <b>$${t.symbol}</b> @ $${t.entry_price} (${t.leverage}x)\n`;
+          }
+        }
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        ctx.reply('Error fetching onchain stats.');
+      }
+    });
     this.bot.command('onchain', async (ctx) => {
       if (!this.onchainScanner) return ctx.reply('Onchain scanner not initialized.');
       ctx.reply('🔗 Running onchain scan (OI + Funding across all perps)...');
