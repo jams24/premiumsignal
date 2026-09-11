@@ -486,6 +486,8 @@ class OnchainTracker {
       let inflowAmount = 0;
       const exchangeNames = new Set();
 
+      const largeTransfers = [];
+
       for (const tx of txData) {
         const decimals = parseInt(tx.tokenDecimal) || 18;
         const amount = parseFloat(tx.value) / Math.pow(10, decimals);
@@ -497,11 +499,15 @@ class OnchainTracker {
         if (fromExchange && !toExchange) {
           outflowCount++;
           outflowAmount += amount;
-          exchangeNames.add(this.identifyExchange(fromLower));
+          const exName = this.identifyExchange(fromLower);
+          exchangeNames.add(exName);
+          largeTransfers.push({ type: 'outflow', exchange: exName, amount, from: tx.from, to: tx.to, tokenSymbol: tx.tokenSymbol || symbol, hash: tx.hash, timeStamp: tx.timeStamp });
         } else if (!fromExchange && toExchange) {
           inflowCount++;
           inflowAmount += amount;
-          exchangeNames.add(this.identifyExchange(toLower));
+          const exName = this.identifyExchange(toLower);
+          exchangeNames.add(exName);
+          largeTransfers.push({ type: 'inflow', exchange: exName, amount, from: tx.from, to: tx.to, tokenSymbol: tx.tokenSymbol || symbol, hash: tx.hash, timeStamp: tx.timeStamp });
         }
       }
 
@@ -518,6 +524,7 @@ class OnchainTracker {
         netFlow,
         totalTxs,
         exchanges: [...exchangeNames].filter(Boolean),
+        largeTransfers: largeTransfers.sort((a, b) => b.amount - a.amount),
         bias: netFlow > 0 ? 'bullish' : netFlow < 0 ? 'bearish' : 'neutral',
         timestamp: Date.now(),
       };
@@ -734,6 +741,67 @@ class OnchainTracker {
     msg += alert.interpretation + '\n\n';
     msg += `Large transfers: ${alert.largeTransfers}\n`;
     msg += `<i>Data: Arkham Intelligence</i>`;
+    return msg;
+  }
+
+  formatLargeTransferAlert(flow, price) {
+    const usdPerToken = price || 0;
+    const transfers = (flow.largeTransfers || []).slice(0, 8);
+    if (!transfers.length) return null;
+
+    const totalInflowUsd = flow.inflowAmount * usdPerToken;
+    const totalOutflowUsd = flow.outflowAmount * usdPerToken;
+    const netUsd = flow.netFlow * usdPerToken;
+    const bias = flow.bias === 'bearish' ? '🔴 SHORT BIAS' : flow.bias === 'bullish' ? '🟢 LONG BIAS' : '⚪ NEUTRAL';
+
+    const fmt = (n) => {
+      if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+      if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+      return `$${n.toFixed(0)}`;
+    };
+    const fmtAmt = (n) => {
+      if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+      if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+      return n.toFixed(0);
+    };
+    const timeAgo = (ts) => {
+      if (!ts) return '';
+      const diff = Math.floor((Date.now() / 1000) - parseInt(ts));
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      return `${Math.floor(diff / 3600)}h ago`;
+    };
+
+    let msg = `🔗 <b>SUPPLY MOVEMENT — ${flow.symbol}</b>\n`;
+    msg += `⛓ ${flow.chain} · ${bias}\n\n`;
+
+    if (totalInflowUsd > 0) msg += `📥 <b>Exchange Inflows:</b> ${fmt(totalInflowUsd)} (${flow.inflowCount} txs)\n`;
+    if (totalOutflowUsd > 0) msg += `📤 <b>Exchange Outflows:</b> ${fmt(totalOutflowUsd)} (${flow.outflowCount} txs)\n`;
+    msg += `💰 <b>Net Flow:</b> ${netUsd >= 0 ? '+' : ''}${fmt(Math.abs(netUsd))} ${netUsd >= 0 ? 'outflow (bullish)' : 'inflow (bearish)'}\n`;
+    msg += `📊 <b>Price:</b> $${price?.toPrecision(4) || '?'}\n\n`;
+
+    msg += `<b>Recent Transfers:</b>\n`;
+    for (const t of transfers) {
+      const usd = t.amount * usdPerToken;
+      if (usd < 1000) continue;
+      const icon = t.type === 'inflow' ? '📥' : '📤';
+      const dir = t.type === 'inflow' ? '→' : '←';
+      const age = timeAgo(t.timeStamp);
+      msg += `  ${icon} ${fmtAmt(t.amount)} ${t.tokenSymbol} (${fmt(usd)}) ${dir} <b>${t.exchange}</b>`;
+      if (age) msg += ` · ${age}`;
+      msg += '\n';
+    }
+
+    if (flow.exchanges?.length) {
+      msg += `\n🏦 <b>Exchanges:</b> ${flow.exchanges.join(', ')}\n`;
+    }
+
+    if (totalInflowUsd > totalOutflowUsd * 2) {
+      msg += `\n⚠️ <b>Heavy inflows — potential sell pressure incoming</b>\n`;
+    } else if (totalOutflowUsd > totalInflowUsd * 2) {
+      msg += `\n✅ <b>Heavy outflows — accumulation / cold storage</b>\n`;
+    }
+
+    msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;
     return msg;
   }
 }

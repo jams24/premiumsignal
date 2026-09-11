@@ -300,6 +300,26 @@ async function main() {
           }, `ONCHAIN ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
         }
 
+        // Send large transfer alerts for tokens with heavy supply movement
+        for (const token of hotTokens.slice(0, 3)) {
+          if (!token.exchangeFlow?.largeTransfers?.length) continue;
+          const flow = token.exchangeFlow;
+          const totalFlowUsd = (flow.inflowAmount + flow.outflowAmount) * (token.price || 0);
+          if (totalFlowUsd < 50000) continue; // Only alert if >$50K total flow
+          if (!shouldLogAlert('SUPPLY_MOVE', token.symbol, flow.bias)) continue;
+          const transferMsg = onchainTracker.formatLargeTransferAlert(flow, token.price);
+          if (transferMsg) await bot.sendRaw(transferMsg);
+          await db.logAlert('SUPPLY_MOVE', token.symbol, {
+            price: token.price, direction: flow.bias === 'bearish' ? 'short' : 'long',
+            exchange: token.exchange, pair: token.pair,
+            inflowUsd: flow.inflowAmount * (token.price || 0),
+            outflowUsd: flow.outflowAmount * (token.price || 0),
+            netFlowUsd: flow.netFlow * (token.price || 0),
+            transferCount: flow.largeTransfers.length,
+            exchanges: flow.exchanges,
+          }, `SUPPLY_MOVE ${flow.bias} ${token.symbol} ${flow.largeTransfers.length} transfers`).catch(() => {});
+        }
+
         // Send setup chart images for top tokens
         for (const token of hotTokens.slice(0, 3)) {
           try {
@@ -412,7 +432,7 @@ async function main() {
   // === Alert Performance Tracker — check prices for past alerts every 10 min ===
   cron.schedule('*/10 * * * *', async () => {
     try {
-      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE'], 65);
+      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 65);
       if (!unchecked.length) return;
 
       for (const alert of unchecked) {
@@ -467,7 +487,7 @@ async function main() {
   // === Alert Invalidation Checker — every 10 min, checks if active alerts flipped ===
   cron.schedule('3,13,23,33,43,53 * * * *', async () => {
     try {
-      const activeAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE'], 2);
+      const activeAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 2);
       if (!activeAlerts.length) return;
 
       for (const alert of activeAlerts) {
