@@ -256,6 +256,18 @@ async function main() {
         const msg = onchainScanner.formatAlerts(hotTokens, 5);
         if (msg) await bot.sendRaw(msg);
 
+        for (const token of hotTokens) {
+          const dir = (token.fundingBias === 'bullish' || token.priceChange > 0) ? 'long' : 'short';
+          await db.logAlert('ONCHAIN', token.symbol, {
+            score: token.score, price: token.price, direction: dir,
+            exchange: token.exchange, pair: token.pair,
+            oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h,
+            fundingRate: token.fundingRate, fundingBias: token.fundingBias,
+            priceChange: token.priceChange, volume: token.volume,
+            signals: token.signals,
+          }, `ONCHAIN ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
+        }
+
         // Send setup chart images for top tokens
         for (const token of hotTokens.slice(0, 3)) {
           try {
@@ -304,6 +316,17 @@ async function main() {
         const msg = flowScanner.formatAlerts(significant, 5);
         if (msg) await bot.sendRaw(msg);
 
+        for (const token of significant) {
+          const dir = token.flow?.outflowCount > token.flow?.inflowCount ? 'long' : 'short';
+          await db.logAlert('FLOW', token.symbol, {
+            flowScore: token.flowScore, price: token.price, direction: dir,
+            exchange: token.exchange, pair: token.pair,
+            priceChange: token.priceChange,
+            outflowCount: token.flow?.outflowCount, inflowCount: token.flow?.inflowCount,
+            netFlow: token.flow?.netFlow,
+          }, `FLOW ${dir} ${token.symbol} score=${token.flowScore}`).catch(() => {});
+        }
+
         // Send setup chart images for top flow tokens
         for (const token of significant.slice(0, 3)) {
           try {
@@ -350,6 +373,61 @@ async function main() {
       }
     } catch (err) {
       logger.error(`Flow scanner error: ${err.message}`);
+    }
+  });
+
+  // === Alert Performance Tracker — check prices for past alerts every 10 min ===
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW'], 65);
+      if (!unchecked.length) return;
+
+      for (const alert of unchecked) {
+        try {
+          const pair = alert.data?.pair;
+          const exchangeId = alert.data?.exchange;
+          const alertPrice = parseFloat(alert.data?.price);
+          const direction = alert.data?.direction || 'long';
+          if (!pair || !exchangeId || !alertPrice) continue;
+
+          const exchange = listingMonitor.exchanges[exchangeId];
+          if (!exchange) continue;
+          const ticker = await exchange.fetchTicker(pair);
+          if (!ticker?.last) continue;
+
+          const currentPrice = ticker.last;
+          const ageMs = Date.now() - new Date(alert.created_at).getTime();
+          const ageHours = ageMs / 3600000;
+
+          const rawPnl = ((currentPrice - alertPrice) / alertPrice) * 100;
+          const pnl = direction === 'short' ? -rawPnl : rawPnl;
+
+          const updates = {};
+          if (!alert.data.checked_1h && ageHours >= 1) {
+            updates.checked_1h = true;
+            updates.price_1h = currentPrice;
+            updates.pnl_1h = parseFloat(pnl.toFixed(2));
+          }
+          if (!alert.data.checked_4h && ageHours >= 4) {
+            updates.checked_4h = true;
+            updates.price_4h = currentPrice;
+            updates.pnl_4h = parseFloat(pnl.toFixed(2));
+          }
+          if (!alert.data.checked_24h && ageHours >= 24) {
+            updates.checked_24h = true;
+            updates.price_24h = currentPrice;
+            updates.pnl_24h = parseFloat(pnl.toFixed(2));
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await db.updateAlertPerformance(alert.id, updates);
+          }
+        } catch (e) {
+          logger.debug(`Alert perf check failed for ${alert.symbol}: ${e.message}`);
+        }
+      }
+    } catch (err) {
+      logger.error(`Alert performance tracker error: ${err.message}`);
     }
   });
 

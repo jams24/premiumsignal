@@ -660,4 +660,67 @@ async function getUserClosedTrades(telegramId, limit = 20) {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, setUserPaperConfig, getUserClosedTrades };
+async function getUncheckedAlerts(alertTypes, minAgeMinutes) {
+  const { rows } = await query(
+    `SELECT * FROM alert_log
+     WHERE alert_type = ANY($1)
+       AND created_at < NOW() - ($2 || ' minutes')::interval
+       AND (data->>'price') IS NOT NULL
+       AND (data->>'checked_1h') IS NULL
+     ORDER BY created_at ASC LIMIT 50`,
+    [alertTypes, String(minAgeMinutes)]
+  );
+  return rows;
+}
+
+async function updateAlertPerformance(alertId, updates) {
+  await query(
+    `UPDATE alert_log SET data = data || $2::jsonb WHERE id = $1`,
+    [alertId, JSON.stringify(updates)]
+  );
+}
+
+async function getAlertPerformance(alertTypes, days = 7) {
+  const { rows } = await query(
+    `SELECT alert_type,
+       count(*) as total,
+       count(*) FILTER (WHERE (data->>'pnl_1h')::float > 0) as win_1h,
+       count(*) FILTER (WHERE (data->>'pnl_1h')::float < 0) as loss_1h,
+       round(avg((data->>'pnl_1h')::float)::numeric, 2) as avg_pnl_1h,
+       count(*) FILTER (WHERE (data->>'pnl_4h')::float > 0) as win_4h,
+       count(*) FILTER (WHERE (data->>'pnl_4h')::float < 0) as loss_4h,
+       round(avg((data->>'pnl_4h')::float)::numeric, 2) as avg_pnl_4h,
+       count(*) FILTER (WHERE (data->>'pnl_24h')::float > 0) as win_24h,
+       count(*) FILTER (WHERE (data->>'pnl_24h')::float < 0) as loss_24h,
+       round(avg((data->>'pnl_24h')::float)::numeric, 2) as avg_pnl_24h,
+       round(avg((data->>'score')::float)::numeric, 1) as avg_score,
+       count(*) FILTER (WHERE (data->>'checked_1h') IS NOT NULL) as checked
+     FROM alert_log
+     WHERE alert_type = ANY($1) AND created_at > NOW() - ($2 || ' days')::interval
+     GROUP BY alert_type`,
+    [alertTypes, String(days)]
+  );
+  return rows;
+}
+
+async function getAlertPerformanceBySymbol(alertTypes, days = 7, limit = 15) {
+  const { rows } = await query(
+    `SELECT symbol, alert_type,
+       count(*) as alerts,
+       round(avg((data->>'pnl_1h')::float)::numeric, 2) as avg_1h,
+       round(avg((data->>'pnl_4h')::float)::numeric, 2) as avg_4h,
+       round(avg((data->>'pnl_24h')::float)::numeric, 2) as avg_24h,
+       round(max((data->>'pnl_24h')::float)::numeric, 2) as best_24h,
+       round(min((data->>'pnl_24h')::float)::numeric, 2) as worst_24h
+     FROM alert_log
+     WHERE alert_type = ANY($1) AND created_at > NOW() - ($2 || ' days')::interval
+       AND (data->>'checked_1h') IS NOT NULL
+     GROUP BY symbol, alert_type
+     ORDER BY avg_4h DESC NULLS LAST
+     LIMIT $3`,
+    [alertTypes, String(days), limit]
+  );
+  return rows;
+}
+
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol };

@@ -141,6 +141,7 @@ class TelegramBot {
         `/signals — Active signals\n` +
         `/scan — Run market scan now\n` +
         `/stats — Signal win rate stats\n` +
+        `/alertperf — Onchain/flow alert P&L tracker\n` +
         `/review — Past signal performance\n\n` +
         `<b>📝 Your Paper Portfolio:</b>\n` +
         `/guide — How to start paper trading\n` +
@@ -760,6 +761,44 @@ class TelegramBot {
         );
       } catch (err) {
         ctx.reply('Error fetching stats.');
+      }
+    });
+
+    this.bot.command('alertperf', async (ctx) => {
+      try {
+        const days = parseInt(ctx.message.text.split(' ')[1]) || 7;
+        const [overall, bySymbol] = await Promise.all([
+          db.getAlertPerformance(['ONCHAIN', 'FLOW'], days),
+          db.getAlertPerformanceBySymbol(['ONCHAIN', 'FLOW'], days, 10),
+        ]);
+
+        if (!overall.length) {
+          return ctx.replyWithHTML('📊 No alert performance data yet. Alerts are now being tracked — check back in a few hours.');
+        }
+
+        let msg = `📊 <b>ALERT PERFORMANCE</b> (last ${days}d)\n\n`;
+        for (const r of overall) {
+          const w1h = r.checked > 0 ? `${r.win_1h}W/${r.loss_1h}L` : '—';
+          const w4h = r.checked > 0 ? `${r.win_4h}W/${r.loss_4h}L` : '—';
+          const w24h = r.checked > 0 ? `${r.win_24h}W/${r.loss_24h}L` : '—';
+          msg += `<b>${r.alert_type}</b> (${r.total} alerts, avg score ${r.avg_score})\n`;
+          msg += `  1h: ${r.avg_pnl_1h ?? '—'}% avg (${w1h})\n`;
+          msg += `  4h: ${r.avg_pnl_4h ?? '—'}% avg (${w4h})\n`;
+          msg += `  24h: ${r.avg_pnl_24h ?? '—'}% avg (${w24h})\n\n`;
+        }
+
+        if (bySymbol.length) {
+          msg += `<b>TOP SYMBOLS BY 4H P&L</b>\n`;
+          for (const r of bySymbol) {
+            const icon = (r.avg_4h ?? 0) > 0 ? '🟢' : '🔴';
+            msg += `${icon} <code>${r.symbol}</code> ${r.alert_type} — 1h:${r.avg_1h ?? '—'}% 4h:${r.avg_4h ?? '—'}% 24h:${r.avg_24h ?? '—'}% (${r.alerts} alerts)\n`;
+          }
+        }
+
+        ctx.replyWithHTML(msg);
+      } catch (err) {
+        logger.error(`alertperf error: ${err.message}`);
+        ctx.reply('Error fetching alert performance.');
       }
     });
 
