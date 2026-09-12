@@ -36,7 +36,7 @@ class TelegramBot {
     const ADMIN_COMMANDS = new Set([
       'trade', 'stop', 'trademode', 'setsize', 'setleverage', 'setloss', 'setmaxloss',
       'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
-      'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop',
+      'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop', 'onchainsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
@@ -1273,23 +1273,38 @@ class TelegramBot {
         this.onchainTradeExecutor.saveConfig();
         ctx.replyWithHTML('❌ Onchain auto-trading <b>disabled</b>.');
       } else {
+        // Show full inline settings panel
         const te = this.onchainTradeExecutor;
-        const balance = await te.getBalance();
-        ctx.replyWithHTML(
-          `🔗 <b>ONCHAIN AUTO-TRADING</b>\n\n` +
-          `Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
-          `Balance: $${balance.toFixed(2)} | Size: $${te.maxPositionSize} | ${te.defaultLeverage}x\n` +
-          `Min Score: ${te.minConfidence === 5 ? 60 : te.minConfidence === 4 ? 45 : 30}+\n` +
-          `Max Positions: ${te.maxConcurrentPositions}\n` +
-          `Daily Loss: $${te.maxDailyLoss} | Per-Trade: $${te.maxLossPerTrade}\n` +
-          `Today P\&L: $${te.dailyPnL.toFixed(2)}\n\n` +
-          `<b>Commands:</b>\n` +
-          `/onchaintrade on|off|paper|live\n` +
-          `/onchainsize <$> | /onchainlev <x>\n` +
-          `/onchainloss <$> | /onchainmaxloss <$>\n` +
-          `/onchainpositions <n> | /onchainminscore <30-100>\n` +
-          `/onchainstats — P\&L stats`
-        );
+        await te.recalcDailyPnL?.();
+        const openTrades = await db.getOpenTrades('onchain').catch(() => []);
+        const scoreLabel = te.minConfidence === 5 ? '60+' : te.minConfidence === 4 ? '45+' : '30+';
+
+        const text =
+          `🔗 <b>ONCHAIN SETTINGS</b>\n\n` +
+          `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+          `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
+          `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+          `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+          `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+          `🎯 Min Score: <b>${scoreLabel}</b> (confidence ${te.minConfidence}/5)\n` +
+          `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
+          `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+          `Tap any button to configure:`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback(`${te.mode === 'paper' ? '📝' : '🔴'} Mode: ${te.mode.toUpperCase()}`, 'oc_cfg_mode'),
+           Markup.button.callback(`${te.enabled ? '✅ ON' : '⛔ OFF'}`, 'oc_cfg_toggle')],
+          [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'oc_cfg_size'),
+           Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'oc_cfg_lev')],
+          [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
+           Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
+          [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
+           Markup.button.callback(`🎯 Score: ${scoreLabel}`, 'oc_cfg_minscore')],
+          [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
+           Markup.button.callback('🔄 Refresh', 'oc_settings')],
+          [Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
+        ]);
+        ctx.replyWithHTML(text, keyboard);
       }
     });
 
@@ -1491,27 +1506,278 @@ class TelegramBot {
       }
     });
 
+    // ── ONCHAIN SETTINGS PANEL (full inline buttons) ──
+    const octe = () => this.onchainTradeExecutor;
+    const ocCheck = (val, cur) => val === cur ? ' ✓' : '';
+    const ocScoreLabel = (conf) => conf === 5 ? '60+' : conf === 4 ? '45+' : '30+';
+
+    const showOcSettings = async (ctx, isNew = false) => {
+      const te = octe();
+      if (!te) return;
+      await te.recalcDailyPnL?.();
+      const openTrades = await db.getOpenTrades('onchain').catch(() => []);
+
+      const text =
+        `🔗 <b>ONCHAIN SETTINGS</b>\n\n` +
+        `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+        `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
+        `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+        `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+        `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+        `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
+        `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
+        `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+        `Tap any button to configure:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(`${te.mode === 'paper' ? '📝' : '🔴'} Mode: ${te.mode.toUpperCase()}`, 'oc_cfg_mode'),
+         Markup.button.callback(`${te.enabled ? '✅ ON' : '⛔ OFF'}`, 'oc_cfg_toggle')],
+        [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'oc_cfg_size'),
+         Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'oc_cfg_lev')],
+        [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
+         Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
+         Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore')],
+        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
+         Markup.button.callback('🔄 Refresh', 'oc_settings')],
+        [Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
+      ]);
+
+      if (isNew) {
+        await ctx.replyWithHTML(text, keyboard);
+      } else {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      }
+    };
+
     this.bot.action('oc_settings', async (ctx) => {
-      if (!this.onchainTradeExecutor) return ctx.answerCbQuery('Not initialized.');
+      if (!octe()) return ctx.answerCbQuery('Not initialized.');
       await ctx.answerCbQuery();
-      const te = this.onchainTradeExecutor;
-      const msg = `🔗 <b>ONCHAIN SETTINGS</b>\n\n` +
-        `Mode: ${te.mode.toUpperCase()} | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
-        `Size: $${te.maxPositionSize} | Leverage: ${te.defaultLeverage}x\n` +
-        `Max Loss/Trade: $${te.maxLossPerTrade} | Daily Limit: $${te.maxDailyLoss}\n` +
-        `Max Positions: ${te.maxConcurrentPositions}\n` +
-        `Min Confidence: ${te.minConfidence}/5\n` +
-        `Today P&L: $${te.dailyPnL.toFixed(2)}\n\n` +
-        `Commands:\n` +
-        `/onchainsize <amt> — Position size\n` +
-        `/onchainlev <n> — Leverage\n` +
-        `/onchainmaxloss <amt> — Per-trade max loss\n` +
-        `/onchainloss <amt> — Daily loss limit\n` +
-        `/onchaintrade on|off|paper|live`;
-      await ctx.editMessageText(msg, {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Positions', 'oc_refresh')]]),
+      await showOcSettings(ctx);
+    });
+
+    // ── MODE ──
+    this.bot.action('oc_cfg_mode', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — TRADE MODE</b>\n\n` +
+        `Current: <b>${te.mode.toUpperCase()}</b> ${te.mode === 'paper' ? '📝' : '💰'}\n\n` +
+        `📝 <b>Paper</b> — Simulated trades, no real funds\n` +
+        `💰 <b>Live</b> — Real orders on exchange`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`📝 Paper${ocCheck('paper', te.mode)}`, 'oc_mode_paper'),
+           Markup.button.callback(`💰 Live${ocCheck('live', te.mode)}`, 'oc_mode_live')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    this.bot.action('oc_mode_paper', async (ctx) => {
+      octe().mode = 'paper'; octe().enabled = true; octe().saveConfig();
+      await ctx.answerCbQuery('Paper mode activated');
+      await showOcSettings(ctx);
+    });
+    this.bot.action('oc_mode_live', async (ctx) => {
+      const te = octe();
+      ctx.editMessageText(
+        `⚠️ <b>SWITCH ONCHAIN TO LIVE?</b>\n\n` +
+        `Real funds will be used for onchain signals.\n\n` +
+        `💵 Size: $${te.maxPositionSize}/trade\n` +
+        `⚡ Leverage: ${te.defaultLeverage}x\n` +
+        `🔒 Max loss/trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'No cap ⚠️'}\n` +
+        `🛡️ Daily loss limit: $${te.maxDailyLoss}`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Yes, go LIVE', 'oc_mode_live_yes')],
+          [Markup.button.callback('❌ Cancel', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    this.bot.action('oc_mode_live_yes', async (ctx) => {
+      octe().mode = 'live'; octe().enabled = true; octe().saveConfig();
+      await ctx.answerCbQuery('🔴 LIVE TRADING ACTIVATED');
+      await showOcSettings(ctx);
+    });
+
+    // ── TOGGLE ──
+    this.bot.action('oc_cfg_toggle', async (ctx) => {
+      const te = octe();
+      te.enabled = !te.enabled; te.saveConfig();
+      await ctx.answerCbQuery(te.enabled ? 'Trading ENABLED' : 'Trading DISABLED');
+      await showOcSettings(ctx);
+    });
+
+    // ── POSITION SIZE ──
+    this.bot.action('oc_cfg_size', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — POSITION SIZE</b>\n\n` +
+        `Current: <b>$${te.maxPositionSize}</b> per trade\n\n` +
+        `This is the maximum margin per trade.\nUse /onchainsize <amount> for custom values.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`$50${ocCheck(50, te.maxPositionSize)}`, 'oc_size_50'),
+           Markup.button.callback(`$100${ocCheck(100, te.maxPositionSize)}`, 'oc_size_100'),
+           Markup.button.callback(`$250${ocCheck(250, te.maxPositionSize)}`, 'oc_size_250')],
+          [Markup.button.callback(`$500${ocCheck(500, te.maxPositionSize)}`, 'oc_size_500'),
+           Markup.button.callback(`$1000${ocCheck(1000, te.maxPositionSize)}`, 'oc_size_1000'),
+           Markup.button.callback(`$2000${ocCheck(2000, te.maxPositionSize)}`, 'oc_size_2000')],
+          [Markup.button.callback(`$3000${ocCheck(3000, te.maxPositionSize)}`, 'oc_size_3000'),
+           Markup.button.callback(`$5000${ocCheck(5000, te.maxPositionSize)}`, 'oc_size_5000')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    for (const size of [50, 100, 250, 500, 1000, 2000, 3000, 5000]) {
+      this.bot.action(`oc_size_${size}`, async (ctx) => {
+        octe().maxPositionSize = size; octe().saveConfig();
+        await ctx.answerCbQuery(`Size: $${size}`);
+        await showOcSettings(ctx);
       });
+    }
+
+    // ── LEVERAGE ──
+    this.bot.action('oc_cfg_lev', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — LEVERAGE</b>\n\n` +
+        `Current: <b>${te.defaultLeverage}x</b>\n\n` +
+        `Higher leverage = more profit potential but faster liquidation.\nUse /onchainlev <n> for custom values.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`3x${ocCheck(3, te.defaultLeverage)}`, 'oc_lev_3'),
+           Markup.button.callback(`5x${ocCheck(5, te.defaultLeverage)}`, 'oc_lev_5'),
+           Markup.button.callback(`10x${ocCheck(10, te.defaultLeverage)}`, 'oc_lev_10')],
+          [Markup.button.callback(`15x${ocCheck(15, te.defaultLeverage)}`, 'oc_lev_15'),
+           Markup.button.callback(`20x${ocCheck(20, te.defaultLeverage)}`, 'oc_lev_20'),
+           Markup.button.callback(`25x${ocCheck(25, te.defaultLeverage)}`, 'oc_lev_25')],
+          [Markup.button.callback(`30x${ocCheck(30, te.defaultLeverage)}`, 'oc_lev_30'),
+           Markup.button.callback(`50x${ocCheck(50, te.defaultLeverage)}`, 'oc_lev_50')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    for (const lev of [3, 5, 10, 15, 20, 25, 30, 50]) {
+      this.bot.action(`oc_lev_${lev}`, async (ctx) => {
+        octe().defaultLeverage = lev; octe().saveConfig();
+        await ctx.answerCbQuery(`Leverage: ${lev}x`);
+        await showOcSettings(ctx);
+      });
+    }
+
+    // ── DAILY LOSS LIMIT ──
+    this.bot.action('oc_cfg_dailyloss', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — DAILY LOSS LIMIT</b>\n\n` +
+        `Current: <b>$${te.maxDailyLoss}</b>\n\n` +
+        `Trading stops for the day when losses hit this limit.\nUse /onchainloss <amount> for custom values.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`$10${ocCheck(10, te.maxDailyLoss)}`, 'oc_dloss_10'),
+           Markup.button.callback(`$20${ocCheck(20, te.maxDailyLoss)}`, 'oc_dloss_20'),
+           Markup.button.callback(`$30${ocCheck(30, te.maxDailyLoss)}`, 'oc_dloss_30')],
+          [Markup.button.callback(`$50${ocCheck(50, te.maxDailyLoss)}`, 'oc_dloss_50'),
+           Markup.button.callback(`$100${ocCheck(100, te.maxDailyLoss)}`, 'oc_dloss_100'),
+           Markup.button.callback(`$200${ocCheck(200, te.maxDailyLoss)}`, 'oc_dloss_200')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    for (const loss of [10, 20, 30, 50, 100, 200]) {
+      this.bot.action(`oc_dloss_${loss}`, async (ctx) => {
+        octe().maxDailyLoss = loss; octe().saveConfig();
+        await ctx.answerCbQuery(`Daily loss: $${loss}`);
+        await showOcSettings(ctx);
+      });
+    }
+
+    // ── PER-TRADE MAX LOSS ──
+    this.bot.action('oc_cfg_tradeloss', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — PER-TRADE MAX LOSS</b>\n\n` +
+        `Current: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n` +
+        `Trade is force-closed if unrealized loss exceeds this.\nUse /onchainmaxloss <amount> for custom values.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'oc_tloss_6'),
+           Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'oc_tloss_10'),
+           Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'oc_tloss_20')],
+          [Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'oc_tloss_30'),
+           Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'oc_tloss_50'),
+           Markup.button.callback(`$60${ocCheck(60, te.maxLossPerTrade)}`, 'oc_tloss_60')],
+          [Markup.button.callback(`$100${ocCheck(100, te.maxLossPerTrade)}`, 'oc_tloss_100'),
+           Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'oc_tloss_0')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    for (const loss of [0, 6, 10, 20, 30, 50, 60, 100]) {
+      this.bot.action(`oc_tloss_${loss}`, async (ctx) => {
+        octe().maxLossPerTrade = loss; octe().saveConfig();
+        await ctx.answerCbQuery(loss > 0 ? `Max loss/trade: $${loss}` : 'Per-trade cap disabled');
+        await showOcSettings(ctx);
+      });
+    }
+
+    // ── MAX POSITIONS ──
+    this.bot.action('oc_cfg_maxpos', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — MAX CONCURRENT POSITIONS</b>\n\n` +
+        `Current: <b>${te.maxConcurrentPositions}</b>\n\n` +
+        `Max trades open at the same time.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`1${ocCheck(1, te.maxConcurrentPositions)}`, 'oc_pos_1'),
+           Markup.button.callback(`2${ocCheck(2, te.maxConcurrentPositions)}`, 'oc_pos_2'),
+           Markup.button.callback(`3${ocCheck(3, te.maxConcurrentPositions)}`, 'oc_pos_3')],
+          [Markup.button.callback(`5${ocCheck(5, te.maxConcurrentPositions)}`, 'oc_pos_5'),
+           Markup.button.callback(`7${ocCheck(7, te.maxConcurrentPositions)}`, 'oc_pos_7'),
+           Markup.button.callback(`10${ocCheck(10, te.maxConcurrentPositions)}`, 'oc_pos_10')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    for (const pos of [1, 2, 3, 5, 7, 10]) {
+      this.bot.action(`oc_pos_${pos}`, async (ctx) => {
+        octe().maxConcurrentPositions = pos; octe().saveConfig();
+        await ctx.answerCbQuery(`Max positions: ${pos}`);
+        await showOcSettings(ctx);
+      });
+    }
+
+    // ── MIN SCORE (maps to confidence) ──
+    this.bot.action('oc_cfg_minscore', async (ctx) => {
+      await ctx.answerCbQuery();
+      const te = octe();
+      ctx.editMessageText(
+        `🔗 <b>ONCHAIN — MIN SCORE TO AUTO-TRADE</b>\n\n` +
+        `Current: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n\n` +
+        `🎯 <b>30+</b> — All signals (early + notable + high)\n` +
+        `⚡ <b>45+</b> — Notable + high conviction only\n` +
+        `🔥 <b>60+</b> — High conviction only (safest)\n\n` +
+        `Lower = more trades, higher = fewer but stronger signals.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`🎯 30+ (all)${ocCheck(3, te.minConfidence)}`, 'oc_score_3')],
+          [Markup.button.callback(`⚡ 45+ (notable)${ocCheck(4, te.minConfidence)}`, 'oc_score_4')],
+          [Markup.button.callback(`🔥 60+ (high only)${ocCheck(5, te.minConfidence)}`, 'oc_score_5')],
+          [Markup.button.callback('⬅️ Back', 'oc_settings')],
+        ]).reply_markup }
+      );
+    });
+    for (const conf of [3, 4, 5]) {
+      this.bot.action(`oc_score_${conf}`, async (ctx) => {
+        octe().minConfidence = conf; octe().saveConfig();
+        await ctx.answerCbQuery(`Min score: ${ocScoreLabel(conf)}`);
+        await showOcSettings(ctx);
+      });
+    }
+
+    // Also wire /onchainsettings command to show the inline panel
+    this.bot.command('onchainsettings', async (ctx) => {
+      if (!octe()) return ctx.reply('Not initialized.');
+      await showOcSettings(ctx, true);
     });
 
     this.bot.command('onchainclose', async (ctx) => {
@@ -2889,6 +3155,7 @@ class TelegramBot {
       { command: 'onchainmaxloss', description: 'Set onchain max loss per trade' },
       { command: 'onchainpositions', description: 'Set onchain max positions' },
       { command: 'onchainminscore', description: 'Set min onchain score (30-100)' },
+      { command: 'onchainsettings', description: 'Onchain settings panel' },
       { command: 'onchainstats', description: 'Onchain trading P&L stats' },
       { command: 'onchainopen', description: 'View open onchain positions' },
       { command: 'onchainclose', description: 'Close onchain position by symbol' },
