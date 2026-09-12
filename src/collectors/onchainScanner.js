@@ -504,7 +504,8 @@ class OnchainScanner {
         ? this.liquidationScanner.generateSetupSnapshot(token)
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
 
-      const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : 'long';
+      const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : null;
+      if (!direction) return null;
       const price = token.price;
       const mult = direction === 'long' ? 1 : -1;
 
