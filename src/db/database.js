@@ -248,6 +248,7 @@ async function init(retries = 3) {
     ['realized_pnl', 'DOUBLE PRECISION DEFAULT 0'],
     ['peak_price', 'DOUBLE PRECISION'],
     ['atr', 'DOUBLE PRECISION'],
+    ['source', "TEXT DEFAULT 'main'"],
   ];
   for (const [col, type] of newCols) {
     try { await p.query(`ALTER TABLE trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
