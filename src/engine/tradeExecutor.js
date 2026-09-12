@@ -125,6 +125,22 @@ class TradeExecutor {
       return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
     }
 
+    // Direction flip guard: don't reverse direction within 2h of closing a trade
+    try {
+      const { rows: lastTrades } = await db.query(
+        `SELECT direction, closed_at FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        [signal.symbol]
+      );
+      if (lastTrades.length && lastTrades[0].direction !== signal.direction) {
+        const closedAt = new Date(lastTrades[0].closed_at).getTime();
+        const flipCooldown = closedAt + 2 * 60 * 60 * 1000;
+        if (Date.now() < flipCooldown) {
+          const minsLeft = Math.ceil((flipCooldown - Date.now()) / 60000);
+          return { ok: false, reason: `${signal.symbol} direction flip blocked — was ${lastTrades[0].direction}, now ${signal.direction} (${minsLeft}m cooldown)` };
+        }
+      }
+    } catch (e) { /* DB error, skip check */ }
+
     const openPositions = await db.getOpenTrades();
     if (openPositions.length >= this.maxConcurrentPositions) {
       return { ok: false, reason: `Max concurrent positions reached (${openPositions.length}/${this.maxConcurrentPositions})` };
