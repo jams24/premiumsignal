@@ -336,8 +336,9 @@ async function main() {
           try {
             const setup = token._tradeSetup;
             if (!setup) continue;
-            if (Math.abs(token.priceChange) > 20) {
-              logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% — late entry risk`);
+            const pumpLimit = token.score >= 60 ? 40 : token.score >= 45 ? 30 : 20;
+            if (Math.abs(token.priceChange) > pumpLimit) {
+              logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${pumpLimit}% for score ${token.score}) — late entry risk`);
               continue;
             }
             await onchainTradeExecutor.executeSignal(setup);
@@ -438,8 +439,9 @@ async function main() {
           try {
             const setup = token.tradeSetup;
             if (!setup) continue;
-            if (Math.abs(token.priceChange) > 20) {
-              logger.info(`Flow skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% — late entry risk`);
+            const flowPumpLimit = token.flowScore >= 60 ? 40 : token.flowScore >= 45 ? 30 : 20;
+            if (Math.abs(token.priceChange) > flowPumpLimit) {
+              logger.info(`Flow skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${flowPumpLimit}% for score ${token.flowScore}) — late entry risk`);
               continue;
             }
             await onchainTradeExecutor.executeSignal(setup);
