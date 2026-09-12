@@ -428,29 +428,41 @@ class FlowScanner {
     const resolved = this.resolvedTokens.get(symbol);
     const addrLine = resolved?.address ? `\n📋 <code>${resolved.address}</code>\n⛓ ${resolved.chain || 'unknown'}` : '';
 
+    const fmtU = (v) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1000 ? `$${(v / 1e3).toFixed(0)}K` : `$${(v || 0).toFixed(0)}`;
+    const outUsd = mem.totalOutflowUsd || 0;
+    const inUsd = mem.totalInflowUsd || 0;
+    const netUsd = outUsd - inUsd;
+    const netDir = outUsd > inUsd * 2 ? '📤 OUTFLOW-HEAVY (accumulation)' :
+                   inUsd > outUsd * 2 ? '📥 INFLOW-HEAVY (distribution)' : '↔️ MIXED FLOWS';
+    const priceNow = mem.currentPrice ? `$${mem.currentPrice >= 1 ? mem.currentPrice.toFixed(4) : mem.currentPrice.toPrecision(4)}` : '—';
+    const priceSince = (mem.priceAtFirst && mem.currentPrice) ? `${((mem.currentPrice - mem.priceAtFirst) / mem.priceAtFirst * 100).toFixed(1)}%` : '—';
+
+    const flowDetail = `📤 Outflows: ${mem.totalOutflows} txs (${fmtU(outUsd)}) across ${mem.scansWithOutflow} scans\n` +
+      `📥 Inflows: ${mem.totalInflows} txs (${fmtU(inUsd)}) across ${mem.scansWithInflow || 0} scans\n` +
+      `💵 Net: ${fmtU(Math.abs(netUsd))} ${netUsd > 0 ? 'outflow' : 'inflow'}\n` +
+      `📊 Direction: ${netDir}\n` +
+      `🏛 Exchanges: ${exchanges}\n` +
+      `💰 Price: ${priceNow} (${priceSince} since first signal)`;
+
     if (tier === 'heavy') {
       return `🔥🏦 <b>HEAVY ACCUMULATION ALERT</b>\n\n` +
         `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
-        `Sustained exchange outflows over <b>${hours} hours</b>\n` +
-        `📤 ${mem.totalOutflows} withdrawals across ${mem.scansWithOutflow} scans\n` +
-        `🏛 Exchanges: ${exchanges}\n\n` +
-        `<i>Consistent accumulation over hours signals smart money positioning before a major move. ` +
-        `Price at first signal: $${mem.priceAtFirst?.toFixed(6) || '?'}</i>`;
+        `Sustained exchange outflows over <b>${hours} hours</b>\n\n` +
+        `${flowDetail}\n\n` +
+        `<i>Consistent accumulation over hours signals smart money positioning before a major move.</i>`;
     }
     if (tier === 'notable') {
       return `⚡🏦 <b>ACCUMULATION BUILDING</b>\n\n` +
         `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
-        `Exchange outflows repeating over <b>${hours} hours</b>\n` +
-        `📤 ${mem.totalOutflows} withdrawals across ${mem.scansWithOutflow} scans\n` +
-        `🏛 Exchanges: ${exchanges}\n\n` +
+        `Exchange flow pattern strengthening over <b>${hours} hours</b>\n\n` +
+        `${flowDetail}\n\n` +
         `<i>Outflow pattern is strengthening. Monitor for continuation — if this keeps building, it's a high-conviction setup.</i>`;
     }
     return `👀🏦 <b>EARLY FLOW SIGNAL</b>\n\n` +
       `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
-      `Exchange outflows detected\n` +
-      `📤 ${mem.totalOutflows} withdrawals\n` +
-      `🏛 Exchanges: ${exchanges}\n\n` +
-      `<i>Initial outflow detected. Needs more scans to confirm accumulation pattern.</i>`;
+      `Exchange flow activity detected\n\n` +
+      `${flowDetail}\n\n` +
+      `<i>Initial flow detected. Needs more scans to confirm pattern.</i>`;
   }
 
   getTier(score) {

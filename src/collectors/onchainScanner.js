@@ -509,9 +509,10 @@ class OnchainScanner {
       const price = token.price;
       const mult = direction === 'long' ? 1 : -1;
 
-      const tp1 = price + mult * atr * 2.0;
-      const tp2 = price + mult * atr * 4.0;
-      const tp3 = price + mult * atr * 6.0;
+      const minPrice = price * 0.05;
+      const tp1 = Math.max(price + mult * atr * 2.0, minPrice);
+      const tp2 = Math.max(price + mult * atr * 4.0, minPrice);
+      const tp3 = Math.max(price + mult * atr * 6.0, minPrice);
 
       // SL: prefer structure levels (support/resistance walls, liq zones) over blind ATR
       let sl = price - mult * atr * 2.0;

@@ -314,12 +314,12 @@ class LiquidationScanner {
 
     if (oiChange4h > 15) bullPoints += 2;
     if (oiChange4h > 25) bullPoints += 1;
-    if (oiChange4h < -15) bearPoints += 2;
+    if (oiChange4h < -15) bearPoints += 1;
 
     if (fundingRate > 0.0003) bullPoints += 1;
     if (fundingRate > 0.001) bullPoints += 1;
-    if (fundingRate < -0.0003) bearPoints += 1;
-    if (fundingRate < -0.001) bearPoints += 1;
+    if (fundingRate < -0.0003 && fundingRate >= -0.005) bearPoints += 1;
+    if (fundingRate < -0.005) bullPoints += 1;
 
     if (priceChange > 3) bullPoints += 1;
     if (priceChange < -3) bearPoints += 1;
@@ -374,6 +374,19 @@ class LiquidationScanner {
 
     if (bullPoints > bearPoints + 1) snap.direction = 'long';
     else if (bearPoints > bullPoints + 1) snap.direction = 'short';
+
+    // Conflict guard: strong outflows (accumulation) contradict SHORT → force neutral
+    if (snap.direction === 'short' && exchangeFlow &&
+        exchangeFlow.outflowCount >= 5 && exchangeFlow.outflowCount > exchangeFlow.inflowCount * 3) {
+      snap.direction = 'neutral';
+      snap.risks.push('Outflows contradict short bias — accumulation pattern conflicts with bearish signals');
+    }
+    // Same for strong inflows contradicting LONG
+    if (snap.direction === 'long' && exchangeFlow &&
+        exchangeFlow.inflowCount >= 5 && exchangeFlow.inflowCount > exchangeFlow.outflowCount * 3) {
+      snap.direction = 'neutral';
+      snap.risks.push('Inflows contradict long bias — distribution pattern conflicts with bullish signals');
+    }
 
     const totalPoints = bullPoints + bearPoints;
     const dominance = Math.max(bullPoints, bearPoints) / (totalPoints || 1);
