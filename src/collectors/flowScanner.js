@@ -102,7 +102,7 @@ class FlowScanner {
 
     // Score using cumulative data
     for (const r of results) {
-      r.flowScore = this.scoreFlow(r.flow);
+      r.flowScore = this.scoreFlow(r.flow, r);
       const mem = this.flowMemory.get(r.symbol);
       if (mem) {
         r.cumulativeScore = this.scoreCumulative(mem);
@@ -163,6 +163,8 @@ class FlowScanner {
         scansWithInflow: 0,
         totalOutflows: 0,
         totalInflows: 0,
+        totalOutflowUsd: 0,
+        totalInflowUsd: 0,
         exchanges: new Set(),
         peakScore: 0,
         priceAtFirst: price,
@@ -176,13 +178,18 @@ class FlowScanner {
     mem.lastSeen = now;
     mem.currentPrice = price;
 
+    const outflowUsd = (flow.outflowAmount || 0) * (price || 0);
+    const inflowUsd = (flow.inflowAmount || 0) * (price || 0);
+
     if (flow.outflowCount > 0) {
       mem.scansWithOutflow++;
       mem.totalOutflows += flow.outflowCount;
+      mem.totalOutflowUsd = (mem.totalOutflowUsd || 0) + outflowUsd;
     }
     if (flow.inflowCount > 0) {
       mem.scansWithInflow++;
       mem.totalInflows += flow.inflowCount;
+      mem.totalInflowUsd = (mem.totalInflowUsd || 0) + inflowUsd;
     }
     for (const ex of (flow.exchanges || [])) {
       mem.exchanges.add(ex);
@@ -230,10 +237,18 @@ class FlowScanner {
     return Math.max(score, 0);
   }
 
-  scoreFlow(flow) {
+  scoreFlow(flow, token) {
     if (!flow) return 0;
     let score = 0;
 
+    // Calculate USD values of flows
+    const price = token?.price || 0;
+    const outflowUsd = (flow.outflowAmount || 0) * price;
+    const inflowUsd = (flow.inflowAmount || 0) * price;
+    const netFlowUsd = outflowUsd - inflowUsd;
+    const marketVol = token?.volume || 0;
+
+    // Flow count scoring (unchanged)
     if (flow.outflowCount >= 8) score += 30;
     else if (flow.outflowCount >= 5) score += 20;
     else if (flow.outflowCount >= 3) score += 10;
@@ -245,7 +260,27 @@ class FlowScanner {
 
     if (flow.inflowCount > flow.outflowCount && flow.inflowCount >= 5) score -= 10;
 
-    return score;
+    // USD value bonus — large flows that could move the market
+    if (marketVol > 0 && outflowUsd > 0) {
+      const flowPctOfVol = outflowUsd / marketVol;
+      if (flowPctOfVol > 0.01) score += 15;       // >1% of daily volume
+      else if (flowPctOfVol > 0.005) score += 10;  // >0.5%
+      else if (flowPctOfVol > 0.001) score += 5;   // >0.1%
+    }
+
+    // Penalize insignificant flows — tiny amounts are noise
+    if (outflowUsd > 0 && outflowUsd < 5000 && flow.outflowCount < 5) {
+      score -= 10;
+    }
+
+    // Large single transfers are more significant
+    if (flow.largeTransfers?.length) {
+      const largestUsd = flow.largeTransfers[0]?.amount * price;
+      if (largestUsd > 100000) score += 10;
+      else if (largestUsd > 50000) score += 5;
+    }
+
+    return Math.max(score, 0);
   }
 
   // Returns new alert tier if the token crossed a threshold this scan
@@ -293,17 +328,33 @@ class FlowScanner {
         msg += `   📋 <code>${r.contractAddress}</code>  ·  ⛓ ${chainLabel}\n`;
       }
 
-      // Current scan data
+      // Current scan data with USD values
       if (f.outflowCount > 0 || f.inflowCount > 0) {
-        msg += `   📤 This scan: ${f.outflowCount} outflows, ${f.inflowCount} inflows\n`;
+        const outUsd = (f.outflowAmount || 0) * (r.price || 0);
+        const inUsd = (f.inflowAmount || 0) * (r.price || 0);
+        const fmtUsd = (v) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1000 ? `$${(v / 1e3).toFixed(0)}K` : `$${v.toFixed(0)}`;
+        let flowLine = `   📤 This scan: ${f.outflowCount} outflows`;
+        if (outUsd > 0) flowLine += ` (${fmtUsd(outUsd)})`;
+        flowLine += `, ${f.inflowCount} inflows`;
+        if (inUsd > 0) flowLine += ` (${fmtUsd(inUsd)})`;
+        msg += flowLine + '\n';
+        if (r.volume && outUsd > 0) {
+          const pctOfVol = (outUsd / r.volume * 100).toFixed(2);
+          if (outUsd > 5000) msg += `   📊 Outflow = ${pctOfVol}% of daily volume\n`;
+        }
       }
 
       // Cumulative data (the key differentiator)
       if (mem) {
         const hours = ((mem.lastSeen - mem.firstSeen) / (60 * 60 * 1000)).toFixed(1);
         msg += `   📊 <b>Cumulative (${hours}h):</b>\n`;
-        msg += `      Outflow scans: ${mem.scansWithOutflow} | Total withdrawals: ${mem.totalOutflows}\n`;
-        msg += `      Inflow scans: ${mem.scansWithInflow} | Total deposits: ${mem.totalInflows}\n`;
+        const fmtU = (v) => v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1000 ? `$${(v / 1e3).toFixed(0)}K` : `$${(v || 0).toFixed(0)}`;
+        msg += `      Outflow scans: ${mem.scansWithOutflow} | Total: ${mem.totalOutflows} txs`;
+        if (mem.totalOutflowUsd > 0) msg += ` (${fmtU(mem.totalOutflowUsd)})`;
+        msg += '\n';
+        msg += `      Inflow scans: ${mem.scansWithInflow} | Total: ${mem.totalInflows} txs`;
+        if (mem.totalInflowUsd > 0) msg += ` (${fmtU(mem.totalInflowUsd)})`;
+        msg += '\n';
         if (mem.exchanges.size > 0) {
           msg += `      Exchanges: ${[...mem.exchanges].join(', ')}\n`;
         }

@@ -325,8 +325,27 @@ class LiquidationScanner {
     if (priceChange < -3) bearPoints += 1;
 
     if (exchangeFlow) {
-      if (exchangeFlow.outflowCount > exchangeFlow.inflowCount) bullPoints += 2;
-      if (exchangeFlow.inflowCount > exchangeFlow.outflowCount) bearPoints += 2;
+      const outUsd = (exchangeFlow.outflowAmount || 0) * (price || 0);
+      const inUsd = (exchangeFlow.inflowAmount || 0) * (price || 0);
+      const vol = tokenData.volume || tokenData.quoteVolume || 0;
+      const outSignificant = vol === 0 || outUsd > vol * 0.001;
+      const inSignificant = vol === 0 || inUsd > vol * 0.001;
+
+      if (exchangeFlow.outflowCount > exchangeFlow.inflowCount) {
+        bullPoints += outSignificant ? 3 : 1;
+        if (outUsd > 50000) bullPoints += 1;
+      }
+      if (exchangeFlow.inflowCount > exchangeFlow.outflowCount) {
+        bearPoints += inSignificant ? 3 : 1;
+        if (inUsd > 50000) bearPoints += 1;
+      }
+      // Tiny flows (<$5K, few txs) should not influence direction
+      if (outUsd > 0 && outUsd < 5000 && exchangeFlow.outflowCount < 5) {
+        bullPoints = Math.max(bullPoints - 2, 0);
+      }
+      if (inUsd > 0 && inUsd < 5000 && exchangeFlow.inflowCount < 5) {
+        bearPoints = Math.max(bearPoints - 2, 0);
+      }
     }
 
     // Order book imbalance affects direction
@@ -476,43 +495,95 @@ class LiquidationScanner {
 
   formatFlowSnapshot(tokenData) {
     const { symbol, flow, memory, priceChange, flowScore, setupData } = tokenData;
-    const snap = { direction: 'neutral', confidence: 'low', thesis: [], risks: [] };
+
+    let bullPoints = 0;
+    let bearPoints = 0;
+    const snap = { direction: 'neutral', confidence: 'low', levels: [], thesis: [], risks: [] };
+
+    // Exchange flow — leading indicator, weighted heavily
+    const outflowUsd = (flow.outflowAmount || 0) * (tokenData.price || 0);
+    const inflowUsd = (flow.inflowAmount || 0) * (tokenData.price || 0);
+    const marketVol = tokenData.volume || 0;
+    const flowSignificant = marketVol === 0 || outflowUsd > marketVol * 0.001 || inflowUsd > marketVol * 0.001;
 
     if (flow.outflowCount > flow.inflowCount && flow.outflowCount >= 3) {
-      snap.direction = 'long';
+      bullPoints += flowSignificant ? 3 : 1;
       snap.thesis.push(`${flow.outflowCount} withdrawals vs ${flow.inflowCount} deposits → accumulation`);
+      if (outflowUsd > 50000) {
+        bullPoints += 1;
+        const fmtV = outflowUsd >= 1e6 ? `$${(outflowUsd / 1e6).toFixed(1)}M` : `$${(outflowUsd / 1e3).toFixed(0)}K`;
+        snap.thesis.push(`${fmtV} in outflows — significant supply removal`);
+      }
     } else if (flow.inflowCount > flow.outflowCount && flow.inflowCount >= 3) {
-      snap.direction = 'short';
+      bearPoints += flowSignificant ? 3 : 1;
       snap.thesis.push(`${flow.inflowCount} deposits vs ${flow.outflowCount} withdrawals → sell pressure`);
     }
 
+    // Penalize tiny flows — noise, not signal
+    if (outflowUsd > 0 && outflowUsd < 5000 && flow.outflowCount < 5) {
+      bullPoints = Math.max(bullPoints - 2, 0);
+      snap.risks.push(`Small outflow volume (~$${outflowUsd.toFixed(0)}) — could be noise`);
+    }
+
+    // Cumulative memory
     if (memory) {
       if (memory.scansWithOutflow >= 5) {
-        snap.confidence = 'high';
+        bullPoints += 2;
         snap.thesis.push(`Sustained outflows over ${((memory.lastSeen - memory.firstSeen) / 3600000).toFixed(1)}h — high conviction`);
       } else if (memory.scansWithOutflow >= 3) {
-        snap.confidence = 'medium';
+        bullPoints += 1;
         snap.thesis.push('Repeated outflows building — pattern strengthening');
       }
       if (memory.exchanges?.size >= 3) {
+        bullPoints += 1;
         snap.thesis.push(`Outflows from ${memory.exchanges.size} exchanges — broad-based`);
       }
       if (memory.priceAtFirst && memory.currentPrice) {
         const priceDelta = ((memory.currentPrice - memory.priceAtFirst) / memory.priceAtFirst * 100);
-        if (priceDelta < -5 && snap.direction === 'long') {
+        if (priceDelta < -5 && bullPoints > bearPoints) {
           snap.thesis.push(`Price down ${priceDelta.toFixed(1)}% since first signal — buying the dip`);
-        } else if (priceDelta > 10 && snap.direction === 'long') {
+        } else if (priceDelta > 10) {
           snap.risks.push(`Price already up ${priceDelta.toFixed(1)}% — late entry risk`);
         }
       }
     }
 
-    // Large trades from setup data
+    // Order book imbalance (secondary — walls can be spoofed)
+    if (setupData?.orderBook) {
+      if (setupData.orderBook.imbalance5pct === 'buy_heavy') bullPoints += 1;
+      if (setupData.orderBook.imbalance5pct === 'sell_heavy') bearPoints += 1;
+      if (setupData.orderBook.imbalance === 'sell_heavy') {
+        snap.risks.push('Heavy sell-side order book — resistance overhead');
+      }
+    }
+
+    // Persistent walls (more reliable than snapshot order book)
+    if (setupData?.orderBook?.persistentWalls?.length) {
+      const pw = setupData.orderBook.persistentWalls;
+      const askWalls = pw.filter(w => w.side === 'ask');
+      const bidWalls = pw.filter(w => w.side === 'bid');
+      if (askWalls.length >= 2) {
+        bearPoints += 1;
+        snap.thesis.push(`${askWalls.length} persistent sell walls (held ${askWalls[0].ageLabel}+) → resistance`);
+      }
+      if (bidWalls.length >= 2) {
+        bullPoints += 1;
+        snap.thesis.push(`${bidWalls.length} persistent buy walls → strong floor`);
+      }
+    }
+
+    // Large whale trades
     if (setupData?.largeTrades?.length >= 2) {
       const buys = setupData.largeTrades.filter(t => t.side === 'buy');
       const sells = setupData.largeTrades.filter(t => t.side === 'sell');
-      if (buys.length > sells.length) {
+      const buyVol = buys.reduce((s, t) => s + (t.usdValue || 0), 0);
+      const sellVol = sells.reduce((s, t) => s + (t.usdValue || 0), 0);
+      if (buyVol > sellVol * 1.5 && buyVol > 10000) bullPoints += 1;
+      if (sellVol > buyVol * 1.5 && sellVol > 10000) bearPoints += 1;
+      if (buys.length > sells.length * 2) {
         snap.thesis.push(`${buys.length} large whale buys confirming accumulation`);
+      } else if (sells.length > buys.length * 2) {
+        snap.thesis.push(`${sells.length} large whale sells — distribution pressure`);
       }
     }
 
@@ -520,15 +591,51 @@ class LiquidationScanner {
       snap.risks.push('Mixed flow — both inflows and outflows detected');
     }
 
+    // Determine direction
+    if (bullPoints > bearPoints + 1) snap.direction = 'long';
+    else if (bearPoints > bullPoints + 1) snap.direction = 'short';
+
+    // Confidence
+    const totalPoints = bullPoints + bearPoints;
+    const dominance = Math.max(bullPoints, bearPoints) / (totalPoints || 1);
+    if (flowScore >= 40 && dominance > 0.7) snap.confidence = 'high';
+    else if (flowScore >= 20 && dominance > 0.6) snap.confidence = 'medium';
+
+    // Key levels from order book
+    if (setupData?.orderBook) {
+      for (const w of (setupData.orderBook.bidWalls || []).slice(0, 2)) {
+        snap.levels.push({ type: 'support', price: w.price, usd: w.usdValue, dist: w.distPct });
+      }
+      for (const w of (setupData.orderBook.askWalls || []).slice(0, 2)) {
+        snap.levels.push({ type: 'resistance', price: w.price, usd: w.usdValue, dist: w.distPct });
+      }
+    }
+
     if (!snap.thesis.length) {
       snap.thesis.push('Monitoring flow pattern — needs more data');
     }
 
+    // Format output
     const dirEmoji = snap.direction === 'long' ? '🟢 LONG BIAS' : snap.direction === 'short' ? '🔴 SHORT BIAS' : '🟡 NEUTRAL';
     const confEmoji = snap.confidence === 'high' ? '🔥' : snap.confidence === 'medium' ? '⚡' : '👀';
 
     let msg = `\n   📸 <b>SETUP SNAPSHOT</b>\n`;
     msg += `   ${dirEmoji} | Confidence: ${confEmoji} ${snap.confidence.toUpperCase()}\n`;
+
+    const supports = snap.levels.filter(l => l.type === 'support');
+    const resistances = snap.levels.filter(l => l.type === 'resistance');
+    if (supports.length || resistances.length) {
+      msg += `   📍 <b>Key Levels:</b>\n`;
+      for (const s of supports.slice(0, 2)) {
+        const usd = s.usd >= 1e6 ? `$${(s.usd / 1e6).toFixed(1)}M` : `$${(s.usd / 1e3).toFixed(0)}K`;
+        msg += `      🟢 Support: $${s.price >= 1 ? s.price.toFixed(2) : s.price.toPrecision(4)} (${usd} wall, ${s.dist}% below)\n`;
+      }
+      for (const r of resistances.slice(0, 2)) {
+        const usd = r.usd >= 1e6 ? `$${(r.usd / 1e6).toFixed(1)}M` : `$${(r.usd / 1e3).toFixed(0)}K`;
+        msg += `      🔴 Resistance: $${r.price >= 1 ? r.price.toFixed(2) : r.price.toPrecision(4)} (${usd} wall, ${r.dist}% above)\n`;
+      }
+    }
+
     msg += `   📝 <b>Thesis:</b>\n`;
     for (const t of snap.thesis.slice(0, 3)) {
       msg += `      • ${t}\n`;
