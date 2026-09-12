@@ -329,6 +329,20 @@ class FlowScanner {
         msg += `   📖 Order Book: ${imbalanceLabel} (Bid $${(ob.bidDepth / 1e6).toFixed(1)}M / Ask $${(ob.askDepth / 1e6).toFixed(1)}M)\n`;
       }
 
+      // Trade setup levels (entry, TP, SL)
+      if (r.tradeSetup) {
+        const s = r.tradeSetup;
+        const fmt = (p) => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
+        const pct = (from, to) => (((to - from) / from) * 100).toFixed(1);
+        const dir = s.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+        msg += `\n   🎯 <b>Trade Setup (${dir})</b>\n`;
+        msg += `   Entry: ${fmt(s.currentPrice)}\n`;
+        msg += `   📈 TP1: ${fmt(s.tp1)} (${s.direction === 'long' ? '+' : ''}${pct(s.currentPrice, s.tp1)}%)\n`;
+        msg += `   📈 TP2: ${fmt(s.tp2)} (${s.direction === 'long' ? '+' : ''}${pct(s.currentPrice, s.tp2)}%)\n`;
+        msg += `   📈 TP3: ${fmt(s.tp3)} (${s.direction === 'long' ? '+' : ''}${pct(s.currentPrice, s.tp3)}%)\n`;
+        msg += `   🛑 SL: ${fmt(s.stopLoss)} (${pct(s.currentPrice, s.stopLoss)}%)\n`;
+      }
+
       // Setup snapshot
       if (this.liquidationScanner && r.flowScore >= 15) {
         msg += this.liquidationScanner.formatFlowSnapshot(r);

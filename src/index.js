@@ -307,6 +307,11 @@ async function main() {
       const results = await onchainScanner.scan();
       const hotTokens = results.filter(r => r.score >= 30);
       if (hotTokens.length > 0) {
+        for (const token of hotTokens.slice(0, 5)) {
+          try {
+            token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP');
+          } catch (e) { /* skip */ }
+        }
         const msg = onchainScanner.formatAlerts(hotTokens, 5);
         if (msg) await bot.sendRaw(msg);
 
@@ -399,6 +404,11 @@ async function main() {
       const results = await flowScanner.scan();
       const significant = results.filter(r => r.flowScore >= 15);
       if (significant.length > 0) {
+        for (const token of significant.slice(0, 5)) {
+          try {
+            token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP');
+          } catch (e) { /* skip */ }
+        }
         const msg = flowScanner.formatAlerts(significant, 5);
         if (msg) await bot.sendRaw(msg);
 
