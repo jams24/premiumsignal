@@ -146,7 +146,7 @@ class TradeExecutor {
       }
     } catch (e) { /* DB error, skip check */ }
 
-    const openPositions = await db.getOpenTrades();
+    const openPositions = await db.getOpenTrades(this.settingsKey);
     if (openPositions.length >= this.maxConcurrentPositions) {
       return { ok: false, reason: `Max concurrent positions reached (${openPositions.length}/${this.maxConcurrentPositions})` };
     }
@@ -473,6 +473,7 @@ class TradeExecutor {
       dcaPrice3: this.dcaEnabled ? dcaPrice3 : null,
       dcaStage: 1,
       status: 'open',
+      source: this.settingsKey,
     };
 
     await db.saveTrade(trade);
@@ -665,6 +666,7 @@ class TradeExecutor {
         dcaStage: usedFullEntry ? 3 : 1,
         orderId: order.id,
         status: 'open',
+        source: this.settingsKey,
       };
 
       await db.saveTrade(trade);
@@ -705,7 +707,7 @@ class TradeExecutor {
 
   async checkOpenTrades() {
     this.resetDailyPnL();
-    const trades = await db.getOpenTrades();
+    const trades = await db.getOpenTrades(this.settingsKey);
     const updates = [];
 
     for (const trade of trades) {
@@ -1152,7 +1154,7 @@ class TradeExecutor {
 
   async closeSingleTrade(tradeId) {
     const trades = await db.getOpenTrades();
-    const trade = trades.find(t => t.id === tradeId);
+    const trade = trades.find(t => t.id === parseInt(tradeId));
     if (!trade) return null;
 
     const exchange = this.exchanges[trade.exchange];
@@ -1183,8 +1185,15 @@ class TradeExecutor {
     return { trade, currentPrice, pnlPct, pnlUsd };
   }
 
+  async closeBySymbol(symbol) {
+    const trades = await db.getOpenTrades(this.settingsKey);
+    const trade = trades.find(t => t.symbol.toUpperCase() === symbol.toUpperCase());
+    if (!trade) return null;
+    return this.closeSingleTrade(trade.id);
+  }
+
   async closeAllPositions() {
-    const trades = await db.getOpenTrades();
+    const trades = await db.getOpenTrades(this.settingsKey);
     for (const trade of trades) {
       try {
         const exchange = this.exchanges[trade.exchange];

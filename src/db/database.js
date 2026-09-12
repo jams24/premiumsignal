@@ -429,14 +429,18 @@ async function getAnalysisData(days = 7) {
 
 async function saveTrade(trade) {
   const { rows } = await query(
-    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, invalidation, dca_stage, dca_qty_2, dca_qty_3, dca_price_2, dca_price_3, order_id, status, peak_price, atr)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) RETURNING id`,
-    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null, trade.stopLoss, trade.originalStopLoss || trade.stopLoss, trade.invalidation || null, trade.dcaStage || 1, trade.dcaQty2 || null, trade.dcaQty3 || null, trade.dcaPrice2 || null, trade.dcaPrice3 || null, trade.orderId || null, 'open', trade.entryPrice, trade.atr || null]
+    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, invalidation, dca_stage, dca_qty_2, dca_qty_3, dca_price_2, dca_price_3, order_id, status, peak_price, atr, source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26) RETURNING id`,
+    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null, trade.stopLoss, trade.originalStopLoss || trade.stopLoss, trade.invalidation || null, trade.dcaStage || 1, trade.dcaQty2 || null, trade.dcaQty3 || null, trade.dcaPrice2 || null, trade.dcaPrice3 || null, trade.orderId || null, 'open', trade.entryPrice, trade.atr || null, trade.source || 'main']
   );
   return rows[0];
 }
 
-async function getOpenTrades() {
+async function getOpenTrades(source) {
+  if (source) {
+    const { rows } = await query("SELECT * FROM trades WHERE status = 'open' AND source = $1 ORDER BY created_at DESC", [source]);
+    return rows;
+  }
   const { rows } = await query("SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC");
   return rows;
 }
