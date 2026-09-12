@@ -333,19 +333,24 @@ class LiquidationScanner {
     if (setupData?.orderBook?.imbalance5pct === 'buy_heavy') bullPoints += 1;
     if (setupData?.orderBook?.imbalance5pct === 'sell_heavy') bearPoints += 1;
 
-    // Large trade bias — scale with imbalance severity
+    // Large trade bias — only count if whale volume is significant vs market volume
     if (setupData?.largeTrades?.length) {
       const buys = setupData.largeTrades.filter(t => t.side === 'buy');
       const sells = setupData.largeTrades.filter(t => t.side === 'sell');
       const buyVol = buys.reduce((s, t) => s + t.usdValue, 0);
       const sellVol = sells.reduce((s, t) => s + t.usdValue, 0);
-      if (buyVol > sellVol * 1.5) bullPoints += 2;
-      if (buyVol > sellVol * 3) bullPoints += 2;
-      if (sellVol > buyVol * 1.5) bearPoints += 2;
-      if (sellVol > buyVol * 3) bearPoints += 2;
-      // Unanimous whale activity (5+ trades, all same side) is a strong override
-      if (sells.length >= 5 && buys.length === 0) bearPoints += 3;
-      if (buys.length >= 5 && sells.length === 0) bullPoints += 3;
+      const totalWhaleVol = buyVol + sellVol;
+      const marketVol = tokenData.volume || tokenData.quoteVolume || 0;
+      // Whale trades must be >0.1% of market volume to influence direction
+      const significant = marketVol === 0 || totalWhaleVol > marketVol * 0.001;
+      if (significant) {
+        if (buyVol > sellVol * 1.5) bullPoints += 2;
+        if (buyVol > sellVol * 3) bullPoints += 1;
+        if (sellVol > buyVol * 1.5) bearPoints += 2;
+        if (sellVol > buyVol * 3) bearPoints += 1;
+        if (sells.length >= 5 && buys.length === 0 && totalWhaleVol > 50000) bearPoints += 2;
+        if (buys.length >= 5 && sells.length === 0 && totalWhaleVol > 50000) bullPoints += 2;
+      }
     }
 
     if (bullPoints > bearPoints + 1) snap.direction = 'long';
