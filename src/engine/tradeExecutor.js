@@ -125,18 +125,23 @@ class TradeExecutor {
       return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
     }
 
-    // Direction flip guard: don't reverse direction within 2h of closing a trade
+    // Re-entry guard: 2h cooldown for direction flip, 30min for same-direction re-entry
     try {
       const { rows: lastTrades } = await db.query(
         `SELECT direction, closed_at FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
         [signal.symbol]
       );
-      if (lastTrades.length && lastTrades[0].direction !== signal.direction) {
+      if (lastTrades.length) {
         const closedAt = new Date(lastTrades[0].closed_at).getTime();
-        const flipCooldown = closedAt + 2 * 60 * 60 * 1000;
-        if (Date.now() < flipCooldown) {
-          const minsLeft = Math.ceil((flipCooldown - Date.now()) / 60000);
-          return { ok: false, reason: `${signal.symbol} direction flip blocked — was ${lastTrades[0].direction}, now ${signal.direction} (${minsLeft}m cooldown)` };
+        const isFlip = lastTrades[0].direction !== signal.direction;
+        const cooldownMs = isFlip ? 2 * 60 * 60 * 1000 : 30 * 60 * 1000;
+        const reentryUntil = closedAt + cooldownMs;
+        if (Date.now() < reentryUntil) {
+          const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
+          const reason = isFlip
+            ? `${signal.symbol} direction flip blocked — was ${lastTrades[0].direction}, now ${signal.direction} (${minsLeft}m cooldown)`
+            : `${signal.symbol} re-entry blocked — closed ${minsLeft}m ago (30m cooldown)`;
+          return { ok: false, reason };
         }
       }
     } catch (e) { /* DB error, skip check */ }
