@@ -511,7 +511,41 @@ class OnchainScanner {
       const tp1 = price + mult * atr * 2.0;
       const tp2 = price + mult * atr * 4.0;
       const tp3 = price + mult * atr * 6.0;
-      const sl = price - mult * atr * 2.0;
+
+      // SL: prefer structure levels (support/resistance walls, liq zones) over blind ATR
+      let sl = price - mult * atr * 2.0;
+      if (snap.levels?.length) {
+        const structureLevels = snap.levels
+          .filter(l => direction === 'long' ? l.type === 'support' && l.price < price : l.type === 'resistance' && l.price > price)
+          .sort((a, b) => direction === 'long' ? b.price - a.price : a.price - b.price);
+        if (structureLevels.length) {
+          // Place SL just beyond the nearest structure level (0.5% buffer)
+          const buffer = direction === 'long' ? 0.995 : 1.005;
+          const structureSL = structureLevels[0].price * buffer;
+          // Use structure SL if it's tighter than ATR SL but not too tight (<0.5% from entry)
+          const structureDistPct = Math.abs((price - structureSL) / price) * 100;
+          if (structureDistPct >= 0.5 && structureDistPct <= 15) {
+            sl = structureSL;
+            logger.info(`${token.symbol}: SL from structure $${structureSL.toPrecision(6)} (${structureDistPct.toFixed(1)}%) vs ATR $${(price - mult * atr * 2.0).toPrecision(6)}`);
+          }
+        }
+      }
+      // Also check liquidation zones — 25x liq as SL floor
+      if (token.setupData?.liquidations) {
+        const liq = token.setupData.liquidations;
+        const liqSL = direction === 'long' ? liq.long25x : liq.short25x;
+        if (liqSL) {
+          const liqDistPct = Math.abs((price - liqSL) / price) * 100;
+          if (liqDistPct >= 0.5 && liqDistPct <= 10) {
+            const liqBeyond = direction === 'long' ? liqSL * 0.995 : liqSL * 1.005;
+            // Use liq zone if it's closer than current SL (tighter invalidation)
+            if (direction === 'long' ? liqBeyond > sl : liqBeyond < sl) {
+              sl = liqBeyond;
+              logger.info(`${token.symbol}: SL tightened to liq zone $${liqBeyond.toPrecision(6)} (${liqDistPct.toFixed(1)}%)`);
+            }
+          }
+        }
+      }
 
       const confidence = token.score >= 60 ? 5 : token.score >= 45 ? 4 : 3;
 

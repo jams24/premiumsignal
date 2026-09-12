@@ -414,10 +414,20 @@ async function main() {
           }, `FLOW ${dir} ${token.symbol} score=${token.flowScore}`).catch(() => {});
         }
 
-        // Auto-trade flow signals via onchain executor
+        // Auto-trade flow signals via onchain executor (cross-check with onchain direction)
         for (const token of significant) {
           if (token.flowScore < 45 || !onchainTradeExecutor.enabled) continue;
           try {
+            // Check if onchain scanner has a conflicting direction for this symbol
+            const onchainToken = hotTokens.find(t => t.symbol === token.symbol && t.score >= 30);
+            if (onchainToken) {
+              const onchainDir = onchainToken.setupSnapshot?.direction || (onchainToken.priceChange > 0 ? 'long' : 'short');
+              const flowDir = token.flow?.netFlow < 0 ? 'long' : 'short';
+              if (onchainDir !== flowDir && onchainToken.score >= 40) {
+                logger.info(`Flow ${flowDir} ${token.symbol} blocked — onchain says ${onchainDir} (score ${onchainToken.score})`);
+                continue;
+              }
+            }
             const setup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP');
             if (setup) await onchainTradeExecutor.executeSignal(setup);
           } catch (e) {
