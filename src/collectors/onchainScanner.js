@@ -531,14 +531,13 @@ class OnchainScanner {
         }
       }
       // Also check liquidation zones — 25x liq as SL floor
-      if (token.setupData?.liquidations) {
-        const liq = token.setupData.liquidations;
-        const liqSL = direction === 'long' ? liq.long25x : liq.short25x;
-        if (liqSL) {
+      if (token.setupData?.liqLevels?.levels) {
+        const lev25 = token.setupData.liqLevels.levels.find(l => l.leverage === 25);
+        if (lev25) {
+          const liqSL = direction === 'long' ? lev25.longLiqPrice : lev25.shortLiqPrice;
           const liqDistPct = Math.abs((price - liqSL) / price) * 100;
           if (liqDistPct >= 0.5 && liqDistPct <= 10) {
             const liqBeyond = direction === 'long' ? liqSL * 0.995 : liqSL * 1.005;
-            // Use liq zone if it's closer than current SL (tighter invalidation)
             if (direction === 'long' ? liqBeyond > sl : liqBeyond < sl) {
               sl = liqBeyond;
               logger.info(`${token.symbol}: SL tightened to liq zone $${liqBeyond.toPrecision(6)} (${liqDistPct.toFixed(1)}%)`);
