@@ -1119,7 +1119,7 @@ class TradeExecutor {
       return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     if (exchangeId === 'binance') {
-      params.stopLossPrice = stopPrice;
+      params.stopPrice = stopPrice;
       return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     // Default fallback
