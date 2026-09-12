@@ -535,7 +535,7 @@ class OnchainScanner {
         atr,
         confidence,
         catalyst: `${type}: ${catalystParts.join(', ')}`,
-        suggestedLeverage: 20,
+        suggestedLeverage: null,
         volumeInfo: `Vol $${(token.volume / 1e6).toFixed(1)}M`,
         onchainScore: token.score,
       };
