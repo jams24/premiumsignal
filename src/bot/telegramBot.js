@@ -1624,7 +1624,7 @@ class TelegramBot {
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — POSITION SIZE</b>\n\n` +
           `Current: <b>$${te.maxPositionSize}</b> per trade\n\n` +
-          `This is the maximum margin per trade.\nUse /onchainsize <amount> for custom values.`,
+          `This is the maximum margin per trade.\nUse /onchainsize for custom values.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`$50${ocCheck(50, te.maxPositionSize)}`, 'oc_size_50'),
              Markup.button.callback(`$100${ocCheck(100, te.maxPositionSize)}`, 'oc_size_100'),
@@ -1657,7 +1657,7 @@ class TelegramBot {
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — LEVERAGE</b>\n\n` +
           `Current: <b>${te.defaultLeverage}x</b>\n\n` +
-          `Higher leverage = more profit potential but faster liquidation.\nUse /onchainlev <n> for custom values.`,
+          `Higher leverage = more profit potential but faster liquidation.\nUse /onchainlev for custom values.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`3x${ocCheck(3, te.defaultLeverage)}`, 'oc_lev_3'),
              Markup.button.callback(`5x${ocCheck(5, te.defaultLeverage)}`, 'oc_lev_5'),
@@ -1690,7 +1690,7 @@ class TelegramBot {
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — DAILY LOSS LIMIT</b>\n\n` +
           `Current: <b>$${te.maxDailyLoss}</b>\n\n` +
-          `Trading stops for the day when losses hit this limit.\nUse /onchainloss <amount> for custom values.`,
+          `Trading stops for the day when losses hit this limit.\nUse /onchainloss for custom values.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`$10${ocCheck(10, te.maxDailyLoss)}`, 'oc_dloss_10'),
              Markup.button.callback(`$20${ocCheck(20, te.maxDailyLoss)}`, 'oc_dloss_20'),
@@ -1721,7 +1721,7 @@ class TelegramBot {
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — PER-TRADE MAX LOSS</b>\n\n` +
           `Current: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n` +
-          `Trade is force-closed if unrealized loss exceeds this.\nUse /onchainmaxloss <amount> for custom values.`,
+          `Trade is force-closed if unrealized loss exceeds this.\nUse /onchainmaxloss for custom values.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'oc_tloss_6'),
              Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'oc_tloss_10'),
