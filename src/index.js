@@ -329,8 +329,9 @@ async function main() {
         }
 
         // Auto-trade onchain signals via onchain executor
+        const ocMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 30;
         for (const token of hotTokens) {
-          if (token.score < 45 || !onchainTradeExecutor.enabled) continue;
+          if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
           try {
             const setup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP');
             if (setup) await onchainTradeExecutor.executeSignal(setup);
@@ -425,8 +426,9 @@ async function main() {
         }
 
         // Auto-trade flow signals via onchain executor (cross-check with onchain direction)
+        const flowMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 30;
         for (const token of significant) {
-          if (token.flowScore < 45 || !onchainTradeExecutor.enabled) continue;
+          if (token.flowScore < flowMinScore || !onchainTradeExecutor.enabled) continue;
           try {
             // Check if onchain scanner has a conflicting direction for this symbol
             const onchainToken = hotTokens.find(t => t.symbol === token.symbol && t.score >= 30);
