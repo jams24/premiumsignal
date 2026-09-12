@@ -1119,8 +1119,10 @@ class TradeExecutor {
       return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     if (exchangeId === 'binance') {
-      params.stopPrice = stopPrice;
-      return exchange.createOrder(pair, 'market', side, qty, undefined, params);
+      // Binance moved stop orders to Algo API (ccxt doesn't support yet)
+      // SL is enforced by checkOpenTrades every minute instead
+      logger.info(`${pair}: Binance SL at $${stopPrice} managed by trade checker (algo API not supported)`);
+      return null;
     }
     // Default fallback
     params.stopPrice = stopPrice;
