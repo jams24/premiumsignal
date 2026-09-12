@@ -412,8 +412,9 @@ async function main() {
       const results = await flowScanner.scan();
       const significant = results.filter(r => r.flowScore >= 15);
       if (significant.length > 0) {
-        for (const token of significant.slice(0, 5)) {
+        for (const token of significant) {
           try {
+            if (token.flow && !token.exchangeFlow) token.exchangeFlow = token.flow;
             token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP');
           } catch (e) { /* skip */ }
         }
