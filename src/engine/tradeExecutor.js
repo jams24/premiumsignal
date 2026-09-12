@@ -240,6 +240,14 @@ class TradeExecutor {
     return this.maxPositionSize;
   }
 
+  // Scale size by confidence — low-confidence signals get smaller positions
+  applyConfidenceScale(size, signal) {
+    const conf = signal.confidence || 3;
+    if (conf >= 5) return size;
+    if (conf >= 4) return size * 0.75;
+    return size * 0.5;
+  }
+
   // Dynamic leverage based on confidence level
   calcLeverage(signal) {
     if (!this.dynamicLeverage) return signal.suggestedLeverage || this.defaultLeverage;
@@ -440,7 +448,8 @@ class TradeExecutor {
 
   async executePaperTrade(signal) {
     const entryPrice = signal.currentPrice;
-    const positionSize = await this.calcPositionSize(signal);
+    let positionSize = await this.calcPositionSize(signal);
+    positionSize = this.applyConfidenceScale(positionSize, signal);
     const leverage = this.calcLeverage(signal);
 
     // DCA: enter 1/3 at market, set limits for 2/3 and 3/3 (when enabled)
@@ -525,6 +534,7 @@ class TradeExecutor {
       const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
 
       let positionSize = await this.calcPositionSize(signal);
+      positionSize = this.applyConfidenceScale(positionSize, signal);
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
 

@@ -307,7 +307,7 @@ async function main() {
       const results = await onchainScanner.scan();
       const hotTokens = results.filter(r => r.score >= 30);
       if (hotTokens.length > 0) {
-        for (const token of hotTokens.slice(0, 5)) {
+        for (const token of hotTokens) {
           try {
             token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP');
           } catch (e) { /* skip */ }
@@ -328,13 +328,19 @@ async function main() {
           }, `ONCHAIN ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
         }
 
-        // Auto-trade onchain signals via onchain executor
+        // Auto-trade onchain signals — reuse _tradeSetup from alert phase
+        // (calling buildTradeSetup again can flip direction between neutral/long)
         const ocMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 30;
         for (const token of hotTokens) {
           if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
           try {
-            const setup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP');
-            if (setup) await onchainTradeExecutor.executeSignal(setup);
+            const setup = token._tradeSetup;
+            if (!setup) continue;
+            if (Math.abs(token.priceChange) > 20) {
+              logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% — late entry risk`);
+              continue;
+            }
+            await onchainTradeExecutor.executeSignal(setup);
           } catch (e) {
             logger.debug(`Onchain auto-trade failed for ${token.symbol}: ${e.message}`);
           }
@@ -425,23 +431,18 @@ async function main() {
           }, `FLOW ${dir} ${token.symbol} score=${token.flowScore}`).catch(() => {});
         }
 
-        // Auto-trade flow signals via onchain executor (cross-check with onchain direction)
+        // Auto-trade flow signals — reuse tradeSetup from alert phase
         const flowMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 30;
         for (const token of significant) {
           if (token.flowScore < flowMinScore || !onchainTradeExecutor.enabled) continue;
           try {
-            // Check if onchain scanner has a conflicting direction for this symbol
-            const onchainToken = hotTokens.find(t => t.symbol === token.symbol && t.score >= 30);
-            if (onchainToken) {
-              const onchainDir = onchainToken.setupSnapshot?.direction || (onchainToken.priceChange > 0 ? 'long' : 'short');
-              const flowDir = token.flow?.netFlow < 0 ? 'long' : 'short';
-              if (onchainDir !== flowDir && onchainToken.score >= 40) {
-                logger.info(`Flow ${flowDir} ${token.symbol} blocked — onchain says ${onchainDir} (score ${onchainToken.score})`);
-                continue;
-              }
+            const setup = token.tradeSetup;
+            if (!setup) continue;
+            if (Math.abs(token.priceChange) > 20) {
+              logger.info(`Flow skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% — late entry risk`);
+              continue;
             }
-            const setup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP');
-            if (setup) await onchainTradeExecutor.executeSignal(setup);
+            await onchainTradeExecutor.executeSignal(setup);
           } catch (e) {
             logger.debug(`Flow auto-trade failed for ${token.symbol}: ${e.message}`);
           }
