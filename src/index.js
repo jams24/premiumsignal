@@ -574,6 +574,11 @@ async function main() {
               `Price moved against the call — consider exiting if in position.\n\n` +
               `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
             await bot.sendRaw(msg);
+
+            // Set cooldown on onchain auto-trader so it doesn't re-enter the same symbol
+            if (onchainTradeExecutor?.cooldowns) {
+              onchainTradeExecutor.cooldowns.set(alert.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
+            }
           }
         } catch (e) {
           logger.debug(`Invalidation check failed for ${alert.symbol}: ${e.message}`);
