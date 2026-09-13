@@ -45,6 +45,9 @@ class TradeExecutor {
 
     // Cooldown: symbol → timestamp, prevents re-entry after invalidation/SL
     this.cooldowns = new Map();
+
+    // Pending entries: wait for 5m pullback instead of market entry
+    this.pendingEntries = new Map();
   }
 
   onTradeUpdate(callback) {
@@ -418,6 +421,86 @@ class TradeExecutor {
           signal.tp1 = fvg.midpoint;
           logger.info(`SMC: Adjusted TP1 to bullish FVG midpoint $${fvg.midpoint.toPrecision(6)}`);
         }
+      }
+    }
+  }
+
+  queueSignal(signal) {
+    const key = `${signal.symbol}_${signal.exchange}`;
+    if (this.pendingEntries.has(key)) return;
+
+    this.pendingEntries.set(key, {
+      signal,
+      queuedAt: Date.now(),
+      signalPrice: signal.currentPrice,
+    });
+
+    logger.info(`Queued ${signal.direction} ${signal.symbol} for pullback entry at $${signal.currentPrice}`);
+    this.notify(
+      `⏳ <b>ENTRY QUEUED</b> $${escapeHtml(signal.symbol)}\n\n` +
+      `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for 5m pullback\n` +
+      `Signal price: $${signal.currentPrice}\n` +
+      `Will enter on dip or after 30 min timeout`
+    ).catch(() => {});
+  }
+
+  async checkPendingEntries() {
+    for (const [key, entry] of this.pendingEntries) {
+      try {
+        const { signal, queuedAt, signalPrice } = entry;
+        const ageMin = (Date.now() - queuedAt) / 60000;
+        const isLong = signal.direction === 'long';
+
+        const exchange = this.exchanges[signal.exchange];
+        if (!exchange) { this.pendingEntries.delete(key); continue; }
+
+        const candles = await exchange.fetchOHLCV(signal.pair, '5m', undefined, 6);
+        if (!candles?.length) continue;
+
+        const latest = candles[candles.length - 1];
+        const [, open, high, low, close] = latest;
+
+        // Price ran away 5%+ from signal → cancel
+        const ranAway = isLong ? close > signalPrice * 1.05 : close < signalPrice * 0.95;
+        if (ranAway) {
+          logger.info(`Pending ${signal.symbol}: price ran away ($${signalPrice} → $${close}), cancelling`);
+          this.pendingEntries.delete(key);
+          await this.notify(
+            `⏭ <b>ENTRY CANCELLED</b> $${escapeHtml(signal.symbol)}\n\n` +
+            `Price moved too far: $${signalPrice} → $${close}\nSkipped — chasing risk too high.`
+          );
+          continue;
+        }
+
+        // Pullback + recovery candle → enter
+        const pulledBack = isLong
+          ? low < signalPrice * 0.99
+          : high > signalPrice * 1.01;
+        const recovering = isLong ? close > open : close < open;
+
+        if (pulledBack && recovering) {
+          signal.currentPrice = close;
+          logger.info(`Pending ${signal.symbol}: pullback entry at $${close} (signal was $${signalPrice}, saved ${((1 - close / signalPrice) * 100).toFixed(1)}%)`);
+          this.pendingEntries.delete(key);
+          await this.notify(
+            `🎯 <b>PULLBACK ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
+            `Signal: $${signalPrice} → Entry: $${close}\n` +
+            `Saved ${Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1)}% on entry`
+          );
+          await this.executeSignal(signal);
+          continue;
+        }
+
+        // Timeout after 30 min → enter at market
+        if (ageMin >= 30) {
+          signal.currentPrice = close;
+          logger.info(`Pending ${signal.symbol}: timeout after ${ageMin.toFixed(0)}m, entering at $${close}`);
+          this.pendingEntries.delete(key);
+          await this.executeSignal(signal);
+          continue;
+        }
+      } catch (e) {
+        logger.debug(`Pending entry check failed for ${key}: ${e.message}`);
       }
     }
   }

@@ -341,7 +341,7 @@ async function main() {
               logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${pumpLimit}% for score ${token.score}) — late entry risk`);
               continue;
             }
-            await onchainTradeExecutor.executeSignal(setup);
+            onchainTradeExecutor.queueSignal(setup);
           } catch (e) {
             logger.debug(`Onchain auto-trade failed for ${token.symbol}: ${e.message}`);
           }
@@ -445,7 +445,7 @@ async function main() {
               logger.info(`Flow skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${flowPumpLimit}% for score ${token.flowScore}) — late entry risk`);
               continue;
             }
-            await onchainTradeExecutor.executeSignal(setup);
+            onchainTradeExecutor.queueSignal(setup);
           } catch (e) {
             logger.debug(`Flow auto-trade failed for ${token.symbol}: ${e.message}`);
           }
@@ -647,6 +647,11 @@ async function main() {
       await onchainTradeExecutor.checkOpenTrades();
     } catch (err) {
       logger.error(`Onchain trade tracker error: ${err.message}`);
+    }
+    try {
+      await onchainTradeExecutor.checkPendingEntries();
+    } catch (err) {
+      logger.error(`Pending entry check error: ${err.message}`);
     }
   });
 
