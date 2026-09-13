@@ -17,6 +17,7 @@ const SignalEngine = require('./engine/signalEngine');
 const SignalTracker = require('./engine/signalTracker');
 const TradeExecutor = require('./engine/tradeExecutor');
 const UserPaperEngine = require('./engine/userPaperEngine');
+const SwingScanner = require('./collectors/swingScanner');
 const TelegramBot = require('./bot/telegramBot');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -106,16 +107,43 @@ async function main() {
     signalFilter: new Set(['ONCHAIN_SETUP']),
   });
 
+  // Init swing trade executor — daily timeframe, wide stops, long hold
+  const swingTradeExecutor = new TradeExecutor(listingMonitor.exchanges, {
+    settingsKey: 'swing',
+    mode: 'paper',
+    maxPositionSize: 50,
+    maxDailyLoss: 50,
+    maxLossPerTrade: 15,
+    maxConcurrentPositions: 3,
+    defaultLeverage: 3,
+    minConfidence: 3,
+    paperBalance: 500,
+    dynamicLeverage: false,
+    dcaEnabled: false,
+    signalFilter: new Set(['SWING_SETUP']),
+    maxTradeAge: 14 * 24 * 60 * 60 * 1000,
+    timeExitMinutes: 0,
+    profitProtectPct: 15,
+    profitProtectLevPnl: 50,
+    trailAtrMultPre: 3,
+    trailAtrMultPost: 5,
+  });
+
+  // Init swing scanner
+  const swingScanner = new SwingScanner(listingMonitor.exchanges, flowScanner, onchainScanner);
+
   // Load persisted settings and today's PnL from DB
   if (dbReady) {
     await tradeExecutor.loadConfig();
     await tradeExecutor.recalcDailyPnL();
     await onchainTradeExecutor.loadConfig();
     await onchainTradeExecutor.recalcDailyPnL();
+    await swingTradeExecutor.loadConfig();
+    await swingTradeExecutor.recalcDailyPnL();
   }
 
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -129,6 +157,11 @@ async function main() {
   // Wire onchain trade executor notifications
   onchainTradeExecutor.onTradeUpdate(async (msg) => {
     await bot.sendRaw(`🔗 <b>[ONCHAIN]</b> ${msg}`);
+  });
+
+  // Wire swing trade executor notifications
+  swingTradeExecutor.onTradeUpdate(async (msg) => {
+    await bot.sendRaw(`🌊 <b>[SWING]</b> ${msg}`);
   });
 
   // Wire up listing alerts
@@ -332,6 +365,12 @@ async function main() {
             fundingRate: token.fundingRate, fundingBias: token.fundingBias,
             priceChange: token.priceChange, volume: token.volume,
             signals: token.signals,
+            lsData: token.lsData || null,
+            exchangeFlow: token.exchangeFlow || null,
+            setupData: token.setupData ? {
+              liquidations: token.setupData.liquidations || null,
+              orderBook: token.setupData.orderBook || null,
+            } : null,
             tp1: setup?.tp1, tp2: setup?.tp2, tp3: setup?.tp3,
             stopLoss: setup?.stopLoss, atr: setup?.atr,
             confidence: setup?.confidence,
@@ -449,6 +488,73 @@ async function main() {
       logger.error(`Onchain scan error: ${err.message}`);
     }
   });
+  // === Swing Scanner — daily timeframe accumulation reversal detection every 2h ===
+  cron.schedule('0 */2 * * *', async () => {
+    logger.info('Running swing scan...');
+    try {
+      const results = await swingScanner.scan();
+      const qualified = results.filter(r => r.score >= 40);
+
+      for (const candidate of qualified.slice(0, 5)) {
+        try {
+          const setup = await swingScanner.buildSwingSetup(candidate);
+          if (!setup) continue;
+
+          const msg = swingScanner.formatSwingAlert(setup, candidate);
+          await bot.sendRaw(msg);
+          await bot.broadcastToUsers(msg);
+
+          await db.logAlert('SWING', setup.symbol, {
+            score: setup.score, price: setup.currentPrice,
+            direction: 'long', exchange: setup.exchange, pair: setup.pair,
+            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3,
+            stopLoss: setup.stopLoss, rr: setup.rr,
+            signals: candidate.signals,
+            ninetyDayHigh: candidate.ninetyDayHigh,
+            ninetyDayLow: candidate.ninetyDayLow,
+          }, `SWING long ${setup.symbol} score=${setup.score}`).catch(() => {});
+
+          swingScanner.addToWatchlist(setup);
+
+          if (setup.score >= 60 && swingTradeExecutor.enabled) {
+            await swingTradeExecutor.queueSignal(setup);
+          }
+
+          // Open paper trades for users following swing signals
+          try {
+            await userPaperEngine.openForSwingFollowers(setup, setup.score);
+          } catch (e) { logger.debug(`User swing paper failed: ${e.message}`); }
+        } catch (e) {
+          logger.debug(`Swing setup failed for ${candidate.symbol}: ${e.message}`);
+        }
+      }
+
+      if (qualified.length) {
+        logger.info(`Swing scan: ${qualified.length} candidates, top=${qualified[0]?.symbol} score=${qualified[0]?.score}`);
+      }
+    } catch (err) {
+      logger.error(`Swing scan error: ${err.message}`);
+    }
+  });
+
+  // === Swing Watchlist — check if prices entered buy zones every 15 min ===
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const entered = await swingScanner.checkWatchlist();
+      for (const setup of entered) {
+        if (swingTradeExecutor.enabled) {
+          await swingTradeExecutor.queueSignal(setup);
+        }
+        const msg = `🌊 <b>SWING ENTRY ZONE</b> — $${setup.symbol}\n\n` +
+          `Price entered buy zone: $${setup.currentPrice.toPrecision(4)}\n` +
+          `Zone: $${setup.entryLow.toPrecision(4)} — $${setup.entryHigh.toPrecision(4)}`;
+        await bot.sendRaw(msg);
+      }
+    } catch (err) {
+      logger.error(`Swing watchlist error: ${err.message}`);
+    }
+  });
+
   // === Flow Scanner — standalone exchange flow detection every 10 min ===
   cron.schedule('*/10 * * * *', async () => {
     try {
@@ -746,6 +852,11 @@ async function main() {
       await userPaperEngine.checkPendingUserEntries();
     } catch (err) {
       logger.error(`User pending entry check error: ${err.message}`);
+    }
+    try {
+      await swingTradeExecutor.checkOpenTrades();
+    } catch (err) {
+      logger.error(`Swing trade tracker error: ${err.message}`);
     }
   });
 

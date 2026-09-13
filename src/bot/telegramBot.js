@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.bot.catch((err) => {
       const msg = err?.message || String(err);
@@ -24,6 +24,8 @@ class TelegramBot {
     this.marketIntel = marketIntel;
     this.tradeExecutor = tradeExecutor;
     this.onchainTradeExecutor = onchainTradeExecutor;
+    this.swingTradeExecutor = swingTradeExecutor;
+    this.swingScanner = swingScanner;
     this.userPaperEngine = null; // wired from index.js
     // Access control MUST be registered before any command handlers
     this.setupAccess();
@@ -37,6 +39,7 @@ class TelegramBot {
       'trade', 'stop', 'trademode', 'setsize', 'setleverage', 'setloss', 'setmaxloss',
       'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
       'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop', 'onchainsettings',
+      'swingtrade', 'swingsize', 'swinglev', 'swingopen', 'swingclose', 'swingstats', 'swingwatchlist',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
@@ -48,6 +51,7 @@ class TelegramBot {
       'setmysize', 'setmyleverage', 'buy', 'sell', 'closetrade', 'mypositions', 'mypnl',
       'onchainfollow', 'onchainunfollow', 'setmyscore', 'setmyloss', 'setmymaxloss',
       'setmypositions', 'myonchainstats', 'myonchain', 'mysettings', 'alertperf', 'flows',
+      'swingfollow', 'swingunfollow',
     ]);
 
     this.bot.use(async (ctx, next) => {
@@ -2533,6 +2537,131 @@ class TelegramBot {
         logger.error(`/onchain error: ${err.message}`);
       }
     });
+
+    // === SWING TRADE COMMANDS ===
+
+    this.bot.command('swingtrade', async (ctx) => {
+      if (!this.swingTradeExecutor) return ctx.reply('Swing trade executor not initialized.');
+      const args = ctx.message.text.split(' ').slice(1);
+      const mode = args[0]?.toLowerCase();
+      if (mode === 'on' || mode === 'paper') {
+        this.swingTradeExecutor.enabled = true;
+        if (mode === 'paper') this.swingTradeExecutor.mode = 'paper';
+        this.swingTradeExecutor.saveConfig();
+        ctx.replyWithHTML(`🌊 Swing trading: <b>${this.swingTradeExecutor.mode.toUpperCase()}</b> | ON`);
+      } else if (mode === 'off') {
+        this.swingTradeExecutor.enabled = false;
+        this.swingTradeExecutor.saveConfig();
+        ctx.replyWithHTML('❌ Swing auto-trading <b>disabled</b>.');
+      } else {
+        const te = this.swingTradeExecutor;
+        await te.recalcDailyPnL?.();
+        const openTrades = await db.getOpenTrades('swing').catch(() => []);
+        const watchlist = this.swingScanner?.getWatchlistStatus() || [];
+        const text =
+          `🌊 <b>SWING SETTINGS</b>\n\n` +
+          `📝 Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+          `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
+          `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+          `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+          `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+          `⏱️ Max Hold: <b>${Math.round(te.maxTradeAge / (24 * 60 * 60 * 1000))}d</b> | Time Exit: <b>${te.timeExitMinutes > 0 ? te.timeExitMinutes + 'min' : 'Off'}</b>\n` +
+          `🎯 Profit Protect: <b>${te.profitProtectPct}%</b> | Trail: <b>${te.trailAtrMultPre}x/${te.trailAtrMultPost}x ATR</b>\n` +
+          `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
+          `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
+          `👁️ Watchlist: <b>${watchlist.length}</b> symbols\n\n` +
+          `<i>Swing trades hold for days/weeks with wide structural SL.</i>`;
+        ctx.replyWithHTML(text);
+      }
+    });
+
+    this.bot.command('swingsize', async (ctx) => {
+      if (!this.swingTradeExecutor) return ctx.reply('Not initialized.');
+      const size = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!size || size < 5 || size > 500) return ctx.reply('Usage: /swingsize <5-500>');
+      this.swingTradeExecutor.maxPositionSize = size;
+      this.swingTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`🌊 Swing trade size: <b>$${size}</b>`);
+    });
+
+    this.bot.command('swinglev', async (ctx) => {
+      if (!this.swingTradeExecutor) return ctx.reply('Not initialized.');
+      const lev = parseInt(ctx.message.text.split(' ')[1]);
+      if (!lev || lev < 1 || lev > 10) return ctx.reply('Usage: /swinglev <1-10>');
+      this.swingTradeExecutor.defaultLeverage = lev;
+      this.swingTradeExecutor.saveConfig();
+      ctx.replyWithHTML(`🌊 Swing leverage: <b>${lev}x</b>`);
+    });
+
+    this.bot.command('swingopen', async (ctx) => {
+      const trades = await db.getOpenTrades('swing').catch(() => []);
+      if (!trades.length) return ctx.reply('🌊 No open swing trades.');
+      let msg = `🌊 <b>OPEN SWING TRADES</b> (${trades.length})\n\n`;
+      for (const t of trades) {
+        const age = ((Date.now() - new Date(t.created_at).getTime()) / (60 * 60 * 1000)).toFixed(0);
+        msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(t.symbol)}</b> ${t.direction.toUpperCase()}\n`;
+        msg += `  Entry: $${t.entry_price} | SL: $${t.stop_loss}\n`;
+        msg += `  Size: $${(t.position_size || 0).toFixed(0)} (${t.leverage}x) | Age: ${age}h\n`;
+        msg += `  TP1: $${t.tp1} | TP2: $${t.tp2} | TP3: $${t.tp3}\n\n`;
+      }
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('swingclose', async (ctx) => {
+      const symbol = ctx.message.text.split(' ')[1]?.toUpperCase();
+      if (!symbol) return ctx.reply('Usage: /swingclose SYMBOL');
+      const trades = await db.getOpenTrades('swing').catch(() => []);
+      const trade = trades.find(t => t.symbol === symbol);
+      if (!trade) return ctx.reply(`No open swing trade for ${symbol}.`);
+      try {
+        const exchange = this.swingTradeExecutor.exchanges[trade.exchange];
+        const pair = [`${symbol}/USDT:USDT`, `${symbol}/USDT`].find(p => exchange?.markets?.[p]);
+        const ticker = pair ? await exchange.fetchTicker(pair) : null;
+        const price = ticker?.last || trade.entry_price;
+        const pnlPct = trade.direction === 'long'
+          ? ((price - trade.entry_price) / trade.entry_price) * 100
+          : ((trade.entry_price - price) / trade.entry_price) * 100;
+        const pnlUsd = (pnlPct / 100) * (trade.position_size || 0);
+        await db.closeTrade(trade.id, price, pnlPct, pnlUsd, 'manual_close');
+        ctx.replyWithHTML(`🌊 Swing trade closed: <b>${symbol}</b>\nExit: $${price} | P&L: $${pnlUsd.toFixed(2)} (${pnlPct.toFixed(1)}%)`);
+      } catch (e) {
+        ctx.reply(`Failed to close: ${e.message}`);
+      }
+    });
+
+    this.bot.command('swingstats', async (ctx) => {
+      const s = await db.getTradeStatsBySource('swing').catch(() => ({}));
+      const msg =
+        `🌊 <b>SWING TRADE STATS</b>\n\n` +
+        `Total: ${s.total || 0} | Open: ${s.open || 0}\n` +
+        `Wins: ${s.wins || 0} | Losses: ${s.losses || 0}\n` +
+        `P&L: <b>$${parseFloat(s.total_pnl || 0).toFixed(2)}</b>\n` +
+        `Best: $${parseFloat(s.best_trade || 0).toFixed(2)} | Worst: $${parseFloat(s.worst_trade || 0).toFixed(2)}`;
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('swingwatchlist', async (ctx) => {
+      const items = this.swingScanner?.getWatchlistStatus() || [];
+      if (!items.length) return ctx.reply('🌊 Swing watchlist is empty.');
+      let msg = `🌊 <b>SWING WATCHLIST</b> (${items.length})\n\n`;
+      for (const item of items) {
+        msg += `<b>${escapeHtml(item.symbol)}</b> — Score: ${item.score}\n`;
+        msg += `  Zone: ${item.entryZone} | SL: ${item.sl}\n`;
+        msg += `  Age: ${item.age} | ${item.inZone ? '✅ In zone' : '⏳ Waiting'}\n\n`;
+      }
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('swingfollow', async (ctx) => {
+      await db.setUserPaperConfig(ctx.state.user.telegram_id, { swingFollow: true });
+      ctx.replyWithHTML('🌊 Swing paper trading <b>enabled</b>. You will auto-paper-trade swing setups scoring 60+.');
+    });
+
+    this.bot.command('swingunfollow', async (ctx) => {
+      await db.setUserPaperConfig(ctx.state.user.telegram_id, { swingFollow: false });
+      ctx.replyWithHTML('🌊 Swing paper trading <b>disabled</b>.');
+    });
+
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 3) {

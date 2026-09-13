@@ -810,6 +810,22 @@ class OnchainScanner {
         suggestedLeverage: null,
         volumeInfo: `Vol $${(token.volume / 1e6).toFixed(1)}M`,
         onchainScore: token.score,
+        onchainContext: {
+          score: token.score,
+          signals: token.signals,
+          oiChange1h: token.oiChange1h,
+          oiChange4h: token.oiChange4h,
+          fundingRate: token.fundingRate,
+          fundingBias: token.fundingBias,
+          priceChange: token.priceChange,
+          volume: token.volume,
+          lsData: token.lsData || null,
+          exchangeFlow: token.exchangeFlow || null,
+          setupData: token.setupData ? {
+            liquidations: token.setupData.liquidations || null,
+            orderBook: token.setupData.orderBook || null,
+          } : null,
+        },
       };
     } catch (err) {
       logger.debug(`buildTradeSetup failed for ${token.symbol}: ${err.message}`);

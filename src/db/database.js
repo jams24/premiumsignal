@@ -249,6 +249,7 @@ async function init(retries = 3) {
     ['peak_price', 'DOUBLE PRECISION'],
     ['atr', 'DOUBLE PRECISION'],
     ['source', "TEXT DEFAULT 'main'"],
+    ['onchain_context', 'JSONB'],
   ];
   for (const [col, type] of newCols) {
     try { await p.query(`ALTER TABLE trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
@@ -264,6 +265,8 @@ async function init(retries = 3) {
     ['daily_loss_limit', 'DOUBLE PRECISION DEFAULT 100'],
     ['per_trade_loss', 'DOUBLE PRECISION DEFAULT 20'],
     ['paper_balance', 'DOUBLE PRECISION DEFAULT 1000'],
+    ['swing_follow', 'BOOLEAN DEFAULT FALSE'],
+    ['swing_min_score', 'INTEGER DEFAULT 60'],
   ];
   for (const [col, type] of userCols) {
     try { await p.query(`ALTER TABLE bot_users ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
@@ -279,6 +282,7 @@ async function init(retries = 3) {
     ['invalidation', 'DOUBLE PRECISION'],
     ['peak_price', 'DOUBLE PRECISION'],
     ['source', "TEXT DEFAULT 'signal'"],
+    ['onchain_context', 'JSONB'],
   ];
   for (const [col, type] of uptCols) {
     try { await p.query(`ALTER TABLE user_paper_trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
@@ -436,9 +440,9 @@ async function getAnalysisData(days = 7) {
 
 async function saveTrade(trade) {
   const { rows } = await query(
-    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, invalidation, dca_stage, dca_qty_2, dca_qty_3, dca_price_2, dca_price_3, order_id, status, peak_price, atr, source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26) RETURNING id`,
-    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null, trade.stopLoss, trade.originalStopLoss || trade.stopLoss, trade.invalidation || null, trade.dcaStage || 1, trade.dcaQty2 || null, trade.dcaQty3 || null, trade.dcaPrice2 || null, trade.dcaPrice3 || null, trade.orderId || null, 'open', trade.entryPrice, trade.atr || null, trade.source || 'main']
+    `INSERT INTO trades (signal_id, symbol, exchange, direction, mode, entry_price, quantity, position_size, leverage, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, invalidation, dca_stage, dca_qty_2, dca_qty_3, dca_price_2, dca_price_3, order_id, status, peak_price, atr, source, onchain_context)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING id`,
+    [trade.signalId, trade.symbol, trade.exchange, trade.direction, trade.mode, trade.entryPrice, trade.quantity, trade.positionSize, trade.leverage, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null, trade.stopLoss, trade.originalStopLoss || trade.stopLoss, trade.invalidation || null, trade.dcaStage || 1, trade.dcaQty2 || null, trade.dcaQty3 || null, trade.dcaPrice2 || null, trade.dcaPrice3 || null, trade.orderId || null, 'open', trade.entryPrice, trade.atr || null, trade.source || 'main', trade.onchainContext ? JSON.stringify(trade.onchainContext) : null]
   );
   return rows[0];
 }
@@ -525,7 +529,7 @@ async function getAllTimePnL(since, mode) {
 }
 
 async function saveSettings(config, key = 'main') {
-  const id = key === 'main' ? 1 : key === 'onchain' ? 2 : 1;
+  const id = key === 'main' ? 1 : key === 'onchain' ? 2 : key === 'swing' ? 3 : 1;
   const json = JSON.stringify(config);
   await query(
     `INSERT INTO bot_settings (id, config, updated_at) VALUES ($1, $2, NOW())
@@ -535,7 +539,7 @@ async function saveSettings(config, key = 'main') {
 }
 
 async function loadSettings(key = 'main') {
-  const id = key === 'main' ? 1 : key === 'onchain' ? 2 : 1;
+  const id = key === 'main' ? 1 : key === 'onchain' ? 2 : key === 'swing' ? 3 : 1;
   const { rows } = await query('SELECT config FROM bot_settings WHERE id = $1', [id]);
   return rows.length ? rows[0].config : null;
 }
@@ -601,13 +605,13 @@ async function getFollowers() {
 
 async function saveUserPaperTrade(trade) {
   const { rows } = await query(
-    `INSERT INTO user_paper_trades (telegram_id, signal_id, symbol, exchange, direction, entry_price, position_size, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, leverage, quantity, atr, invalidation, peak_price, source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
+    `INSERT INTO user_paper_trades (telegram_id, signal_id, symbol, exchange, direction, entry_price, position_size, tp1, tp2, tp3, tp4, stop_loss, original_stop_loss, leverage, quantity, atr, invalidation, peak_price, source, onchain_context)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
     [trade.telegramId, trade.signalId || null, trade.symbol, trade.exchange, trade.direction,
      trade.entryPrice, trade.positionSize || 100, trade.tp1, trade.tp2, trade.tp3, trade.tp4 || null,
      trade.stopLoss, trade.stopLoss,
      trade.leverage || 1, trade.quantity || null, trade.atr || null, trade.invalidation || null,
-     trade.entryPrice, trade.source || 'signal']
+     trade.entryPrice, trade.source || 'signal', trade.onchainContext ? JSON.stringify(trade.onchainContext) : null]
   );
   return rows[0];
 }
@@ -667,6 +671,7 @@ async function setUserPaperConfig(telegramId, config) {
   const fieldMap = {
     paperSize: 'paper_size', paperLeverage: 'paper_leverage',
     onchainFollow: 'onchain_follow', onchainMinScore: 'onchain_min_score',
+    swingFollow: 'swing_follow', swingMinScore: 'swing_min_score',
     maxPositions: 'max_positions', dailyLossLimit: 'daily_loss_limit',
     perTradeLoss: 'per_trade_loss', paperBalance: 'paper_balance',
   };
@@ -681,6 +686,26 @@ async function setUserPaperConfig(telegramId, config) {
 async function getOnchainFollowers() {
   const { rows } = await query("SELECT * FROM bot_users WHERE status = 'active' AND onchain_follow = TRUE");
   return rows;
+}
+
+async function getSwingFollowers() {
+  const { rows } = await query("SELECT * FROM bot_users WHERE status = 'active' AND swing_follow = TRUE");
+  return rows;
+}
+
+async function getTradeStatsBySource(source) {
+  const { rows } = await query(`
+    SELECT
+      COUNT(*) as total,
+      COUNT(*) FILTER (WHERE status = 'open') as open,
+      COUNT(*) FILTER (WHERE pnl_usd > 0 AND status = 'closed') as wins,
+      COUNT(*) FILTER (WHERE pnl_usd <= 0 AND status = 'closed') as losses,
+      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      MAX(pnl_usd) as best_trade,
+      MIN(pnl_usd) as worst_trade
+    FROM trades WHERE source = $1
+  `, [source]);
+  return rows[0] || {};
 }
 
 async function getUserDailyPnL(telegramId) {
@@ -830,4 +855,4 @@ async function getAlertPerformanceBySymbol(alertTypes, days = 7, limit = 15) {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource };

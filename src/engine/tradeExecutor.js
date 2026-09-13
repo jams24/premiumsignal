@@ -48,6 +48,16 @@ class TradeExecutor {
 
     // Pending entries: wait for 5m pullback instead of market entry
     this.pendingEntries = new Map();
+
+    // Parameterized trade management (swing trades override these)
+    this.maxTradeAge = config.maxTradeAge || 48 * 60 * 60 * 1000;
+    this.timeExitMinutes = config.timeExitMinutes ?? 90;
+    this.profitProtectPct = config.profitProtectPct || 5;
+    this.profitProtectLevPnl = config.profitProtectLevPnl || 25;
+    this.trailAtrMultPre = config.trailAtrMultPre || 1.5;
+    this.trailAtrMultPost = config.trailAtrMultPost || 3;
+    this.dcaSpreadMult1 = config.dcaSpreadMult1 || 1.0;
+    this.dcaSpreadMult2 = config.dcaSpreadMult2 || 1.5;
   }
 
   onTradeUpdate(callback) {
@@ -334,6 +344,14 @@ class TradeExecutor {
       disabledExchanges: [...this.disabledExchanges],
       pnlResetDate: this.pnlResetDate || null,
       dailyPnL: this.dailyPnL,
+      maxTradeAge: this.maxTradeAge,
+      timeExitMinutes: this.timeExitMinutes,
+      profitProtectPct: this.profitProtectPct,
+      profitProtectLevPnl: this.profitProtectLevPnl,
+      trailAtrMultPre: this.trailAtrMultPre,
+      trailAtrMultPost: this.trailAtrMultPost,
+      dcaSpreadMult1: this.dcaSpreadMult1,
+      dcaSpreadMult2: this.dcaSpreadMult2,
     };
   }
 
@@ -355,6 +373,14 @@ class TradeExecutor {
     if (cfg.excludedSymbols != null) this.excludedSymbols = new Set(cfg.excludedSymbols);
     if (cfg.disabledExchanges != null) this.disabledExchanges = new Set(cfg.disabledExchanges);
     if (cfg.pnlResetDate != null) this.pnlResetDate = cfg.pnlResetDate;
+    if (cfg.maxTradeAge != null) this.maxTradeAge = cfg.maxTradeAge;
+    if (cfg.timeExitMinutes != null) this.timeExitMinutes = cfg.timeExitMinutes;
+    if (cfg.profitProtectPct != null) this.profitProtectPct = cfg.profitProtectPct;
+    if (cfg.profitProtectLevPnl != null) this.profitProtectLevPnl = cfg.profitProtectLevPnl;
+    if (cfg.trailAtrMultPre != null) this.trailAtrMultPre = cfg.trailAtrMultPre;
+    if (cfg.trailAtrMultPost != null) this.trailAtrMultPost = cfg.trailAtrMultPost;
+    if (cfg.dcaSpreadMult1 != null) this.dcaSpreadMult1 = cfg.dcaSpreadMult1;
+    if (cfg.dcaSpreadMult2 != null) this.dcaSpreadMult2 = cfg.dcaSpreadMult2;
   }
 
   async saveConfig() {
@@ -383,8 +409,8 @@ class TradeExecutor {
     const atr = signal.atr || Math.abs(signal.stopLoss - price) / 3.5;
     const isLong = signal.direction === 'long';
     return {
-      dcaPrice2: isLong ? price - atr * 1.0 : price + atr * 1.0,
-      dcaPrice3: isLong ? price - atr * 1.5 : price + atr * 1.5,
+      dcaPrice2: isLong ? price - atr * this.dcaSpreadMult1 : price + atr * this.dcaSpreadMult1,
+      dcaPrice3: isLong ? price - atr * this.dcaSpreadMult2 : price + atr * this.dcaSpreadMult2,
     };
   }
 
@@ -701,6 +727,7 @@ class TradeExecutor {
       dcaStage: 1,
       status: 'open',
       source: this.settingsKey,
+      onchainContext: signal.onchainContext || null,
     };
 
     await db.saveTrade(trade);
@@ -885,6 +912,7 @@ class TradeExecutor {
         orderId: order.id,
         status: 'open',
         source: this.settingsKey,
+        onchainContext: signal.onchainContext || null,
       };
 
       await db.saveTrade(trade);
@@ -995,9 +1023,9 @@ class TradeExecutor {
         const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
 
         // --- TIME-BASED EXIT: edge decays after 30-60 min ---
-        if (!action && !trade.hit_tp1 && tradeAgeMs > 45 * 60 * 1000) {
-          if (pnlUsd > 0 && tradeAgeMs < 90 * 60 * 1000) {
-            // 45-90min in profit, no TP1: trail SL to breakeven + 1%
+        if (this.timeExitMinutes > 0 && !action && !trade.hit_tp1 && tradeAgeMs > this.timeExitMinutes * 0.5 * 60 * 1000) {
+          if (pnlUsd > 0 && tradeAgeMs < this.timeExitMinutes * 60 * 1000) {
+            // Half-time in profit, no TP1: trail SL to breakeven + 1%
             const beTrail = isLong ? trade.entry_price * 1.01 : trade.entry_price * 0.99;
             const currentSL = trade.stop_loss;
             const priceAboveTrail = isLong ? currentPrice > beTrail : currentPrice < beTrail;
@@ -1007,16 +1035,16 @@ class TradeExecutor {
               await this.updateExchangeSL(trade, beTrail);
               trade.stop_loss = beTrail;
               action = 'time_trail';
-              logger.info(`${trade.symbol}: 45min+ in profit, no TP1 — SL trailed to breakeven+1% ($${beTrail.toPrecision(6)})`);
+              logger.info(`${trade.symbol}: ${this.timeExitMinutes / 2}min+ in profit, no TP1 — SL trailed to breakeven+1% ($${beTrail.toPrecision(6)})`);
             }
-          } else if (tradeAgeMs > 90 * 60 * 1000) {
-            // 90min+, no TP1: close the trade — edge is gone
+          } else if (tradeAgeMs > this.timeExitMinutes * 60 * 1000) {
+            // Full time, no TP1: close the trade — edge is gone
             action = 'time_exit';
             await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'time_exit');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 1 * 60 * 60 * 1000);
-            logger.info(`${trade.symbol}: 90min+ no TP1 — time exit at $${currentPrice} (${pnlPct.toFixed(2)}%, $${pnlUsd.toFixed(2)})`);
+            logger.info(`${trade.symbol}: ${this.timeExitMinutes}min+ no TP1 — time exit at $${currentPrice} (${pnlPct.toFixed(2)}%, $${pnlUsd.toFixed(2)})`);
           }
         }
 
@@ -1113,7 +1141,7 @@ class TradeExecutor {
         // Post-TP3 runner uses 3x ATR trail (wide, lets it ride big moves)
         // Pre-TP3 uses 1.5x ATR trail (tighter, locks in gains)
         if (!action && trade.hit_tp1 && trade.atr) {
-          const trailDist = trade.hit_tp3 ? trade.atr * 3 : trade.atr * 1.5;
+          const trailDist = trade.hit_tp3 ? trade.atr * this.trailAtrMultPost : trade.atr * this.trailAtrMultPre;
           const peak = trade.peak_price || trade.entry_price;
           const newPeak = isLong
             ? Math.max(peak, currentPrice)
@@ -1139,7 +1167,7 @@ class TradeExecutor {
         // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
         // Trigger at 5% price move OR 25% leveraged ROI (whichever comes first)
         const leveragedPnl = pnlPct * (trade.leverage || 1);
-        if (!action && !trade.hit_tp1 && (pnlPct > 5 || leveragedPnl > 25)) {
+        if (!action && !trade.hit_tp1 && (pnlPct > this.profitProtectPct || leveragedPnl > this.profitProtectLevPnl)) {
           const currentSL = trade.stop_loss;
           const atBreakeven = isLong ? currentSL >= trade.entry_price : currentSL <= trade.entry_price;
           if (!atBreakeven) {
@@ -1152,7 +1180,7 @@ class TradeExecutor {
           } else if (trade.atr) {
             // Already at breakeven — trail SL keeping 67% of profit (give back max 33%)
             const profitDist = Math.abs((trade.peak_price || currentPrice) - trade.entry_price);
-            const trailDist = Math.min(trade.atr * 1.5, profitDist * 0.33 || trade.atr * 1.5);
+            const trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.33 || trade.atr * this.trailAtrMultPre);
             const peak = trade.peak_price || trade.entry_price;
             const newPeak = isLong ? Math.max(peak, currentPrice) : Math.min(peak, currentPrice);
             if (newPeak !== peak) {
@@ -1196,8 +1224,8 @@ class TradeExecutor {
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + slPnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
         }
-        // --- AUTO-CLOSE AFTER 48h ---
-        else if (!action && Date.now() - new Date(trade.created_at).getTime() > 48 * 60 * 60 * 1000) {
+        // --- AUTO-CLOSE AFTER maxTradeAge ---
+        else if (!action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
           action = 'expired';
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;

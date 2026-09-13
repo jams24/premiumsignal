@@ -84,6 +84,7 @@ class UserPaperEngine {
             stopLoss: setup.stopLoss,
             invalidation: setup.invalidation,
             atr: setup.atr || Math.abs(setup.stopLoss - setup.currentPrice) / 3,
+            onchainContext: setup.onchainContext || null,
           }, 'onchain', user);
           queued++;
         } catch (e) {
@@ -93,6 +94,46 @@ class UserPaperEngine {
       if (queued) logger.info(`Onchain paper entries queued for ${queued} user(s): ${setup.symbol}`);
     } catch (e) {
       logger.error(`openForOnchainFollowers failed: ${e.message}`);
+    }
+  }
+
+  async openForSwingFollowers(setup, score) {
+    try {
+      const followers = await db.getSwingFollowers();
+      let queued = 0;
+      for (const user of followers) {
+        try {
+          const minScore = parseInt(user.swing_min_score) || 60;
+          if (score < minScore) continue;
+
+          const maxPos = parseInt(user.max_positions) || 5;
+          const openTrades = await db.getOpenUserTrades(user.telegram_id);
+          if (openTrades.length >= maxPos) continue;
+          if (openTrades.find(t => t.symbol === setup.symbol)) continue;
+
+          const dailyLossLimit = parseFloat(user.daily_loss_limit) || 100;
+          const dailyPnl = await db.getUserDailyPnL(user.telegram_id);
+          if (dailyPnl <= -dailyLossLimit) continue;
+
+          await this._queueEntry(user.telegram_id, {
+            symbol: setup.symbol,
+            exchange: setup.exchange,
+            direction: setup.direction,
+            currentPrice: setup.currentPrice,
+            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3,
+            stopLoss: setup.stopLoss,
+            invalidation: setup.stopLoss,
+            atr: setup.atr || Math.abs(setup.stopLoss - setup.currentPrice) / 3,
+            onchainContext: setup.onchainContext || null,
+          }, 'swing', user);
+          queued++;
+        } catch (e) {
+          logger.warn(`User swing paper queue failed for ${user.telegram_id}: ${e.message}`);
+        }
+      }
+      if (queued) logger.info(`Swing paper entries queued for ${queued} user(s): ${setup.symbol}`);
+    } catch (e) {
+      logger.error(`openForSwingFollowers failed: ${e.message}`);
     }
   }
 
@@ -202,6 +243,7 @@ class UserPaperEngine {
       stopLoss: setup.stopLoss,
       leverage, quantity, atr, invalidation,
       source,
+      onchainContext: setup.onchainContext || null,
     });
 
     const emoji = source === 'onchain' ? '🔗' : '📝';
@@ -670,8 +712,9 @@ class UserPaperEngine {
         `Closed at $${slPrice.toPrecision(6)}\nP&L: $${slPnlUsd.toFixed(2)}${this.balanceTag(slBal)}`);
     }
 
-    // --- 48h EXPIRY ---
-    if (!action && tradeAgeMs > 48 * 60 * 60 * 1000) {
+    // --- TRADE EXPIRY (48h default, 14d for swing) ---
+    const maxTradeAge = t.onchain_context?.swingData ? 14 * 24 * 60 * 60 * 1000 : 48 * 60 * 60 * 1000;
+    if (!action && tradeAgeMs > maxTradeAge) {
       action = 'expired';
       const totalPnl = pnlUsd + parseFloat(t.realized_pnl_usd || 0);
       await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'expired');
