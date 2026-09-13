@@ -312,6 +312,63 @@ class UserPaperEngine {
 
     let action = null;
 
+    // --- TIME-BASED EXIT: edge decays after 45-90 min ---
+    if (!action && !t.hit_tp1 && tradeAgeMs > 45 * 60 * 1000) {
+      if (pnlUsd > 0 && tradeAgeMs < 90 * 60 * 1000) {
+        const beTrail = isLong ? entry * 1.01 : entry * 0.99;
+        const currentSL = parseFloat(t.stop_loss);
+        const priceAboveTrail = isLong ? price > beTrail : price < beTrail;
+        const shouldMove = priceAboveTrail && (isLong ? beTrail > currentSL : beTrail < currentSL);
+        if (shouldMove) {
+          await db.updateUserPaperTrade(t.id, { stop_loss: beTrail });
+          t.stop_loss = beTrail;
+          action = 'time_trail';
+        }
+      } else if (tradeAgeMs > 90 * 60 * 1000) {
+        action = 'time_exit';
+        const totalPnl = pnlUsd + parseFloat(t.realized_pnl_usd || 0);
+        await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'time_exit');
+        await this.notify(t.telegram_id,
+          `⏰ <b>TIME EXIT</b> — $${escapeHtml(t.symbol)}\n` +
+          `90min+ no TP1 — edge decayed\nP&L: $${totalPnl.toFixed(2)}`);
+      }
+    }
+
+    // --- SMC THESIS RE-CHECK: detect structure flip every 15 min ---
+    if (!action && tradeAgeMs > 30 * 60 * 1000 && !t.hit_tp1) {
+      const lastRecheck = t._lastSmcRecheck || 0;
+      if (Date.now() - lastRecheck > 15 * 60 * 1000) {
+        t._lastSmcRecheck = Date.now();
+        try {
+          const exchange = this.exchanges[t.exchange];
+          const pair = [`${t.symbol}/USDT:USDT`, `${t.symbol}/USDT`].find(p => exchange?.markets?.[p]);
+          if (pair && exchange) {
+            const ohlcv1h = await exchange.fetchOHLCV(pair, '1h', undefined, 100);
+            if (ohlcv1h && ohlcv1h.length >= 20) {
+              const SMCAnalyzer = require('../collectors/smcAnalyzer');
+              const smc = new SMCAnalyzer();
+              const result = smc.analyze(ohlcv1h);
+              if (result && result.structureBias !== 'neutral') {
+                const structureConflict = (isLong && result.structureBias === 'bearish') ||
+                  (!isLong && result.structureBias === 'bullish');
+                const hasChoch = isLong
+                  ? result.chochEvents.some(e => e.type === 'CHOCH_BEARISH')
+                  : result.chochEvents.some(e => e.type === 'CHOCH_BULLISH');
+                if (structureConflict && hasChoch && pnlUsd < 0) {
+                  action = 'thesis_broken';
+                  const totalPnl = pnlUsd + parseFloat(t.realized_pnl_usd || 0);
+                  await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'thesis_broken');
+                  await this.notify(t.telegram_id,
+                    `🔄 <b>THESIS BROKEN</b> — $${escapeHtml(t.symbol)}\n` +
+                    `SMC structure flipped ${result.structureBias} with ChoCH\nP&L: $${totalPnl.toFixed(2)}`);
+                }
+              }
+            }
+          }
+        } catch (e) { /* SMC recheck failed */ }
+      }
+    }
+
     // --- INVALIDATION CHECK: 4H candle close below invalidation level ---
     if (!action && t.invalidation && ohlcv && ohlcv.length >= 2 && tradeAgeMs > 4 * 60 * 60 * 1000) {
       const prevClose = ohlcv[ohlcv.length - 2][4];
