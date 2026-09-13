@@ -497,24 +497,36 @@ class TelegramBot {
         const uid = ctx.state.user.telegram_id;
         const user = await db.getUser(uid);
         const stats = await db.getUserTradeStats(uid);
+        const ocStats = await db.getUserTradeStatsBySource(uid, 'onchain');
+        const sigStats = await db.getUserTradeStatsBySource(uid, 'signal');
         const open = await db.getOpenUserTrades(uid);
+        const dailyPnl = await db.getUserDailyPnL(uid);
         const size = parseFloat(user.paper_size) || 100;
         const lev = parseInt(user.paper_leverage) || 20;
+        const wr = stats.closed > 0 ? ((parseInt(stats.wins) / parseInt(stats.closed)) * 100).toFixed(0) : 0;
+
         let msg = `📊 <b>Your Paper Portfolio</b>\n\n` +
-          `⚙️ Size: $${size} | Leverage: ${lev}x | Notional: $${(size * lev).toFixed(0)}\n\n` +
-          `Closed: ${stats.closed} | Wins: ${stats.wins}\n` +
-          `Total P&L: <b>$${parseFloat(stats.total_pnl).toFixed(2)}</b>\n` +
-          `Avg trade: ${parseFloat(stats.avg_pnl_pct).toFixed(2)}%\n`;
+          `⚙️ $${size} × ${lev}x = $${(size * lev).toFixed(0)} notional\n` +
+          `📡 Signals: ${user.paper_follow ? '✅' : '❌'} | 🔗 Onchain: ${user.onchain_follow ? '✅' : '❌'}\n\n`;
+
+        msg += `<b>Overall:</b> ${stats.closed} trades | WR: ${wr}% | P&L: <b>$${parseFloat(stats.total_pnl).toFixed(2)}</b>\n`;
+        msg += `Today: $${dailyPnl.toFixed(2)}\n\n`;
+
+        if (parseInt(sigStats.closed) > 0) {
+          const sigWr = ((parseInt(sigStats.wins) / parseInt(sigStats.closed)) * 100).toFixed(0);
+          msg += `📡 <b>Signals:</b> ${sigStats.closed} trades | WR: ${sigWr}% | $${parseFloat(sigStats.total_pnl).toFixed(2)}\n`;
+        }
+        if (parseInt(ocStats.closed) > 0) {
+          const ocWr = ((parseInt(ocStats.wins) / parseInt(ocStats.closed)) * 100).toFixed(0);
+          msg += `🔗 <b>Onchain:</b> ${ocStats.closed} trades | WR: ${ocWr}% | $${parseFloat(ocStats.total_pnl).toFixed(2)}\n`;
+        }
+
         if (open.length) {
-          msg += `\n<b>Open (${open.length}):</b>\n`;
-          for (const t of open.slice(0, 10)) {
-            const entry = parseFloat(t.entry_price);
-            const realized = parseFloat(t.realized_pnl_usd || 0);
-            const tps = [t.hit_tp1 ? 'TP1' : '', t.hit_tp2 ? 'TP2' : '', t.hit_tp3 ? 'TP3' : ''].filter(Boolean).join(',');
-            const pnlStr = realized > 0 ? ` | banked $${realized.toFixed(2)}` : '';
-            const src = t.source === 'onchain' ? ' 🔗' : t.source === 'manual' ? ' 🔧' : '';
-            msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${entry.toPrecision(6)}${pnlStr}${tps ? ` | ${tps}` : ''}${src}\n`;
-          }
+          const exchanges = this.userPaperEngine?.exchanges || this.technicalScanner?.exchanges || {};
+          const { msg: posMsg, totalPnl } = await formatPositions(open, exchanges);
+          const pnlColor = totalPnl >= 0 ? '🟩' : '🟥';
+          msg += `\n<b>Open (${open.length})</b> ${pnlColor} $${totalPnl.toFixed(2)}\n\n`;
+          msg += posMsg;
         } else {
           msg += `\nNo open trades. Use /follow or /buy <SYMBOL>`;
         }
@@ -613,6 +625,62 @@ class TelegramBot {
       }
     });
 
+    const formatPositions = async (trades, exchanges) => {
+      const prices = new Map();
+      for (const t of trades) {
+        const key = `${t.exchange}:${t.symbol}`;
+        if (prices.has(key)) continue;
+        const ex = exchanges?.[t.exchange];
+        if (!ex) continue;
+        for (const pair of [`${t.symbol}/USDT:USDT`, `${t.symbol}/USDT`]) {
+          if (ex.markets?.[pair]) {
+            try { const tk = await ex.fetchTicker(pair); prices.set(key, tk.last); } catch (e) {}
+            break;
+          }
+        }
+      }
+
+      let totalUnrealized = 0;
+      let totalRealized = 0;
+      let msg = '';
+      for (const t of trades.slice(0, 10)) {
+        const entry = parseFloat(t.entry_price);
+        const posSize = parseFloat(t.position_size);
+        const qty = parseFloat(t.quantity);
+        const realized = parseFloat(t.realized_pnl_usd || 0);
+        const isLong = t.direction === 'long';
+        const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
+        const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+        const ageStr = age < 60 ? `${age}m` : age < 1440 ? `${Math.round(age / 60)}h` : `${Math.round(age / 1440)}d`;
+
+        const curPrice = prices.get(`${t.exchange}:${t.symbol}`);
+        let unrealizedPct = 0, unrealizedUsd = 0;
+        if (curPrice) {
+          unrealizedPct = isLong
+            ? ((curPrice - entry) / entry) * 100
+            : ((entry - curPrice) / entry) * 100;
+          unrealizedUsd = (unrealizedPct / 100) * posSize;
+        }
+        const combinedPnl = unrealizedUsd + realized;
+        totalUnrealized += unrealizedUsd;
+        totalRealized += realized;
+
+        const pnlEmoji = combinedPnl >= 0 ? '🟩' : '🟥';
+        const tpHits = [t.hit_tp1 ? '✅1' : '⬜1', t.hit_tp2 ? '✅2' : '⬜2', t.hit_tp3 ? '✅3' : '⬜3'].join(' ');
+
+        msg += `${isLong ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src} · ${ageStr}\n`;
+        msg += `  Entry: $${entry.toPrecision(6)}`;
+        if (curPrice) msg += ` → Now: $${curPrice.toPrecision(6)}`;
+        msg += `\n`;
+        msg += `  ${pnlEmoji} P&L: <b>$${combinedPnl.toFixed(2)}</b> (${unrealizedPct >= 0 ? '+' : ''}${unrealizedPct.toFixed(2)}%)`;
+        if (realized > 0) msg += ` · Banked: $${realized.toFixed(2)}`;
+        msg += `\n`;
+        msg += `  SL: $${parseFloat(t.stop_loss).toPrecision(6)} · Size: $${posSize.toFixed(0)}\n`;
+        msg += `  TP: ${tpHits}\n\n`;
+      }
+      return { msg, totalUnrealized, totalRealized, totalPnl: totalUnrealized + totalRealized };
+    };
+
     this.bot.command('mypositions', async (ctx) => {
       try {
         if (!this.userPaperEngine) return ctx.replyWithHTML('⚠️ Paper engine not ready.');
@@ -620,23 +688,11 @@ class TelegramBot {
         const open = await db.getOpenUserTrades(uid);
         if (!open.length) return ctx.replyWithHTML('📭 No open positions.\n\nUse /buy <SYMBOL> or /follow to start trading.');
 
-        let msg = `📈 <b>Your Open Positions (${open.length})</b>\n\n`;
-        for (const t of open.slice(0, 15)) {
-          const entry = parseFloat(t.entry_price);
-          const posSize = parseFloat(t.position_size);
-          const realized = parseFloat(t.realized_pnl_usd || 0);
-          const tps = [t.hit_tp1 ? '✅TP1' : '', t.hit_tp2 ? '✅TP2' : '', t.hit_tp3 ? '✅TP3' : ''].filter(Boolean).join(' ');
-          const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
-          const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
-          const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
-
-          msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src}\n`;
-          msg += `  Entry: $${entry.toPrecision(6)} | Size: $${posSize.toFixed(0)} | ${ageStr}\n`;
-          msg += `  SL: $${parseFloat(t.stop_loss).toPrecision(6)}`;
-          if (realized > 0) msg += ` | Banked: $${realized.toFixed(2)}`;
-          if (tps) msg += ` | ${tps}`;
-          msg += `\n\n`;
-        }
+        const { msg: posMsg, totalPnl } = await formatPositions(open, this.userPaperEngine.exchanges);
+        const pnlColor = totalPnl >= 0 ? '🟩' : '🟥';
+        let msg = `📈 <b>Your Open Positions (${open.length})</b>\n`;
+        msg += `${pnlColor} Total unrealized: <b>$${totalPnl.toFixed(2)}</b>\n\n`;
+        msg += posMsg;
         msg += `Close: <code>/closetrade SYMBOL</code>`;
         await ctx.replyWithHTML(msg);
       } catch (e) {
@@ -759,22 +815,12 @@ class TelegramBot {
         const onchain = open.filter(t => t.source === 'onchain');
         if (!onchain.length) return ctx.replyWithHTML('📭 No open onchain positions.\n\nEnable with /onchainfollow');
 
-        let msg = `🔗 <b>Onchain Positions (${onchain.length})</b>\n\n`;
-        for (const t of onchain.slice(0, 15)) {
-          const entry = parseFloat(t.entry_price);
-          const posSize = parseFloat(t.position_size);
-          const realized = parseFloat(t.realized_pnl_usd || 0);
-          const tps = [t.hit_tp1 ? '✅TP1' : '', t.hit_tp2 ? '✅TP2' : '', t.hit_tp3 ? '✅TP3' : ''].filter(Boolean).join(' ');
-          const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
-          const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
-
-          msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b>\n`;
-          msg += `  Entry: $${entry.toPrecision(6)} | Size: $${posSize.toFixed(0)} | ${ageStr}\n`;
-          msg += `  SL: $${parseFloat(t.stop_loss).toPrecision(6)}`;
-          if (realized > 0) msg += ` | Banked: $${realized.toFixed(2)}`;
-          if (tps) msg += ` | ${tps}`;
-          msg += `\n\n`;
-        }
+        const exchanges = this.userPaperEngine?.exchanges || this.technicalScanner?.exchanges || {};
+        const { msg: posMsg, totalPnl } = await formatPositions(onchain, exchanges);
+        const pnlColor = totalPnl >= 0 ? '🟩' : '🟥';
+        let msg = `🔗 <b>Onchain Positions (${onchain.length})</b>\n`;
+        msg += `${pnlColor} Total: <b>$${totalPnl.toFixed(2)}</b>\n\n`;
+        msg += posMsg;
         msg += `Close: <code>/closetrade SYMBOL</code>`;
         await ctx.replyWithHTML(msg);
       } catch (e) {
@@ -1103,18 +1149,16 @@ class TelegramBot {
           );
           return;
         }
-        let msg = `📈 <b>Open Positions (${open.length})</b>\n\n`;
-        for (const t of open.slice(0, 10)) {
-          const entry = parseFloat(t.entry_price);
-          const realized = parseFloat(t.realized_pnl_usd || 0);
-          const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
-          msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src} @ $${entry.toPrecision(6)}`;
-          if (realized > 0) msg += ` | +$${realized.toFixed(2)}`;
-          msg += `\n`;
-        }
-        msg += `\nClose: <code>/closetrade SYMBOL</code>`;
+        const exchanges = this.userPaperEngine?.exchanges || this.technicalScanner?.exchanges || {};
+        const { msg: posMsg, totalPnl } = await formatPositions(open, exchanges);
+        const pnlColor = totalPnl >= 0 ? '🟩' : '🟥';
+        let msg = `📈 <b>Open Positions (${open.length})</b>\n`;
+        msg += `${pnlColor} Total: <b>$${totalPnl.toFixed(2)}</b>\n\n`;
+        msg += posMsg;
+        msg += `Close: <code>/closetrade SYMBOL</code>`;
         await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback('⬅️ Back', 'my_settings')],
+          [Markup.button.callback('🔄 Refresh', 'my_cfg_positions'),
+           Markup.button.callback('⬅️ Back', 'my_settings')],
         ]).reply_markup });
       } catch (e) { logger.error(`my_cfg_positions: ${e.message}`); }
     });
