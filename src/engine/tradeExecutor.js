@@ -128,23 +128,30 @@ class TradeExecutor {
       return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
     }
 
-    // Re-entry guard: 2h cooldown for direction flip, 30min for same-direction re-entry
+    // Re-entry guard (DB-based, survives restarts):
+    // 4h after SL/max_loss/invalidation, 2h after direction flip, 1h after profitable close
     try {
       const { rows: lastTrades } = await db.query(
-        `SELECT direction, closed_at FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        `SELECT direction, closed_at, close_reason, pnl_usd FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
         [signal.symbol]
       );
       if (lastTrades.length) {
         const closedAt = new Date(lastTrades[0].closed_at).getTime();
         const isFlip = lastTrades[0].direction !== signal.direction;
-        const cooldownMs = isFlip ? 2 * 60 * 60 * 1000 : 30 * 60 * 1000;
+        const pnl = parseFloat(lastTrades[0].pnl_usd) || 0;
+        const lossReasons = ['max_loss', 'invalidated', 'thesis_broken'];
+        const wasLoss = lossReasons.includes(lastTrades[0].close_reason)
+          || (lastTrades[0].close_reason === 'sl' && pnl < -0.01)
+          || pnl < -0.01;
+        let cooldownMs;
+        if (wasLoss) cooldownMs = 4 * 60 * 60 * 1000;
+        else if (isFlip) cooldownMs = 2 * 60 * 60 * 1000;
+        else cooldownMs = 1 * 60 * 60 * 1000;
         const reentryUntil = closedAt + cooldownMs;
         if (Date.now() < reentryUntil) {
           const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
-          const reason = isFlip
-            ? `${signal.symbol} direction flip blocked — was ${lastTrades[0].direction}, now ${signal.direction} (${minsLeft}m cooldown)`
-            : `${signal.symbol} re-entry blocked — closed ${minsLeft}m ago (30m cooldown)`;
-          return { ok: false, reason };
+          const label = wasLoss ? 'loss cooldown' : isFlip ? 'direction flip cooldown' : 're-entry cooldown';
+          return { ok: false, reason: `${signal.symbol} blocked — ${label} (${minsLeft}m remaining)` };
         }
       }
     } catch (e) { /* DB error, skip check */ }
