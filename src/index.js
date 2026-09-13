@@ -103,7 +103,7 @@ async function main() {
     paperBalance: 500,
     dynamicLeverage: false,
     dcaEnabled: false,
-    signalFilter: new Set(['ONCHAIN_SETUP', 'FLOW_SETUP']),
+    signalFilter: new Set(['ONCHAIN_SETUP']),
   });
 
   // Load persisted settings and today's PnL from DB
@@ -433,23 +433,8 @@ async function main() {
           }, `FLOW ${dir} ${token.symbol} score=${token.flowScore}`).catch(() => {});
         }
 
-        // Auto-trade flow signals — reuse tradeSetup from alert phase
-        const flowMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 30;
-        for (const token of significant) {
-          if (token.flowScore < flowMinScore || !onchainTradeExecutor.enabled) continue;
-          try {
-            const setup = token.tradeSetup;
-            if (!setup) continue;
-            const flowPumpLimit = token.flowScore >= 60 ? 40 : token.flowScore >= 45 ? 30 : 20;
-            if (Math.abs(token.priceChange) > flowPumpLimit) {
-              logger.info(`Flow skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${flowPumpLimit}% for score ${token.flowScore}) — late entry risk`);
-              continue;
-            }
-            await onchainTradeExecutor.queueSignal(setup);
-          } catch (e) {
-            logger.debug(`Flow auto-trade failed for ${token.symbol}: ${e.message}`);
-          }
-        }
+        // Flow auto-trade disabled — flow signals are alerts-only (negative 4h avg -4.2%)
+        // Onchain auto-trade (ONCHAIN_SETUP) is unaffected
 
         // Send setup chart images for top flow tokens
         for (const token of significant.slice(0, 3)) {

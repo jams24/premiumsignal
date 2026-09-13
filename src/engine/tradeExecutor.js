@@ -916,8 +916,34 @@ class TradeExecutor {
 
         let action = null;
 
-        // --- SMC THESIS RE-CHECK: every 15 min, re-run SMC to detect structure flip ---
         const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
+
+        // --- TIME-BASED EXIT: edge decays after 30-60 min ---
+        if (!action && !trade.hit_tp1 && tradeAgeMs > 45 * 60 * 1000) {
+          if (pnlUsd > 0 && tradeAgeMs < 90 * 60 * 1000) {
+            // 45-90min in profit, no TP1: trail SL to breakeven + 1%
+            const beTrail = isLong ? trade.entry_price * 1.01 : trade.entry_price * 0.99;
+            const currentSL = trade.stop_loss;
+            const shouldMove = isLong ? beTrail > currentSL : beTrail < currentSL;
+            if (shouldMove) {
+              await db.updateTradeStopLoss(trade.id, beTrail);
+              await this.updateExchangeSL(trade, beTrail);
+              trade.stop_loss = beTrail;
+              action = 'time_trail';
+              logger.info(`${trade.symbol}: 45min+ in profit, no TP1 — SL trailed to breakeven+1% ($${beTrail.toPrecision(6)})`);
+            }
+          } else if (tradeAgeMs > 90 * 60 * 1000) {
+            // 90min+, no TP1: close the trade — edge is gone
+            action = 'time_exit';
+            await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'time_exit');
+            this.dailyPnL += pnlUsd;
+            if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+            this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 1 * 60 * 60 * 1000);
+            logger.info(`${trade.symbol}: 90min+ no TP1 — time exit at $${currentPrice} (${pnlPct.toFixed(2)}%, $${pnlUsd.toFixed(2)})`);
+          }
+        }
+
+        // --- SMC THESIS RE-CHECK: every 15 min, re-run SMC to detect structure flip ---
         if (!action && tradeAgeMs > 30 * 60 * 1000 && !trade.hit_tp1) {
           const lastRecheck = trade._lastSmcRecheck || 0;
           if (Date.now() - lastRecheck > 15 * 60 * 1000) {
@@ -1103,10 +1129,10 @@ class TradeExecutor {
         }
 
         if (action) {
-          if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired', 'thesis_broken'].includes(action)) {
+          if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired', 'thesis_broken', 'time_exit'].includes(action)) {
             await this.closeExchangePosition(trade);
           }
-          if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken'].includes(action)) {
+          if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken', 'time_exit'].includes(action)) {
             this.saveConfig();
           }
 
@@ -1402,6 +1428,12 @@ class TradeExecutor {
     }
     if (action === 'max_loss') {
       return `${modeTag} 🛑 <b>MAX LOSS CAP</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n⚠️ Per-trade loss limit ($${this.maxLossPerTrade}) reached.\nPosition closed to protect capital.`;
+    }
+    if (action === 'time_exit') {
+      return `${modeTag} ⏱️ <b>TIME EXIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n90min+ without TP1 — edge expired.\nCapital freed for better setups.`;
+    }
+    if (action === 'time_trail') {
+      return `${modeTag} ⏱️ <b>TIME TRAIL</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n🔒 45min+ in profit, no TP1 — SL trailed to breakeven+1%\nWill auto-close at 90min if no TP1.`;
     }
     if (action === 'expired') {
       return `${modeTag} ⏰ <b>EXPIRED</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\nAuto-closed after 48 hours.`;

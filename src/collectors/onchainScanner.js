@@ -510,9 +510,9 @@ class OnchainScanner {
       const mult = direction === 'long' ? 1 : -1;
 
       const minPrice = price * 0.05;
-      const tp1 = Math.max(price + mult * atr * 2.0, minPrice);
-      const tp2 = Math.max(price + mult * atr * 4.0, minPrice);
-      const tp3 = Math.max(price + mult * atr * 6.0, minPrice);
+      const tp1 = Math.max(price + mult * atr * 1.2, minPrice);
+      const tp2 = Math.max(price + mult * atr * 2.5, minPrice);
+      const tp3 = Math.max(price + mult * atr * 4.0, minPrice);
 
       // SL: find real support/resistance from chart structure, not blind ATR
       const atrSL = price - mult * atr * 2.0;
