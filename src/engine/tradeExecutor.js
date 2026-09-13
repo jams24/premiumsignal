@@ -425,9 +425,19 @@ class TradeExecutor {
     }
   }
 
-  queueSignal(signal) {
+  async queueSignal(signal) {
     const key = `${signal.symbol}_${signal.exchange}`;
     if (this.pendingEntries.has(key)) return;
+
+    // Check DB for existing position on same symbol
+    try {
+      const openPositions = await db.getOpenTrades(this.settingsKey);
+      const existing = openPositions.find(p => p.symbol === signal.symbol);
+      if (existing) {
+        logger.info(`Queue skip ${signal.symbol}: already in position (${existing.exchange})`);
+        return;
+      }
+    } catch (e) { logger.debug(`Queue DB check failed: ${e.message}`); }
 
     this.pendingEntries.set(key, {
       signal,
@@ -450,6 +460,16 @@ class TradeExecutor {
         const { signal, queuedAt, signalPrice } = entry;
         const ageMin = (Date.now() - queuedAt) / 60000;
         const isLong = signal.direction === 'long';
+
+        // Re-check: if a position opened since queuing, cancel
+        try {
+          const openPositions = await db.getOpenTrades(this.settingsKey);
+          if (openPositions.find(p => p.symbol === signal.symbol)) {
+            logger.info(`Pending ${signal.symbol}: position already open, cancelling queue`);
+            this.pendingEntries.delete(key);
+            continue;
+          }
+        } catch (e) { /* proceed with other checks */ }
 
         const exchange = this.exchanges[signal.exchange];
         if (!exchange) { this.pendingEntries.delete(key); continue; }
@@ -480,14 +500,17 @@ class TradeExecutor {
 
         if (pulledBack && recovering) {
           signal.currentPrice = close;
-          logger.info(`Pending ${signal.symbol}: pullback entry at $${close} (signal was $${signalPrice}, saved ${((1 - close / signalPrice) * 100).toFixed(1)}%)`);
           this.pendingEntries.delete(key);
-          await this.notify(
-            `🎯 <b>PULLBACK ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
-            `Signal: $${signalPrice} → Entry: $${close}\n` +
-            `Saved ${Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1)}% on entry`
-          );
-          await this.executeSignal(signal);
+          const result = await this.executeSignal(signal);
+          if (result) {
+            const saved = Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1);
+            logger.info(`Pending ${signal.symbol}: pullback entry at $${close} (signal was $${signalPrice}, saved ${saved}%)`);
+            await this.notify(
+              `🎯 <b>PULLBACK ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
+              `Signal: $${signalPrice} → Entry: $${close}\n` +
+              `Saved ${saved}% on entry`
+            );
+          }
           continue;
         }
 
