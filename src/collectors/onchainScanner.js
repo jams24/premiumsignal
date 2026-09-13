@@ -1,6 +1,21 @@
 const logger = require('../utils/logger');
 const { EMA } = require('technicalindicators');
+const https = require('https');
 const { STOCK_TOKENS } = require('./technicalScanner');
+
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 5000 }, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
 
 function isStockToken(symbol) {
   if (STOCK_TOKENS.test(symbol)) return true;
@@ -14,8 +29,35 @@ class OnchainScanner {
     this.exchanges = exchanges;
     this.onchainTracker = onchainTracker;
     this.oiCache = new Map();
+    this.lsCache = new Map();
     this.alerts = [];
     this.lastScan = null;
+  }
+
+  async fetchLongShortRatio(symbol) {
+    const cacheKey = symbol;
+    const cached = this.lsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) return cached;
+
+    const pair = symbol.replace('/', '').replace(':USDT', '');
+    try {
+      const [topAcct, topPos, global] = await Promise.all([
+        fetchJSON(`https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=${pair}&period=1h&limit=1`),
+        fetchJSON(`https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${pair}&period=1h&limit=1`),
+        fetchJSON(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${pair}&period=1h&limit=1`),
+      ]);
+      const result = {
+        timestamp: Date.now(),
+        topTraderAcctRatio: topAcct?.[0] ? parseFloat(topAcct[0].longShortRatio) : null,
+        topTraderPosRatio: topPos?.[0] ? parseFloat(topPos[0].longShortRatio) : null,
+        globalRatio: global?.[0] ? parseFloat(global[0].longShortRatio) : null,
+      };
+      this.lsCache.set(cacheKey, result);
+      return result;
+    } catch (e) {
+      logger.debug(`L/S ratio fetch failed for ${pair}: ${e.message}`);
+      return null;
+    }
   }
 
   async scan() {
@@ -113,6 +155,33 @@ class OnchainScanner {
       // Re-sort after flow boosts
       sorted.sort((a, b) => b.score - a.score);
     }
+
+    // Phase 3: Fetch L/S ratios from Binance for top tokens
+    const topForLS = sorted.filter(r => r.score >= 20).slice(0, 10);
+    for (const token of topForLS) {
+      try {
+        const ls = await this.fetchLongShortRatio(token.pair);
+        if (ls && ls.topTraderAcctRatio != null) {
+          token.lsData = ls;
+          const topLS = ls.topTraderAcctRatio;
+          const retailLS = ls.globalRatio;
+
+          if (topLS < 0.85 && retailLS > 1.1) {
+            token.score += 10;
+            token.signals.push(`📊 Top traders SHORT (${topLS.toFixed(2)}) vs retail LONG (${retailLS.toFixed(2)}) — squeeze or dump`);
+          } else if (topLS > 1.15 && retailLS < 0.9) {
+            token.score += 10;
+            token.signals.push(`📊 Top traders LONG (${topLS.toFixed(2)}) vs retail SHORT (${retailLS.toFixed(2)}) — smart money accumulating`);
+          }
+          if (topLS < 0.7) {
+            token.signals.push(`⚠️ Top traders extremely short (${topLS.toFixed(2)}) — squeeze setup`);
+          } else if (topLS > 1.3) {
+            token.signals.push(`⚠️ Top traders extremely long (${topLS.toFixed(2)}) — conviction play`);
+          }
+        }
+      } catch (e) { logger.debug(`L/S ratio failed for ${token.symbol}: ${e.message}`); }
+    }
+    sorted.sort((a, b) => b.score - a.score);
 
     // Fetch setup data (order book + liquidations) for top tokens
     if (this.liquidationScanner) {
@@ -247,6 +316,7 @@ class OnchainScanner {
       priceChange,
       price: ticker.last,
       volume: ticker.quoteVolume,
+      lsData: null,
     };
   }
 
@@ -397,6 +467,21 @@ class OnchainScanner {
           else if (r.fundingRate < -0.001) msg += ' — <b>Shorts paying longs, crowded short — squeeze risk</b>';
           else if (r.fundingRate < -0.0003) msg += ' — Shorts dominant, bears in control';
           msg += '\n';
+        }
+      }
+
+      // L/S Ratio — positioning analysis
+      if (r.lsData && r.lsData.topTraderAcctRatio != null) {
+        const topLS = r.lsData.topTraderAcctRatio;
+        const topPosLS = r.lsData.topTraderPosRatio;
+        const retailLS = r.lsData.globalRatio;
+        msg += `   📊 Top Trader L/S: ${topLS?.toFixed(2) || '—'}`;
+        if (topPosLS != null) msg += ` (pos: ${topPosLS.toFixed(2)})`;
+        msg += ` | Retail L/S: ${retailLS?.toFixed(2) || '—'}\n`;
+        if (topLS < 0.85 && retailLS > 1.05) {
+          msg += `      <i>Smart money short, retail long — classic dump or squeeze setup</i>\n`;
+        } else if (topLS > 1.15 && retailLS < 0.95) {
+          msg += `      <i>Smart money long, retail short — big players accumulating while crowd fades</i>\n`;
         }
       }
 
@@ -594,6 +679,22 @@ class OnchainScanner {
           }
         }
       } catch (e) { logger.debug(`${token.symbol}: 4H trend check failed: ${e.message}`); }
+
+      // L/S positioning filter — reject trades where smart money disagrees
+      try {
+        const ls = token.lsData || await this.fetchLongShortRatio(token.pair);
+        if (ls && ls.topTraderAcctRatio != null) {
+          const topLS = ls.topTraderAcctRatio;
+          if (direction === 'long' && topLS < 0.75) {
+            logger.info(`${token.symbol}: Reject LONG — top traders heavily short (L/S ${topLS.toFixed(2)})`);
+            return null;
+          }
+          if (direction === 'short' && topLS > 1.25) {
+            logger.info(`${token.symbol}: Reject SHORT — top traders heavily long (L/S ${topLS.toFixed(2)})`);
+            return null;
+          }
+        }
+      } catch (e) { /* L/S data unavailable, skip filter */ }
 
       const mult = direction === 'long' ? 1 : -1;
 
