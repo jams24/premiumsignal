@@ -90,14 +90,17 @@ class OnchainScanner {
           token.contractAddress = contract.address;
           token.chain = contract.chain;
 
-          // Score exchange flows
+          // Score exchange flows — real on-chain data, weight heavily
           if (flow.outflowCount > flow.inflowCount && flow.outflowCount >= 3) {
-            const flowBoost = flow.outflowCount >= 8 ? 20 : flow.outflowCount >= 5 ? 15 : 10;
+            const flowBoost = flow.outflowCount >= 8 ? 25 : flow.outflowCount >= 5 ? 20 : 15;
             token.score += flowBoost;
             token.signals.push(`🏦 Exchange outflow: ${flow.outflowCount} withdrawals from ${flow.exchanges.join(', ')}`);
           }
-          if (flow.inflowCount > flow.outflowCount && flow.inflowCount >= 5) {
-            token.signals.push(`⚠️ Exchange inflow: ${flow.inflowCount} deposits — potential sell pressure`);
+          // Penalize inflows — tokens entering exchanges = sell pressure
+          if (flow.inflowCount > flow.outflowCount && flow.inflowCount >= 3) {
+            const penalty = flow.inflowCount >= 8 ? 15 : flow.inflowCount >= 5 ? 10 : 5;
+            token.score -= penalty;
+            token.signals.push(`⚠️ Exchange inflow: ${flow.inflowCount} deposits — sell pressure (-${penalty}pts)`);
           }
 
           // Rate limit: Etherscan 5 req/sec free tier
@@ -153,19 +156,21 @@ class OnchainScanner {
             oiChange4h = oiVal4h > 0 ? ((oiVal - oiVal4h) / oiVal4h) * 100 : 0;
           }
 
-          // Score OI surge
+          // Score OI surge — capped at 15pts (OI >30% is crowded, not bullish)
           if (oiChange4h !== null) {
-            if (oiChange4h > 30) { score += 25; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h 🔥`); }
-            else if (oiChange4h > 20) { score += 20; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h`); }
+            if (oiChange4h > 40) { score += 10; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h ⚠️ crowded`); }
+            else if (oiChange4h > 30) { score += 15; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h 🔥`); }
+            else if (oiChange4h > 20) { score += 15; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h`); }
             else if (oiChange4h > 15) { score += 15; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h`); }
             else if (oiChange4h > 10) { score += 10; signals.push(`OI +${oiChange4h.toFixed(1)}% 4h`); }
             else if (oiChange4h < -20) { score += 10; signals.push(`OI ${oiChange4h.toFixed(1)}% 4h (flush)`); }
           }
 
-          // 1h OI spike is also notable
+          // 1h OI spike — moderate is good, extreme is crowded
           if (oiChange1h !== null && oiChange1h > 15) {
-            score += 10;
-            signals.push(`OI +${oiChange1h.toFixed(1)}% 1h spike`);
+            const oiBoost = oiChange1h > 40 ? 5 : 10;
+            score += oiBoost;
+            signals.push(`OI +${oiChange1h.toFixed(1)}% 1h spike${oiChange1h > 40 ? ' ⚠️' : ''}`);
           }
 
           this.oiCache.set(symbol, { timestamp: Date.now(), oiVal, oiChange1h, oiChange4h });
@@ -507,12 +512,37 @@ class OnchainScanner {
       const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : null;
       if (!direction) return null;
       const price = token.price;
+
+      // Candle confirmation — reject if last 2 completed candles contradict direction
+      const lastCandle = ohlcv[ohlcv.length - 2]; // completed candle (current candle is incomplete)
+      const prevCandle = ohlcv[ohlcv.length - 3];
+      if (lastCandle && prevCandle) {
+        const lastGreen = lastCandle[4] >= lastCandle[1]; // close >= open
+        const prevGreen = prevCandle[4] >= prevCandle[1];
+        // For LONG: reject if both last candles are red (falling knife)
+        // For SHORT: reject if both last candles are green (catching a rocket)
+        if (direction === 'long' && !lastGreen && !prevGreen) {
+          logger.info(`${token.symbol}: Skipping LONG — last 2 candles red (falling knife)`);
+          return null;
+        }
+        if (direction === 'short' && lastGreen && prevGreen) {
+          logger.info(`${token.symbol}: Skipping SHORT — last 2 candles green (chasing strength)`);
+          return null;
+        }
+      }
       const mult = direction === 'long' ? 1 : -1;
 
       const minPrice = price * 0.05;
-      const tp1 = Math.max(price + mult * atr * 1.2, minPrice);
-      const tp2 = Math.max(price + mult * atr * 2.5, minPrice);
-      const tp3 = Math.max(price + mult * atr * 4.0, minPrice);
+      const tp1Raw = price + mult * atr * 1.2;
+      const tp2Raw = price + mult * atr * 2.5;
+      const tp3Raw = price + mult * atr * 4.0;
+      // Cap TPs by absolute % — inflated ATR from pumps makes ATR-based targets unreachable
+      const tp1Cap = price * (1 + mult * 0.03);  // max 3%
+      const tp2Cap = price * (1 + mult * 0.06);  // max 6%
+      const tp3Cap = price * (1 + mult * 0.10);  // max 10%
+      const tp1 = Math.max(direction === 'long' ? Math.min(tp1Raw, tp1Cap) : Math.max(tp1Raw, tp1Cap), minPrice);
+      const tp2 = Math.max(direction === 'long' ? Math.min(tp2Raw, tp2Cap) : Math.max(tp2Raw, tp2Cap), minPrice);
+      const tp3 = Math.max(direction === 'long' ? Math.min(tp3Raw, tp3Cap) : Math.max(tp3Raw, tp3Cap), minPrice);
 
       // SL: find real support/resistance from chart structure, not blind ATR
       const atrSL = price - mult * atr * 2.0;
@@ -539,7 +569,7 @@ class OnchainScanner {
         const buffer = direction === 'long' ? 0.99 : 1.01;
         const swingSL = bestSwing * buffer;
         const swingDistPct = Math.abs((price - swingSL) / price) * 100;
-        if (swingDistPct >= 1.5 && swingDistPct <= 15) {
+        if (swingDistPct >= 3 && swingDistPct <= 15) {
           sl = swingSL;
           logger.info(`${token.symbol}: SL below swing ${direction === 'long' ? 'low' : 'high'} $${bestSwing.toPrecision(6)} → SL $${swingSL.toPrecision(6)} (${swingDistPct.toFixed(1)}%)`);
         }
@@ -554,7 +584,7 @@ class OnchainScanner {
           const wallBuffer = direction === 'long' ? 0.995 : 1.005;
           const wallSL = structureLevels[0].price * wallBuffer;
           const wallDistPct = Math.abs((price - wallSL) / price) * 100;
-          if (wallDistPct >= 1.5 && wallDistPct <= 15) {
+          if (wallDistPct >= 3 && wallDistPct <= 15) {
             if (direction === 'long' ? wallSL > sl : wallSL < sl) {
               sl = wallSL;
               logger.info(`${token.symbol}: SL upgraded to order book wall $${wallSL.toPrecision(6)} (${wallDistPct.toFixed(1)}%)`);
@@ -569,7 +599,7 @@ class OnchainScanner {
         if (lev25) {
           const liqSL = direction === 'long' ? lev25.longLiqPrice : lev25.shortLiqPrice;
           const liqDistPct = Math.abs((price - liqSL) / price) * 100;
-          if (liqDistPct >= 1.5 && liqDistPct <= 10) {
+          if (liqDistPct >= 3 && liqDistPct <= 10) {
             const liqBeyond = direction === 'long' ? liqSL * 0.995 : liqSL * 1.005;
             if (direction === 'long' ? liqBeyond > sl : liqBeyond < sl) {
               sl = liqBeyond;
@@ -579,11 +609,14 @@ class OnchainScanner {
         }
       }
 
-      // Floor: SL must be at least 1.5% from entry
+      // Floor: SL must be at least 3% from entry AND on correct side
+      const slOnWrongSide = direction === 'long' ? sl >= price : sl <= price;
       const slDistPct = Math.abs((price - sl) / price) * 100;
-      if (slDistPct < 1.5) {
-        sl = atrSL;
-        logger.info(`${token.symbol}: SL too tight (${slDistPct.toFixed(1)}%), falling back to ATR`);
+      if (slOnWrongSide || slDistPct < 3) {
+        const hardFloor = direction === 'long' ? price * 0.97 : price * 1.03;
+        const atrOk = direction === 'long' ? atrSL < price * 0.97 : atrSL > price * 1.03;
+        sl = atrOk ? atrSL : hardFloor;
+        logger.info(`${token.symbol}: SL ${slOnWrongSide ? 'on wrong side' : 'too tight'} (${slDistPct.toFixed(1)}%) → $${sl.toPrecision(6)} (${Math.abs((price - sl) / price * 100).toFixed(1)}%)`);
       }
 
       const confidence = token.score >= 60 ? 5 : token.score >= 45 ? 4 : 3;

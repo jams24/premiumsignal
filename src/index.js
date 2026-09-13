@@ -330,7 +330,7 @@ async function main() {
 
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
         // (calling buildTradeSetup again can flip direction between neutral/long)
-        const ocMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 30;
+        const ocMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
         for (const token of hotTokens) {
           if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
           try {
