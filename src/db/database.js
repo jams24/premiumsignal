@@ -636,11 +636,17 @@ async function updateUserPaperTrade(id, fields) {
 }
 
 async function closeUserPaperTrade(id, exitPrice, pnlPct, pnlUsd, reason) {
-  await query(
+  const { rows } = await query(
     `UPDATE user_paper_trades SET status='closed', exit_price=$2, pnl_pct=$3, pnl_usd=$4,
-     close_reason=$5, closed_at=NOW() WHERE id=$1`,
+     close_reason=$5, closed_at=NOW() WHERE id=$1 RETURNING telegram_id`,
     [id, exitPrice, pnlPct, pnlUsd, reason]
   );
+  if (rows.length && pnlUsd != null) {
+    await query(
+      `UPDATE bot_users SET paper_balance = COALESCE(paper_balance, 1000) + $2 WHERE telegram_id = $1`,
+      [rows[0].telegram_id, pnlUsd]
+    );
+  }
 }
 
 async function getUserTradeStats(telegramId) {

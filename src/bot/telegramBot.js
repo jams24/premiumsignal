@@ -612,13 +612,16 @@ class TelegramBot {
         const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
         if (!symbol) return ctx.replyWithHTML('Usage: <code>/closetrade BTC</code>');
         if (!this.userPaperEngine) return ctx.replyWithHTML('⚠️ Paper engine not ready.');
-        const result = await this.userPaperEngine.closeManualTrade(ctx.state.user.telegram_id, symbol);
+        const uid = ctx.state.user.telegram_id;
+        const result = await this.userPaperEngine.closeManualTrade(uid, symbol);
+        const bal = await this.userPaperEngine.getBalance(uid);
         const emoji = result.pnlUsd >= 0 ? '✅' : '❌';
+        const balLine = bal != null ? `\n${bal >= 500 ? '💰' : bal >= 100 ? '⚠️' : '🔴'} Balance: <b>$${bal.toFixed(2)}</b>` : '';
         ctx.replyWithHTML(
           `${emoji} <b>Position closed</b> — $${escapeHtml(symbol)}\n\n` +
           `${result.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'}\n` +
           `Entry: $${result.entry.toPrecision(6)} → Exit: $${result.exit.toPrecision(6)}\n` +
-          `P&L: <b>$${result.pnlUsd.toFixed(2)}</b> (${result.pnlPct.toFixed(2)}%)`
+          `P&L: <b>$${result.pnlUsd.toFixed(2)}</b> (${result.pnlPct.toFixed(2)}%)${balLine}`
         );
       } catch (e) {
         ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
@@ -868,9 +871,12 @@ class TelegramBot {
       const maxPos = parseInt(user.max_positions) || 5;
       const dailyLimit = parseFloat(user.daily_loss_limit) || 100;
       const perTrade = parseFloat(user.per_trade_loss) || 20;
+      const balance = parseFloat(user.paper_balance) || 1000;
+      const balEmoji = balance >= 500 ? '💰' : balance >= 100 ? '⚠️' : '🔴';
 
       const text =
         `⚙️ <b>YOUR SETTINGS</b>\n\n` +
+        `${balEmoji} <b>Balance: $${balance.toFixed(2)}</b>${balance < 100 ? ' — Low balance!' : ''}\n` +
         `📡 Signal follow: ${user.paper_follow ? '<b>✅ ON</b>' : '<b>❌ OFF</b>'} | ` +
         `🔗 Onchain: ${user.onchain_follow ? '<b>✅ ON</b>' : '<b>❌ OFF</b>'}\n` +
         `💵 Margin: <b>$${size}</b> | ⚡ Leverage: <b>${lev}x</b> | Notional: $${(size * lev).toFixed(0)}\n` +
@@ -879,7 +885,7 @@ class TelegramBot {
         `📈 Today: <b>$${dailyPnl.toFixed(2)}</b> | Open: <b>${open.length}/${maxPos}</b>\n\n` +
         `Tap any button to configure:`;
 
-      const keyboard = Markup.inlineKeyboard([
+      const buttons = [
         [Markup.button.callback(`${user.paper_follow ? '✅' : '❌'} Signals`, 'my_cfg_follow'),
          Markup.button.callback(`${user.onchain_follow ? '✅' : '❌'} Onchain`, 'my_cfg_onchain')],
         [Markup.button.callback(`💵 Size: $${size}`, 'my_cfg_size'),
@@ -890,7 +896,11 @@ class TelegramBot {
          Markup.button.callback(`🎯 Score: ${score}`, 'my_cfg_score')],
         [Markup.button.callback(`📈 Positions (${open.length})`, 'my_cfg_positions'),
          Markup.button.callback('🔄 Refresh', 'my_settings')],
-      ]);
+      ];
+      if (balance < 500) {
+        buttons.push([Markup.button.callback('💳 Top Up Balance → $1,000', 'my_cfg_topup')]);
+      }
+      const keyboard = Markup.inlineKeyboard(buttons);
 
       if (isNew) {
         await ctx.replyWithHTML(text, keyboard);
@@ -1192,13 +1202,16 @@ class TelegramBot {
           return;
         }
         const result = await this.userPaperEngine.closeManualTrade(uid, trade.symbol);
+        const closeBal = await this.userPaperEngine.getBalance(uid);
+        const balStr = closeBal != null ? ` | Bal: $${closeBal.toFixed(0)}` : '';
         const emoji = result.pnlUsd >= 0 ? '✅' : '❌';
-        await ctx.answerCbQuery(`${emoji} ${trade.symbol}: $${result.pnlUsd.toFixed(2)}`);
+        await ctx.answerCbQuery(`${emoji} ${trade.symbol}: $${result.pnlUsd.toFixed(2)}${balStr}`);
         // Refresh the positions panel
         const remaining = await db.getOpenUserTrades(uid);
         if (!remaining.length) {
+          const balLine = closeBal != null ? `\n${closeBal >= 500 ? '💰' : closeBal >= 100 ? '⚠️' : '🔴'} Balance: <b>$${closeBal.toFixed(2)}</b>` : '';
           await ctx.editMessageText(
-            `${emoji} <b>Closed $${escapeHtml(trade.symbol)}</b> — P&L: $${result.pnlUsd.toFixed(2)}\n\n📭 No more open positions.`,
+            `${emoji} <b>Closed $${escapeHtml(trade.symbol)}</b> — P&L: $${result.pnlUsd.toFixed(2)}${balLine}\n\n📭 No more open positions.`,
             { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
               [Markup.button.callback('⬅️ Back', 'my_settings')],
             ]).reply_markup }
@@ -1229,6 +1242,18 @@ class TelegramBot {
         }
       } catch (e) {
         logger.error(`my_close: ${e.message}`);
+        await ctx.answerCbQuery(`Error: ${e.message}`).catch(() => {});
+      }
+    });
+
+    this.bot.action('my_cfg_topup', async (ctx) => {
+      try {
+        const uid = ctx.from.id;
+        await db.setUserPaperConfig(uid, { paperBalance: 1000 });
+        await ctx.answerCbQuery('Balance topped up to $1,000!', { show_alert: true });
+        await showMySettings(ctx);
+      } catch (e) {
+        logger.error(`my_cfg_topup: ${e.message}`);
         await ctx.answerCbQuery(`Error: ${e.message}`).catch(() => {});
       }
     });

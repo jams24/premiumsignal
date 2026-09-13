@@ -19,6 +19,19 @@ class UserPaperEngine {
     }
   }
 
+  async getBalance(telegramId) {
+    try {
+      const user = await db.getUser(telegramId);
+      return parseFloat(user?.paper_balance) || 1000;
+    } catch (e) { return null; }
+  }
+
+  balanceTag(bal) {
+    if (bal == null) return '';
+    const emoji = bal >= 500 ? '💰' : bal >= 100 ? '⚠️' : '🔴';
+    return `\n${emoji} Balance: <b>$${bal.toFixed(2)}</b>`;
+  }
+
   async openForFollowers(signal) {
     try {
       const followers = await db.getFollowers();
@@ -447,9 +460,10 @@ class UserPaperEngine {
         action = 'time_exit';
         const totalPnl = pnlUsd + parseFloat(t.realized_pnl_usd || 0);
         await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'time_exit');
+        const bal = await this.getBalance(t.telegram_id);
         await this.notify(t.telegram_id,
           `⏰ <b>TIME EXIT</b> — $${escapeHtml(t.symbol)}\n` +
-          `90min+ no TP1 — edge decayed\nP&L: $${totalPnl.toFixed(2)}`);
+          `90min+ no TP1 — edge decayed\nP&L: $${totalPnl.toFixed(2)}${this.balanceTag(bal)}`);
       }
     }
 
@@ -477,9 +491,10 @@ class UserPaperEngine {
                   action = 'thesis_broken';
                   const totalPnl = pnlUsd + parseFloat(t.realized_pnl_usd || 0);
                   await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'thesis_broken');
+                  const bal = await this.getBalance(t.telegram_id);
                   await this.notify(t.telegram_id,
                     `🔄 <b>THESIS BROKEN</b> — $${escapeHtml(t.symbol)}\n` +
-                    `SMC structure flipped ${result.structureBias} with ChoCH\nP&L: $${totalPnl.toFixed(2)}`);
+                    `SMC structure flipped ${result.structureBias} with ChoCH\nP&L: $${totalPnl.toFixed(2)}${this.balanceTag(bal)}`);
                 }
               }
             }
@@ -590,9 +605,10 @@ class UserPaperEngine {
     if (!action && pnlUsd < 0 && Math.abs(pnlUsd) >= userPerTradeLoss) {
       action = 'max_loss';
       await db.closeUserPaperTrade(t.id, price, pnlPct, pnlUsd + parseFloat(t.realized_pnl_usd || 0), 'max_loss');
+      const bal = await this.getBalance(t.telegram_id);
       await this.notify(t.telegram_id,
         `❌ <b>MAX LOSS</b> — $${escapeHtml(t.symbol)}\n` +
-        `Closed at $${price.toPrecision(6)}\nP&L: $${pnlUsd.toFixed(2)}`);
+        `Closed at $${price.toPrecision(6)}\nP&L: $${pnlUsd.toFixed(2)}${this.balanceTag(bal)}`);
     }
 
     // --- SL CHECK ---
@@ -604,10 +620,11 @@ class UserPaperEngine {
         : ((entry - slPrice) / entry) * 100;
       const slPnlUsd = (slPnlPct / 100) * posSize + parseFloat(t.realized_pnl_usd || 0);
       await db.closeUserPaperTrade(t.id, slPrice, slPnlPct, slPnlUsd, t.hit_tp1 ? 'sl_trailed' : 'sl');
+      const slBal = await this.getBalance(t.telegram_id);
       const emoji = slPnlUsd >= 0 ? '✅' : '❌';
       await this.notify(t.telegram_id,
         `${emoji} <b>SL HIT</b> — $${escapeHtml(t.symbol)}\n` +
-        `Closed at $${slPrice.toPrecision(6)}\nP&L: $${slPnlUsd.toFixed(2)}`);
+        `Closed at $${slPrice.toPrecision(6)}\nP&L: $${slPnlUsd.toFixed(2)}${this.balanceTag(slBal)}`);
     }
 
     // --- 48h EXPIRY ---
@@ -615,18 +632,20 @@ class UserPaperEngine {
       action = 'expired';
       const totalPnl = pnlUsd + parseFloat(t.realized_pnl_usd || 0);
       await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'expired');
+      const expBal = await this.getBalance(t.telegram_id);
       await this.notify(t.telegram_id,
         `⏰ <b>EXPIRED</b> — $${escapeHtml(t.symbol)}\n` +
-        `Closed after 48h at $${price.toPrecision(6)}\nP&L: $${totalPnl.toFixed(2)}`);
+        `Closed after 48h at $${price.toPrecision(6)}\nP&L: $${totalPnl.toFixed(2)}${this.balanceTag(expBal)}`);
     }
 
     // Notify on close actions
     if (action && ['tp4', 'invalidated'].includes(action)) {
       const totalPnl = (pnlPct / 100) * posSize + parseFloat(t.realized_pnl_usd || 0);
+      const closeBal = await this.getBalance(t.telegram_id);
       const emoji = totalPnl >= 0 ? '🎯' : '❌';
       await this.notify(t.telegram_id,
         `${emoji} <b>${action.toUpperCase()}</b> — $${escapeHtml(t.symbol)}\n` +
-        `Closed at $${price.toPrecision(6)}\nP&L: $${totalPnl.toFixed(2)}`);
+        `Closed at $${price.toPrecision(6)}\nP&L: $${totalPnl.toFixed(2)}${this.balanceTag(closeBal)}`);
     }
   }
 
