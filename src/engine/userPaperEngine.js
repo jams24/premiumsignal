@@ -122,6 +122,43 @@ class UserPaperEngine {
       }
     } catch (e) { /* proceed */ }
 
+    // Find demand/supply zone from recent 5m candles
+    let demandZone = null;
+    try {
+      const exchange = this.exchanges[setup.exchange];
+      if (exchange) {
+        const pair = [`${setup.symbol}/USDT:USDT`, `${setup.symbol}/USDT`].find(p => exchange.markets?.[p]);
+        if (pair) {
+          const candles = await exchange.fetchOHLCV(pair, '5m', undefined, 30);
+          if (candles?.length >= 5) {
+            const completed = candles.slice(0, -1);
+            const isLong = setup.direction === 'long';
+            const price = setup.currentPrice;
+            const sl = setup.stopLoss;
+            if (isLong) {
+              const swingLows = [];
+              for (let i = 1; i < completed.length - 1; i++) {
+                if (completed[i][3] < completed[i - 1][3] && completed[i][3] < completed[i + 1][3]) {
+                  const lvl = completed[i][3];
+                  if (lvl < price && lvl > sl) swingLows.push(lvl);
+                }
+              }
+              demandZone = swingLows.length ? Math.max(...swingLows) : price - (price - sl) * 0.4;
+            } else {
+              const swingHighs = [];
+              for (let i = 1; i < completed.length - 1; i++) {
+                if (completed[i][2] > completed[i - 1][2] && completed[i][2] > completed[i + 1][2]) {
+                  const lvl = completed[i][2];
+                  if (lvl > price && lvl < sl) swingHighs.push(lvl);
+                }
+              }
+              demandZone = swingHighs.length ? Math.min(...swingHighs) : price + (sl - price) * 0.4;
+            }
+          }
+        }
+      }
+    } catch (e) { /* proceed without zone */ }
+
     this.pendingEntries.set(key, {
       telegramId,
       setup,
@@ -129,14 +166,17 @@ class UserPaperEngine {
       user,
       queuedAt: Date.now(),
       signalPrice: setup.currentPrice,
+      demandZone,
     });
 
-    logger.info(`User ${telegramId} queued ${setup.direction} ${setup.symbol} for pullback entry`);
+    const dzInfo = demandZone ? `\nEntry zone: $${demandZone.toPrecision(6)}` : '';
+    logger.info(`User ${telegramId} queued ${setup.direction} ${setup.symbol} for demand zone entry`);
     await this.notify(telegramId,
       `⏳ <b>ENTRY QUEUED</b> $${escapeHtml(setup.symbol)}\n\n` +
-      `${setup.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for 5m pullback\n` +
-      `Signal price: $${setup.currentPrice}\n` +
-      `Will enter on dip or timeout after 30 min`
+      `${setup.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for demand zone\n` +
+      `Signal: $${setup.currentPrice}${dzInfo}\n` +
+      `SL: $${setup.stopLoss?.toPrecision(6) || '?'}\n` +
+      `Will enter at structure or expire after 30 min`
     );
   }
 
@@ -229,8 +269,11 @@ class UserPaperEngine {
           }
         }
 
-        // Pullback + recovery candle → enter
-        const pulledBack = isLong ? low < signalPrice * 0.99 : high > signalPrice * 1.01;
+        // Pullback to demand zone + recovery candle → enter at structure
+        const dz = entry.demandZone;
+        const pulledBack = dz
+          ? (isLong ? low <= dz : high >= dz)
+          : (isLong ? low < signalPrice * 0.99 : high > signalPrice * 1.01);
         const recovering = isLong ? close > open : close < open;
 
         if (pulledBack && recovering) {
@@ -238,7 +281,7 @@ class UserPaperEngine {
           this.pendingEntries.delete(key);
           await this._executeQueuedEntry(telegramId, setup, source, user);
           const saved = Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1);
-          logger.info(`User ${telegramId} pullback entry ${setup.symbol} at $${close} (signal $${signalPrice}, saved ${saved}%)`);
+          logger.info(`User ${telegramId} demand zone entry ${setup.symbol} at $${close} (signal $${signalPrice}, zone $${dz?.toPrecision(6)}, saved ${saved}%)`);
           continue;
         }
 

@@ -403,20 +403,14 @@ class TradeExecutor {
     const price = signal.currentPrice;
 
     // Use nearby order block as refined SL (demand zone for longs, supply zone for shorts)
-    // Never tighten SL closer than 3% from entry — tight SLs get stop-hunted
-    const minSLDist = price * 0.03;
     for (const ob of signal.smc.orderBlocks || []) {
       if (isLong && ob.type === 'OB_BULLISH' && ob.low < price && ob.low > signal.stopLoss) {
-        if (price - ob.low >= minSLDist) {
-          signal.stopLoss = ob.low;
-          logger.info(`SMC: Tightened SL to bullish OB at $${ob.low.toPrecision(6)}`);
-        }
+        signal.stopLoss = ob.low;
+        logger.info(`SMC: Tightened SL to bullish OB at $${ob.low.toPrecision(6)}`);
       }
       if (!isLong && ob.type === 'OB_BEARISH' && ob.high > price && ob.high < signal.stopLoss) {
-        if (ob.high - price >= minSLDist) {
-          signal.stopLoss = ob.high;
-          logger.info(`SMC: Tightened SL to bearish OB at $${ob.high.toPrecision(6)}`);
-        }
+        signal.stopLoss = ob.high;
+        logger.info(`SMC: Tightened SL to bearish OB at $${ob.high.toPrecision(6)}`);
       }
     }
 
@@ -478,18 +472,68 @@ class TradeExecutor {
       }
     } catch (e) { /* proceed */ }
 
+    // Find demand/supply zone from recent 5m candles for structural entry
+    let demandZone = null;
+    try {
+      const exchange = this.exchanges[signal.exchange];
+      if (exchange) {
+        const candles = await exchange.fetchOHLCV(signal.pair, '5m', undefined, 30);
+        if (candles?.length >= 5) {
+          const completed = candles.slice(0, -1);
+          const isLong = signal.direction === 'long';
+          const price = signal.currentPrice;
+          const sl = signal.stopLoss;
+
+          if (isLong) {
+            // Find swing lows: candle whose low < both neighbors
+            const swingLows = [];
+            for (let i = 1; i < completed.length - 1; i++) {
+              if (completed[i][3] < completed[i - 1][3] && completed[i][3] < completed[i + 1][3]) {
+                const lvl = completed[i][3];
+                if (lvl < price && lvl > sl) swingLows.push(lvl);
+              }
+            }
+            // Use the highest swing low (nearest demand above SL)
+            if (swingLows.length) {
+              demandZone = Math.max(...swingLows);
+            } else {
+              // Fallback: midpoint between price and SL
+              demandZone = price - (price - sl) * 0.4;
+            }
+          } else {
+            const swingHighs = [];
+            for (let i = 1; i < completed.length - 1; i++) {
+              if (completed[i][2] > completed[i - 1][2] && completed[i][2] > completed[i + 1][2]) {
+                const lvl = completed[i][2];
+                if (lvl > price && lvl < sl) swingHighs.push(lvl);
+              }
+            }
+            if (swingHighs.length) {
+              demandZone = Math.min(...swingHighs);
+            } else {
+              demandZone = price + (sl - price) * 0.4;
+            }
+          }
+          logger.info(`${signal.symbol}: demand zone at $${demandZone.toPrecision(6)} (SL $${sl?.toPrecision(6)})`);
+        }
+      }
+    } catch (e) { logger.debug(`Demand zone scan failed for ${signal.symbol}: ${e.message}`); }
+
     this.pendingEntries.set(key, {
       signal,
       queuedAt: Date.now(),
       signalPrice: signal.currentPrice,
+      demandZone,
     });
 
+    const dzInfo = demandZone ? `\nEntry zone: $${demandZone.toPrecision(6)}` : '';
     logger.info(`Queued ${signal.direction} ${signal.symbol} for pullback entry at $${signal.currentPrice}`);
     this.notify(
       `⏳ <b>ENTRY QUEUED</b> $${escapeHtml(signal.symbol)}\n\n` +
-      `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for 5m pullback\n` +
-      `Signal price: $${signal.currentPrice}\n` +
-      `Will enter on dip or after 30 min timeout`
+      `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for demand zone entry\n` +
+      `Signal: $${signal.currentPrice}${dzInfo}\n` +
+      `SL: $${signal.stopLoss?.toPrecision(6) || '?'}\n` +
+      `Will enter at structure or expire after 30 min`
     ).catch(() => {});
   }
 
@@ -547,10 +591,11 @@ class TradeExecutor {
           }
         }
 
-        // Pullback + recovery candle → enter
-        const pulledBack = isLong
-          ? low < signalPrice * 0.99
-          : high > signalPrice * 1.01;
+        // Pullback to demand zone + recovery candle → enter at structure
+        const dz = entry.demandZone;
+        const pulledBack = dz
+          ? (isLong ? low <= dz : high >= dz)
+          : (isLong ? low < signalPrice * 0.99 : high > signalPrice * 1.01);
         const recovering = isLong ? close > open : close < open;
 
         if (pulledBack && recovering) {
@@ -559,11 +604,12 @@ class TradeExecutor {
           const result = await this.executeSignal(signal);
           if (result) {
             const saved = Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1);
-            logger.info(`Pending ${signal.symbol}: pullback entry at $${close} (signal was $${signalPrice}, saved ${saved}%)`);
+            logger.info(`Pending ${signal.symbol}: demand zone entry at $${close} (signal $${signalPrice}, zone $${dz?.toPrecision(6)}, saved ${saved}%)`);
             await this.notify(
-              `🎯 <b>PULLBACK ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
+              `🎯 <b>DEMAND ZONE ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
               `Signal: $${signalPrice} → Entry: $${close}\n` +
-              `Saved ${saved}% on entry`
+              `${dz ? `Zone: $${dz.toPrecision(6)} | ` : ''}Saved ${saved}% on entry\n` +
+              `SL below structure — invalidation = trade dead`
             );
           }
           continue;
@@ -762,18 +808,10 @@ class TradeExecutor {
 
       logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (1/3 DCA)`);
 
-      // Place SL order at the signal's SL level (min 3% from entry)
-      // Max loss cap is enforced by checkOpenTrades every minute — don't tighten the
-      // exchange SL below 3% or it gets stop-hunted by normal volatility wicks
+      // Place SL at the signal's structural level — derived from swing lows, OB walls,
+      // liq zones in buildTradeSetup. Max loss cap enforced by checkOpenTrades every minute.
       const closeSide = signal.direction === 'long' ? 'sell' : 'buy';
-      const entryForSL = parseFloat(order.average || order.price || entryPrice);
       let effectiveSL = signal.stopLoss;
-      const slFloor = signal.direction === 'long' ? entryForSL * 0.97 : entryForSL * 1.03;
-      const slTooTight = signal.direction === 'long' ? effectiveSL > slFloor : effectiveSL < slFloor;
-      if (slTooTight) {
-        logger.info(`${pair}: SL $${effectiveSL.toPrecision(6)} too tight (${(Math.abs((entryForSL - effectiveSL) / entryForSL) * 100).toFixed(1)}%) → widened to 3% floor $${slFloor.toPrecision(6)}`);
-        effectiveSL = slFloor;
-      }
       try {
         const slPrice = exchange.priceToPrecision(pair, effectiveSL);
         await this.placeStopOrder(exchange, signal.exchange, pair, closeSide, roundedQty, slPrice);
