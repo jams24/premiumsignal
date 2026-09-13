@@ -513,23 +513,24 @@ class OnchainScanner {
       if (!direction) return null;
       const price = token.price;
 
-      // Candle confirmation — reject if last 2 completed candles contradict direction
-      const lastCandle = ohlcv[ohlcv.length - 2]; // completed candle (current candle is incomplete)
-      const prevCandle = ohlcv[ohlcv.length - 3];
-      if (lastCandle && prevCandle) {
-        const lastGreen = lastCandle[4] >= lastCandle[1]; // close >= open
-        const prevGreen = prevCandle[4] >= prevCandle[1];
-        // For LONG: reject if both last candles are red (falling knife)
-        // For SHORT: reject if both last candles are green (catching a rocket)
-        if (direction === 'long' && !lastGreen && !prevGreen) {
-          logger.info(`${token.symbol}: Skipping LONG — last 2 candles red (falling knife)`);
-          return null;
+      // Candle confirmation on 5m — reject if last 3 completed 5m candles contradict direction
+      try {
+        const ohlcv5m = await exchange.fetchOHLCV(token.pair, '5m', undefined, 6);
+        if (ohlcv5m && ohlcv5m.length >= 4) {
+          const c1 = ohlcv5m[ohlcv5m.length - 2]; // last completed
+          const c2 = ohlcv5m[ohlcv5m.length - 3];
+          const c3 = ohlcv5m[ohlcv5m.length - 4];
+          const g1 = c1[4] >= c1[1], g2 = c2[4] >= c2[1], g3 = c3[4] >= c3[1];
+          if (direction === 'long' && !g1 && !g2 && !g3) {
+            logger.info(`${token.symbol}: Skipping LONG — last 3 5m candles red (falling knife)`);
+            return null;
+          }
+          if (direction === 'short' && g1 && g2 && g3) {
+            logger.info(`${token.symbol}: Skipping SHORT — last 3 5m candles green (chasing strength)`);
+            return null;
+          }
         }
-        if (direction === 'short' && lastGreen && prevGreen) {
-          logger.info(`${token.symbol}: Skipping SHORT — last 2 candles green (chasing strength)`);
-          return null;
-        }
-      }
+      } catch (e) { logger.debug(`${token.symbol}: 5m candle check failed: ${e.message}`); }
       const mult = direction === 'long' ? 1 : -1;
 
       const minPrice = price * 0.05;
