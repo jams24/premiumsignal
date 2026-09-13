@@ -46,6 +46,8 @@ class TelegramBot {
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
       'follow', 'unfollow', 'mypaper', 'myaccess',
       'setmysize', 'setmyleverage', 'buy', 'sell', 'closetrade', 'mypositions', 'mypnl',
+      'onchainfollow', 'onchainunfollow', 'setmyscore', 'setmyloss', 'setmymaxloss',
+      'setmypositions', 'myonchainstats', 'myonchain', 'mysettings', 'alertperf', 'flows',
     ]);
 
     this.bot.use(async (ctx, next) => {
@@ -158,6 +160,16 @@ class TelegramBot {
         `/mypnl — Your P&amp;L history\n` +
         `/setmysize &lt;$&gt; — Set margin per trade\n` +
         `/setmyleverage &lt;x&gt; — Set leverage\n\n` +
+        `<b>🔗 Onchain Paper Trading:</b>\n` +
+        `/onchainfollow — Auto-paper onchain signals\n` +
+        `/onchainunfollow — Stop onchain auto-paper\n` +
+        `/setmyscore &lt;30-100&gt; — Min score filter\n` +
+        `/setmyloss &lt;$&gt; — Daily loss limit\n` +
+        `/setmymaxloss &lt;$&gt; — Per-trade max loss\n` +
+        `/setmypositions &lt;1-10&gt; — Max concurrent\n` +
+        `/myonchain — Open onchain positions\n` +
+        `/myonchainstats — Onchain P&amp;L stats\n` +
+        `/mysettings — All your settings\n\n` +
         (isAdmin
           ? `<b>👑 Admin — Trading Control:</b>\n` +
             `/trade — Trading status &amp; config\n` +
@@ -442,6 +454,21 @@ class TelegramBot {
       `2. Or send /buy BTC to open your first trade\n` +
       `3. Check /mypositions to see how it's going\n\n` +
 
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `<b>ONCHAIN SIGNALS</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
+
+      `The bot also scans on-chain data (OI, funding, exchange flows).\n` +
+      `To auto-paper these signals:\n\n` +
+      `  /onchainfollow — Enable onchain auto-trading\n` +
+      `  /setmyscore 50 — Only trade score ≥ 50\n` +
+      `  /setmyloss 50 — Stop trading at -$50/day\n` +
+      `  /setmymaxloss 10 — Max $10 loss per trade\n` +
+      `  /setmypositions 3 — Max 3 trades at once\n` +
+      `  /myonchain — View onchain positions\n` +
+      `  /myonchainstats — Onchain P&amp;L breakdown\n` +
+      `  /mysettings — See all your settings\n\n` +
+
       `<i>This is 100% virtual — no real money, no real risk. Practice until you're confident!</i>`
     ));
 
@@ -485,7 +512,7 @@ class TelegramBot {
             const realized = parseFloat(t.realized_pnl_usd || 0);
             const tps = [t.hit_tp1 ? 'TP1' : '', t.hit_tp2 ? 'TP2' : '', t.hit_tp3 ? 'TP3' : ''].filter(Boolean).join(',');
             const pnlStr = realized > 0 ? ` | banked $${realized.toFixed(2)}` : '';
-            const src = t.source === 'manual' ? ' 🔧' : '';
+            const src = t.source === 'onchain' ? ' 🔗' : t.source === 'manual' ? ' 🔧' : '';
             msg += `${t.direction === 'long' ? '🟢' : '🔴'} $${escapeHtml(t.symbol)} @ $${entry.toPrecision(6)}${pnlStr}${tps ? ` | ${tps}` : ''}${src}\n`;
           }
         } else {
@@ -599,7 +626,7 @@ class TelegramBot {
           const posSize = parseFloat(t.position_size);
           const realized = parseFloat(t.realized_pnl_usd || 0);
           const tps = [t.hit_tp1 ? '✅TP1' : '', t.hit_tp2 ? '✅TP2' : '', t.hit_tp3 ? '✅TP3' : ''].filter(Boolean).join(' ');
-          const src = t.source === 'manual' ? '🔧' : '📡';
+          const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
           const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
           const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
 
@@ -639,6 +666,176 @@ class TelegramBot {
       } catch (e) {
         logger.error(`/mypnl: ${e.message}`);
         ctx.replyWithHTML('⚠️ Could not load P&L.');
+      }
+    });
+
+    // --- Onchain paper trading (user) ---
+    this.bot.command('onchainfollow', async (ctx) => {
+      try {
+        const uid = ctx.state.user.telegram_id;
+        await db.setUserPaperConfig(uid, { onchainFollow: true });
+        const user = await db.getUser(uid);
+        const score = parseInt(user.onchain_min_score) || 45;
+        const size = parseFloat(user.paper_size) || 100;
+        const lev = parseInt(user.paper_leverage) || 20;
+        ctx.replyWithHTML(
+          `✅ <b>Onchain auto-paper enabled</b>\n\n` +
+          `Onchain signals with score ≥ ${score} will auto-open paper trades.\n` +
+          `Size: $${size} × ${lev}x = $${(size * lev).toFixed(0)} notional\n\n` +
+          `Config: /setmyscore, /setmyloss, /setmymaxloss, /setmypositions\n` +
+          `Track: /myonchain, /myonchainstats`
+        );
+      } catch (e) {
+        logger.error(`/onchainfollow: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to enable onchain follow.');
+      }
+    });
+
+    this.bot.command('onchainunfollow', async (ctx) => {
+      await db.setUserPaperConfig(ctx.state.user.telegram_id, { onchainFollow: false });
+      ctx.replyWithHTML(`✅ <b>Onchain auto-paper disabled.</b> Open onchain trades still run to completion.`);
+    });
+
+    this.bot.command('setmyscore', async (ctx) => {
+      try {
+        const score = parseInt(ctx.message.text.split(' ')[1]);
+        if (!score || score < 30 || score > 100) {
+          return ctx.replyWithHTML('Usage: <code>/setmyscore 50</code>\nRange: 30 — 100 (higher = fewer but higher confidence trades)');
+        }
+        await db.setUserPaperConfig(ctx.state.user.telegram_id, { onchainMinScore: score });
+        ctx.replyWithHTML(`✅ Min onchain score set to <b>${score}</b>`);
+      } catch (e) {
+        logger.error(`/setmyscore: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to update score.');
+      }
+    });
+
+    this.bot.command('setmyloss', async (ctx) => {
+      try {
+        const limit = parseFloat(ctx.message.text.split(' ')[1]);
+        if (!limit || limit < 5 || limit > 10000) {
+          return ctx.replyWithHTML('Usage: <code>/setmyloss 50</code>\nRange: $5 — $10,000 (daily paper loss limit)');
+        }
+        await db.setUserPaperConfig(ctx.state.user.telegram_id, { dailyLossLimit: limit });
+        ctx.replyWithHTML(`✅ Daily loss limit set to <b>$${limit}</b>\nTrading stops when you hit this.`);
+      } catch (e) {
+        logger.error(`/setmyloss: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to update loss limit.');
+      }
+    });
+
+    this.bot.command('setmymaxloss', async (ctx) => {
+      try {
+        const limit = parseFloat(ctx.message.text.split(' ')[1]);
+        if (!limit || limit < 1 || limit > 1000) {
+          return ctx.replyWithHTML('Usage: <code>/setmymaxloss 10</code>\nRange: $1 — $1,000 (max loss per trade before auto-close)');
+        }
+        await db.setUserPaperConfig(ctx.state.user.telegram_id, { perTradeLoss: limit });
+        ctx.replyWithHTML(`✅ Per-trade max loss set to <b>$${limit}</b>\nTrades auto-close when they lose this much.`);
+      } catch (e) {
+        logger.error(`/setmymaxloss: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to update max loss.');
+      }
+    });
+
+    this.bot.command('setmypositions', async (ctx) => {
+      try {
+        const max = parseInt(ctx.message.text.split(' ')[1]);
+        if (!max || max < 1 || max > 10) {
+          return ctx.replyWithHTML('Usage: <code>/setmypositions 3</code>\nRange: 1 — 10 (max concurrent paper positions)');
+        }
+        await db.setUserPaperConfig(ctx.state.user.telegram_id, { maxPositions: max });
+        ctx.replyWithHTML(`✅ Max concurrent positions set to <b>${max}</b>`);
+      } catch (e) {
+        logger.error(`/setmypositions: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Failed to update positions limit.');
+      }
+    });
+
+    this.bot.command('myonchain', async (ctx) => {
+      try {
+        const uid = ctx.state.user.telegram_id;
+        const open = await db.getOpenUserTrades(uid);
+        const onchain = open.filter(t => t.source === 'onchain');
+        if (!onchain.length) return ctx.replyWithHTML('📭 No open onchain positions.\n\nEnable with /onchainfollow');
+
+        let msg = `🔗 <b>Onchain Positions (${onchain.length})</b>\n\n`;
+        for (const t of onchain.slice(0, 15)) {
+          const entry = parseFloat(t.entry_price);
+          const posSize = parseFloat(t.position_size);
+          const realized = parseFloat(t.realized_pnl_usd || 0);
+          const tps = [t.hit_tp1 ? '✅TP1' : '', t.hit_tp2 ? '✅TP2' : '', t.hit_tp3 ? '✅TP3' : ''].filter(Boolean).join(' ');
+          const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+          const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
+
+          msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b>\n`;
+          msg += `  Entry: $${entry.toPrecision(6)} | Size: $${posSize.toFixed(0)} | ${ageStr}\n`;
+          msg += `  SL: $${parseFloat(t.stop_loss).toPrecision(6)}`;
+          if (realized > 0) msg += ` | Banked: $${realized.toFixed(2)}`;
+          if (tps) msg += ` | ${tps}`;
+          msg += `\n\n`;
+        }
+        msg += `Close: <code>/closetrade SYMBOL</code>`;
+        await ctx.replyWithHTML(msg);
+      } catch (e) {
+        logger.error(`/myonchain: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Could not load onchain positions.');
+      }
+    });
+
+    this.bot.command('myonchainstats', async (ctx) => {
+      try {
+        const uid = ctx.state.user.telegram_id;
+        const stats = await db.getUserTradeStatsBySource(uid, 'onchain');
+        const dailyPnl = await db.getUserDailyPnL(uid);
+        const user = await db.getUser(uid);
+        const dailyLimit = parseFloat(user.daily_loss_limit) || 100;
+
+        let msg = `🔗 <b>Onchain Paper Stats</b>\n\n`;
+        msg += `Trades: ${stats.closed} closed | ${stats.open_count} open\n`;
+        msg += `Wins: ${stats.wins} | Losses: ${stats.losses}\n`;
+        msg += `Win Rate: ${stats.closed > 0 ? ((parseInt(stats.wins) / parseInt(stats.closed)) * 100).toFixed(0) : 0}%\n`;
+        msg += `Total P&L: <b>$${parseFloat(stats.total_pnl).toFixed(2)}</b>\n`;
+        msg += `Avg: ${parseFloat(stats.avg_pnl_pct).toFixed(2)}%\n`;
+        if (stats.best_trade) msg += `Best: $${parseFloat(stats.best_trade).toFixed(2)}`;
+        if (stats.worst_trade) msg += ` | Worst: $${parseFloat(stats.worst_trade).toFixed(2)}`;
+        msg += `\n\nToday: $${dailyPnl.toFixed(2)} / -$${dailyLimit} limit`;
+        await ctx.replyWithHTML(msg);
+      } catch (e) {
+        logger.error(`/myonchainstats: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Could not load stats.');
+      }
+    });
+
+    this.bot.command('mysettings', async (ctx) => {
+      try {
+        const uid = ctx.state.user.telegram_id;
+        const user = await db.getUser(uid);
+        const open = await db.getOpenUserTrades(uid);
+        const dailyPnl = await db.getUserDailyPnL(uid);
+
+        const size = parseFloat(user.paper_size) || 100;
+        const lev = parseInt(user.paper_leverage) || 20;
+        const score = parseInt(user.onchain_min_score) || 45;
+        const maxPos = parseInt(user.max_positions) || 5;
+        const dailyLimit = parseFloat(user.daily_loss_limit) || 100;
+        const perTrade = parseFloat(user.per_trade_loss) || 20;
+
+        let msg = `⚙️ <b>Your Settings</b>\n\n`;
+        msg += `<b>Trade Sizing:</b>\n`;
+        msg += `  Margin: $${size} | Leverage: ${lev}x | Notional: $${(size * lev).toFixed(0)}\n\n`;
+        msg += `<b>Signal Follow:</b>\n`;
+        msg += `  Auto-paper: ${user.paper_follow ? '✅' : '❌'}\n`;
+        msg += `  Onchain auto: ${user.onchain_follow ? '✅' : '❌'}\n`;
+        msg += `  Min onchain score: ${score}\n\n`;
+        msg += `<b>Risk Controls:</b>\n`;
+        msg += `  Max positions: ${maxPos} (current: ${open.length})\n`;
+        msg += `  Daily loss limit: $${dailyLimit} (today: $${dailyPnl.toFixed(2)})\n`;
+        msg += `  Per-trade max loss: $${perTrade}\n`;
+        await ctx.replyWithHTML(msg);
+      } catch (e) {
+        logger.error(`/mysettings: ${e.message}`);
+        ctx.replyWithHTML('⚠️ Could not load settings.');
       }
     });
 
@@ -3215,6 +3412,15 @@ class TelegramBot {
       { command: 'mypnl', description: 'Your paper P&L history' },
       { command: 'setmysize', description: 'Set your paper margin size' },
       { command: 'setmyleverage', description: 'Set your paper leverage' },
+      { command: 'onchainfollow', description: 'Auto-paper onchain signals' },
+      { command: 'onchainunfollow', description: 'Stop onchain auto-paper' },
+      { command: 'setmyscore', description: 'Set min onchain score' },
+      { command: 'setmyloss', description: 'Set daily loss limit' },
+      { command: 'setmymaxloss', description: 'Set per-trade max loss' },
+      { command: 'setmypositions', description: 'Set max concurrent positions' },
+      { command: 'myonchain', description: 'Your open onchain positions' },
+      { command: 'myonchainstats', description: 'Onchain paper P&L stats' },
+      { command: 'mysettings', description: 'View all your settings' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 

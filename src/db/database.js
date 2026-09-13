@@ -258,6 +258,12 @@ async function init(retries = 3) {
   const userCols = [
     ['paper_size', 'DOUBLE PRECISION DEFAULT 100'],
     ['paper_leverage', 'INTEGER DEFAULT 20'],
+    ['onchain_follow', 'BOOLEAN DEFAULT FALSE'],
+    ['onchain_min_score', 'INTEGER DEFAULT 45'],
+    ['max_positions', 'INTEGER DEFAULT 5'],
+    ['daily_loss_limit', 'DOUBLE PRECISION DEFAULT 100'],
+    ['per_trade_loss', 'DOUBLE PRECISION DEFAULT 20'],
+    ['paper_balance', 'DOUBLE PRECISION DEFAULT 1000'],
   ];
   for (const [col, type] of userCols) {
     try { await p.query(`ALTER TABLE bot_users ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
@@ -651,12 +657,55 @@ async function getUserTradeStats(telegramId) {
   return rows[0];
 }
 
-async function setUserPaperConfig(telegramId, { paperSize, paperLeverage }) {
+async function setUserPaperConfig(telegramId, config) {
+  const fieldMap = {
+    paperSize: 'paper_size', paperLeverage: 'paper_leverage',
+    onchainFollow: 'onchain_follow', onchainMinScore: 'onchain_min_score',
+    maxPositions: 'max_positions', dailyLossLimit: 'daily_loss_limit',
+    perTradeLoss: 'per_trade_loss', paperBalance: 'paper_balance',
+  };
   const sets = [];
   const params = [telegramId];
-  if (paperSize != null) { params.push(paperSize); sets.push(`paper_size = $${params.length}`); }
-  if (paperLeverage != null) { params.push(paperLeverage); sets.push(`paper_leverage = $${params.length}`); }
+  for (const [key, col] of Object.entries(fieldMap)) {
+    if (config[key] != null) { params.push(config[key]); sets.push(`${col} = $${params.length}`); }
+  }
   if (sets.length) await query(`UPDATE bot_users SET ${sets.join(', ')} WHERE telegram_id = $1`, params);
+}
+
+async function getOnchainFollowers() {
+  const { rows } = await query("SELECT * FROM bot_users WHERE status = 'active' AND onchain_follow = TRUE");
+  return rows;
+}
+
+async function getUserDailyPnL(telegramId) {
+  const { rows } = await query(
+    `SELECT COALESCE(SUM(pnl_usd), 0) as daily_pnl
+     FROM user_paper_trades
+     WHERE telegram_id = $1 AND status = 'closed'
+       AND closed_at >= (NOW() AT TIME ZONE 'UTC')::date`,
+    [telegramId]
+  );
+  return parseFloat(rows[0]?.daily_pnl) || 0;
+}
+
+async function getUserTradeStatsBySource(telegramId, source) {
+  const params = [telegramId];
+  let filter = '';
+  if (source) { params.push(source); filter = ` AND source = $${params.length}`; }
+  const { rows } = await query(
+    `SELECT count(*) total,
+            count(*) FILTER (WHERE status='closed') closed,
+            count(*) FILTER (WHERE status='open') open_count,
+            count(*) FILTER (WHERE pnl_usd > 0) wins,
+            count(*) FILTER (WHERE pnl_usd <= 0 AND status='closed') losses,
+            COALESCE(SUM(pnl_usd) FILTER (WHERE status='closed'), 0) total_pnl,
+            COALESCE(AVG(pnl_pct) FILTER (WHERE status='closed'), 0) avg_pnl_pct,
+            COALESCE(MAX(pnl_usd) FILTER (WHERE status='closed'), 0) best_trade,
+            COALESCE(MIN(pnl_usd) FILTER (WHERE status='closed'), 0) worst_trade
+     FROM user_paper_trades WHERE telegram_id = $1${filter}`,
+    params
+  );
+  return rows[0];
 }
 
 async function getUserClosedTrades(telegramId, limit = 20) {
@@ -775,4 +824,4 @@ async function getAlertPerformanceBySymbol(alertTypes, days = 7, limit = 15) {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol };

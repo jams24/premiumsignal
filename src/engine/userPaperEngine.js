@@ -71,6 +71,67 @@ class UserPaperEngine {
     }
   }
 
+  async openForOnchainFollowers(setup, score) {
+    try {
+      const followers = await db.getOnchainFollowers();
+      let opened = 0;
+      for (const user of followers) {
+        try {
+          const minScore = parseInt(user.onchain_min_score) || 45;
+          if (score < minScore) continue;
+
+          const maxPos = parseInt(user.max_positions) || 5;
+          const openTrades = await db.getOpenUserTrades(user.telegram_id);
+          if (openTrades.length >= maxPos) continue;
+          if (openTrades.find(t => t.symbol === setup.symbol)) continue;
+
+          const dailyLossLimit = parseFloat(user.daily_loss_limit) || 100;
+          const dailyPnl = await db.getUserDailyPnL(user.telegram_id);
+          if (dailyPnl <= -dailyLossLimit) continue;
+
+          const size = parseFloat(user.paper_size) || 100;
+          const leverage = parseInt(user.paper_leverage) || 20;
+          const notional = size * leverage;
+          const quantity = notional / setup.currentPrice;
+          const isLong = setup.direction === 'long';
+          const atr = setup.atr || Math.abs(setup.stopLoss - setup.currentPrice) / 3;
+          const tp4 = isLong ? setup.currentPrice + atr * 8 : setup.currentPrice - atr * 8;
+          const invalidation = setup.invalidation || (isLong ? setup.currentPrice - atr * 3 : setup.currentPrice + atr * 3);
+
+          await db.saveUserPaperTrade({
+            telegramId: user.telegram_id,
+            signalId: null,
+            symbol: setup.symbol,
+            exchange: setup.exchange,
+            direction: setup.direction,
+            entryPrice: setup.currentPrice,
+            positionSize: notional,
+            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4,
+            stopLoss: setup.stopLoss,
+            leverage, quantity, atr, invalidation,
+            source: 'onchain',
+          });
+
+          await this.notify(user.telegram_id,
+            `🔗 <b>Onchain paper trade opened</b>\n\n` +
+            `${isLong ? '🟢 LONG' : '🔴 SHORT'} $${escapeHtml(setup.symbol)} (score: ${score})\n` +
+            `Entry: $${setup.currentPrice.toPrecision(6)}\n` +
+            `Size: $${notional.toFixed(0)} (${leverage}x)\n` +
+            `TP1: $${parseFloat(setup.tp1).toPrecision(6)} | TP2: $${parseFloat(setup.tp2).toPrecision(6)}\n` +
+            `TP3: $${parseFloat(setup.tp3).toPrecision(6)}\n` +
+            `SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`
+          );
+          opened++;
+        } catch (e) {
+          logger.warn(`User onchain paper failed for ${user.telegram_id}: ${e.message}`);
+        }
+      }
+      if (opened) logger.info(`Onchain paper trades opened for ${opened} user(s): ${setup.symbol}`);
+    } catch (e) {
+      logger.error(`openForOnchainFollowers failed: ${e.message}`);
+    }
+  }
+
   async openManualTrade(telegramId, symbol, direction) {
     const user = await db.getUser(telegramId);
     if (!user) throw new Error('User not found');
@@ -212,9 +273,22 @@ class UserPaperEngine {
       }
     }
 
+    // Load per-user settings for all users with open trades
+    const userSettings = new Map();
+    for (const t of open) {
+      if (!userSettings.has(t.telegram_id)) {
+        try {
+          const u = await db.getUser(t.telegram_id);
+          userSettings.set(t.telegram_id, u);
+        } catch (e) { /* use defaults */ }
+      }
+    }
+
     for (const t of open) {
       const data = priceData.get(`${t.exchange}:${t.symbol}`);
       if (!data?.price) continue;
+      const u = userSettings.get(t.telegram_id);
+      if (u?.per_trade_loss) t._perTradeLoss = parseFloat(u.per_trade_loss);
       try {
         await this.evaluateTrade(t, data.price, data.ohlcv);
       } catch (e) {
@@ -335,9 +409,9 @@ class UserPaperEngine {
       }
     }
 
-    // --- MAX LOSS CAP (scaled to user's size) ---
-    const maxLoss = 6 * (posSize / 800);
-    if (!action && pnlUsd < 0 && Math.abs(pnlUsd) >= maxLoss) {
+    // --- MAX LOSS CAP (per-user setting or scaled default) ---
+    const userPerTradeLoss = t._perTradeLoss || (6 * (posSize / 800));
+    if (!action && pnlUsd < 0 && Math.abs(pnlUsd) >= userPerTradeLoss) {
       action = 'max_loss';
       await db.closeUserPaperTrade(t.id, price, pnlPct, pnlUsd + parseFloat(t.realized_pnl_usd || 0), 'max_loss');
       await this.notify(t.telegram_id,

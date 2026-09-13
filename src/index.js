@@ -370,6 +370,15 @@ async function main() {
           }
         }
 
+        // Open paper trades for users following onchain signals
+        for (const token of hotTokens) {
+          const setup = token._tradeSetup;
+          if (!setup) continue;
+          try {
+            await userPaperEngine.openForOnchainFollowers(setup, token.score);
+          } catch (e) { logger.debug(`User onchain paper failed ${token.symbol}: ${e.message}`); }
+        }
+
         // Send large transfer alerts for tokens with heavy supply movement
         for (const token of hotTokens.slice(0, 3)) {
           if (!token.exchangeFlow?.largeTransfers?.length) continue;
