@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { EMA } = require('technicalindicators');
 const { STOCK_TOKENS } = require('./technicalScanner');
 
 function isStockToken(symbol) {
@@ -531,6 +532,69 @@ class OnchainScanner {
           }
         }
       } catch (e) { logger.debug(`${token.symbol}: 5m candle check failed: ${e.message}`); }
+
+      // 5m volatility filter — reject if candles are swinging too wildly for reliable entries
+      try {
+        const vol5m = await exchange.fetchOHLCV(token.pair, '5m', undefined, 14);
+        if (vol5m && vol5m.length >= 10) {
+          let atr5mSum = 0;
+          for (let i = vol5m.length - 10; i < vol5m.length; i++) {
+            atr5mSum += vol5m[i][2] - vol5m[i][3]; // high - low
+          }
+          const atr5m = atr5mSum / 10;
+          const atr5mPct = (atr5m / price) * 100;
+          if (atr5mPct > 2.5) {
+            logger.info(`${token.symbol}: Reject — 5m ATR ${atr5mPct.toFixed(1)}% of price (too volatile for reliable entry)`);
+            return null;
+          }
+        }
+      } catch (e) { logger.debug(`${token.symbol}: 5m volatility check failed: ${e.message}`); }
+
+      // 4H macro trend filter — reject counter-trend entries and post-pump dumps
+      try {
+        const ohlcv4h = await exchange.fetchOHLCV(token.pair, '4h', undefined, 30);
+        if (ohlcv4h.length >= 20) {
+          const closes4h = ohlcv4h.map(c => c[4]);
+          const highs4h = ohlcv4h.map(c => c[2]);
+
+          // EMA20 trend: reject if price is >5% against the 4H trend
+          const ema20_4h = EMA.calculate({ values: closes4h, period: 20 });
+          if (ema20_4h.length) {
+            const currentEma4h = ema20_4h[ema20_4h.length - 1];
+            const trendGap = ((price - currentEma4h) / currentEma4h) * 100;
+            if (direction === 'long' && trendGap < -5) {
+              logger.info(`${token.symbol}: Reject LONG — price ${trendGap.toFixed(1)}% below 4H EMA20 (downtrend)`);
+              return null;
+            }
+            if (direction === 'short' && trendGap > 5) {
+              logger.info(`${token.symbol}: Reject SHORT — price ${trendGap.toFixed(1)}% above 4H EMA20 (uptrend)`);
+              return null;
+            }
+          }
+
+          // Post-pump dump: if coin dropped >30% from its recent 4H high, it's bleeding — don't long
+          const recentHigh = Math.max(...highs4h.slice(-20));
+          const drawdown = ((recentHigh - price) / recentHigh) * 100;
+          if (direction === 'long' && drawdown > 30) {
+            logger.info(`${token.symbol}: Reject LONG — ${drawdown.toFixed(1)}% below 4H high $${recentHigh.toPrecision(4)} (post-pump dump)`);
+            return null;
+          }
+          if (direction === 'short' && drawdown < 5) {
+            logger.info(`${token.symbol}: Reject SHORT — only ${drawdown.toFixed(1)}% from highs (still near peak)`);
+            return null;
+          }
+
+          // Pump not settled: if latest 4H candle has >8% body, the move is still in progress
+          const last4h = ohlcv4h[ohlcv4h.length - 1];
+          const bodyPct = Math.abs((last4h[4] - last4h[1]) / last4h[1]) * 100;
+          const rangePct = ((last4h[2] - last4h[3]) / last4h[3]) * 100;
+          if (rangePct > 10) {
+            logger.info(`${token.symbol}: Reject — current 4H candle range ${rangePct.toFixed(1)}% (pump not settled, wait for consolidation)`);
+            return null;
+          }
+        }
+      } catch (e) { logger.debug(`${token.symbol}: 4H trend check failed: ${e.message}`); }
+
       const mult = direction === 'long' ? 1 : -1;
 
       const minPrice = price * 0.05;
