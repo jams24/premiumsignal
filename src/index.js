@@ -190,13 +190,13 @@ async function main() {
         for (const opp of fundingOpps.slice(0, 3)) {
           const fundingSignal = signalEngine.processFundingSignal(opp);
           if (fundingSignal) {
-            await bot.sendRaw(
-              `📉 <b>FUNDING ALERT</b>\n\n` +
+            const fundMsg = `📉 <b>FUNDING ALERT</b>\n\n` +
               `<b>${opp.symbol}</b> on ${opp.exchange}\n` +
               `${opp.reason}\n` +
               `Suggested: ${opp.direction.toUpperCase()}\n\n` +
-              `<i>Mean reversion opportunity — DYOR</i>`
-            );
+              `<i>Mean reversion opportunity — DYOR</i>`;
+            await bot.sendRaw(fundMsg);
+            await bot.broadcastToUsers(fundMsg);
           }
         }
       }
@@ -232,7 +232,10 @@ async function main() {
       const updates = await signalTracker.checkAllSignals();
       for (const update of updates) {
         const msg = signalTracker.formatUpdate(update);
-        if (msg) await bot.sendRaw(msg);
+        if (msg) {
+          await bot.sendRaw(msg);
+          await bot.broadcastToUsers(msg);
+        }
       }
       if (updates.length) logger.info(`Tracker: ${updates.length} signal updates`);
     } catch (err) {
@@ -313,7 +316,10 @@ async function main() {
           } catch (e) { /* skip */ }
         }
         const msg = onchainScanner.formatAlerts(hotTokens, 5);
-        if (msg) await bot.sendRaw(msg);
+        if (msg) {
+          await bot.sendRaw(msg);
+          await bot.broadcastToUsers(msg);
+        }
 
         for (const token of hotTokens) {
           const dir = (token.fundingBias === 'bullish' || token.priceChange > 0) ? 'long' : 'short';
@@ -387,7 +393,10 @@ async function main() {
           if (totalFlowUsd < 50000) continue; // Only alert if >$50K total flow
           if (!shouldLogAlert('SUPPLY_MOVE', token.symbol, flow.bias)) continue;
           const transferMsg = onchainTracker.formatLargeTransferAlert(flow, token.price);
-          if (transferMsg) await bot.sendRaw(transferMsg);
+          if (transferMsg) {
+            await bot.sendRaw(transferMsg);
+            await bot.broadcastToUsers(transferMsg);
+          }
           await db.logAlert('SUPPLY_MOVE', token.symbol, {
             price: token.price, direction: flow.bias === 'bearish' ? 'short' : 'long',
             exchange: token.exchange, pair: token.pair,
@@ -424,7 +433,9 @@ async function main() {
             };
             const chartBuf = generateSetupChart(ohlcv, chartInfo);
             if (chartBuf) {
-              await bot.sendRawPhoto(chartBuf, `📸 <b>${token.symbol}</b> Setup Snapshot — Score: ${token.score}/100`);
+              const cap = `📸 <b>${token.symbol}</b> Setup Snapshot — Score: ${token.score}/100`;
+              await bot.sendRawPhoto(chartBuf, cap);
+              await bot.broadcastPhotoToUsers(chartBuf, cap);
             }
           } catch (e) {
             logger.debug(`Setup chart failed for ${token.symbol}: ${e.message}`);
@@ -451,7 +462,10 @@ async function main() {
           } catch (e) { /* skip */ }
         }
         const msg = flowScanner.formatAlerts(significant, 5);
-        if (msg) await bot.sendRaw(msg);
+        if (msg) {
+          await bot.sendRaw(msg);
+          await bot.broadcastToUsers(msg);
+        }
 
         for (const token of significant) {
           const dir = token.flow?.outflowCount > token.flow?.inflowCount ? 'long' : 'short';
@@ -494,7 +508,9 @@ async function main() {
             };
             const chartBuf = generateSetupChart(ohlcv, chartInfo);
             if (chartBuf) {
-              await bot.sendRawPhoto(chartBuf, `📸 <b>${token.symbol}</b> Flow Snapshot — Score: ${token.flowScore}`);
+              const cap = `📸 <b>${token.symbol}</b> Flow Snapshot — Score: ${token.flowScore}`;
+              await bot.sendRawPhoto(chartBuf, cap);
+              await bot.broadcastPhotoToUsers(chartBuf, cap);
             }
           } catch (e) {
             logger.debug(`Flow chart failed for ${token.symbol}: ${e.message}`);
@@ -506,7 +522,10 @@ async function main() {
         const tier = flowScanner.checkAlertEscalation(r.symbol);
         if (tier) {
           const escMsg = flowScanner.formatEscalationAlert(r.symbol, tier);
-          if (escMsg) await bot.sendRaw(escMsg);
+          if (escMsg) {
+            await bot.sendRaw(escMsg);
+            await bot.broadcastToUsers(escMsg);
+          }
         }
       }
       if (results.length) {
@@ -653,6 +672,7 @@ async function main() {
               `Price moved against the call — consider exiting if in position.\n\n` +
               `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
             await bot.sendRaw(msg);
+            await bot.broadcastToUsers(msg);
 
             // Set cooldown on onchain auto-trader so it doesn't re-enter the same symbol
             if (onchainTradeExecutor?.cooldowns) {

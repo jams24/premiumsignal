@@ -3751,6 +3751,35 @@ class TelegramBot {
     }
   }
 
+  async broadcastToUsers(message) {
+    try {
+      const users = await db.getActiveUsers();
+      for (const u of users) {
+        try {
+          await this.bot.telegram.sendMessage(u.telegram_id, message, { parse_mode: 'HTML' });
+        } catch (e) {
+          if (!String(e.message).includes('blocked')) logger.debug(`Broadcast DM ${u.telegram_id}: ${e.message}`);
+        }
+      }
+    } catch (e) { logger.error(`broadcastToUsers: ${e.message}`); }
+  }
+
+  async broadcastPhotoToUsers(photoBuf, caption) {
+    try {
+      const users = await db.getActiveUsers();
+      for (const u of users) {
+        try {
+          await this.bot.telegram.sendPhoto(u.telegram_id, { source: photoBuf }, {
+            caption: caption && caption.length <= 1024 ? caption : undefined,
+            parse_mode: 'HTML',
+          });
+        } catch (e) {
+          if (!String(e.message).includes('blocked')) logger.debug(`Broadcast photo DM ${u.telegram_id}: ${e.message}`);
+        }
+      }
+    } catch (e) { logger.error(`broadcastPhotoToUsers: ${e.message}`); }
+  }
+
   async launch() {
     // Register command menu (shows in Telegram UI)
     await this.bot.telegram.setMyCommands([
