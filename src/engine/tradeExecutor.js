@@ -480,16 +480,32 @@ class TradeExecutor {
         const latest = candles[candles.length - 1];
         const [, open, high, low, close] = latest;
 
-        // Price ran away 5%+ from signal → cancel
-        const ranAway = isLong ? close > signalPrice * 1.05 : close < signalPrice * 0.95;
-        if (ranAway) {
-          logger.info(`Pending ${signal.symbol}: price ran away ($${signalPrice} → $${close}), cancelling`);
+        // Price ran away 5%+ from signal (either direction) → cancel
+        const ranAwayWithTrend = isLong ? close > signalPrice * 1.05 : close < signalPrice * 0.95;
+        const ranAgainstTrend = isLong ? close < signalPrice * 0.95 : close > signalPrice * 1.05;
+        if (ranAwayWithTrend || ranAgainstTrend) {
+          const reason = ranAgainstTrend ? 'moved against signal' : 'chasing risk too high';
+          logger.info(`Pending ${signal.symbol}: price ${reason} ($${signalPrice} → $${close}), cancelling`);
           this.pendingEntries.delete(key);
           await this.notify(
             `⏭ <b>ENTRY CANCELLED</b> $${escapeHtml(signal.symbol)}\n\n` +
-            `Price moved too far: $${signalPrice} → $${close}\nSkipped — chasing risk too high.`
+            `Price: $${signalPrice} → $${close}\n${ranAgainstTrend ? 'Signal invalidated — price moved against bias.' : 'Skipped — chasing risk too high.'}`
           );
           continue;
+        }
+
+        // SL would be at or above current price → instant stop-out, cancel
+        if (signal.stopLoss) {
+          const slInvalid = isLong ? close <= signal.stopLoss : close >= signal.stopLoss;
+          if (slInvalid) {
+            logger.info(`Pending ${signal.symbol}: price $${close} already past SL $${signal.stopLoss}, cancelling`);
+            this.pendingEntries.delete(key);
+            await this.notify(
+              `⏭ <b>ENTRY CANCELLED</b> $${escapeHtml(signal.symbol)}\n\n` +
+              `Price $${close} already past SL $${signal.stopLoss}\nWould trigger instant stop-out.`
+            );
+            continue;
+          }
         }
 
         // Pullback + recovery candle → enter
