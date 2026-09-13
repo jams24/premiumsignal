@@ -341,6 +341,25 @@ async function main() {
               logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${pumpLimit}% for score ${token.score}) — late entry risk`);
               continue;
             }
+            // Entry drift check: skip if price drifted >2% from recent alert (falling knife)
+            try {
+              const { rows: recentAlerts } = await db.query(
+                `SELECT (data->>'price')::numeric as price, data->>'direction' as dir
+                 FROM alert_log WHERE symbol = $1 AND alert_type = 'ONCHAIN'
+                 AND created_at > NOW() - INTERVAL '1 hour'
+                 ORDER BY created_at ASC LIMIT 1`,
+                [token.symbol]
+              );
+              if (recentAlerts.length) {
+                const firstAlertPrice = parseFloat(recentAlerts[0].price);
+                const driftPct = ((token.price - firstAlertPrice) / firstAlertPrice) * 100;
+                const badDrift = setup.direction === 'long' ? driftPct < -2 : driftPct > 2;
+                if (badDrift) {
+                  logger.info(`Onchain skip ${token.symbol}: entry drifted ${driftPct.toFixed(1)}% from first alert $${firstAlertPrice.toPrecision(4)} — falling knife`);
+                  continue;
+                }
+              }
+            } catch (e) { /* skip drift check on error */ }
             await onchainTradeExecutor.queueSignal(setup);
           } catch (e) {
             logger.debug(`Onchain auto-trade failed for ${token.symbol}: ${e.message}`);
