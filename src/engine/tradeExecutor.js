@@ -403,14 +403,20 @@ class TradeExecutor {
     const price = signal.currentPrice;
 
     // Use nearby order block as refined SL (demand zone for longs, supply zone for shorts)
+    // Never tighten SL closer than 3% from entry — tight SLs get stop-hunted
+    const minSLDist = price * 0.03;
     for (const ob of signal.smc.orderBlocks || []) {
       if (isLong && ob.type === 'OB_BULLISH' && ob.low < price && ob.low > signal.stopLoss) {
-        signal.stopLoss = ob.low;
-        logger.info(`SMC: Tightened SL to bullish OB at $${ob.low.toPrecision(6)}`);
+        if (price - ob.low >= minSLDist) {
+          signal.stopLoss = ob.low;
+          logger.info(`SMC: Tightened SL to bullish OB at $${ob.low.toPrecision(6)}`);
+        }
       }
       if (!isLong && ob.type === 'OB_BEARISH' && ob.high > price && ob.high < signal.stopLoss) {
-        signal.stopLoss = ob.high;
-        logger.info(`SMC: Tightened SL to bearish OB at $${ob.high.toPrecision(6)}`);
+        if (ob.high - price >= minSLDist) {
+          signal.stopLoss = ob.high;
+          logger.info(`SMC: Tightened SL to bearish OB at $${ob.high.toPrecision(6)}`);
+        }
       }
     }
 
@@ -756,19 +762,17 @@ class TradeExecutor {
 
       logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (1/3 DCA)`);
 
-      // Place SL order — use max_loss cap price if tighter than signal SL
+      // Place SL order at the signal's SL level (min 3% from entry)
+      // Max loss cap is enforced by checkOpenTrades every minute — don't tighten the
+      // exchange SL below 3% or it gets stop-hunted by normal volatility wicks
       const closeSide = signal.direction === 'long' ? 'sell' : 'buy';
       const entryForSL = parseFloat(order.average || order.price || entryPrice);
       let effectiveSL = signal.stopLoss;
-      if (this.maxLossPerTrade > 0) {
-        const maxLossPct = (this.maxLossPerTrade / positionSize) * 100;
-        const capSL = signal.direction === 'long'
-          ? entryForSL * (1 - maxLossPct / 100)
-          : entryForSL * (1 + maxLossPct / 100);
-        if (signal.direction === 'long' ? capSL > effectiveSL : capSL < effectiveSL) {
-          effectiveSL = capSL;
-          logger.info(`${pair}: SL tightened to max_loss cap price $${capSL.toPrecision(6)}`);
-        }
+      const slFloor = signal.direction === 'long' ? entryForSL * 0.97 : entryForSL * 1.03;
+      const slTooTight = signal.direction === 'long' ? effectiveSL > slFloor : effectiveSL < slFloor;
+      if (slTooTight) {
+        logger.info(`${pair}: SL $${effectiveSL.toPrecision(6)} too tight (${(Math.abs((entryForSL - effectiveSL) / entryForSL) * 100).toFixed(1)}%) → widened to 3% floor $${slFloor.toPrecision(6)}`);
+        effectiveSL = slFloor;
       }
       try {
         const slPrice = exchange.priceToPrecision(pair, effectiveSL);
