@@ -783,10 +783,12 @@ class OnchainTracker {
     for (const t of transfers) {
       const usd = t.amount * usdPerToken;
       if (usd < 1000) continue;
-      const icon = t.type === 'inflow' ? '📥' : '📤';
-      const dir = t.type === 'inflow' ? '→' : '←';
       const age = timeAgo(t.timeStamp);
-      msg += `  ${icon} ${fmtAmt(t.amount)} ${t.tokenSymbol} (${fmt(usd)}) ${dir} <b>${t.exchange}</b>`;
+      if (t.type === 'inflow') {
+        msg += `  📥 ${fmtAmt(t.amount)} ${t.tokenSymbol} (${fmt(usd)}) ➜ deposited to <b>${t.exchange}</b>`;
+      } else {
+        msg += `  📤 ${fmtAmt(t.amount)} ${t.tokenSymbol} (${fmt(usd)}) ⬅ withdrawn from <b>${t.exchange}</b>`;
+      }
       if (age) msg += ` · ${age}`;
       msg += '\n';
     }
@@ -795,10 +797,33 @@ class OnchainTracker {
       msg += `\n🏦 <b>Exchanges:</b> ${flow.exchanges.join(', ')}\n`;
     }
 
-    if (totalInflowUsd > totalOutflowUsd * 2) {
+    // Trading analysis
+    const priceStr = price ? (price >= 1 ? `$${price.toFixed(4)}` : `$${price.toPrecision(4)}`) : null;
+    if (totalInflowUsd > totalOutflowUsd * 2 && price) {
+      const resistZone = price * 1.03;
+      const target1 = price * 0.95;
+      const target2 = price * 0.90;
+      const fmtP = (p) => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
       msg += `\n⚠️ <b>Heavy inflows — potential sell pressure incoming</b>\n`;
-    } else if (totalOutflowUsd > totalInflowUsd * 2) {
+      msg += `\n🔮 <b>Outlook: SHORT likely</b>\n`;
+      msg += `Tokens deposited to sell → expect resistance near ${fmtP(resistZone)}\n`;
+      msg += `Watch for rejection at current levels for short entry\n`;
+      msg += `🎯 Targets: ${fmtP(target1)} / ${fmtP(target2)}\n`;
+      msg += `🛑 Invalidation: break above ${fmtP(resistZone)}\n`;
+    } else if (totalOutflowUsd > totalInflowUsd * 2 && price) {
+      const supportZone = price * 0.97;
+      const target1 = price * 1.05;
+      const target2 = price * 1.10;
+      const fmtP = (p) => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
       msg += `\n✅ <b>Heavy outflows — accumulation / cold storage</b>\n`;
+      msg += `\n🔮 <b>Outlook: LONG likely</b>\n`;
+      msg += `Tokens withdrawn to hold → expect support near ${fmtP(supportZone)}\n`;
+      msg += `Watch for pullback to support zone for long entry\n`;
+      msg += `🎯 Targets: ${fmtP(target1)} / ${fmtP(target2)}\n`;
+      msg += `🛑 Invalidation: break below ${fmtP(supportZone)}\n`;
+    } else if (price) {
+      msg += `\n↔️ <b>Mixed flow — no clear directional bias yet</b>\n`;
+      msg += `Wait for dominant direction before entering\n`;
     }
 
     msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;

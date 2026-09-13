@@ -7,6 +7,7 @@ class UserPaperEngine {
   constructor(exchanges, bot) {
     this.exchanges = exchanges;
     this.bot = bot;
+    this.pendingEntries = new Map();
   }
 
   async notify(telegramId, msg) {
@@ -23,49 +24,21 @@ class UserPaperEngine {
       const followers = await db.getFollowers();
       for (const user of followers) {
         try {
-          const size = parseFloat(user.paper_size) || 100;
-          const leverage = parseInt(user.paper_leverage) || 20;
-          const notional = size * leverage;
-          const quantity = notional / signal.currentPrice;
-          const atr = signal.atr || Math.abs(signal.stopLoss - signal.currentPrice) / 3;
-          const isLong = signal.direction === 'long';
-          const tp4 = isLong ? signal.currentPrice + atr * 8 : signal.currentPrice - atr * 8;
-          const invalidation = isLong ? signal.currentPrice - atr * 3 : signal.currentPrice + atr * 3;
-
-          await db.saveUserPaperTrade({
-            telegramId: user.telegram_id,
+          await this._queueEntry(user.telegram_id, {
             signalId: signal.id || null,
             symbol: signal.symbol,
             exchange: signal.exchange,
             direction: signal.direction,
-            entryPrice: signal.currentPrice,
-            positionSize: notional,
-            tp1: signal.tp1,
-            tp2: signal.tp2,
-            tp3: signal.tp3,
-            tp4,
+            currentPrice: signal.currentPrice,
+            tp1: signal.tp1, tp2: signal.tp2, tp3: signal.tp3,
             stopLoss: signal.stopLoss,
-            leverage,
-            quantity,
-            atr,
-            invalidation,
-            source: 'signal',
-          });
-
-          await this.notify(user.telegram_id,
-            `📝 <b>Paper trade opened</b>\n\n` +
-            `${isLong ? '🟢 LONG' : '🔴 SHORT'} $${escapeHtml(signal.symbol)}\n` +
-            `Entry: $${signal.currentPrice.toPrecision(6)}\n` +
-            `Size: $${notional.toFixed(0)} (${leverage}x)\n` +
-            `TP1: $${signal.tp1} | TP2: $${signal.tp2}\n` +
-            `TP3: $${signal.tp3} | TP4: $${tp4.toPrecision(6)}\n` +
-            `SL: $${signal.stopLoss}`
-          );
+            atr: signal.atr || Math.abs(signal.stopLoss - signal.currentPrice) / 3,
+          }, 'signal', user);
         } catch (e) {
-          logger.warn(`User paper trade open failed for ${user.telegram_id}: ${e.message}`);
+          logger.warn(`User paper queue failed for ${user.telegram_id}: ${e.message}`);
         }
       }
-      if (followers.length) logger.info(`User paper trades opened for ${followers.length} follower(s): ${signal.symbol}`);
+      if (followers.length) logger.info(`User paper entries queued for ${followers.length} follower(s): ${signal.symbol}`);
     } catch (e) {
       logger.error(`openForFollowers failed: ${e.message}`);
     }
@@ -74,7 +47,7 @@ class UserPaperEngine {
   async openForOnchainFollowers(setup, score) {
     try {
       const followers = await db.getOnchainFollowers();
-      let opened = 0;
+      let queued = 0;
       for (const user of followers) {
         try {
           const minScore = parseInt(user.onchain_min_score) || 45;
@@ -89,46 +62,192 @@ class UserPaperEngine {
           const dailyPnl = await db.getUserDailyPnL(user.telegram_id);
           if (dailyPnl <= -dailyLossLimit) continue;
 
-          const size = parseFloat(user.paper_size) || 100;
-          const leverage = parseInt(user.paper_leverage) || 20;
-          const notional = size * leverage;
-          const quantity = notional / setup.currentPrice;
-          const isLong = setup.direction === 'long';
-          const atr = setup.atr || Math.abs(setup.stopLoss - setup.currentPrice) / 3;
-          const tp4 = isLong ? setup.currentPrice + atr * 8 : setup.currentPrice - atr * 8;
-          const invalidation = setup.invalidation || (isLong ? setup.currentPrice - atr * 3 : setup.currentPrice + atr * 3);
-
-          await db.saveUserPaperTrade({
-            telegramId: user.telegram_id,
-            signalId: null,
+          await this._queueEntry(user.telegram_id, {
             symbol: setup.symbol,
             exchange: setup.exchange,
             direction: setup.direction,
-            entryPrice: setup.currentPrice,
-            positionSize: notional,
-            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4,
+            currentPrice: setup.currentPrice,
+            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3,
             stopLoss: setup.stopLoss,
-            leverage, quantity, atr, invalidation,
-            source: 'onchain',
-          });
-
-          await this.notify(user.telegram_id,
-            `🔗 <b>Onchain paper trade opened</b>\n\n` +
-            `${isLong ? '🟢 LONG' : '🔴 SHORT'} $${escapeHtml(setup.symbol)} (score: ${score})\n` +
-            `Entry: $${setup.currentPrice.toPrecision(6)}\n` +
-            `Size: $${notional.toFixed(0)} (${leverage}x)\n` +
-            `TP1: $${parseFloat(setup.tp1).toPrecision(6)} | TP2: $${parseFloat(setup.tp2).toPrecision(6)}\n` +
-            `TP3: $${parseFloat(setup.tp3).toPrecision(6)}\n` +
-            `SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`
-          );
-          opened++;
+            invalidation: setup.invalidation,
+            atr: setup.atr || Math.abs(setup.stopLoss - setup.currentPrice) / 3,
+          }, 'onchain', user);
+          queued++;
         } catch (e) {
-          logger.warn(`User onchain paper failed for ${user.telegram_id}: ${e.message}`);
+          logger.warn(`User onchain paper queue failed for ${user.telegram_id}: ${e.message}`);
         }
       }
-      if (opened) logger.info(`Onchain paper trades opened for ${opened} user(s): ${setup.symbol}`);
+      if (queued) logger.info(`Onchain paper entries queued for ${queued} user(s): ${setup.symbol}`);
     } catch (e) {
       logger.error(`openForOnchainFollowers failed: ${e.message}`);
+    }
+  }
+
+  async _queueEntry(telegramId, setup, source, user) {
+    const key = `${telegramId}_${setup.symbol}`;
+    if (this.pendingEntries.has(key)) return;
+
+    // Check cooldown from recent closed user trades
+    try {
+      const { rows: lastTrades } = await db.query(
+        `SELECT direction, closed_at, close_reason, pnl_usd FROM user_paper_trades WHERE telegram_id = $1 AND symbol = $2 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        [telegramId, setup.symbol]
+      );
+      if (lastTrades.length) {
+        const closedAt = new Date(lastTrades[0].closed_at).getTime();
+        const pnl = parseFloat(lastTrades[0].pnl_usd) || 0;
+        const lossReasons = ['max_loss', 'invalidated', 'thesis_broken', 'time_exit'];
+        const wasLoss = lossReasons.includes(lastTrades[0].close_reason)
+          || (lastTrades[0].close_reason === 'sl' && pnl < -0.01)
+          || pnl < -0.01;
+        const isFlip = lastTrades[0].direction !== setup.direction;
+        let cooldownMs;
+        if (wasLoss) cooldownMs = 4 * 60 * 60 * 1000;
+        else if (isFlip) cooldownMs = 2 * 60 * 60 * 1000;
+        else cooldownMs = 1 * 60 * 60 * 1000;
+        if (Date.now() < closedAt + cooldownMs) return;
+      }
+    } catch (e) { /* proceed */ }
+
+    this.pendingEntries.set(key, {
+      telegramId,
+      setup,
+      source,
+      user,
+      queuedAt: Date.now(),
+      signalPrice: setup.currentPrice,
+    });
+
+    logger.info(`User ${telegramId} queued ${setup.direction} ${setup.symbol} for pullback entry`);
+    await this.notify(telegramId,
+      `⏳ <b>ENTRY QUEUED</b> $${escapeHtml(setup.symbol)}\n\n` +
+      `${setup.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for 5m pullback\n` +
+      `Signal price: $${setup.currentPrice}\n` +
+      `Will enter on dip or timeout after 30 min`
+    );
+  }
+
+  async _executeQueuedEntry(telegramId, setup, source, user) {
+    const size = parseFloat(user.paper_size) || 100;
+    const leverage = parseInt(user.paper_leverage) || 20;
+    const notional = size * leverage;
+    const quantity = notional / setup.currentPrice;
+    const isLong = setup.direction === 'long';
+    const atr = setup.atr;
+    const tp4 = isLong ? setup.currentPrice + atr * 8 : setup.currentPrice - atr * 8;
+    const invalidation = setup.invalidation || (isLong ? setup.currentPrice - atr * 3 : setup.currentPrice + atr * 3);
+
+    await db.saveUserPaperTrade({
+      telegramId,
+      signalId: setup.signalId || null,
+      symbol: setup.symbol,
+      exchange: setup.exchange,
+      direction: setup.direction,
+      entryPrice: setup.currentPrice,
+      positionSize: notional,
+      tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4,
+      stopLoss: setup.stopLoss,
+      leverage, quantity, atr, invalidation,
+      source,
+    });
+
+    const emoji = source === 'onchain' ? '🔗' : '📝';
+    await this.notify(telegramId,
+      `${emoji} <b>Paper trade opened</b>\n\n` +
+      `${isLong ? '🟢 LONG' : '🔴 SHORT'} $${escapeHtml(setup.symbol)}\n` +
+      `Entry: $${setup.currentPrice.toPrecision(6)}\n` +
+      `Size: $${notional.toFixed(0)} (${leverage}x)\n` +
+      `TP1: $${parseFloat(setup.tp1).toPrecision(6)} | TP2: $${parseFloat(setup.tp2).toPrecision(6)}\n` +
+      `TP3: $${parseFloat(setup.tp3).toPrecision(6)}\n` +
+      `SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`
+    );
+  }
+
+  async checkPendingUserEntries() {
+    for (const [key, entry] of this.pendingEntries) {
+      try {
+        const { telegramId, setup, source, user, queuedAt, signalPrice } = entry;
+        const ageMin = (Date.now() - queuedAt) / 60000;
+        const isLong = setup.direction === 'long';
+
+        // Re-check: if user already has a position on this symbol, cancel
+        try {
+          const openTrades = await db.getOpenUserTrades(telegramId);
+          if (openTrades.find(t => t.symbol === setup.symbol)) {
+            this.pendingEntries.delete(key);
+            continue;
+          }
+        } catch (e) { /* proceed */ }
+
+        const exchange = this.exchanges[setup.exchange];
+        if (!exchange) { this.pendingEntries.delete(key); continue; }
+
+        const pair = [`${setup.symbol}/USDT:USDT`, `${setup.symbol}/USDT`].find(p => exchange.markets?.[p]);
+        if (!pair) { this.pendingEntries.delete(key); continue; }
+
+        const candles = await exchange.fetchOHLCV(pair, '5m', undefined, 6);
+        if (!candles?.length) continue;
+
+        const latest = candles[candles.length - 1];
+        const [, open, high, low, close] = latest;
+
+        // Price ran 5%+ away → cancel
+        const ranAway = isLong ? close > signalPrice * 1.05 : close < signalPrice * 0.95;
+        const ranAgainst = isLong ? close < signalPrice * 0.95 : close > signalPrice * 1.05;
+        if (ranAway || ranAgainst) {
+          this.pendingEntries.delete(key);
+          await this.notify(telegramId,
+            `⏭ <b>ENTRY CANCELLED</b> $${escapeHtml(setup.symbol)}\n\n` +
+            `Price: $${signalPrice} → $${close}\n${ranAgainst ? 'Signal invalidated — price moved against bias.' : 'Skipped — chasing risk too high.'}`
+          );
+          continue;
+        }
+
+        // Price already past SL → cancel
+        if (setup.stopLoss) {
+          const slInvalid = isLong ? close <= setup.stopLoss : close >= setup.stopLoss;
+          if (slInvalid) {
+            this.pendingEntries.delete(key);
+            await this.notify(telegramId,
+              `⏭ <b>ENTRY CANCELLED</b> $${escapeHtml(setup.symbol)}\n\n` +
+              `Price $${close} already past SL $${setup.stopLoss}\nWould trigger instant stop-out.`
+            );
+            continue;
+          }
+        }
+
+        // Pullback + recovery candle → enter
+        const pulledBack = isLong ? low < signalPrice * 0.99 : high > signalPrice * 1.01;
+        const recovering = isLong ? close > open : close < open;
+
+        if (pulledBack && recovering) {
+          setup.currentPrice = close;
+          this.pendingEntries.delete(key);
+          await this._executeQueuedEntry(telegramId, setup, source, user);
+          const saved = Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1);
+          logger.info(`User ${telegramId} pullback entry ${setup.symbol} at $${close} (signal $${signalPrice}, saved ${saved}%)`);
+          continue;
+        }
+
+        // 30 min timeout — only enter if recovery candle confirms
+        if (ageMin >= 30) {
+          this.pendingEntries.delete(key);
+          if (recovering) {
+            setup.currentPrice = close;
+            await this._executeQueuedEntry(telegramId, setup, source, user);
+            logger.info(`User ${telegramId} timeout entry ${setup.symbol} at $${close} (candle confirms)`);
+          } else {
+            logger.info(`User ${telegramId} entry expired ${setup.symbol} — no recovery candle after ${ageMin.toFixed(0)}m`);
+            await this.notify(telegramId,
+              `⏭ <b>ENTRY EXPIRED</b> $${escapeHtml(setup.symbol)}\n\n` +
+              `No pullback + recovery after 30m\nPrice still moving against — skipping.`
+            );
+          }
+          continue;
+        }
+      } catch (e) {
+        logger.debug(`User pending entry check failed for ${key}: ${e.message}`);
+      }
     }
   }
 

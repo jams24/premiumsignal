@@ -444,24 +444,55 @@ class FlowScanner {
       `🏛 Exchanges: ${exchanges}\n` +
       `💰 Price: ${priceNow} (${priceSince} since first signal)`;
 
+    // Trading outlook based on flow direction
+    const isOutflowHeavy = outUsd > inUsd * 2;
+    const isInflowHeavy = inUsd > outUsd * 2;
+    const priceVal = mem.currentPrice;
+    let outlook = '';
+    if (priceVal) {
+      const fmtP = (p) => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
+      if (isOutflowHeavy) {
+        const support = priceVal * 0.97;
+        const t1 = priceVal * 1.05;
+        const t2 = priceVal * 1.10;
+        outlook = `\n🔮 <b>Outlook: LONG likely</b>\n` +
+          `Tokens leaving exchanges → accumulation / cold storage\n` +
+          `📍 Entry zone: pullback to ${fmtP(support)} – ${fmtP(priceVal)}\n` +
+          `🎯 Targets: ${fmtP(t1)} / ${fmtP(t2)}\n` +
+          `🛑 Invalidation: break below ${fmtP(support)}`;
+      } else if (isInflowHeavy) {
+        const resist = priceVal * 1.03;
+        const t1 = priceVal * 0.95;
+        const t2 = priceVal * 0.90;
+        outlook = `\n🔮 <b>Outlook: SHORT likely</b>\n` +
+          `Tokens entering exchanges → distribution / preparing to sell\n` +
+          `📍 Entry zone: rejection near ${fmtP(priceVal)} – ${fmtP(resist)}\n` +
+          `🎯 Targets: ${fmtP(t1)} / ${fmtP(t2)}\n` +
+          `🛑 Invalidation: break above ${fmtP(resist)}`;
+      } else {
+        outlook = `\n🔮 <b>Outlook: MIXED — no clear bias</b>\n` +
+          `Flows are balanced. Wait for dominant direction before entering.`;
+      }
+    }
+
     if (tier === 'heavy') {
       return `🔥🏦 <b>HEAVY ACCUMULATION ALERT</b>\n\n` +
         `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
         `Sustained exchange outflows over <b>${hours} hours</b>\n\n` +
-        `${flowDetail}\n\n` +
+        `${flowDetail}\n${outlook}\n\n` +
         `<i>Consistent accumulation over hours signals smart money positioning before a major move.</i>`;
     }
     if (tier === 'notable') {
       return `⚡🏦 <b>ACCUMULATION BUILDING</b>\n\n` +
         `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
         `Exchange flow pattern strengthening over <b>${hours} hours</b>\n\n` +
-        `${flowDetail}\n\n` +
+        `${flowDetail}\n${outlook}\n\n` +
         `<i>Outflow pattern is strengthening. Monitor for continuation — if this keeps building, it's a high-conviction setup.</i>`;
     }
     return `👀🏦 <b>EARLY FLOW SIGNAL</b>\n\n` +
       `<b><code>${symbol}</code></b> — Cumulative Score: ${score}${addrLine}\n` +
       `Exchange flow activity detected\n\n` +
-      `${flowDetail}\n\n` +
+      `${flowDetail}\n${outlook}\n\n` +
       `<i>Initial flow detected. Needs more scans to confirm pattern.</i>`;
   }
 

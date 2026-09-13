@@ -742,6 +742,11 @@ async function main() {
     } catch (err) {
       logger.error(`Pending entry check error: ${err.message}`);
     }
+    try {
+      await userPaperEngine.checkPendingUserEntries();
+    } catch (err) {
+      logger.error(`User pending entry check error: ${err.message}`);
+    }
   });
 
   cron.schedule('*/2 * * * *', async () => {
