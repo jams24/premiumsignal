@@ -514,31 +514,62 @@ class OnchainScanner {
       const tp2 = Math.max(price + mult * atr * 4.0, minPrice);
       const tp3 = Math.max(price + mult * atr * 6.0, minPrice);
 
-      // SL: prefer structure levels (support/resistance walls, liq zones) over blind ATR
-      let sl = price - mult * atr * 2.0;
+      // SL: find real support/resistance from chart structure, not blind ATR
+      const atrSL = price - mult * atr * 2.0;
+      let sl = atrSL;
+
+      // 1) Swing structure from 1H candles — find swing lows (LONG) or highs (SHORT)
+      const swingLevels = [];
+      for (let i = 2; i < ohlcv.length - 1; i++) {
+        const prev = ohlcv[i - 1], curr = ohlcv[i], next = ohlcv[i + 1];
+        if (direction === 'long') {
+          if (curr[3] <= prev[3] && curr[3] <= next[3] && curr[3] < price)
+            swingLevels.push(curr[3]);
+        } else {
+          if (curr[2] >= prev[2] && curr[2] >= next[2] && curr[2] > price)
+            swingLevels.push(curr[2]);
+        }
+      }
+      // Sort: nearest swing to price first
+      if (direction === 'long') swingLevels.sort((a, b) => b - a);
+      else swingLevels.sort((a, b) => a - b);
+
+      if (swingLevels.length) {
+        const bestSwing = swingLevels[0];
+        const buffer = direction === 'long' ? 0.99 : 1.01;
+        const swingSL = bestSwing * buffer;
+        const swingDistPct = Math.abs((price - swingSL) / price) * 100;
+        if (swingDistPct >= 1.5 && swingDistPct <= 15) {
+          sl = swingSL;
+          logger.info(`${token.symbol}: SL below swing ${direction === 'long' ? 'low' : 'high'} $${bestSwing.toPrecision(6)} → SL $${swingSL.toPrecision(6)} (${swingDistPct.toFixed(1)}%)`);
+        }
+      }
+
+      // 2) Order book walls — upgrade SL if a wall sits closer and confirms support
       if (snap.levels?.length) {
         const structureLevels = snap.levels
           .filter(l => direction === 'long' ? l.type === 'support' && l.price < price : l.type === 'resistance' && l.price > price)
           .sort((a, b) => direction === 'long' ? b.price - a.price : a.price - b.price);
         if (structureLevels.length) {
-          // Place SL just beyond the nearest structure level (0.5% buffer)
-          const buffer = direction === 'long' ? 0.995 : 1.005;
-          const structureSL = structureLevels[0].price * buffer;
-          // Use structure SL if it's tighter than ATR SL but not too tight (<0.5% from entry)
-          const structureDistPct = Math.abs((price - structureSL) / price) * 100;
-          if (structureDistPct >= 0.5 && structureDistPct <= 15) {
-            sl = structureSL;
-            logger.info(`${token.symbol}: SL from structure $${structureSL.toPrecision(6)} (${structureDistPct.toFixed(1)}%) vs ATR $${(price - mult * atr * 2.0).toPrecision(6)}`);
+          const wallBuffer = direction === 'long' ? 0.995 : 1.005;
+          const wallSL = structureLevels[0].price * wallBuffer;
+          const wallDistPct = Math.abs((price - wallSL) / price) * 100;
+          if (wallDistPct >= 1.5 && wallDistPct <= 15) {
+            if (direction === 'long' ? wallSL > sl : wallSL < sl) {
+              sl = wallSL;
+              logger.info(`${token.symbol}: SL upgraded to order book wall $${wallSL.toPrecision(6)} (${wallDistPct.toFixed(1)}%)`);
+            }
           }
         }
       }
-      // Also check liquidation zones — 25x liq as SL floor
+
+      // 3) Liq zones — 25x liq as SL floor
       if (token.setupData?.liqLevels?.levels) {
         const lev25 = token.setupData.liqLevels.levels.find(l => l.leverage === 25);
         if (lev25) {
           const liqSL = direction === 'long' ? lev25.longLiqPrice : lev25.shortLiqPrice;
           const liqDistPct = Math.abs((price - liqSL) / price) * 100;
-          if (liqDistPct >= 0.5 && liqDistPct <= 10) {
+          if (liqDistPct >= 1.5 && liqDistPct <= 10) {
             const liqBeyond = direction === 'long' ? liqSL * 0.995 : liqSL * 1.005;
             if (direction === 'long' ? liqBeyond > sl : liqBeyond < sl) {
               sl = liqBeyond;
@@ -546,6 +577,13 @@ class OnchainScanner {
             }
           }
         }
+      }
+
+      // Floor: SL must be at least 1.5% from entry
+      const slDistPct = Math.abs((price - sl) / price) * 100;
+      if (slDistPct < 1.5) {
+        sl = atrSL;
+        logger.info(`${token.symbol}: SL too tight (${slDistPct.toFixed(1)}%), falling back to ATR`);
       }
 
       const confidence = token.score >= 60 ? 5 : token.score >= 45 ? 4 : 3;
