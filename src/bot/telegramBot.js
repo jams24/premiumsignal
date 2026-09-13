@@ -682,7 +682,7 @@ class TelegramBot {
           `✅ <b>Onchain auto-paper enabled</b>\n\n` +
           `Onchain signals with score ≥ ${score} will auto-open paper trades.\n` +
           `Size: $${size} × ${lev}x = $${(size * lev).toFixed(0)} notional\n\n` +
-          `Config: /setmyscore, /setmyloss, /setmymaxloss, /setmypositions\n` +
+          `Use /mysettings for full config panel\n` +
           `Track: /myonchain, /myonchainstats`
         );
       } catch (e) {
@@ -807,36 +807,316 @@ class TelegramBot {
       }
     });
 
+    // --- User settings panel (inline buttons) ---
+    const myCheck = (val, cur) => val === cur ? ' ✓' : '';
+
+    const showMySettings = async (ctx, isNew = false) => {
+      const uid = ctx.state?.user?.telegram_id || ctx.from?.id;
+      const user = await db.getUser(uid);
+      const open = await db.getOpenUserTrades(uid);
+      const dailyPnl = await db.getUserDailyPnL(uid);
+
+      const size = parseFloat(user.paper_size) || 100;
+      const lev = parseInt(user.paper_leverage) || 20;
+      const score = parseInt(user.onchain_min_score) || 45;
+      const maxPos = parseInt(user.max_positions) || 5;
+      const dailyLimit = parseFloat(user.daily_loss_limit) || 100;
+      const perTrade = parseFloat(user.per_trade_loss) || 20;
+
+      const text =
+        `⚙️ <b>YOUR SETTINGS</b>\n\n` +
+        `📡 Signal follow: ${user.paper_follow ? '<b>✅ ON</b>' : '<b>❌ OFF</b>'} | ` +
+        `🔗 Onchain: ${user.onchain_follow ? '<b>✅ ON</b>' : '<b>❌ OFF</b>'}\n` +
+        `💵 Margin: <b>$${size}</b> | ⚡ Leverage: <b>${lev}x</b> | Notional: $${(size * lev).toFixed(0)}\n` +
+        `🎯 Min score: <b>${score}</b> | 📊 Max pos: <b>${maxPos}</b>\n` +
+        `🛡️ Daily limit: <b>$${dailyLimit}</b> | 🔒 Per-trade: <b>$${perTrade}</b>\n` +
+        `📈 Today: <b>$${dailyPnl.toFixed(2)}</b> | Open: <b>${open.length}/${maxPos}</b>\n\n` +
+        `Tap any button to configure:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(`${user.paper_follow ? '✅' : '❌'} Signals`, 'my_cfg_follow'),
+         Markup.button.callback(`${user.onchain_follow ? '✅' : '❌'} Onchain`, 'my_cfg_onchain')],
+        [Markup.button.callback(`💵 Size: $${size}`, 'my_cfg_size'),
+         Markup.button.callback(`⚡ Lev: ${lev}x`, 'my_cfg_lev')],
+        [Markup.button.callback(`🛡️ Daily: $${dailyLimit}`, 'my_cfg_dailyloss'),
+         Markup.button.callback(`🔒 Trade: $${perTrade}`, 'my_cfg_tradeloss')],
+        [Markup.button.callback(`📊 Pos: ${maxPos}`, 'my_cfg_maxpos'),
+         Markup.button.callback(`🎯 Score: ${score}`, 'my_cfg_score')],
+        [Markup.button.callback(`📈 Positions (${open.length})`, 'my_cfg_positions'),
+         Markup.button.callback('🔄 Refresh', 'my_settings')],
+      ]);
+
+      if (isNew) {
+        await ctx.replyWithHTML(text, keyboard);
+      } else {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      }
+    };
+
     this.bot.command('mysettings', async (ctx) => {
-      try {
-        const uid = ctx.state.user.telegram_id;
-        const user = await db.getUser(uid);
-        const open = await db.getOpenUserTrades(uid);
-        const dailyPnl = await db.getUserDailyPnL(uid);
-
-        const size = parseFloat(user.paper_size) || 100;
-        const lev = parseInt(user.paper_leverage) || 20;
-        const score = parseInt(user.onchain_min_score) || 45;
-        const maxPos = parseInt(user.max_positions) || 5;
-        const dailyLimit = parseFloat(user.daily_loss_limit) || 100;
-        const perTrade = parseFloat(user.per_trade_loss) || 20;
-
-        let msg = `⚙️ <b>Your Settings</b>\n\n`;
-        msg += `<b>Trade Sizing:</b>\n`;
-        msg += `  Margin: $${size} | Leverage: ${lev}x | Notional: $${(size * lev).toFixed(0)}\n\n`;
-        msg += `<b>Signal Follow:</b>\n`;
-        msg += `  Auto-paper: ${user.paper_follow ? '✅' : '❌'}\n`;
-        msg += `  Onchain auto: ${user.onchain_follow ? '✅' : '❌'}\n`;
-        msg += `  Min onchain score: ${score}\n\n`;
-        msg += `<b>Risk Controls:</b>\n`;
-        msg += `  Max positions: ${maxPos} (current: ${open.length})\n`;
-        msg += `  Daily loss limit: $${dailyLimit} (today: $${dailyPnl.toFixed(2)})\n`;
-        msg += `  Per-trade max loss: $${perTrade}\n`;
-        await ctx.replyWithHTML(msg);
-      } catch (e) {
+      try { await showMySettings(ctx, true); } catch (e) {
         logger.error(`/mysettings: ${e.message}`);
         ctx.replyWithHTML('⚠️ Could not load settings.');
       }
+    });
+
+    this.bot.action('my_settings', async (ctx) => {
+      try { await ctx.answerCbQuery(); } catch (e) {}
+      try { await showMySettings(ctx); } catch (e) { logger.error(`my_settings: ${e.message}`); }
+    });
+
+    // ── SIGNAL FOLLOW TOGGLE ──
+    this.bot.action('my_cfg_follow', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const uid = ctx.from.id;
+        const user = await db.getUser(uid);
+        const newVal = !user.paper_follow;
+        await db.setPaperFollow(uid, newVal);
+        await ctx.answerCbQuery(newVal ? 'Signal follow ON' : 'Signal follow OFF').catch(() => {});
+        await showMySettings(ctx);
+      } catch (e) { logger.error(`my_cfg_follow: ${e.message}`); }
+    });
+
+    // ── ONCHAIN FOLLOW TOGGLE ──
+    this.bot.action('my_cfg_onchain', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const uid = ctx.from.id;
+        const user = await db.getUser(uid);
+        const newVal = !user.onchain_follow;
+        await db.setUserPaperConfig(uid, { onchainFollow: newVal });
+        await showMySettings(ctx);
+      } catch (e) { logger.error(`my_cfg_onchain: ${e.message}`); }
+    });
+
+    // ── SIZE ──
+    this.bot.action('my_cfg_size', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const cur = parseFloat(user.paper_size) || 100;
+        await ctx.editMessageText(
+          `💵 <b>MARGIN PER TRADE</b>\n\n` +
+          `Current: <b>$${cur}</b>\n\n` +
+          `This is how much margin you risk on each trade.\nUse /setmysize for custom values.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$25${myCheck(25, cur)}`, 'my_size_25'),
+             Markup.button.callback(`$50${myCheck(50, cur)}`, 'my_size_50'),
+             Markup.button.callback(`$100${myCheck(100, cur)}`, 'my_size_100')],
+            [Markup.button.callback(`$200${myCheck(200, cur)}`, 'my_size_200'),
+             Markup.button.callback(`$500${myCheck(500, cur)}`, 'my_size_500'),
+             Markup.button.callback(`$1000${myCheck(1000, cur)}`, 'my_size_1000')],
+            [Markup.button.callback(`$2000${myCheck(2000, cur)}`, 'my_size_2000'),
+             Markup.button.callback(`$5000${myCheck(5000, cur)}`, 'my_size_5000')],
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`my_cfg_size: ${e.message}`); }
+    });
+    for (const size of [25, 50, 100, 200, 500, 1000, 2000, 5000]) {
+      this.bot.action(`my_size_${size}`, async (ctx) => {
+        try {
+          await db.setUserPaperConfig(ctx.from.id, { paperSize: size });
+          await ctx.answerCbQuery(`Size: $${size}`);
+          await showMySettings(ctx);
+        } catch (e) { logger.error(`my_size: ${e.message}`); }
+      });
+    }
+
+    // ── LEVERAGE ──
+    this.bot.action('my_cfg_lev', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const cur = parseInt(user.paper_leverage) || 20;
+        await ctx.editMessageText(
+          `⚡ <b>LEVERAGE</b>\n\n` +
+          `Current: <b>${cur}x</b>\n\n` +
+          `Higher leverage = bigger gains AND bigger losses.\nUse /setmyleverage for custom values.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3x${myCheck(3, cur)}`, 'my_lev_3'),
+             Markup.button.callback(`5x${myCheck(5, cur)}`, 'my_lev_5'),
+             Markup.button.callback(`10x${myCheck(10, cur)}`, 'my_lev_10')],
+            [Markup.button.callback(`15x${myCheck(15, cur)}`, 'my_lev_15'),
+             Markup.button.callback(`20x${myCheck(20, cur)}`, 'my_lev_20'),
+             Markup.button.callback(`25x${myCheck(25, cur)}`, 'my_lev_25')],
+            [Markup.button.callback(`30x${myCheck(30, cur)}`, 'my_lev_30'),
+             Markup.button.callback(`50x${myCheck(50, cur)}`, 'my_lev_50')],
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`my_cfg_lev: ${e.message}`); }
+    });
+    for (const lev of [3, 5, 10, 15, 20, 25, 30, 50]) {
+      this.bot.action(`my_lev_${lev}`, async (ctx) => {
+        try {
+          await db.setUserPaperConfig(ctx.from.id, { paperLeverage: lev });
+          await ctx.answerCbQuery(`Leverage: ${lev}x`);
+          await showMySettings(ctx);
+        } catch (e) { logger.error(`my_lev: ${e.message}`); }
+      });
+    }
+
+    // ── DAILY LOSS LIMIT ──
+    this.bot.action('my_cfg_dailyloss', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const cur = parseFloat(user.daily_loss_limit) || 100;
+        await ctx.editMessageText(
+          `🛡️ <b>DAILY LOSS LIMIT</b>\n\n` +
+          `Current: <b>$${cur}</b>\n\n` +
+          `Auto-trading stops for the day when your total paper losses hit this limit.\nUse /setmyloss for custom values.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$10${myCheck(10, cur)}`, 'my_dloss_10'),
+             Markup.button.callback(`$25${myCheck(25, cur)}`, 'my_dloss_25'),
+             Markup.button.callback(`$50${myCheck(50, cur)}`, 'my_dloss_50')],
+            [Markup.button.callback(`$100${myCheck(100, cur)}`, 'my_dloss_100'),
+             Markup.button.callback(`$200${myCheck(200, cur)}`, 'my_dloss_200'),
+             Markup.button.callback(`$500${myCheck(500, cur)}`, 'my_dloss_500')],
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`my_cfg_dailyloss: ${e.message}`); }
+    });
+    for (const loss of [10, 25, 50, 100, 200, 500]) {
+      this.bot.action(`my_dloss_${loss}`, async (ctx) => {
+        try {
+          await db.setUserPaperConfig(ctx.from.id, { dailyLossLimit: loss });
+          await ctx.answerCbQuery(`Daily limit: $${loss}`);
+          await showMySettings(ctx);
+        } catch (e) { logger.error(`my_dloss: ${e.message}`); }
+      });
+    }
+
+    // ── PER-TRADE MAX LOSS ──
+    this.bot.action('my_cfg_tradeloss', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const cur = parseFloat(user.per_trade_loss) || 20;
+        await ctx.editMessageText(
+          `🔒 <b>PER-TRADE MAX LOSS</b>\n\n` +
+          `Current: <b>$${cur}</b>\n\n` +
+          `Each trade is auto-closed if its unrealized loss reaches this amount.\nUse /setmymaxloss for custom values.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$5${myCheck(5, cur)}`, 'my_tloss_5'),
+             Markup.button.callback(`$10${myCheck(10, cur)}`, 'my_tloss_10'),
+             Markup.button.callback(`$20${myCheck(20, cur)}`, 'my_tloss_20')],
+            [Markup.button.callback(`$30${myCheck(30, cur)}`, 'my_tloss_30'),
+             Markup.button.callback(`$50${myCheck(50, cur)}`, 'my_tloss_50'),
+             Markup.button.callback(`$100${myCheck(100, cur)}`, 'my_tloss_100')],
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`my_cfg_tradeloss: ${e.message}`); }
+    });
+    for (const loss of [5, 10, 20, 30, 50, 100]) {
+      this.bot.action(`my_tloss_${loss}`, async (ctx) => {
+        try {
+          await db.setUserPaperConfig(ctx.from.id, { perTradeLoss: loss });
+          await ctx.answerCbQuery(`Max loss/trade: $${loss}`);
+          await showMySettings(ctx);
+        } catch (e) { logger.error(`my_tloss: ${e.message}`); }
+      });
+    }
+
+    // ── MAX POSITIONS ──
+    this.bot.action('my_cfg_maxpos', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const cur = parseInt(user.max_positions) || 5;
+        await ctx.editMessageText(
+          `📊 <b>MAX CONCURRENT POSITIONS</b>\n\n` +
+          `Current: <b>${cur}</b>\n\n` +
+          `Maximum number of paper trades open at the same time.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`1${myCheck(1, cur)}`, 'my_pos_1'),
+             Markup.button.callback(`2${myCheck(2, cur)}`, 'my_pos_2'),
+             Markup.button.callback(`3${myCheck(3, cur)}`, 'my_pos_3')],
+            [Markup.button.callback(`5${myCheck(5, cur)}`, 'my_pos_5'),
+             Markup.button.callback(`7${myCheck(7, cur)}`, 'my_pos_7'),
+             Markup.button.callback(`10${myCheck(10, cur)}`, 'my_pos_10')],
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`my_cfg_maxpos: ${e.message}`); }
+    });
+    for (const pos of [1, 2, 3, 5, 7, 10]) {
+      this.bot.action(`my_pos_${pos}`, async (ctx) => {
+        try {
+          await db.setUserPaperConfig(ctx.from.id, { maxPositions: pos });
+          await ctx.answerCbQuery(`Max positions: ${pos}`);
+          await showMySettings(ctx);
+        } catch (e) { logger.error(`my_pos: ${e.message}`); }
+      });
+    }
+
+    // ── MIN ONCHAIN SCORE ──
+    this.bot.action('my_cfg_score', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const cur = parseInt(user.onchain_min_score) || 45;
+        await ctx.editMessageText(
+          `🎯 <b>MIN ONCHAIN SCORE</b>\n\n` +
+          `Current: <b>${cur}</b>\n\n` +
+          `🎯 <b>30</b> — All signals (early + notable + high)\n` +
+          `⚡ <b>45</b> — Notable + high conviction only\n` +
+          `🔥 <b>60</b> — High conviction only (safest)\n` +
+          `💎 <b>75</b> — Ultra selective\n\n` +
+          `Lower = more trades, higher = fewer but stronger.\nUse /setmyscore for custom values.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`🎯 30 (all)${myCheck(30, cur)}`, 'my_score_30'),
+             Markup.button.callback(`⚡ 45 (notable)${myCheck(45, cur)}`, 'my_score_45')],
+            [Markup.button.callback(`🔥 60 (high)${myCheck(60, cur)}`, 'my_score_60'),
+             Markup.button.callback(`💎 75 (ultra)${myCheck(75, cur)}`, 'my_score_75')],
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`my_cfg_score: ${e.message}`); }
+    });
+    for (const score of [30, 45, 60, 75]) {
+      this.bot.action(`my_score_${score}`, async (ctx) => {
+        try {
+          await db.setUserPaperConfig(ctx.from.id, { onchainMinScore: score });
+          await ctx.answerCbQuery(`Min score: ${score}`);
+          await showMySettings(ctx);
+        } catch (e) { logger.error(`my_score: ${e.message}`); }
+      });
+    }
+
+    // ── POSITIONS QUICK VIEW ──
+    this.bot.action('my_cfg_positions', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const uid = ctx.from.id;
+        const open = await db.getOpenUserTrades(uid);
+        if (!open.length) {
+          await ctx.editMessageText(
+            `📭 <b>No open positions</b>\n\nUse /follow or /buy <SYMBOL> to start trading.`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('⬅️ Back', 'my_settings')],
+            ]).reply_markup }
+          );
+          return;
+        }
+        let msg = `📈 <b>Open Positions (${open.length})</b>\n\n`;
+        for (const t of open.slice(0, 10)) {
+          const entry = parseFloat(t.entry_price);
+          const realized = parseFloat(t.realized_pnl_usd || 0);
+          const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
+          msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src} @ $${entry.toPrecision(6)}`;
+          if (realized > 0) msg += ` | +$${realized.toFixed(2)}`;
+          msg += `\n`;
+        }
+        msg += `\nClose: <code>/closetrade SYMBOL</code>`;
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('⬅️ Back', 'my_settings')],
+        ]).reply_markup });
+      } catch (e) { logger.error(`my_cfg_positions: ${e.message}`); }
     });
 
     // ---------- Admin: user management ----------
