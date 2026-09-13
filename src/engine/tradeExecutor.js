@@ -446,6 +446,32 @@ class TradeExecutor {
       }
     } catch (e) { logger.debug(`Queue DB check failed: ${e.message}`); }
 
+    // Check cooldown before queuing — don't send misleading notifications
+    try {
+      const { rows: lastTrades } = await db.query(
+        `SELECT direction, closed_at, close_reason, pnl_usd FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        [signal.symbol]
+      );
+      if (lastTrades.length) {
+        const closedAt = new Date(lastTrades[0].closed_at).getTime();
+        const pnl = parseFloat(lastTrades[0].pnl_usd) || 0;
+        const lossReasons = ['max_loss', 'invalidated', 'thesis_broken'];
+        const wasLoss = lossReasons.includes(lastTrades[0].close_reason)
+          || (lastTrades[0].close_reason === 'sl' && pnl < -0.01)
+          || pnl < -0.01;
+        const isFlip = lastTrades[0].direction !== signal.direction;
+        let cooldownMs;
+        if (wasLoss) cooldownMs = 4 * 60 * 60 * 1000;
+        else if (isFlip) cooldownMs = 2 * 60 * 60 * 1000;
+        else cooldownMs = 1 * 60 * 60 * 1000;
+        if (Date.now() < closedAt + cooldownMs) {
+          const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
+          logger.info(`Queue skip ${signal.symbol}: cooldown (${minsLeft}m remaining)`);
+          return;
+        }
+      }
+    } catch (e) { /* proceed */ }
+
     this.pendingEntries.set(key, {
       signal,
       queuedAt: Date.now(),
