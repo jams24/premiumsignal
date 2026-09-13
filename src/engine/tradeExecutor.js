@@ -563,12 +563,20 @@ class TradeExecutor {
           continue;
         }
 
-        // Timeout after 30 min → enter at market
+        // Timeout after 30 min — only enter if current candle confirms direction
         if (ageMin >= 30) {
-          signal.currentPrice = close;
-          logger.info(`Pending ${signal.symbol}: timeout after ${ageMin.toFixed(0)}m, entering at $${close}`);
           this.pendingEntries.delete(key);
-          await this.executeSignal(signal);
+          if (recovering) {
+            signal.currentPrice = close;
+            logger.info(`Pending ${signal.symbol}: timeout entry at $${close} (candle confirms direction)`);
+            await this.executeSignal(signal);
+          } else {
+            logger.info(`Pending ${signal.symbol}: timeout cancelled — no recovery candle after ${ageMin.toFixed(0)}m`);
+            await this.notify(
+              `⏭ <b>ENTRY EXPIRED</b> $${escapeHtml(signal.symbol)}\n\n` +
+              `No pullback + recovery after 30m\nPrice still moving against — skipping.`
+            );
+          }
           continue;
         }
       } catch (e) {
