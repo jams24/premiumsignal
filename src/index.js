@@ -318,14 +318,18 @@ async function main() {
         for (const token of hotTokens) {
           const dir = (token.fundingBias === 'bullish' || token.priceChange > 0) ? 'long' : 'short';
           if (!shouldLogAlert('ONCHAIN', token.symbol, dir)) continue;
+          const setup = token._tradeSetup;
           await db.logAlert('ONCHAIN', token.symbol, {
-            score: token.score, price: token.price, direction: dir,
+            score: token.score, price: token.price, direction: setup?.direction || dir,
             exchange: token.exchange, pair: token.pair,
             oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h,
             fundingRate: token.fundingRate, fundingBias: token.fundingBias,
             priceChange: token.priceChange, volume: token.volume,
             signals: token.signals,
-          }, `ONCHAIN ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
+            tp1: setup?.tp1, tp2: setup?.tp2, tp3: setup?.tp3,
+            stopLoss: setup?.stopLoss, atr: setup?.atr,
+            confidence: setup?.confidence,
+          }, `ONCHAIN ${setup?.direction || dir} ${token.symbol} score=${token.score}`).catch(() => {});
         }
 
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
@@ -504,10 +508,10 @@ async function main() {
     }
   });
 
-  // === Alert Performance Tracker — check prices for past alerts every 10 min ===
-  cron.schedule('*/10 * * * *', async () => {
+  // === Alert Performance Tracker — check prices for past alerts every 5 min ===
+  cron.schedule('*/5 * * * *', async () => {
     try {
-      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 65);
+      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 10);
       if (!unchecked.length) return;
 
       for (const alert of unchecked) {
@@ -531,20 +535,67 @@ async function main() {
           const pnl = direction === 'short' ? -rawPnl : rawPnl;
 
           const updates = {};
+
+          // Continuous best/worst PnL tracking — updated every check
+          const prevBest = parseFloat(alert.data?.best_pnl) || 0;
+          const prevWorst = parseFloat(alert.data?.worst_pnl) || 0;
+          if (pnl > prevBest) { updates.best_pnl = parseFloat(pnl.toFixed(2)); updates.best_price = currentPrice; }
+          if (pnl < prevWorst) { updates.worst_pnl = parseFloat(pnl.toFixed(2)); updates.worst_price = currentPrice; }
+
+          // Checkpoint snapshots — 15m, 30m, 1h, 4h, 24h
+          if (!alert.data.checked_15m && ageHours >= 0.25) {
+            updates.checked_15m = true; updates.price_15m = currentPrice; updates.pnl_15m = parseFloat(pnl.toFixed(2));
+          }
+          if (!alert.data.checked_30m && ageHours >= 0.5) {
+            updates.checked_30m = true; updates.price_30m = currentPrice; updates.pnl_30m = parseFloat(pnl.toFixed(2));
+          }
           if (!alert.data.checked_1h && ageHours >= 1) {
-            updates.checked_1h = true;
-            updates.price_1h = currentPrice;
-            updates.pnl_1h = parseFloat(pnl.toFixed(2));
+            updates.checked_1h = true; updates.price_1h = currentPrice; updates.pnl_1h = parseFloat(pnl.toFixed(2));
           }
           if (!alert.data.checked_4h && ageHours >= 4) {
-            updates.checked_4h = true;
-            updates.price_4h = currentPrice;
-            updates.pnl_4h = parseFloat(pnl.toFixed(2));
+            updates.checked_4h = true; updates.price_4h = currentPrice; updates.pnl_4h = parseFloat(pnl.toFixed(2));
           }
           if (!alert.data.checked_24h && ageHours >= 24) {
-            updates.checked_24h = true;
-            updates.price_24h = currentPrice;
-            updates.pnl_24h = parseFloat(pnl.toFixed(2));
+            updates.checked_24h = true; updates.price_24h = currentPrice; updates.pnl_24h = parseFloat(pnl.toFixed(2));
+            updates.direction_correct = pnl > 0;
+          }
+
+          // TP hit tracking — check if price reached TP levels from the trade setup
+          if (!alert.data.tp1_hit) {
+            const tp1 = parseFloat(alert.data?.tp1);
+            if (tp1 && (direction === 'long' ? currentPrice >= tp1 : currentPrice <= tp1)) {
+              updates.tp1_hit = true; updates.tp1_hit_at = new Date().toISOString();
+              updates.tp1_time_min = Math.round(ageHours * 60);
+            }
+          }
+          if (!alert.data.tp2_hit) {
+            const tp2 = parseFloat(alert.data?.tp2);
+            if (tp2 && (direction === 'long' ? currentPrice >= tp2 : currentPrice <= tp2)) {
+              updates.tp2_hit = true; updates.tp2_hit_at = new Date().toISOString();
+              updates.tp2_time_min = Math.round(ageHours * 60);
+            }
+          }
+          if (!alert.data.tp3_hit) {
+            const tp3 = parseFloat(alert.data?.tp3);
+            if (tp3 && (direction === 'long' ? currentPrice >= tp3 : currentPrice <= tp3)) {
+              updates.tp3_hit = true; updates.tp3_hit_at = new Date().toISOString();
+              updates.tp3_time_min = Math.round(ageHours * 60);
+            }
+          }
+
+          // SL hit tracking
+          if (!alert.data.sl_hit) {
+            const sl = parseFloat(alert.data?.stopLoss || alert.data?.sl);
+            if (sl && (direction === 'long' ? currentPrice <= sl : currentPrice >= sl)) {
+              updates.sl_hit = true; updates.sl_hit_at = new Date().toISOString();
+              updates.sl_time_min = Math.round(ageHours * 60);
+            }
+          }
+
+          // Flag if this alert had exchange flow data
+          if (alert.data.has_flow === undefined) {
+            const signals = alert.data?.signals || [];
+            updates.has_flow = signals.some(s => typeof s === 'string' && (s.includes('outflow') || s.includes('OUTFLOW')));
           }
 
           if (Object.keys(updates).length > 0) {

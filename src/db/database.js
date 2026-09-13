@@ -672,8 +672,11 @@ async function getUncheckedAlerts(alertTypes, minAgeMinutes) {
     `SELECT * FROM alert_log
      WHERE alert_type = ANY($1)
        AND created_at < NOW() - ($2 || ' minutes')::interval
+       AND created_at > NOW() - INTERVAL '48 hours'
        AND (data->>'price') IS NOT NULL
-       AND ((data->>'checked_1h') IS NULL OR (data->>'checked_4h') IS NULL OR (data->>'checked_24h') IS NULL)
+       AND ((data->>'checked_15m') IS NULL OR (data->>'checked_30m') IS NULL
+         OR (data->>'checked_1h') IS NULL OR (data->>'checked_4h') IS NULL
+         OR (data->>'checked_24h') IS NULL)
      ORDER BY created_at ASC LIMIT 50`,
     [alertTypes, String(minAgeMinutes)]
   );
@@ -710,17 +713,34 @@ async function getAlertPerformance(alertTypes, days = 7) {
   const { rows } = await query(
     `SELECT alert_type,
        count(*) as total,
-       count(*) FILTER (WHERE (data->>'pnl_1h')::float > 0) as win_1h,
-       count(*) FILTER (WHERE (data->>'pnl_1h')::float < 0) as loss_1h,
+       count(*) FILTER (WHERE (data->>'checked_15m') IS NOT NULL) as checked,
+       -- 15m/30m early direction check
+       round(avg((data->>'pnl_15m')::float)::numeric, 2) as avg_pnl_15m,
+       round(count(*) FILTER (WHERE (data->>'pnl_15m')::float > 0) * 100.0 / NULLIF(count(*) FILTER (WHERE data->>'pnl_15m' IS NOT NULL), 0), 1) as win_15m_pct,
+       round(avg((data->>'pnl_30m')::float)::numeric, 2) as avg_pnl_30m,
+       round(count(*) FILTER (WHERE (data->>'pnl_30m')::float > 0) * 100.0 / NULLIF(count(*) FILTER (WHERE data->>'pnl_30m' IS NOT NULL), 0), 1) as win_30m_pct,
+       -- Standard checkpoints
        round(avg((data->>'pnl_1h')::float)::numeric, 2) as avg_pnl_1h,
-       count(*) FILTER (WHERE (data->>'pnl_4h')::float > 0) as win_4h,
-       count(*) FILTER (WHERE (data->>'pnl_4h')::float < 0) as loss_4h,
+       round(count(*) FILTER (WHERE (data->>'pnl_1h')::float > 0) * 100.0 / NULLIF(count(*) FILTER (WHERE data->>'pnl_1h' IS NOT NULL), 0), 1) as win_1h_pct,
        round(avg((data->>'pnl_4h')::float)::numeric, 2) as avg_pnl_4h,
-       count(*) FILTER (WHERE (data->>'pnl_24h')::float > 0) as win_24h,
-       count(*) FILTER (WHERE (data->>'pnl_24h')::float < 0) as loss_24h,
+       round(count(*) FILTER (WHERE (data->>'pnl_4h')::float > 0) * 100.0 / NULLIF(count(*) FILTER (WHERE data->>'pnl_4h' IS NOT NULL), 0), 1) as win_4h_pct,
        round(avg((data->>'pnl_24h')::float)::numeric, 2) as avg_pnl_24h,
+       round(count(*) FILTER (WHERE (data->>'pnl_24h')::float > 0) * 100.0 / NULLIF(count(*) FILTER (WHERE data->>'pnl_24h' IS NOT NULL), 0), 1) as win_24h_pct,
+       -- Best/worst peak PnL
+       round(avg((data->>'best_pnl')::float)::numeric, 2) as avg_best_pnl,
+       round(avg((data->>'worst_pnl')::float)::numeric, 2) as avg_worst_pnl,
+       -- TP/SL hit rates
+       count(*) FILTER (WHERE (data->>'tp1_hit')::boolean = true) as tp1_hits,
+       count(*) FILTER (WHERE (data->>'tp2_hit')::boolean = true) as tp2_hits,
+       count(*) FILTER (WHERE (data->>'tp3_hit')::boolean = true) as tp3_hits,
+       count(*) FILTER (WHERE (data->>'sl_hit')::boolean = true) as sl_hits,
+       -- Flow data presence
+       count(*) FILTER (WHERE (data->>'has_flow')::boolean = true) as with_flow,
+       round(avg((data->>'pnl_4h')::float) FILTER (WHERE (data->>'has_flow')::boolean = true)::numeric, 2) as flow_avg_4h,
+       round(avg((data->>'pnl_4h')::float) FILTER (WHERE (data->>'has_flow')::boolean = false)::numeric, 2) as noflow_avg_4h,
+       -- Score
        round(avg((data->>'score')::float)::numeric, 1) as avg_score,
-       count(*) FILTER (WHERE (data->>'checked_1h') IS NOT NULL) as checked
+       count(*) FILTER (WHERE (data->>'invalidated')::boolean = true) as invalidated
      FROM alert_log
      WHERE alert_type = ANY($1) AND created_at > NOW() - ($2 || ' days')::interval
      GROUP BY alert_type`,
@@ -733,14 +753,20 @@ async function getAlertPerformanceBySymbol(alertTypes, days = 7, limit = 15) {
   const { rows } = await query(
     `SELECT symbol, alert_type,
        count(*) as alerts,
+       round(avg((data->>'pnl_15m')::float)::numeric, 2) as avg_15m,
+       round(avg((data->>'pnl_30m')::float)::numeric, 2) as avg_30m,
        round(avg((data->>'pnl_1h')::float)::numeric, 2) as avg_1h,
        round(avg((data->>'pnl_4h')::float)::numeric, 2) as avg_4h,
-       round(avg((data->>'pnl_24h')::float)::numeric, 2) as avg_24h,
-       round(max((data->>'pnl_24h')::float)::numeric, 2) as best_24h,
-       round(min((data->>'pnl_24h')::float)::numeric, 2) as worst_24h
+       round(avg((data->>'best_pnl')::float)::numeric, 2) as avg_best,
+       round(avg((data->>'worst_pnl')::float)::numeric, 2) as avg_worst,
+       count(*) FILTER (WHERE (data->>'tp1_hit')::boolean = true) as tp1_hits,
+       count(*) FILTER (WHERE (data->>'sl_hit')::boolean = true) as sl_hits,
+       count(*) FILTER (WHERE (data->>'has_flow')::boolean = true) as with_flow,
+       count(*) FILTER (WHERE (data->>'invalidated')::boolean = true) as invalidated,
+       round(avg((data->>'score')::float)::numeric, 0) as avg_score
      FROM alert_log
      WHERE alert_type = ANY($1) AND created_at > NOW() - ($2 || ' days')::interval
-       AND (data->>'checked_1h') IS NOT NULL
+       AND (data->>'checked_15m') IS NOT NULL
      GROUP BY symbol, alert_type
      ORDER BY avg_4h DESC NULLS LAST
      LIMIT $3`,

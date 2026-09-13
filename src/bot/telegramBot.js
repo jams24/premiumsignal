@@ -779,25 +779,35 @@ class TelegramBot {
         ]);
 
         if (!overall.length) {
-          return ctx.replyWithHTML('📊 No alert performance data yet. Alerts are now being tracked — check back in a few hours.');
+          return ctx.replyWithHTML('No alert performance data yet. Check back in a few hours.');
         }
 
-        let msg = `📊 <b>ALERT PERFORMANCE</b> (last ${days}d)\n\n`;
+        let msg = `<b>ALERT PERFORMANCE</b> (last ${days}d)\n\n`;
         for (const r of overall) {
-          const w1h = r.checked > 0 ? `${r.win_1h}W/${r.loss_1h}L` : '—';
-          const w4h = r.checked > 0 ? `${r.win_4h}W/${r.loss_4h}L` : '—';
-          const w24h = r.checked > 0 ? `${r.win_24h}W/${r.loss_24h}L` : '—';
-          msg += `<b>${r.alert_type}</b> (${r.total} alerts, avg score ${r.avg_score})\n`;
-          msg += `  1h: ${r.avg_pnl_1h ?? '—'}% avg (${w1h})\n`;
-          msg += `  4h: ${r.avg_pnl_4h ?? '—'}% avg (${w4h})\n`;
-          msg += `  24h: ${r.avg_pnl_24h ?? '—'}% avg (${w24h})\n\n`;
+          msg += `<b>${r.alert_type}</b> (${r.total} alerts, avg score ${r.avg_score || '—'})\n`;
+          msg += `  15m: ${r.avg_pnl_15m ?? '—'}% (${r.win_15m_pct ?? '—'}% win)\n`;
+          msg += `  30m: ${r.avg_pnl_30m ?? '—'}% (${r.win_30m_pct ?? '—'}% win)\n`;
+          msg += `  1h: ${r.avg_pnl_1h ?? '—'}% (${r.win_1h_pct ?? '—'}% win)\n`;
+          msg += `  4h: ${r.avg_pnl_4h ?? '—'}% (${r.win_4h_pct ?? '—'}% win)\n`;
+          msg += `  24h: ${r.avg_pnl_24h ?? '—'}% (${r.win_24h_pct ?? '—'}% win)\n`;
+          msg += `  Peak: best ${r.avg_best_pnl ?? '—'}% / worst ${r.avg_worst_pnl ?? '—'}%\n`;
+          if (r.tp1_hits > 0 || r.sl_hits > 0) {
+            msg += `  TP1: ${r.tp1_hits} | TP2: ${r.tp2_hits} | TP3: ${r.tp3_hits} | SL: ${r.sl_hits}\n`;
+          }
+          if (r.with_flow > 0) {
+            msg += `  Flow alerts: ${r.with_flow} (4h: ${r.flow_avg_4h ?? '—'}%) vs no-flow (4h: ${r.noflow_avg_4h ?? '—'}%)\n`;
+          }
+          msg += `  Invalidated: ${r.invalidated}\n\n`;
         }
 
         if (bySymbol.length) {
-          msg += `<b>TOP SYMBOLS BY 4H P&L</b>\n`;
+          msg += `<b>BY SYMBOL (4h)</b>\n`;
           for (const r of bySymbol) {
-            const icon = (r.avg_4h ?? 0) > 0 ? '🟢' : '🔴';
-            msg += `${icon} <code>${r.symbol}</code> ${r.alert_type} — 1h:${r.avg_1h ?? '—'}% 4h:${r.avg_4h ?? '—'}% 24h:${r.avg_24h ?? '—'}% (${r.alerts} alerts)\n`;
+            const icon = (r.avg_4h ?? 0) > 0 ? '+' : '';
+            const flow = r.with_flow > 0 ? ' [F]' : '';
+            const tp = r.tp1_hits > 0 ? ` TP1:${r.tp1_hits}` : '';
+            const sl = r.sl_hits > 0 ? ` SL:${r.sl_hits}` : '';
+            msg += `${(r.avg_4h ?? 0) > 0 ? '🟢' : '🔴'} <code>${r.symbol}</code> 15m:${r.avg_15m ?? '—'}% 30m:${r.avg_30m ?? '—'}% 4h:${icon}${r.avg_4h ?? '—'}%${flow}${tp}${sl} (${r.alerts})\n`;
           }
         }
 
