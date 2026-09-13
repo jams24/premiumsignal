@@ -1155,12 +1155,82 @@ class TelegramBot {
         let msg = `📈 <b>Open Positions (${open.length})</b>\n`;
         msg += `${pnlColor} Total: <b>$${totalPnl.toFixed(2)}</b>\n\n`;
         msg += posMsg;
-        msg += `Close: <code>/closetrade SYMBOL</code>`;
-        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Refresh', 'my_cfg_positions'),
-           Markup.button.callback('⬅️ Back', 'my_settings')],
-        ]).reply_markup });
+        msg += `Tap ❌ to close a trade:`;
+
+        const closeButtons = [];
+        for (let i = 0; i < open.length && i < 8; i += 2) {
+          const row = [];
+          const t1 = open[i];
+          row.push(Markup.button.callback(`❌ ${t1.symbol}`, `my_close_${t1.id}`));
+          if (open[i + 1]) {
+            const t2 = open[i + 1];
+            row.push(Markup.button.callback(`❌ ${t2.symbol}`, `my_close_${t2.id}`));
+          }
+          closeButtons.push(row);
+        }
+        closeButtons.push([
+          Markup.button.callback('🔄 Refresh', 'my_cfg_positions'),
+          Markup.button.callback('⬅️ Back', 'my_settings'),
+        ]);
+
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(closeButtons).reply_markup });
       } catch (e) { logger.error(`my_cfg_positions: ${e.message}`); }
+    });
+
+    this.bot.action(/^my_close_(\d+)$/, async (ctx) => {
+      try {
+        const tradeId = parseInt(ctx.match[1]);
+        const uid = ctx.from.id;
+        const open = await db.getOpenUserTrades(uid);
+        const trade = open.find(t => t.id === tradeId);
+        if (!trade) {
+          await ctx.answerCbQuery('Trade not found or already closed');
+          return;
+        }
+        if (!this.userPaperEngine) {
+          await ctx.answerCbQuery('Paper engine not ready');
+          return;
+        }
+        const result = await this.userPaperEngine.closeManualTrade(uid, trade.symbol);
+        const emoji = result.pnlUsd >= 0 ? '✅' : '❌';
+        await ctx.answerCbQuery(`${emoji} ${trade.symbol}: $${result.pnlUsd.toFixed(2)}`);
+        // Refresh the positions panel
+        const remaining = await db.getOpenUserTrades(uid);
+        if (!remaining.length) {
+          await ctx.editMessageText(
+            `${emoji} <b>Closed $${escapeHtml(trade.symbol)}</b> — P&L: $${result.pnlUsd.toFixed(2)}\n\n📭 No more open positions.`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('⬅️ Back', 'my_settings')],
+            ]).reply_markup }
+          );
+        } else {
+          // Re-trigger the positions view with updated data
+          const exchanges = this.userPaperEngine?.exchanges || this.technicalScanner?.exchanges || {};
+          const { msg: posMsg, totalPnl } = await formatPositions(remaining, exchanges);
+          const pnlColor = totalPnl >= 0 ? '🟩' : '🟥';
+          let msg = `${emoji} Closed $${escapeHtml(trade.symbol)}: <b>$${result.pnlUsd.toFixed(2)}</b>\n\n`;
+          msg += `📈 <b>Remaining (${remaining.length})</b>\n`;
+          msg += `${pnlColor} Total: <b>$${totalPnl.toFixed(2)}</b>\n\n`;
+          msg += posMsg;
+          msg += `Tap ❌ to close a trade:`;
+
+          const closeButtons = [];
+          for (let i = 0; i < remaining.length && i < 8; i += 2) {
+            const row = [];
+            row.push(Markup.button.callback(`❌ ${remaining[i].symbol}`, `my_close_${remaining[i].id}`));
+            if (remaining[i + 1]) row.push(Markup.button.callback(`❌ ${remaining[i + 1].symbol}`, `my_close_${remaining[i + 1].id}`));
+            closeButtons.push(row);
+          }
+          closeButtons.push([
+            Markup.button.callback('🔄 Refresh', 'my_cfg_positions'),
+            Markup.button.callback('⬅️ Back', 'my_settings'),
+          ]);
+          await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(closeButtons).reply_markup });
+        }
+      } catch (e) {
+        logger.error(`my_close: ${e.message}`);
+        await ctx.answerCbQuery(`Error: ${e.message}`).catch(() => {});
+      }
     });
 
     // ---------- Admin: user management ----------
