@@ -924,7 +924,8 @@ class TradeExecutor {
             // 45-90min in profit, no TP1: trail SL to breakeven + 1%
             const beTrail = isLong ? trade.entry_price * 1.01 : trade.entry_price * 0.99;
             const currentSL = trade.stop_loss;
-            const shouldMove = isLong ? beTrail > currentSL : beTrail < currentSL;
+            const priceAboveTrail = isLong ? currentPrice > beTrail : currentPrice < beTrail;
+            const shouldMove = priceAboveTrail && (isLong ? beTrail > currentSL : beTrail < currentSL);
             if (shouldMove) {
               await db.updateTradeStopLoss(trade.id, beTrail);
               await this.updateExchangeSL(trade, beTrail);
