@@ -573,7 +573,10 @@ async function main() {
   cron.schedule('*/15 * * * *', async () => {
     try {
       const results = await onchainScanner.scanDemandZones();
-      const qualified = results.filter(r => r.score >= 30);
+      // Cross-scanner dedup: skip symbols onchain executor already has open positions on
+      const ocOpen = await db.getOpenTrades('onchain').catch(() => []);
+      const ocSymbols = new Set(ocOpen.map(t => t.symbol));
+      const qualified = results.filter(r => r.score >= 30 && !ocSymbols.has(r.symbol));
       if (!qualified.length) return;
 
       for (const token of qualified) {
