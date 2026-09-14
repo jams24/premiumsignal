@@ -3315,7 +3315,7 @@ class TelegramBot {
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'dz_cfg_lev')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos'),
          Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
-        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_refresh'),
+        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main')],
       ]);
@@ -3335,6 +3335,63 @@ class TelegramBot {
     this.bot.action('dz_refresh', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showDzSettings(ctx); } catch (e) { logger.error(`dz_refresh error: ${e.message}`); }
+    });
+
+    this.bot.action('dz_trades', async (ctx) => {
+      try { await ctx.answerCbQuery('Loading trades...'); } catch (e) {}
+      try {
+        const trades = await db.getOpenTrades('demandzone');
+        if (!trades.length) {
+          return ctx.editMessageText(
+            `📋 <b>DZ POSITIONS</b>\n\n<i>No open positions.</i>`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'dz_trades')],
+              [Markup.button.callback('⬅️ Settings', 'dz_settings')],
+            ]).reply_markup }
+          );
+        }
+        const te = dzte();
+        let msg = `📋 <b>DZ POSITIONS</b> (${trades.length})\n\n`;
+        let totalPnl = 0;
+        for (const t of trades) {
+          let currentPrice = null;
+          try {
+            const pairs = [`${t.symbol}/USDT:USDT`, `${t.symbol}/USDT`];
+            for (const [, ex] of Object.entries(te.exchanges)) {
+              for (const pair of pairs) {
+                if (ex.markets?.[pair]) {
+                  const ticker = await ex.fetchTicker(pair);
+                  currentPrice = ticker.last;
+                  break;
+                }
+              }
+              if (currentPrice) break;
+            }
+          } catch (e) { /* skip */ }
+          const isLong = t.direction === 'long';
+          const pnlPct = currentPrice
+            ? (isLong ? ((currentPrice - t.entry_price) / t.entry_price) * 100
+                      : ((t.entry_price - currentPrice) / t.entry_price) * 100)
+            : 0;
+          const pnlLev = pnlPct * (t.leverage || 1);
+          const pnlUsd = (pnlPct / 100) * (t.position_size || 0);
+          totalPnl += pnlUsd;
+          const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';
+          msg += `${icon} <b>${t.symbol}</b> ${t.leverage}x\n`;
+          msg += `$${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'} | <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)})\n\n`;
+        }
+        msg += `Total: <b>$${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}</b>`;
+        if (msg.length > 4000) msg = msg.slice(0, 3990) + '\n\n<i>…truncated</i>';
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('🔄 Refresh', 'dz_trades')],
+          [Markup.button.callback('⬅️ Settings', 'dz_settings')],
+        ]).reply_markup });
+      } catch (e) {
+        logger.error(`dz_trades error: ${e.message}`);
+        ctx.editMessageText('Failed to load trades.', { reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('⬅️ Back', 'dz_settings')],
+        ]).reply_markup }).catch(() => {});
+      }
     });
 
     // dz_ SIZE
@@ -4768,7 +4825,22 @@ class TelegramBot {
   async sendRaw(message) {
     if (!this.channelId) return;
     try {
-      await this.bot.telegram.sendMessage(this.channelId, message, { parse_mode: 'HTML' });
+      if (message.length > 4000) {
+        const parts = [];
+        let remaining = message;
+        while (remaining.length > 0) {
+          if (remaining.length <= 4000) { parts.push(remaining); break; }
+          let cut = remaining.lastIndexOf('\n', 4000);
+          if (cut < 2000) cut = 4000;
+          parts.push(remaining.slice(0, cut));
+          remaining = remaining.slice(cut);
+        }
+        for (const part of parts) {
+          await this.bot.telegram.sendMessage(this.channelId, part, { parse_mode: 'HTML' });
+        }
+      } else {
+        await this.bot.telegram.sendMessage(this.channelId, message, { parse_mode: 'HTML' });
+      }
     } catch (err) {
       logger.error(`Failed to send message: ${err.message}`);
     }
