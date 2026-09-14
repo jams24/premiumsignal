@@ -678,17 +678,37 @@ class OnchainScanner {
 
     if (score < 20) return null;
 
+    // Bounce confirmation: check if recent candles show recovery (not still falling)
+    const last3 = ohlcv4h.slice(-3);
+    const lastCandle = last3[last3.length - 1];
+    const prevCandle = last3[last3.length - 2];
+    const lastGreen = lastCandle[4] > lastCandle[1];
+    const prevRed = prevCandle[4] < prevCandle[1];
+    const stillFalling = !lastGreen && lastCandle[4] < prevCandle[4];
+    let bounceConfirmed = false;
+    if (lastGreen) {
+      bounceConfirmed = true;
+      score += 5;
+      signals.push('Bounce candle confirmed — green close in zone');
+    } else if (stillFalling) {
+      score -= 10;
+      signals.push('Still falling — no bounce confirmation yet');
+    }
+
+    if (score < 20) return null;
+
     return {
       type: 'DEMAND_ZONE', symbol: base, pair: symbol, exchange: exchangeId,
       score, signals, price, priceChange, volume: ticker.quoteVolume,
-      zone: bestZone, atr: currentATR, inZone, distToZone,
+      zone: bestZone, atr: currentATR, inZone, distToZone, bounceConfirmed,
       oiChange1h: null, oiChange4h: null, lsData: null, exchangeFlow: null,
     };
   }
 
-  buildDemandZoneSetup(token) {
+  buildDemandZoneSetup(token, { requireBounce = false } = {}) {
     const { zone, price, atr, pair, exchange: exchangeId } = token;
     if (!zone) return null;
+    if (requireBounce && !token.bounceConfirmed) return null;
     const direction = zone.breakoutDir;
     const mult = direction === 'long' ? 1 : -1;
 
@@ -744,7 +764,8 @@ class OnchainScanner {
         const icon = pnlUsd >= 0 ? '🟢' : '🔴';
         return ` ${icon} $${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
       })() : '';
-      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.score}/100 ${tier}${tradeTag}\n`;
+      const bounceTag = r.bounceConfirmed ? ' ✅ BOUNCE' : (r.inZone ? ' ⏳ NO BOUNCE' : '');
+      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.score}/100 ${tier}${bounceTag}${tradeTag}\n`;
 
       const priceStr = r.price >= 1 ? `$${r.price.toFixed(4)}` : `$${r.price.toPrecision(4)}`;
       msg += `   💰 ${priceStr} (${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}%)\n`;

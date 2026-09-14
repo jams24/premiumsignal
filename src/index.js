@@ -579,6 +579,7 @@ async function main() {
       for (const token of qualified) {
         try {
           token._tradeSetup = onchainScanner.buildDemandZoneSetup(token);
+          token._liveSetup = onchainScanner.buildDemandZoneSetup(token, { requireBounce: true });
         } catch (e) { /* skip */ }
       }
 
@@ -650,11 +651,11 @@ async function main() {
         }
       }
 
-      // Auto-trade demand zone signals on onchain executor (live/paper based on its mode)
+      // Auto-trade demand zone signals — ONLY with bounce confirmation
       const dzMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
       for (const token of qualified) {
         if (token.score < dzMinScore || !onchainTradeExecutor.enabled) continue;
-        const setup = token._tradeSetup;
+        const setup = token._liveSetup;
         if (!setup) continue;
         try {
           await onchainTradeExecutor.queueSignal(setup);
