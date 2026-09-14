@@ -299,8 +299,8 @@ async function main() {
     }
   });
 
-  // Evaluate per-user virtual paper trades every 2 minutes
-  cron.schedule('*/2 * * * *', async () => {
+  // Evaluate per-user virtual paper trades every minute
+  cron.schedule('* * * * *', async () => {
     try {
       await userPaperEngine.checkAllTrades();
     } catch (err) {
