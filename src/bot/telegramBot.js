@@ -2692,7 +2692,7 @@ class TelegramBot {
     this.bot.command('swingsize', async (ctx) => {
       if (!this.swingTradeExecutor) return ctx.reply('Not initialized.');
       const size = parseFloat(ctx.message.text.split(' ')[1]);
-      if (!size || size < 5 || size > 500) return ctx.reply('Usage: /swingsize <5-500>');
+      if (!size || size < 5 || size > 10000) return ctx.reply('Usage: /swingsize <5-10000>');
       this.swingTradeExecutor.maxPositionSize = size;
       this.swingTradeExecutor.saveConfig();
       ctx.replyWithHTML(`🌊 Swing trade size: <b>$${size}</b>`);
@@ -3218,20 +3218,23 @@ class TelegramBot {
         await ctx.answerCbQuery();
         const te = swte();
         await ctx.editMessageText(
-          `🌊 <b>SWING — POSITION SIZE</b>\n\nCurrent: <b>$${te.maxPositionSize}</b> per trade`,
+          `🌊 <b>SWING — POSITION SIZE</b>\n\nCurrent: <b>$${te.maxPositionSize}</b> per trade\n\n<i>Custom: type /swingsize 75 for any amount</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`$5${ocCheck(5, te.maxPositionSize)}`, 'sw_size_5'),
-             Markup.button.callback(`$10${ocCheck(10, te.maxPositionSize)}`, 'sw_size_10'),
-             Markup.button.callback(`$15${ocCheck(15, te.maxPositionSize)}`, 'sw_size_15')],
-            [Markup.button.callback(`$20${ocCheck(20, te.maxPositionSize)}`, 'sw_size_20'),
+            [Markup.button.callback(`$10${ocCheck(10, te.maxPositionSize)}`, 'sw_size_10'),
              Markup.button.callback(`$25${ocCheck(25, te.maxPositionSize)}`, 'sw_size_25'),
              Markup.button.callback(`$50${ocCheck(50, te.maxPositionSize)}`, 'sw_size_50')],
+            [Markup.button.callback(`$100${ocCheck(100, te.maxPositionSize)}`, 'sw_size_100'),
+             Markup.button.callback(`$250${ocCheck(250, te.maxPositionSize)}`, 'sw_size_250'),
+             Markup.button.callback(`$500${ocCheck(500, te.maxPositionSize)}`, 'sw_size_500')],
+            [Markup.button.callback(`$1000${ocCheck(1000, te.maxPositionSize)}`, 'sw_size_1000'),
+             Markup.button.callback(`$2000${ocCheck(2000, te.maxPositionSize)}`, 'sw_size_2000'),
+             Markup.button.callback(`$5000${ocCheck(5000, te.maxPositionSize)}`, 'sw_size_5000')],
             [Markup.button.callback('⬅️ Back', 'sw_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`sw_cfg_size error: ${e.message}`); }
     });
-    for (const size of [5, 10, 15, 20, 25, 50]) {
+    for (const size of [10, 25, 50, 100, 250, 500, 1000, 2000, 5000]) {
       this.bot.action(`sw_size_${size}`, async (ctx) => {
         try {
           swte().maxPositionSize = size; swte().saveConfig();
