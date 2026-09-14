@@ -2179,7 +2179,8 @@ class TelegramBot {
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
          Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore')],
-        [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
+        [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb'),
+         Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol Filter: ON' : '⚡ Vol Filter: OFF'}`, 'oc_cfg_volfilt')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback('🔄 Refresh', 'oc_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
@@ -2524,6 +2525,17 @@ class TelegramBot {
         } catch (e) { logger.error(`oc_cb_pause error: ${e.message}`); }
       });
     }
+
+    // Volatility filter toggle
+    this.bot.action('oc_cfg_volfilt', async (ctx) => {
+      try {
+        const te = octe();
+        te.volatilityFilter = !te.volatilityFilter;
+        te.saveConfig();
+        await ctx.answerCbQuery(`Volatility filter ${te.volatilityFilter ? 'enabled' : 'disabled'}`);
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_cfg_volfilt error: ${e.message}`); }
+    });
 
     // Also wire /onchainsettings command to show the inline panel
     this.bot.command('onchainsettings', async (ctx) => {
@@ -3411,6 +3423,10 @@ class TelegramBot {
       if (!te) return;
       await te.recalcDailyPnL?.();
       const openTrades = await db.getOpenTrades('demandzone').catch(() => []);
+      const paperTrades = openTrades.filter(t => t.mode === 'paper');
+      const liveTrades = openTrades.filter(t => t.mode === 'live');
+      const paperPnl = await db.getTodayPnL('paper', 'demandzone').catch(() => 0);
+      const livePnl = await db.getTodayPnL('live', 'demandzone').catch(() => 0);
 
       const text =
         `🎯 <b>DEMAND ZONE SETTINGS</b>\n\n` +
@@ -3419,8 +3435,9 @@ class TelegramBot {
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
-        `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
-        `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+        `📈 Paper P&L: <b>$${paperPnl.toFixed(2)}</b> (${paperTrades.length} open)\n` +
+        `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
+        `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
         `Tap any button to configure:`;
 
       const keyboard = Markup.inlineKeyboard([

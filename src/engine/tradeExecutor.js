@@ -64,6 +64,9 @@ class TradeExecutor {
     this.cbStreak = config.cbStreak || 3;
     this.cbPauseMinutes = config.cbPauseMinutes || 120;
     this.cbOverrideUntil = 0; // manual override timestamp — skip CB until this time
+
+    // Volatility filter: skip entries on high-ATR or mid-pump candles
+    this.volatilityFilter = config.volatilityFilter !== false;
   }
 
   onTradeUpdate(callback) {
@@ -387,6 +390,7 @@ class TradeExecutor {
       cbEnabled: this.cbEnabled,
       cbStreak: this.cbStreak,
       cbPauseMinutes: this.cbPauseMinutes,
+      volatilityFilter: this.volatilityFilter,
     };
   }
 
@@ -419,6 +423,7 @@ class TradeExecutor {
     if (cfg.cbEnabled != null) this.cbEnabled = cfg.cbEnabled;
     if (cfg.cbStreak != null) this.cbStreak = cfg.cbStreak;
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
+    if (cfg.volatilityFilter != null) this.volatilityFilter = cfg.volatilityFilter;
   }
 
   async getCircuitBreakerStatus() {

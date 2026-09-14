@@ -1015,7 +1015,7 @@ class OnchainScanner {
     return { icon: '📊', label: 'LOW ACTIVITY', meaning: 'Minor signal — not actionable yet' };
   }
 
-  async buildTradeSetup(token, exchanges, type = 'ONCHAIN_SETUP') {
+  async buildTradeSetup(token, exchanges, type = 'ONCHAIN_SETUP', opts = {}) {
     try {
       const exchange = exchanges[token.exchange];
       if (!exchange) return null;
@@ -1060,6 +1060,7 @@ class OnchainScanner {
       } catch (e) { logger.debug(`${token.symbol}: 5m candle check failed: ${e.message}`); }
 
       // 5m volatility filter — reject if candles are swinging too wildly for reliable entries
+      if (opts.volatilityFilter !== false) {
       try {
         const vol5m = await exchange.fetchOHLCV(token.pair, '5m', undefined, 14);
         if (vol5m && vol5m.length >= 10) {
@@ -1075,6 +1076,7 @@ class OnchainScanner {
           }
         }
       } catch (e) { logger.debug(`${token.symbol}: 5m volatility check failed: ${e.message}`); }
+      }
 
       // 4H macro trend filter — reject counter-trend entries and post-pump dumps
       try {
@@ -1111,12 +1113,14 @@ class OnchainScanner {
           }
 
           // Pump not settled: if latest 4H candle has >8% body, the move is still in progress
+          if (opts.volatilityFilter !== false) {
           const last4h = ohlcv4h[ohlcv4h.length - 1];
           const bodyPct = Math.abs((last4h[4] - last4h[1]) / last4h[1]) * 100;
           const rangePct = ((last4h[2] - last4h[3]) / last4h[3]) * 100;
           if (rangePct > 10) {
             logger.info(`${token.symbol}: Reject — current 4H candle range ${rangePct.toFixed(1)}% (pump not settled, wait for consolidation)`);
             return null;
+          }
           }
         }
       } catch (e) { logger.debug(`${token.symbol}: 4H trend check failed: ${e.message}`); }
