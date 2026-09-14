@@ -348,6 +348,33 @@ async function main() {
             token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP');
           } catch (e) { /* skip */ }
         }
+        // Attach prior alert tracking data for inline PnL display
+        try {
+          const priorAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 48);
+          const priorBySymbol = {};
+          for (const a of priorAlerts) priorBySymbol[a.symbol] = a;
+          for (const token of hotTokens) {
+            const prior = priorBySymbol[token.symbol];
+            if (prior && prior.data?.price) {
+              const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
+              const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
+              const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;
+              const dir = prior.data.direction || 'long';
+              token._alertTracking = {
+                firstAlertedAt,
+                entryPrice,
+                direction: dir,
+                pnl: dir === 'short' ? -rawPnl : rawPnl,
+                bestPnl: parseFloat(prior.data.best_pnl) || 0,
+                worstPnl: parseFloat(prior.data.worst_pnl) || 0,
+                alertCount: parseInt(prior.data.alert_count) || 1,
+                tp1Hit: prior.data.tp1_hit || false,
+                tp2Hit: prior.data.tp2_hit || false,
+              };
+            }
+          }
+        } catch (e) { logger.debug(`Alert tracking lookup failed: ${e.message}`); }
+
         const msg = onchainScanner.formatAlerts(hotTokens, 5);
         if (msg) {
           await bot.sendRaw(msg);
@@ -358,6 +385,7 @@ async function main() {
           const dir = (token.fundingBias === 'bullish' || token.priceChange > 0) ? 'long' : 'short';
           if (!shouldLogAlert('ONCHAIN', token.symbol, dir)) continue;
           const setup = token._tradeSetup;
+          const priorCount = token._alertTracking?.alertCount || 0;
           await db.logAlert('ONCHAIN', token.symbol, {
             score: token.score, price: token.price, direction: setup?.direction || dir,
             exchange: token.exchange, pair: token.pair,
@@ -371,6 +399,9 @@ async function main() {
               liquidations: token.setupData.liquidations || null,
               orderBook: token.setupData.orderBook || null,
             } : null,
+            alert_count: priorCount + 1,
+            first_alert_price: token._alertTracking?.entryPrice || token.price,
+            first_alert_at: token._alertTracking?.firstAlertedAt || new Date().toISOString(),
             tp1: setup?.tp1, tp2: setup?.tp2, tp3: setup?.tp3,
             stopLoss: setup?.stopLoss, atr: setup?.atr,
             confidence: setup?.confidence,
@@ -567,6 +598,33 @@ async function main() {
             token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP');
           } catch (e) { /* skip */ }
         }
+        // Attach prior alert tracking for inline PnL on flow alerts
+        try {
+          const priorAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 48);
+          const priorBySymbol = {};
+          for (const a of priorAlerts) priorBySymbol[a.symbol] = a;
+          for (const token of significant) {
+            const prior = priorBySymbol[token.symbol];
+            if (prior && prior.data?.price) {
+              const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
+              const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
+              const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;
+              const dir = prior.data.direction || 'long';
+              token._alertTracking = {
+                firstAlertedAt,
+                entryPrice,
+                direction: dir,
+                pnl: dir === 'short' ? -rawPnl : rawPnl,
+                bestPnl: parseFloat(prior.data.best_pnl) || 0,
+                worstPnl: parseFloat(prior.data.worst_pnl) || 0,
+                alertCount: parseInt(prior.data.alert_count) || 1,
+                tp1Hit: prior.data.tp1_hit || false,
+                tp2Hit: prior.data.tp2_hit || false,
+              };
+            }
+          }
+        } catch (e) { logger.debug(`Flow alert tracking lookup failed: ${e.message}`); }
+
         const msg = flowScanner.formatAlerts(significant, 5);
         if (msg) {
           await bot.sendRaw(msg);
@@ -576,8 +634,12 @@ async function main() {
         for (const token of significant) {
           const dir = token.flow?.outflowCount > token.flow?.inflowCount ? 'long' : 'short';
           if (!shouldLogAlert('FLOW', token.symbol, dir)) continue;
+          const priorCount = token._alertTracking?.alertCount || 0;
           await db.logAlert('FLOW', token.symbol, {
             flowScore: token.flowScore, price: token.price, direction: dir,
+            alert_count: priorCount + 1,
+            first_alert_price: token._alertTracking?.entryPrice || token.price,
+            first_alert_at: token._alertTracking?.firstAlertedAt || new Date().toISOString(),
             exchange: token.exchange, pair: token.pair,
             priceChange: token.priceChange,
             outflowCount: token.flow?.outflowCount, inflowCount: token.flow?.inflowCount,
