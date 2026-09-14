@@ -41,7 +41,7 @@ class TelegramBot {
       'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
       'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop', 'onchainsettings',
       'swingtrade', 'swingsize', 'swinglev', 'swingopen', 'swingclose', 'swingstats', 'swingperf', 'swingwatchlist',
-      'dzopen', 'dzclose', 'dzstats', 'dzperf', 'dzsettings',
+      'dzopen', 'dzclose', 'dzstats', 'dzperf', 'dzsettings', 'dzmaxloss', 'swingmaxloss',
       'panel', 'swingsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
@@ -1064,20 +1064,22 @@ class TelegramBot {
         await ctx.editMessageText(
           `🔒 <b>PER-TRADE MAX LOSS</b>\n\n` +
           `Current: <b>$${cur}</b>\n\n` +
-          `Each trade is auto-closed if its unrealized loss reaches this amount.\nUse /setmymaxloss for custom values.`,
+          `Each trade is auto-closed if its unrealized loss reaches this amount.\nUse /setmymaxloss for any custom value.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`$5${myCheck(5, cur)}`, 'my_tloss_5'),
              Markup.button.callback(`$10${myCheck(10, cur)}`, 'my_tloss_10'),
-             Markup.button.callback(`$20${myCheck(20, cur)}`, 'my_tloss_20')],
-            [Markup.button.callback(`$30${myCheck(30, cur)}`, 'my_tloss_30'),
-             Markup.button.callback(`$50${myCheck(50, cur)}`, 'my_tloss_50'),
+             Markup.button.callback(`$15${myCheck(15, cur)}`, 'my_tloss_15')],
+            [Markup.button.callback(`$20${myCheck(20, cur)}`, 'my_tloss_20'),
+             Markup.button.callback(`$30${myCheck(30, cur)}`, 'my_tloss_30'),
+             Markup.button.callback(`$50${myCheck(50, cur)}`, 'my_tloss_50')],
+            [Markup.button.callback(`$75${myCheck(75, cur)}`, 'my_tloss_75'),
              Markup.button.callback(`$100${myCheck(100, cur)}`, 'my_tloss_100')],
             [Markup.button.callback('⬅️ Back', 'my_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`my_cfg_tradeloss: ${e.message}`); }
     });
-    for (const loss of [5, 10, 20, 30, 50, 100]) {
+    for (const loss of [5, 10, 15, 20, 30, 50, 75, 100]) {
       this.bot.action(`my_tloss_${loss}`, async (ctx) => {
         try {
           await db.setUserPaperConfig(ctx.from.id, { perTradeLoss: loss });
@@ -2373,22 +2375,23 @@ class TelegramBot {
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — PER-TRADE MAX LOSS</b>\n\n` +
           `Current: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n` +
-          `Trade is force-closed if unrealized loss exceeds this.\nUse /onchainmaxloss for custom values.`,
+          `Trade is force-closed if unrealized loss exceeds this.\nUse /onchainmaxloss for any custom value.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'oc_tloss_6'),
-             Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'oc_tloss_10'),
-             Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'oc_tloss_20')],
-            [Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'oc_tloss_30'),
-             Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'oc_tloss_50'),
-             Markup.button.callback(`$60${ocCheck(60, te.maxLossPerTrade)}`, 'oc_tloss_60')],
-            [Markup.button.callback(`$100${ocCheck(100, te.maxLossPerTrade)}`, 'oc_tloss_100'),
-             Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'oc_tloss_0')],
+            [Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'oc_tloss_0'),
+             Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'oc_tloss_6'),
+             Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'oc_tloss_10')],
+            [Markup.button.callback(`$15${ocCheck(15, te.maxLossPerTrade)}`, 'oc_tloss_15'),
+             Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'oc_tloss_20'),
+             Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'oc_tloss_30')],
+            [Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'oc_tloss_50'),
+             Markup.button.callback(`$75${ocCheck(75, te.maxLossPerTrade)}`, 'oc_tloss_75'),
+             Markup.button.callback(`$100${ocCheck(100, te.maxLossPerTrade)}`, 'oc_tloss_100')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`oc_cfg_tradeloss error: ${e.message}`); }
     });
-    for (const loss of [0, 6, 10, 20, 30, 50, 60, 100]) {
+    for (const loss of [0, 6, 10, 15, 20, 30, 50, 75, 100]) {
       this.bot.action(`oc_tloss_${loss}`, async (ctx) => {
         try {
           octe().maxLossPerTrade = loss; octe().saveConfig();
@@ -3318,20 +3321,23 @@ class TelegramBot {
         await ctx.answerCbQuery();
         const te = swte();
         await ctx.editMessageText(
-          `🌊 <b>SWING — PER-TRADE MAX LOSS</b>\n\nCurrent: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>`,
+          `🌊 <b>SWING — PER-TRADE MAX LOSS</b>\n\nCurrent: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n<i>Use /swingmaxloss for any custom value.</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'sw_tloss_6'),
-             Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'sw_tloss_10'),
-             Markup.button.callback(`$15${ocCheck(15, te.maxLossPerTrade)}`, 'sw_tloss_15')],
-            [Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'sw_tloss_20'),
-             Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'sw_tloss_30'),
-             Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'sw_tloss_0')],
+            [Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'sw_tloss_0'),
+             Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'sw_tloss_6'),
+             Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'sw_tloss_10')],
+            [Markup.button.callback(`$15${ocCheck(15, te.maxLossPerTrade)}`, 'sw_tloss_15'),
+             Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'sw_tloss_20'),
+             Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'sw_tloss_30')],
+            [Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'sw_tloss_50'),
+             Markup.button.callback(`$75${ocCheck(75, te.maxLossPerTrade)}`, 'sw_tloss_75'),
+             Markup.button.callback(`$100${ocCheck(100, te.maxLossPerTrade)}`, 'sw_tloss_100')],
             [Markup.button.callback('⬅️ Back', 'sw_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`sw_cfg_tradeloss error: ${e.message}`); }
     });
-    for (const loss of [0, 6, 10, 15, 20, 30]) {
+    for (const loss of [0, 6, 10, 15, 20, 30, 50, 75, 100]) {
       this.bot.action(`sw_tloss_${loss}`, async (ctx) => {
         try {
           swte().maxLossPerTrade = loss; swte().saveConfig();
@@ -3340,6 +3346,19 @@ class TelegramBot {
         } catch (e) { logger.error(`sw_tloss error: ${e.message}`); }
       });
     }
+
+    this.bot.command('swingmaxloss', async (ctx) => {
+      const input = ctx.message.text.split(' ')[1];
+      if (!input) return ctx.replyWithHTML('Usage: <code>/swingmaxloss 25</code>\nRange: $1 — $10,000 per trade. Use <code>/swingmaxloss 0</code> to disable.');
+      const loss = parseFloat(input);
+      if (input === '0' || input.toLowerCase() === 'off') {
+        swte().maxLossPerTrade = 0; swte().saveConfig();
+        return ctx.replyWithHTML('✅ Swing per-trade loss cap <b>disabled</b>');
+      }
+      if (!loss || loss < 1 || loss > 10000) return ctx.replyWithHTML('Usage: <code>/swingmaxloss 25</code>\nRange: $1 — $10,000');
+      swte().maxLossPerTrade = loss; swte().saveConfig();
+      ctx.replyWithHTML(`✅ Swing per-trade loss cap set to <b>$${loss}</b>`);
+    });
 
     // sw_ MAX POSITIONS
     this.bot.action('sw_cfg_maxpos', async (ctx) => {
@@ -3831,20 +3850,23 @@ class TelegramBot {
         await ctx.answerCbQuery();
         const te = dzte();
         await ctx.editMessageText(
-          `🎯 <b>DZ — PER-TRADE LOSS CAP</b>\n\nCurrent: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n<i>Each trade is auto-closed if its unrealized loss reaches this amount.</i>`,
+          `🎯 <b>DZ — PER-TRADE LOSS CAP</b>\n\nCurrent: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n<i>Each trade is auto-closed if its unrealized loss reaches this amount.\nUse /dzmaxloss for any custom value.</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'dz_tl_0'),
              Markup.button.callback(`$5${ocCheck(5, te.maxLossPerTrade)}`, 'dz_tl_5'),
              Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'dz_tl_10')],
-            [Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'dz_tl_20'),
-             Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'dz_tl_50'),
+            [Markup.button.callback(`$15${ocCheck(15, te.maxLossPerTrade)}`, 'dz_tl_15'),
+             Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'dz_tl_20'),
+             Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'dz_tl_30')],
+            [Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'dz_tl_50'),
+             Markup.button.callback(`$75${ocCheck(75, te.maxLossPerTrade)}`, 'dz_tl_75'),
              Markup.button.callback(`$100${ocCheck(100, te.maxLossPerTrade)}`, 'dz_tl_100')],
             [Markup.button.callback('⬅️ Back', 'dz_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`dz_cfg_tradeloss error: ${e.message}`); }
     });
-    for (const tl of [0, 5, 10, 20, 50, 100]) {
+    for (const tl of [0, 5, 10, 15, 20, 30, 50, 75, 100]) {
       this.bot.action(`dz_tl_${tl}`, async (ctx) => {
         try {
           dzte().maxLossPerTrade = tl; dzte().saveConfig();
@@ -3853,6 +3875,19 @@ class TelegramBot {
         } catch (e) { logger.error(`dz_tl error: ${e.message}`); }
       });
     }
+
+    this.bot.command('dzmaxloss', async (ctx) => {
+      const input = ctx.message.text.split(' ')[1];
+      if (!input) return ctx.replyWithHTML('Usage: <code>/dzmaxloss 25</code>\nRange: $1 — $10,000 per trade. Use <code>/dzmaxloss 0</code> to disable.');
+      const loss = parseFloat(input);
+      if (input === '0' || input.toLowerCase() === 'off') {
+        dzte().maxLossPerTrade = 0; dzte().saveConfig();
+        return ctx.replyWithHTML('✅ DZ per-trade loss cap <b>disabled</b>');
+      }
+      if (!loss || loss < 1 || loss > 10000) return ctx.replyWithHTML('Usage: <code>/dzmaxloss 25</code>\nRange: $1 — $10,000');
+      dzte().maxLossPerTrade = loss; dzte().saveConfig();
+      ctx.replyWithHTML(`✅ DZ per-trade loss cap set to <b>$${loss}</b>`);
+    });
 
     // dz_ MAX POSITIONS
     this.bot.action('dz_cfg_maxpos', async (ctx) => {
