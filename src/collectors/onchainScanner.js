@@ -725,16 +725,26 @@ class OnchainScanner {
     };
   }
 
-  formatDemandZoneAlerts(results, limit = 5) {
+  formatDemandZoneAlerts(results, limit = 5, openTrades = []) {
     if (!results.length) return null;
     const top = results.slice(0, limit);
+    const tradeMap = new Map(openTrades.map(t => [t.symbol, t]));
     let msg = '🎯 <b>DEMAND ZONE SCANNER</b>\n';
     msg += '<i>4H consolidation zones with onchain accumulation signals — pre-breakout entries with tight structural stops.</i>\n\n';
 
     for (const r of top) {
       const arrow = r.priceChange >= 0 ? '🟢' : '🔴';
       const tier = r.score >= 50 ? '🔥' : r.score >= 35 ? '⚡' : '👀';
-      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.score}/100 ${tier}\n`;
+      const trade = tradeMap.get(r.symbol);
+      const tradeTag = trade ? (() => {
+        const pnlPct = trade.direction === 'long'
+          ? ((r.price - trade.entry_price) / trade.entry_price) * 100
+          : ((trade.entry_price - r.price) / trade.entry_price) * 100;
+        const pnlUsd = (pnlPct / 100) * (trade.position_size || 0);
+        const icon = pnlUsd >= 0 ? '🟢' : '🔴';
+        return ` ${icon} $${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`;
+      })() : '';
+      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.score}/100 ${tier}${tradeTag}\n`;
 
       const priceStr = r.price >= 1 ? `$${r.price.toFixed(4)}` : `$${r.price.toPrecision(4)}`;
       msg += `   💰 ${priceStr} (${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}%)\n`;

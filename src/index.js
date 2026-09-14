@@ -129,6 +129,22 @@ async function main() {
     trailAtrMultPost: 5,
   });
 
+  // Init demand zone executor — paper-trades ALL demand zone signals for performance tracking
+  const dzTradeExecutor = new TradeExecutor(listingMonitor.exchanges, {
+    settingsKey: 'demandzone',
+    mode: 'paper',
+    maxPositionSize: 20,
+    maxDailyLoss: 100,
+    maxLossPerTrade: 10,
+    maxConcurrentPositions: 10,
+    defaultLeverage: 5,
+    minConfidence: 3,
+    paperBalance: 1000,
+    dynamicLeverage: false,
+    dcaEnabled: false,
+    signalFilter: new Set(['DEMAND_ZONE_SETUP']),
+  });
+
   // Init swing scanner
   const swingScanner = new SwingScanner(listingMonitor.exchanges, flowScanner, onchainScanner);
 
@@ -140,10 +156,12 @@ async function main() {
     await onchainTradeExecutor.recalcDailyPnL();
     await swingTradeExecutor.loadConfig();
     await swingTradeExecutor.recalcDailyPnL();
+    await dzTradeExecutor.loadConfig();
+    await dzTradeExecutor.recalcDailyPnL();
   }
 
   // Init Telegram bot
-  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner });
+  const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -162,6 +180,11 @@ async function main() {
   // Wire swing trade executor notifications
   swingTradeExecutor.onTradeUpdate(async (msg) => {
     await bot.sendRaw(`🌊 <b>[SWING]</b> ${msg}`);
+  });
+
+  // Wire demand zone executor notifications
+  dzTradeExecutor.onTradeUpdate(async (msg) => {
+    await bot.sendRaw(`🎯 <b>[DZ]</b> ${msg}`);
   });
 
   // Wire up listing alerts
@@ -559,7 +582,8 @@ async function main() {
         } catch (e) { /* skip */ }
       }
 
-      const msg = onchainScanner.formatDemandZoneAlerts(qualified, 5);
+      const dzOpenTrades = await db.getOpenTrades('demandzone').catch(() => []);
+      const msg = onchainScanner.formatDemandZoneAlerts(qualified, 5, dzOpenTrades);
       if (msg) {
         await bot.sendRaw(msg);
         await bot.broadcastToUsers(msg);
@@ -583,7 +607,18 @@ async function main() {
         }, `DEMAND_ZONE ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
       }
 
-      // Auto-trade demand zone signals
+      // Paper-trade ALL demand zone signals for performance tracking
+      for (const token of qualified) {
+        const setup = token._tradeSetup;
+        if (!setup) continue;
+        try {
+          await dzTradeExecutor.queueSignal(setup);
+        } catch (e) {
+          logger.debug(`DZ paper-trade failed for ${token.symbol}: ${e.message}`);
+        }
+      }
+
+      // Auto-trade demand zone signals on onchain executor (live/paper based on its mode)
       const dzMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
       for (const token of qualified) {
         if (token.score < dzMinScore || !onchainTradeExecutor.enabled) continue;
@@ -1037,6 +1072,11 @@ async function main() {
       await swingTradeExecutor.checkOpenTrades();
     } catch (err) {
       logger.error(`Swing trade tracker error: ${err.message}`);
+    }
+    try {
+      await dzTradeExecutor.checkOpenTrades();
+    } catch (err) {
+      logger.error(`DZ trade tracker error: ${err.message}`);
     }
   });
 

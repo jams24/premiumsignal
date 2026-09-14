@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 
 class TelegramBot {
-  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner }) {
+  constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor }) {
     this.bot = new Telegraf(config.telegram.botToken);
     this.bot.catch((err) => {
       const msg = err?.message || String(err);
@@ -26,6 +26,7 @@ class TelegramBot {
     this.onchainTradeExecutor = onchainTradeExecutor;
     this.swingTradeExecutor = swingTradeExecutor;
     this.swingScanner = swingScanner;
+    this.dzTradeExecutor = dzTradeExecutor;
     this.userPaperEngine = null; // wired from index.js
     // Access control MUST be registered before any command handlers
     this.setupAccess();
@@ -40,6 +41,7 @@ class TelegramBot {
       'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
       'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop', 'onchainsettings',
       'swingtrade', 'swingsize', 'swinglev', 'swingopen', 'swingclose', 'swingstats', 'swingperf', 'swingwatchlist',
+      'dzopen', 'dzclose', 'dzstats', 'dzperf',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
@@ -2729,6 +2731,105 @@ class TelegramBot {
       ctx.replyWithHTML('🌊 Swing paper trading <b>disabled</b>.');
     });
 
+    // === Demand Zone Paper Trade Commands ===
+    this.bot.command('dzopen', async (ctx) => {
+      const trades = await db.getOpenTrades('demandzone').catch(() => []);
+      if (!trades.length) return ctx.reply('🎯 No open demand zone paper trades.');
+      let msg = `🎯 <b>OPEN DZ PAPER TRADES</b> (${trades.length})\n\n`;
+      for (const t of trades) {
+        const age = ((Date.now() - new Date(t.created_at).getTime()) / (60 * 60 * 1000)).toFixed(0);
+        const ctx_ = t.onchain_context || {};
+        const scoreStr = ctx_.score ? ` | Score: ${ctx_.score}` : '';
+        msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(t.symbol)}</b> ${t.direction.toUpperCase()}${scoreStr}\n`;
+        msg += `  Entry: $${t.entry_price} | SL: $${t.stop_loss}\n`;
+        msg += `  Size: $${(t.position_size || 0).toFixed(0)} (${t.leverage}x) | Age: ${age}h\n`;
+        msg += `  TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}${t.hit_tp3 ? ' ✅' : ''}\n`;
+        if (t.pnl_usd != null) msg += `  P&L: <b>$${parseFloat(t.pnl_usd).toFixed(2)}</b> (${parseFloat(t.pnl_pct).toFixed(1)}%)\n`;
+        msg += '\n';
+      }
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('dzclose', async (ctx) => {
+      const symbol = ctx.message.text.split(' ')[1]?.toUpperCase();
+      if (!symbol) return ctx.reply('Usage: /dzclose SYMBOL');
+      const trades = await db.getOpenTrades('demandzone').catch(() => []);
+      const trade = trades.find(t => t.symbol === symbol);
+      if (!trade) return ctx.reply(`No open DZ paper trade for ${symbol}.`);
+      try {
+        const exchange = this.dzTradeExecutor.exchanges[trade.exchange];
+        const pair = [`${symbol}/USDT:USDT`, `${symbol}/USDT`].find(p => exchange?.markets?.[p]);
+        const ticker = pair ? await exchange.fetchTicker(pair) : null;
+        const price = ticker?.last || trade.entry_price;
+        const pnlPct = trade.direction === 'long'
+          ? ((price - trade.entry_price) / trade.entry_price) * 100
+          : ((trade.entry_price - price) / trade.entry_price) * 100;
+        const pnlUsd = (pnlPct / 100) * (trade.position_size || 0);
+        await db.closeTrade(trade.id, price, pnlPct, pnlUsd, 'manual_close');
+        ctx.replyWithHTML(`🎯 DZ trade closed: <b>${symbol}</b>\nExit: $${price} | P&L: $${pnlUsd.toFixed(2)} (${pnlPct.toFixed(1)}%)`);
+      } catch (e) {
+        ctx.reply(`Failed to close: ${e.message}`);
+      }
+    });
+
+    this.bot.command('dzstats', async (ctx) => {
+      const s = await db.getTradeStatsBySource('demandzone').catch(() => ({}));
+      const msg =
+        `🎯 <b>DZ PAPER TRADE STATS</b>\n\n` +
+        `Total: ${s.total || 0} | Open: ${s.open || 0}\n` +
+        `Wins: ${s.wins || 0} | Losses: ${s.losses || 0}\n` +
+        `P&L: <b>$${parseFloat(s.total_pnl || 0).toFixed(2)}</b>\n` +
+        `Best: $${parseFloat(s.best_trade || 0).toFixed(2)} | Worst: $${parseFloat(s.worst_trade || 0).toFixed(2)}`;
+      ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('dzperf', async (ctx) => {
+      try {
+        const days = parseInt(ctx.message.text.split(' ')[1]) || 30;
+        const perf = await db.getDemandZonePerformance(days);
+        const openTrades = await db.getDemandZoneOpenTrades();
+
+        const total = parseInt(perf.total) || 0;
+        const closed = parseInt(perf.closed_count) || 0;
+        if (total === 0) return ctx.reply('🎯 No demand zone paper trades yet.');
+
+        const wins = parseInt(perf.wins) || 0;
+        const losses = parseInt(perf.losses) || 0;
+        const winRate = closed > 0 ? ((wins / closed) * 100).toFixed(0) : '0';
+        const totalPnl = parseFloat(perf.total_pnl) || 0;
+        const avgPnl = parseFloat(perf.avg_pnl) || 0;
+        const avgWin = parseFloat(perf.avg_win_pct) || 0;
+        const avgLoss = parseFloat(perf.avg_loss_pct) || 0;
+        const avgHold = parseFloat(perf.avg_hold_hours) || 0;
+        const tp1 = parseInt(perf.tp1_hits) || 0;
+        const tp2 = parseInt(perf.tp2_hits) || 0;
+        const tp3 = parseInt(perf.tp3_hits) || 0;
+
+        let msg = `🎯 <b>DEMAND ZONE PERFORMANCE</b> (${days}d)\n\n`;
+        msg += `📊 ${total} trades | ${closed} closed | ${parseInt(perf.open_count) || 0} open\n`;
+        msg += `✅ ${wins}W / ${losses}L — <b>${winRate}% win rate</b>\n`;
+        msg += `💰 Total P&L: <b>$${totalPnl.toFixed(2)}</b>\n`;
+        msg += `📈 Avg: $${avgPnl.toFixed(2)} | Win: +${avgWin.toFixed(1)}% | Loss: ${avgLoss.toFixed(1)}%\n`;
+        msg += `⏱ Avg hold: ${avgHold.toFixed(1)}h\n`;
+        msg += `🎯 TP hits: TP1 ${tp1} | TP2 ${tp2} | TP3 ${tp3}\n`;
+
+        if (openTrades.length) {
+          msg += `\n<b>OPEN POSITIONS</b>\n`;
+          for (const t of openTrades) {
+            const age = ((Date.now() - new Date(t.created_at).getTime()) / (60 * 60 * 1000)).toFixed(0);
+            const ctx_ = t.onchain_context || {};
+            msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(t.symbol)}</b> — $${t.entry_price} (${age}h)`;
+            msg += ` | Score: ${ctx_.score || '?'}\n`;
+          }
+        }
+
+        msg += `\n<i>Usage: /dzperf [days] — default 30</i>`;
+        ctx.replyWithHTML(msg);
+      } catch (e) {
+        ctx.reply(`Error: ${e.message}`);
+      }
+    });
+
     this.bot.command('whale', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1);
       if (args.length < 3) {
@@ -4065,6 +4166,10 @@ class TelegramBot {
       { command: 'myonchain', description: 'Your open onchain positions' },
       { command: 'myonchainstats', description: 'Onchain paper P&L stats' },
       { command: 'mysettings', description: 'View all your settings' },
+      { command: 'dzopen', description: 'Open demand zone paper trades' },
+      { command: 'dzperf', description: 'Demand zone performance stats' },
+      { command: 'dzstats', description: 'Demand zone quick P&L' },
+      { command: 'dzclose', description: 'Close a DZ paper trade' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 
