@@ -593,7 +593,7 @@ class TradeExecutor {
     logger.info(`Queued ${signal.direction} ${signal.symbol} for pullback entry at $${signal.currentPrice}`);
     this.notify(
       `⏳ <b>ENTRY QUEUED</b> $${escapeHtml(signal.symbol)}\n\n` +
-      `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for demand zone entry\n` +
+      `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for pullback entry\n` +
       `Signal: $${signal.currentPrice}${dzInfo}\n` +
       `SL: $${signal.stopLoss?.toPrecision(6) || '?'}\n` +
       `Will enter at structure or expire after 30 min`
@@ -669,7 +669,7 @@ class TradeExecutor {
             const saved = Math.abs(((close - signalPrice) / signalPrice) * 100).toFixed(1);
             logger.info(`Pending ${signal.symbol}: demand zone entry at $${close} (signal $${signalPrice}, zone $${dz?.toPrecision(6)}, saved ${saved}%)`);
             await this.notify(
-              `🎯 <b>DEMAND ZONE ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
+              `🎯 <b>PULLBACK ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
               `Signal: $${signalPrice} → Entry: $${close}\n` +
               `${dz ? `Zone: $${dz.toPrecision(6)} | ` : ''}Saved ${saved}% on entry\n` +
               `SL below structure — invalidation = trade dead`
