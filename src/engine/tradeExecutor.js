@@ -67,6 +67,9 @@ class TradeExecutor {
 
     // Volatility filter: skip entries on high-ATR or mid-pump candles
     this.volatilityFilter = config.volatilityFilter !== false;
+
+    // Risk-fit sizing: shrink position so SL hit = maxLossPerTrade
+    this.riskFitSizing = config.riskFitSizing !== false;
   }
 
   onTradeUpdate(callback) {
@@ -275,9 +278,9 @@ class TradeExecutor {
     }
 
     // Risk-fit sizing: size position so hitting SL = losing exactly maxLossPerTrade
-    // Only applies when maxLossPerTrade would produce a meaningful size (>10% of maxPositionSize)
-    // Otherwise use flat maxPositionSize and rely on checkOpenTrades max_loss enforcement
-    if (this.maxLossPerTrade > 0 && signal.stopLoss && signal.currentPrice) {
+    // Only applies when riskFitSizing is enabled and maxLossPerTrade would produce a meaningful size
+    // When disabled, uses flat maxPositionSize and relies on checkOpenTrades max_loss enforcement
+    if (this.riskFitSizing && this.maxLossPerTrade > 0 && signal.stopLoss && signal.currentPrice) {
       const slDistPct = Math.abs((signal.currentPrice - signal.stopLoss) / signal.currentPrice) * 100;
       if (slDistPct > 0) {
         const riskFitSize = this.maxLossPerTrade / (slDistPct / 100);
@@ -391,6 +394,7 @@ class TradeExecutor {
       cbStreak: this.cbStreak,
       cbPauseMinutes: this.cbPauseMinutes,
       volatilityFilter: this.volatilityFilter,
+      riskFitSizing: this.riskFitSizing,
     };
   }
 
@@ -424,6 +428,7 @@ class TradeExecutor {
     if (cfg.cbStreak != null) this.cbStreak = cfg.cbStreak;
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
     if (cfg.volatilityFilter != null) this.volatilityFilter = cfg.volatilityFilter;
+    if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
   }
 
   async getCircuitBreakerStatus() {
