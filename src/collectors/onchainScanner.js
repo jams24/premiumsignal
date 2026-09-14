@@ -1112,14 +1112,16 @@ class OnchainScanner {
             return null;
           }
 
-          // Pump not settled: if latest 4H candle has >8% body, the move is still in progress
+          // Pump not settled: if current OR previous 4H candle has >10% range, still too volatile
           if (opts.volatilityFilter !== false) {
-          const last4h = ohlcv4h[ohlcv4h.length - 1];
-          const bodyPct = Math.abs((last4h[4] - last4h[1]) / last4h[1]) * 100;
-          const rangePct = ((last4h[2] - last4h[3]) / last4h[3]) * 100;
-          if (rangePct > 10) {
-            logger.info(`${token.symbol}: Reject — current 4H candle range ${rangePct.toFixed(1)}% (pump not settled, wait for consolidation)`);
-            return null;
+          for (let ci = ohlcv4h.length - 1; ci >= Math.max(0, ohlcv4h.length - 2); ci--) {
+            const c4h = ohlcv4h[ci];
+            const rangePct = ((c4h[2] - c4h[3]) / c4h[3]) * 100;
+            if (rangePct > 10) {
+              const which = ci === ohlcv4h.length - 1 ? 'current' : 'previous';
+              logger.info(`${token.symbol}: Reject — ${which} 4H candle range ${rangePct.toFixed(1)}% (pump not settled, wait for consolidation)`);
+              return null;
+            }
           }
           }
         }
