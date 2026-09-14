@@ -70,6 +70,9 @@ class TradeExecutor {
 
     // Risk-fit sizing: shrink position so SL hit = maxLossPerTrade
     this.riskFitSizing = config.riskFitSizing !== false;
+
+    // Confidence scaling: reduce position for low-confidence signals (default on)
+    this.confidenceScaling = config.confidenceScaling !== false;
   }
 
   onTradeUpdate(callback) {
@@ -300,6 +303,7 @@ class TradeExecutor {
 
   // Scale size by confidence — low-confidence signals get smaller positions
   applyConfidenceScale(size, signal) {
+    if (!this.confidenceScaling) return size;
     const conf = signal.confidence || 3;
     if (conf >= 5) return size;
     if (conf >= 4) return size * 0.75;
@@ -395,6 +399,7 @@ class TradeExecutor {
       cbPauseMinutes: this.cbPauseMinutes,
       volatilityFilter: this.volatilityFilter,
       riskFitSizing: this.riskFitSizing,
+      confidenceScaling: this.confidenceScaling,
     };
   }
 
@@ -429,6 +434,7 @@ class TradeExecutor {
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
     if (cfg.volatilityFilter != null) this.volatilityFilter = cfg.volatilityFilter;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
+    if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
   }
 
   async getCircuitBreakerStatus() {

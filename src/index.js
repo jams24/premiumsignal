@@ -142,6 +142,7 @@ async function main() {
     paperBalance: 1000,
     dynamicLeverage: false,
     dcaEnabled: false,
+    confidenceScaling: false,
     signalFilter: new Set(['DEMAND_ZONE_SETUP']),
   });
 

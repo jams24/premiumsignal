@@ -2168,6 +2168,7 @@ class TelegramBot {
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
+        `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
@@ -2183,7 +2184,8 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit'),
-         Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos')],
+         Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos')],
         [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore'),
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol Filter: ON' : '⚡ Vol Filter: OFF'}`, 'oc_cfg_volfilt')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
@@ -2550,6 +2552,15 @@ class TelegramBot {
         await ctx.answerCbQuery(`Risk-fit sizing ${te.riskFitSizing ? 'ON' : 'OFF'}`);
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_riskfit error: ${e.message}`); }
+    });
+
+    this.bot.action('oc_cfg_confscale', async (ctx) => {
+      try {
+        const te = octe();
+        te.confidenceScaling = !te.confidenceScaling; te.saveConfig();
+        await ctx.answerCbQuery(`Confidence scaling ${te.confidenceScaling ? 'ON — low score = 50-75% size' : 'OFF — always full size'}`);
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_cfg_confscale error: ${e.message}`); }
     });
 
     // Also wire /onchainsettings command to show the inline panel
@@ -3472,6 +3483,7 @@ class TelegramBot {
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
+        `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `📈 Paper P&L: <b>$${paperPnl.toFixed(2)}</b> (${paperTrades.length} open)\n` +
         `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
@@ -3486,7 +3498,8 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'dz_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'dz_cfg_tradeloss')],
         [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'dz_cfg_riskfit'),
-         Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos')],
+         Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'dz_cfg_confscale')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -3576,6 +3589,15 @@ class TelegramBot {
         await ctx.answerCbQuery(`Risk-fit sizing ${te.riskFitSizing ? 'ON — size shrinks to cap loss at SL' : 'OFF — full size, loss cap enforced by checker'}`);
         await showDzSettings(ctx);
       } catch (e) { logger.error(`dz_cfg_riskfit error: ${e.message}`); }
+    });
+
+    this.bot.action('dz_cfg_confscale', async (ctx) => {
+      try {
+        const te = dzte();
+        te.confidenceScaling = !te.confidenceScaling; te.saveConfig();
+        await ctx.answerCbQuery(`Confidence scaling ${te.confidenceScaling ? 'ON — low score = 50-75% size' : 'OFF — always full size'}`);
+        await showDzSettings(ctx);
+      } catch (e) { logger.error(`dz_cfg_confscale error: ${e.message}`); }
     });
 
     // /dzsetsize custom command
