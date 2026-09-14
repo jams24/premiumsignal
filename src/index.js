@@ -493,7 +493,7 @@ async function main() {
     logger.info('Running swing scan...');
     try {
       const results = await swingScanner.scan();
-      const qualified = results.filter(r => r.score >= 40);
+      const qualified = results.filter(r => r.score >= 35);
 
       for (const candidate of qualified.slice(0, 5)) {
         try {
@@ -516,7 +516,7 @@ async function main() {
 
           swingScanner.addToWatchlist(setup);
 
-          if (setup.score >= 60 && swingTradeExecutor.enabled) {
+          if (setup.score >= 55 && swingTradeExecutor.enabled) {
             await swingTradeExecutor.queueSignal(setup);
           }
 

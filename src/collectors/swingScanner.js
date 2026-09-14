@@ -47,15 +47,15 @@ class SwingScanner {
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const candidates = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 5000000)
+          .filter(([, t]) => t.quoteVolume > 2000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .sort((a, b) => (b[1].quoteVolume || 0) - (a[1].quoteVolume || 0))
-          .slice(0, 50);
+          .slice(0, 75);
 
         for (const [symbol, ticker] of candidates) {
           try {
             const result = await this.analyzeSwingCandidate(exchange, exchangeId, symbol, ticker);
-            if (result && result.score >= 40) results.push(result);
+            if (result && result.score >= 35) results.push(result);
           } catch (e) {
             logger.debug(`Swing scan failed for ${symbol}: ${e.message}`);
           }
@@ -73,7 +73,7 @@ class SwingScanner {
     }
 
     const sorted = [...best.values()].sort((a, b) => b.score - a.score);
-    logger.info(`Swing scan: ${sorted.length} candidates scored 40+`);
+    logger.info(`Swing scan: ${sorted.length} candidates scored 35+`);
     return sorted;
   }
 
@@ -107,34 +107,71 @@ class SwingScanner {
     const signals = [];
     const sym = symbol.split('/')[0];
 
-    // === AXIS 1: Accumulation Zone Detection (up to 25 pts) ===
+    // === AXIS 1: Setup Detection (up to 25 pts) ===
+    // Path A: Accumulation (near lows) — price within striking distance of 90d low
+    // Path B: Breakout Continuation (after a move) — pulled back from breakout, onchain confirms
 
     const distFromLow = ((currentPrice - ninetyDayLow) / ninetyDayLow) * 100;
-    if (distFromLow <= 10) { score += 10; signals.push(`Near 90d low (${distFromLow.toFixed(0)}% above)`); }
-    else if (distFromLow <= 20) { score += 5; signals.push(`Within 20% of 90d low`); }
-    else if (distFromLow > 50) return null;
-
     const totalDecline = ((ninetyDayHigh - ninetyDayLow) / ninetyDayHigh) * 100;
-    if (totalDecline >= 70) { score += 8; signals.push(`Major decline -${totalDecline.toFixed(0)}%`); }
-    else if (totalDecline >= 50) { score += 5; signals.push(`Extended downtrend -${totalDecline.toFixed(0)}%`); }
-    else if (totalDecline < 30) return null;
 
-    const recentATRs = atr14.slice(-14);
-    const allATRs = atr14.slice(-Math.min(90, atr14.length));
-    const recentAvgATR = recentATRs.reduce((a, b) => a + b, 0) / recentATRs.length;
-    const fullAvgATR = allATRs.reduce((a, b) => a + b, 0) / allATRs.length;
-    if (recentAvgATR < fullAvgATR * 0.5) {
-      score += 7; signals.push('Low volatility consolidation at lows');
-    } else if (recentAvgATR < fullAvgATR * 0.7) {
-      score += 3; signals.push('Narrowing range');
+    if (totalDecline < 15) return null;
+    if (distFromLow > 200) return null;
+
+    let setupType = 'accumulation';
+
+    if (distFromLow <= 15) {
+      score += 10; signals.push(`Near 90d low (${distFromLow.toFixed(0)}% above)`);
+    } else if (distFromLow <= 30) {
+      score += 5; signals.push(`Within 30% of 90d low`);
+    } else if (distFromLow <= 60) {
+      score += 3; signals.push(`Moderate distance from lows (${distFromLow.toFixed(0)}%)`);
+    } else {
+      setupType = 'continuation';
     }
 
-    // === AXIS 2: Trend Reversal Signals (up to 25 pts) ===
+    if (totalDecline >= 70) { score += 8; signals.push(`Major range -${totalDecline.toFixed(0)}%`); }
+    else if (totalDecline >= 50) { score += 5; signals.push(`Extended range -${totalDecline.toFixed(0)}%`); }
+    else if (totalDecline >= 30) { score += 3; signals.push(`Significant range -${totalDecline.toFixed(0)}%`); }
+
+    if (setupType === 'continuation') {
+      const last14Highs = highs.slice(-14);
+      const recentHigh = Math.max(...last14Highs);
+      const pullbackPct = ((recentHigh - currentPrice) / recentHigh) * 100;
+
+      if (pullbackPct >= 25) {
+        score += 8; signals.push(`Pullback -${pullbackPct.toFixed(0)}% from recent high — deep re-entry`);
+      } else if (pullbackPct >= 15) {
+        score += 6; signals.push(`Pullback -${pullbackPct.toFixed(0)}% from recent high`);
+      } else if (pullbackPct >= 5) {
+        score += 4; signals.push(`Shallow dip -${pullbackPct.toFixed(0)}% from recent high`);
+      } else {
+        score += 2; signals.push('Near highs — momentum');
+      }
+
+      const last14Changes = ohlcvDaily.slice(-14).map(c => Math.abs((c[4] - c[1]) / c[1]) * 100);
+      const maxDailyMove = Math.max(...last14Changes);
+      if (maxDailyMove > 30) { score += 5; signals.push(`${maxDailyMove.toFixed(0)}% daily candle in 14d — proven momentum`); }
+      else if (maxDailyMove > 15) { score += 3; signals.push(`${maxDailyMove.toFixed(0)}% daily move recently`); }
+    } else {
+      const recentATRs = atr14.slice(-14);
+      const allATRs = atr14.slice(-Math.min(90, atr14.length));
+      const recentAvgATR = recentATRs.reduce((a, b) => a + b, 0) / recentATRs.length;
+      const fullAvgATR = allATRs.reduce((a, b) => a + b, 0) / allATRs.length;
+      if (recentAvgATR < fullAvgATR * 0.5) {
+        score += 7; signals.push('Low volatility consolidation at lows');
+      } else if (recentAvgATR < fullAvgATR * 0.7) {
+        score += 3; signals.push('Narrowing range');
+      }
+    }
+
+    // === AXIS 2: Trend / Momentum Signals (up to 25 pts) ===
 
     const rsiWindow = rsi14.slice(-14);
     const wasOversold = rsiWindow.some(v => v < 30);
     if (wasOversold && currentRSI > 35 && currentRSI < 55) {
       score += 7; signals.push(`RSI recovering from oversold (${currentRSI.toFixed(0)})`);
+    } else if (setupType === 'continuation' && currentRSI > 50 && currentRSI < 70) {
+      score += 3; signals.push(`RSI healthy momentum (${currentRSI.toFixed(0)})`);
     }
 
     const prevClose = closes[closes.length - 2];
@@ -166,7 +203,7 @@ class SwingScanner {
       score += 3; signals.push(`Volume accumulating (up ${(upVol / downVol).toFixed(1)}x vs down)`);
     }
 
-    // === AXIS 3: Onchain Confirmation (up to 30 pts) ===
+    // === AXIS 3: Onchain Confirmation (up to 35 pts) ===
 
     const flowMem = this.flowScanner?.flowMemory?.get(sym);
     if (flowMem) {
@@ -186,12 +223,29 @@ class SwingScanner {
     try {
       const lsData = await this.onchainScanner?.fetchLongShortRatio(symbol);
       if (lsData && lsData.topTraderPosRatio != null) {
-        const topLong = lsData.topTraderPosRatio > 1.2;
+        const topHeavy = lsData.topTraderPosRatio > 1.5;
+        const topLeaning = lsData.topTraderPosRatio > 1.2;
         const retailShort = lsData.globalRatio < 0.9;
-        if (topLong && retailShort) {
-          score += 8; signals.push(`Smart money divergence (top ${lsData.topTraderPosRatio.toFixed(2)} vs retail ${lsData.globalRatio.toFixed(2)})`);
-        } else if (topLong) {
-          score += 4; signals.push('Top traders accumulating');
+        if (topHeavy && retailShort) {
+          score += 10; signals.push(`Strong divergence — top ${lsData.topTraderPosRatio.toFixed(2)} vs retail ${lsData.globalRatio.toFixed(2)}`);
+        } else if (topLeaning && retailShort) {
+          score += 7; signals.push(`Smart money divergence (top ${lsData.topTraderPosRatio.toFixed(2)} vs retail ${lsData.globalRatio.toFixed(2)})`);
+        } else if (topHeavy) {
+          score += 5; signals.push(`Top traders heavily long (${lsData.topTraderPosRatio.toFixed(2)})`);
+        } else if (topLeaning) {
+          score += 3; signals.push('Top traders accumulating');
+        }
+      }
+    } catch (e) { /* skip */ }
+
+    try {
+      const acctData = await fetchJSON(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${pair}USDT&period=1d&limit=1`);
+      if (acctData?.length) {
+        const acctRatio = parseFloat(acctData[0].longShortRatio);
+        if (acctRatio < 0.85) {
+          score += 4; signals.push(`Retail accounts shorting (${acctRatio.toFixed(2)} L/S)`);
+        } else if (acctRatio < 0.95) {
+          score += 2; signals.push(`Retail slightly short (${acctRatio.toFixed(2)} L/S)`);
         }
       }
     } catch (e) { /* skip */ }
@@ -204,12 +258,21 @@ class SwingScanner {
       }
     } catch (e) { /* skip */ }
 
-    // === AXIS 4: Volume/Momentum (up to 20 pts) ===
+    // === AXIS 4: Volume / Momentum (up to 25 pts) ===
 
     const currentVol = volumes[volumes.length - 1];
     const avgVol20 = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
-    if (avgVol20 > 0 && currentVol > avgVol20 * 2) { score += 7; signals.push(`Volume ${(currentVol / avgVol20).toFixed(1)}x avg`); }
-    else if (avgVol20 > 0 && currentVol > avgVol20 * 1.5) { score += 4; signals.push('Above-avg volume'); }
+    if (avgVol20 > 0 && currentVol > avgVol20 * 3) { score += 7; signals.push(`Volume explosion ${(currentVol / avgVol20).toFixed(1)}x avg`); }
+    else if (avgVol20 > 0 && currentVol > avgVol20 * 2) { score += 5; signals.push(`Volume ${(currentVol / avgVol20).toFixed(1)}x avg`); }
+    else if (avgVol20 > 0 && currentVol > avgVol20 * 1.5) { score += 3; signals.push('Above-avg volume'); }
+
+    if (volumes.length >= 30) {
+      const avg7d = volumes.slice(-7).reduce((a, b) => a + b, 0) / 7;
+      const avg30d = volumes.slice(-30).reduce((a, b) => a + b, 0) / 30;
+      if (avg30d > 0 && avg7d > avg30d * 3) {
+        score += 5; signals.push(`7d volume ${(avg7d / avg30d).toFixed(1)}x 30d avg — sustained expansion`);
+      }
+    }
 
     if (ohlcvDaily.length >= 35) {
       const weeklyCandles = [];
@@ -231,7 +294,6 @@ class SwingScanner {
       }
     }
 
-    // OI rising while price flat = accumulation
     try {
       const oiHist = await exchange.fetchOpenInterestHistory(symbol, '1d', undefined, 7);
       if (oiHist && oiHist.length >= 3) {
@@ -240,17 +302,22 @@ class SwingScanner {
         const oiChange = ((lastOI - firstOI) / firstOI) * 100;
         const priceChange7d = ticker.percentage || 0;
         if (oiChange > 10 && Math.abs(priceChange7d) < 5) {
-          score += 8; signals.push(`OI rising +${oiChange.toFixed(0)}% while price flat`);
+          score += 8; signals.push(`OI rising +${oiChange.toFixed(0)}% while price flat — accumulation`);
+        } else if (oiChange > 50) {
+          score += 7; signals.push(`OI surge +${oiChange.toFixed(0)}% — fresh money flooding in`);
+        } else if (oiChange > 20) {
+          score += 5; signals.push(`OI expanding +${oiChange.toFixed(0)}%`);
         } else if (oiChange > 5) {
           score += 3; signals.push(`OI building +${oiChange.toFixed(0)}%`);
         }
       }
     } catch (e) { /* skip — not all exchanges support this */ }
 
-    if (score < 30) return null;
+    if (score < 20) return null;
 
     return {
       type: 'SWING_CANDIDATE',
+      setupType,
       symbol: sym,
       pair: symbol,
       exchange: exchangeId,
@@ -271,15 +338,22 @@ class SwingScanner {
 
   async buildSwingSetup(candidate) {
     try {
-      const { currentPrice, ninetyDayHigh, ninetyDayLow, atr, pair, exchange: exchangeId } = candidate;
+      const { currentPrice, ninetyDayHigh, ninetyDayLow, atr, pair, exchange: exchangeId, setupType } = candidate;
 
       const entryHigh = currentPrice;
-      const entryLow = currentPrice * 0.95;
-
-      const stopLoss = ninetyDayLow * 0.97;
+      const entryLow = setupType === 'continuation' ? currentPrice * 0.97 : currentPrice * 0.95;
 
       const exchange = this.exchanges[exchangeId];
       const ohlcvDaily = await exchange.fetchOHLCV(pair, '1d', undefined, 180);
+
+      let stopLoss;
+      if (setupType === 'continuation') {
+        const last14Lows = ohlcvDaily.slice(-14).map(c => c[3]);
+        const recentSwingLow = Math.min(...last14Lows);
+        stopLoss = recentSwingLow * 0.97;
+      } else {
+        stopLoss = ninetyDayLow * 0.97;
+      }
 
       const swingHighs = [];
       for (let i = 5; i < ohlcvDaily.length - 5; i++) {
@@ -290,22 +364,33 @@ class SwingScanner {
       }
       swingHighs.sort((a, b) => a - b);
 
-      const tp1 = swingHighs[0] || currentPrice + (currentPrice - ninetyDayLow) * 1.5;
-      const tp1Move = tp1 - currentPrice;
-      const tp2 = swingHighs[1] || currentPrice + tp1Move * 2;
-      const tp3 = Math.max(ninetyDayHigh, currentPrice + tp1Move * 3);
+      let tp1, tp2, tp3;
+      if (setupType === 'continuation') {
+        const range = currentPrice - stopLoss;
+        tp1 = currentPrice + range * 1.618;
+        tp2 = currentPrice + range * 2.618;
+        tp3 = currentPrice + range * 4.236;
+        if (swingHighs.length) tp1 = Math.max(tp1, swingHighs[0]);
+      } else {
+        tp1 = swingHighs[0] || currentPrice + (currentPrice - ninetyDayLow) * 1.5;
+        const tp1Move = tp1 - currentPrice;
+        tp2 = swingHighs[1] || currentPrice + tp1Move * 2;
+        tp3 = Math.max(ninetyDayHigh, currentPrice + tp1Move * 3);
+      }
 
       const slDistPct = Math.abs((currentPrice - stopLoss) / currentPrice) * 100;
       const tp1DistPct = ((tp1 - currentPrice) / currentPrice) * 100;
       const rr = tp1DistPct / slDistPct;
 
-      if (rr < 2) {
-        logger.info(`Swing skip ${candidate.symbol}: R:R ${rr.toFixed(1)} < 2.0`);
+      const minRR = setupType === 'continuation' ? 1.5 : 2.0;
+      if (rr < minRR) {
+        logger.info(`Swing skip ${candidate.symbol}: R:R ${rr.toFixed(1)} < ${minRR}`);
         return null;
       }
 
       return {
         type: 'SWING_SETUP',
+        setupType,
         symbol: candidate.symbol,
         pair,
         exchange: exchangeId,
@@ -316,15 +401,16 @@ class SwingScanner {
         tp1, tp2, tp3,
         stopLoss,
         atr,
-        confidence: candidate.score >= 60 ? 5 : candidate.score >= 50 ? 4 : 3,
+        confidence: candidate.score >= 55 ? 5 : candidate.score >= 45 ? 4 : 3,
         score: candidate.score,
         signals: candidate.signals,
         rr: parseFloat(rr.toFixed(1)),
-        suggestedLeverage: 3,
+        suggestedLeverage: setupType === 'continuation' ? 5 : 3,
         volumeInfo: `Vol $${((candidate.ticker?.quoteVolume || 0) / 1e6).toFixed(1)}M`,
         onchainContext: {
           score: candidate.score,
           signals: candidate.signals,
+          setupType,
           swingData: {
             ninetyDayHigh, ninetyDayLow,
             distFromLow: candidate.distFromLow,
@@ -350,9 +436,11 @@ class SwingScanner {
     const tp2Pct = ((setup.tp2 - setup.currentPrice) / setup.currentPrice * 100).toFixed(0);
     const tp3Pct = ((setup.tp3 - setup.currentPrice) / setup.currentPrice * 100).toFixed(0);
 
-    let msg = `🌊 <b>SWING SETUP</b> — $${escapeHtml(setup.symbol)}\n\n`;
+    const typeLabel = setup.setupType === 'continuation' ? 'BREAKOUT CONTINUATION' : 'ACCUMULATION REVERSAL';
+    let msg = `🌊 <b>SWING ${typeLabel}</b> — $${escapeHtml(setup.symbol)}\n\n`;
     msg += `<b>Score:</b> ${scoreBar} ${setup.score}/100\n`;
     msg += `<b>Direction:</b> 🟢 LONG\n`;
+    msg += `<b>Leverage:</b> ${setup.suggestedLeverage}x\n`;
     msg += `<b>Entry Zone:</b> $${setup.entryLow.toPrecision(4)} — $${setup.entryHigh.toPrecision(4)}\n`;
     msg += `<b>Stop Loss:</b> $${setup.stopLoss.toPrecision(4)} (${slPct}% below)\n`;
     msg += `<b>TP1:</b> $${setup.tp1.toPrecision(4)} (+${tp1Pct}%)\n`;
@@ -360,7 +448,8 @@ class SwingScanner {
     msg += `<b>TP3:</b> $${setup.tp3.toPrecision(4)} (+${tp3Pct}%)\n`;
     msg += `<b>R:R:</b> ${setup.rr}:1\n\n`;
     msg += `<b>Signals:</b>\n${candidate.signals.map(s => `  • ${s}`).join('\n')}\n\n`;
-    msg += `<i>Swing trade — hold for days/weeks. SL below accumulation zone.</i>\n`;
+    const holdLabel = setup.setupType === 'continuation' ? 'days to weeks' : 'weeks to months';
+    msg += `<i>Swing trade — hold for ${holdLabel}.</i>\n`;
     msg += `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
     return msg;
   }
