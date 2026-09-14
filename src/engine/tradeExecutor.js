@@ -122,7 +122,8 @@ class TradeExecutor {
     if (this.cbEnabled && Date.now() > this.cbOverrideUntil) {
       try {
         const recentTrades = await db.query(
-          `SELECT pnl_usd, close_reason, closed_at FROM trades WHERE status = 'closed' AND mode = 'live' ORDER BY closed_at DESC LIMIT 5`
+          `SELECT pnl_usd, close_reason, closed_at FROM trades WHERE status = 'closed' AND source = $1 ORDER BY closed_at DESC LIMIT 5`,
+          [this.settingsKey]
         );
         let streak = 0;
         for (const t of recentTrades.rows) {
@@ -425,7 +426,8 @@ class TradeExecutor {
     if (Date.now() < this.cbOverrideUntil) return { active: false, enabled: true, overrideUntil: this.cbOverrideUntil };
     try {
       const recentTrades = await db.query(
-        `SELECT pnl_usd, closed_at FROM trades WHERE status = 'closed' AND mode = 'live' ORDER BY closed_at DESC LIMIT 5`
+        `SELECT pnl_usd, closed_at FROM trades WHERE status = 'closed' AND source = $1 ORDER BY closed_at DESC LIMIT 5`,
+        [this.settingsKey]
       );
       let streak = 0;
       for (const t of recentTrades.rows) {
