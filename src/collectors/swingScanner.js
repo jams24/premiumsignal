@@ -271,6 +271,16 @@ class SwingScanner {
       const avg30d = volumes.slice(-30).reduce((a, b) => a + b, 0) / 30;
       if (avg30d > 0 && avg7d > avg30d * 3) {
         score += 5; signals.push(`7d volume ${(avg7d / avg30d).toFixed(1)}x 30d avg — sustained expansion`);
+      } else if (avg30d > 0 && avg7d > avg30d * 2) {
+        score += 3; signals.push(`7d volume ${(avg7d / avg30d).toFixed(1)}x 30d avg — expanding`);
+      }
+    }
+    // Peak daily volume in last 3 days vs average — catches explosive breakouts
+    if (volumes.length >= 21) {
+      const peakRecent = Math.max(...volumes.slice(-3));
+      const avgPrior = volumes.slice(-21, -3).reduce((a, b) => a + b, 0) / 18;
+      if (avgPrior > 0 && peakRecent > avgPrior * 5) {
+        score += 5; signals.push(`Peak day ${(peakRecent / avgPrior).toFixed(0)}x avg — breakout volume`);
       }
     }
 

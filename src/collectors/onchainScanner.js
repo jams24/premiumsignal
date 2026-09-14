@@ -117,7 +117,7 @@ class OnchainScanner {
 
     // Phase 2: Check exchange flows for top tokens via Etherscan
     if (this.onchainTracker) {
-      const topForFlows = sorted.filter(r => r.score >= 15).slice(0, 8);
+      const topForFlows = sorted.filter(r => r.score >= 10).slice(0, 10);
       for (const token of topForFlows) {
         try {
           const contract = await this.onchainTracker.resolveContractAddress(token.symbol);
@@ -157,7 +157,7 @@ class OnchainScanner {
     }
 
     // Phase 3: Fetch L/S ratios from Binance for top tokens
-    const topForLS = sorted.filter(r => r.score >= 20).slice(0, 10);
+    const topForLS = sorted.filter(r => r.score >= 15).slice(0, 10);
     for (const token of topForLS) {
       try {
         const ls = await this.fetchLongShortRatio(token.pair);
@@ -301,6 +301,40 @@ class OnchainScanner {
       signals.push('🔍 OI rising, price flat — accumulation');
     }
 
+    // === 3b. Price Momentum ===
+    if (Math.abs(priceChange) > 20) { score += 8; signals.push(`📈 Major ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(0)}% move`); }
+    else if (Math.abs(priceChange) > 10) { score += 5; signals.push(`📈 Strong ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(0)}% move`); }
+
+    // === 4. Volume Explosion Detection ===
+    // Skip if OI/funding already scored well (saves API call)
+    let volRatio = null;
+    if (score < 25) try {
+      const dailyOHLCV = await exchange.fetchOHLCV(symbol, '1d', undefined, 21);
+      if (dailyOHLCV && dailyOHLCV.length >= 10) {
+        const pastVols = dailyOHLCV.slice(0, -1).map(c => c[5]);
+        const avgVol = pastVols.reduce((a, b) => a + b, 0) / pastVols.length;
+        const currentVol = dailyOHLCV[dailyOHLCV.length - 1][5];
+        if (avgVol > 0) {
+          volRatio = currentVol / avgVol;
+          if (volRatio >= 8) { score += 15; signals.push(`📊 Volume ${volRatio.toFixed(1)}x avg — extreme explosion`); }
+          else if (volRatio >= 5) { score += 12; signals.push(`📊 Volume ${volRatio.toFixed(1)}x avg — massive surge`); }
+          else if (volRatio >= 3) { score += 10; signals.push(`📊 Volume ${volRatio.toFixed(1)}x avg — major breakout volume`); }
+          else if (volRatio >= 2) { score += 5; signals.push(`📊 Volume ${volRatio.toFixed(1)}x avg`); }
+        }
+      }
+    } catch (e) { /* skip — volume ratio is additive */ }
+
+    // === 5. Volume + Price Momentum Combo ===
+    if (volRatio >= 3 && priceChange > 10) {
+      score += 15; signals.push(`🔥 Volume explosion + ${priceChange.toFixed(0)}% price surge — breakout`);
+    } else if (volRatio >= 3 && priceChange > 5) {
+      score += 10; signals.push(`⚡ Volume surge + ${priceChange.toFixed(0)}% move`);
+    } else if (volRatio >= 2 && priceChange > 15) {
+      score += 10; signals.push(`⚡ Volume + strong ${priceChange.toFixed(0)}% momentum`);
+    } else if (volRatio >= 3 && priceChange < -10) {
+      score += 8; signals.push(`📉 Volume explosion + ${priceChange.toFixed(0)}% drop — capitulation or reversal`);
+    }
+
     if (score === 0) return null;
 
     return {
@@ -316,6 +350,7 @@ class OnchainScanner {
       priceChange,
       price: ticker.last,
       volume: ticker.quoteVolume,
+      volRatio,
       lsData: null,
     };
   }
@@ -437,7 +472,8 @@ class OnchainScanner {
       const priceStr = r.price ? `$${r.price >= 1 ? r.price.toFixed(2) : r.price.toPrecision(4)}` : '—';
       const changeStr = `${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}%`;
       const changeIcon = r.priceChange > 5 ? ' 🚀' : r.priceChange < -5 ? ' 📉' : '';
-      msg += `   💰 Price: ${priceStr} (${changeStr}${changeIcon}) | Vol: $${(r.volume / 1e6).toFixed(1)}M\n`;
+      const volExtra = r.volRatio >= 3 ? ` (${r.volRatio.toFixed(1)}x avg 🔥)` : r.volRatio >= 2 ? ` (${r.volRatio.toFixed(1)}x avg)` : '';
+      msg += `   💰 Price: ${priceStr} (${changeStr}${changeIcon}) | Vol: $${(r.volume / 1e6).toFixed(1)}M${volExtra}\n`;
       if (r.contractAddress) {
         msg += `   📋 <code>${r.contractAddress}</code>  ·  ⛓ ${r.chain || 'unknown'}\n`;
       }
