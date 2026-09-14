@@ -2971,7 +2971,7 @@ class TelegramBot {
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'sw_cfg_tradeloss')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'sw_cfg_maxpos'),
          Markup.button.callback(swCbLabel, 'sw_cfg_cb')],
-        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'sw_refresh'),
+        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'sw_trades'),
          Markup.button.callback('🔄 Refresh', 'sw_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
          Markup.button.callback('🛑 Close All & Stop', 'sw_closeall')],
@@ -2992,6 +2992,118 @@ class TelegramBot {
     this.bot.action('sw_refresh', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showSwSettings(ctx); } catch (e) { logger.error(`sw_refresh error: ${e.message}`); }
+    });
+
+    this.bot.action('sw_trades', async (ctx) => {
+      try { await ctx.answerCbQuery('Loading trades...'); } catch (e) {}
+      try {
+        const trades = await db.getOpenTrades('swing');
+        if (!trades.length) {
+          return ctx.editMessageText(
+            `📋 <b>SWING POSITIONS</b>\n\n<i>No open positions.</i>`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'sw_trades')],
+              [Markup.button.callback('⬅️ Settings', 'sw_settings')],
+            ]).reply_markup }
+          );
+        }
+        const te = swte();
+        let msg = `📋 <b>SWING POSITIONS</b> (${trades.length})\n\n`;
+        let totalPnl = 0;
+        for (const t of trades) {
+          let currentPrice = null;
+          try {
+            const pairs = [`${t.symbol}/USDT:USDT`, `${t.symbol}/USDT`];
+            for (const [, ex] of Object.entries(te.exchanges)) {
+              for (const pair of pairs) {
+                if (ex.markets?.[pair]) {
+                  const ticker = await ex.fetchTicker(pair);
+                  currentPrice = ticker.last;
+                  break;
+                }
+              }
+              if (currentPrice) break;
+            }
+          } catch (e) { /* skip */ }
+          const isLong = t.direction === 'long';
+          const pnlPct = currentPrice
+            ? (isLong ? ((currentPrice - t.entry_price) / t.entry_price) * 100
+                      : ((t.entry_price - currentPrice) / t.entry_price) * 100)
+            : 0;
+          const pnlLev = pnlPct * (t.leverage || 1);
+          const pnlUsd = (pnlPct / 100) * (t.position_size || 0);
+          totalPnl += pnlUsd;
+          const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';
+          const dir = isLong ? '⬆️' : '⬇️';
+          const tpHit = [t.hit_tp1 ? 'TP1✅' : '', t.hit_tp2 ? 'TP2✅' : '', t.hit_tp3 ? 'TP3✅' : ''].filter(Boolean).join(' ') || 'none';
+          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange || 'unknown'})\n`;
+          msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
+          msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
+          msg += `TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
+          msg += `Size: $${(t.position_size || 0).toFixed(2)} | ${t.mode}\n\n`;
+        }
+        msg += `<b>Total unrealized PnL: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>`;
+        if (msg.length > 4000) msg = msg.slice(0, 3990) + '\n\n<i>…truncated</i>';
+
+        const closeButtons = trades.reduce((rows, t, i) => {
+          if (i % 3 === 0) rows.push([]);
+          rows[rows.length - 1].push(Markup.button.callback(`❌ ${t.symbol}`, `sw_close_${t.id}`));
+          return rows;
+        }, []);
+
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          ...closeButtons,
+          [Markup.button.callback('🛑 Close All Swing', 'sw_closeall_trades')],
+          [Markup.button.callback('🔄 Refresh', 'sw_trades')],
+          [Markup.button.callback('⬅️ Settings', 'sw_settings')],
+        ]).reply_markup });
+      } catch (e) {
+        logger.error(`sw_trades error: ${e.message}`);
+        ctx.editMessageText('❌ Failed to load trades.', { reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('⬅️ Back', 'sw_settings')],
+        ]).reply_markup }).catch(() => {});
+      }
+    });
+
+    this.bot.action(/^sw_close_(\d+)$/, async (ctx) => {
+      const tradeId = parseInt(ctx.match[1]);
+      await ctx.answerCbQuery(`Closing swing trade #${tradeId}...`);
+      try {
+        const te = swte();
+        const result = await te.closeSingleTrade(tradeId);
+        if (!result) return ctx.answerCbQuery('Trade not found or already closed', { show_alert: true });
+        const { trade, pnlUsd } = result;
+        await this.sendRaw(
+          `✅ <b>SWING MANUAL CLOSE</b> ${trade.symbol} (${trade.exchange || 'unknown'})\n\n` +
+          `PnL: ${pnlUsd >= 0 ? '🟢' : '🔴'} ${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)}\nMode: ${trade.mode}`
+        );
+        await ctx.editMessageText('✅ Trade closed. Tap Refresh to reload.', {
+          parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Refresh', 'sw_trades')],
+            [Markup.button.callback('⬅️ Settings', 'sw_settings')],
+          ]).reply_markup
+        });
+      } catch (e) {
+        logger.error(`sw_close error: ${e.message}`);
+        ctx.answerCbQuery(`Failed: ${e.message}`, { show_alert: true });
+      }
+    });
+
+    this.bot.action('sw_closeall_trades', async (ctx) => {
+      await ctx.answerCbQuery('Closing all swing positions...');
+      try {
+        const count = await swte().closeAllPositions();
+        await this.sendRaw(`🛑 <b>ALL SWING POSITIONS CLOSED</b>\n\n${count} trade(s) closed.`);
+        await ctx.editMessageText('📋 <b>SWING POSITIONS</b>\n\n<i>All positions closed.</i>', {
+          parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Refresh', 'sw_trades')],
+            [Markup.button.callback('⬅️ Settings', 'sw_settings')],
+          ]).reply_markup
+        });
+      } catch (e) {
+        logger.error(`sw_closeall_trades error: ${e.message}`);
+        ctx.answerCbQuery(`Failed: ${e.message}`, { show_alert: true });
+      }
     });
 
     // sw_ MODE
@@ -3377,20 +3489,85 @@ class TelegramBot {
           const pnlUsd = (pnlPct / 100) * (t.position_size || 0);
           totalPnl += pnlUsd;
           const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';
-          msg += `${icon} <b>${t.symbol}</b> ${t.leverage}x\n`;
-          msg += `$${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'} | <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)})\n\n`;
+          const dir = isLong ? '⬆️' : '⬇️';
+          const tpHit = [t.hit_tp1 ? 'TP1✅' : '', t.hit_tp2 ? 'TP2✅' : '', t.hit_tp3 ? 'TP3✅' : ''].filter(Boolean).join(' ') || 'none';
+          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange || 'unknown'})\n`;
+          msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
+          msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
+          msg += `TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
+          msg += `Size: $${(t.position_size || 0).toFixed(2)} | ${t.mode}\n\n`;
         }
-        msg += `Total: <b>$${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}</b>`;
+        msg += `<b>Total unrealized PnL: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>`;
         if (msg.length > 4000) msg = msg.slice(0, 3990) + '\n\n<i>…truncated</i>';
+
+        const closeButtons = trades.reduce((rows, t, i) => {
+          if (i % 3 === 0) rows.push([]);
+          rows[rows.length - 1].push(Markup.button.callback(`❌ ${t.symbol}`, `dz_close_${t.id}`));
+          return rows;
+        }, []);
+
         await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          ...closeButtons,
+          [Markup.button.callback('🛑 Close All DZ', 'dz_closeall_trades')],
           [Markup.button.callback('🔄 Refresh', 'dz_trades')],
           [Markup.button.callback('⬅️ Settings', 'dz_settings')],
         ]).reply_markup });
       } catch (e) {
         logger.error(`dz_trades error: ${e.message}`);
-        ctx.editMessageText('Failed to load trades.', { reply_markup: Markup.inlineKeyboard([
+        ctx.editMessageText('❌ Failed to load trades.', { reply_markup: Markup.inlineKeyboard([
           [Markup.button.callback('⬅️ Back', 'dz_settings')],
         ]).reply_markup }).catch(() => {});
+      }
+    });
+
+    this.bot.action(/^dz_close_(\d+)$/, async (ctx) => {
+      const tradeId = parseInt(ctx.match[1]);
+      await ctx.answerCbQuery(`Closing DZ trade #${tradeId}...`);
+      try {
+        const te = dzte();
+        const result = await te.closeSingleTrade(tradeId);
+        if (!result) return ctx.answerCbQuery('Trade not found or already closed', { show_alert: true });
+        const { trade, pnlUsd } = result;
+        await this.sendRaw(
+          `✅ <b>DZ MANUAL CLOSE</b> ${trade.symbol} (${trade.exchange || 'unknown'})\n\n` +
+          `PnL: ${pnlUsd >= 0 ? '🟢' : '🔴'} ${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)}\nMode: ${trade.mode}`
+        );
+        const remaining = await db.getOpenTrades('demandzone');
+        if (!remaining.length) {
+          await ctx.editMessageText('📋 <b>DZ POSITIONS</b>\n\n<i>All positions closed.</i>', {
+            parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'dz_trades')],
+              [Markup.button.callback('⬅️ Settings', 'dz_settings')],
+            ]).reply_markup
+          });
+        } else {
+          await ctx.editMessageText('✅ Trade closed. Tap Refresh to reload.', {
+            parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'dz_trades')],
+              [Markup.button.callback('⬅️ Settings', 'dz_settings')],
+            ]).reply_markup
+          });
+        }
+      } catch (e) {
+        logger.error(`dz_close error: ${e.message}`);
+        ctx.answerCbQuery(`Failed: ${e.message}`, { show_alert: true });
+      }
+    });
+
+    this.bot.action('dz_closeall_trades', async (ctx) => {
+      await ctx.answerCbQuery('Closing all DZ positions...');
+      try {
+        const count = await dzte().closeAllPositions();
+        await this.sendRaw(`🛑 <b>ALL DZ POSITIONS CLOSED</b>\n\n${count} trade(s) closed.`);
+        await ctx.editMessageText('📋 <b>DZ POSITIONS</b>\n\n<i>All positions closed.</i>', {
+          parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Refresh', 'dz_trades')],
+            [Markup.button.callback('⬅️ Settings', 'dz_settings')],
+          ]).reply_markup
+        });
+      } catch (e) {
+        logger.error(`dz_closeall error: ${e.message}`);
+        ctx.answerCbQuery(`Failed: ${e.message}`, { show_alert: true });
       }
     });
 
