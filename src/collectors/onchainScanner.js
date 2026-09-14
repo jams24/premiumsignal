@@ -928,6 +928,10 @@ class OnchainScanner {
         if (t.tp1Hit) msg += `   ✅ TP1 hit`;
         if (t.tp2Hit) msg += ` | ✅ TP2 hit`;
         if (t.tp1Hit || t.tp2Hit) msg += '\n';
+        if (t.flippedFrom) {
+          const flipIcon = t.flipPnl >= 0 ? '🟢' : '🔴';
+          msg += `   🔄 Flipped from ${t.flippedFrom.toUpperCase()} (${flipIcon} ${t.flipPnl >= 0 ? '+' : ''}${t.flipPnl.toFixed(1)}% at flip)\n`;
+        }
         if (t.alertCount > 1) msg += `   🔔 Alert #${t.alertCount + 1} for this symbol\n`;
       }
 

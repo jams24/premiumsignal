@@ -358,7 +358,32 @@ async function main() {
             if (prior && prior.data?.price) {
               const priorDir = prior.data.direction || 'long';
               const currentDir = token._tradeSetup?.direction || (token.fundingBias === 'bullish' || token.priceChange > 0 ? 'long' : 'short');
-              if (priorDir !== currentDir) continue;
+              if (priorDir !== currentDir) {
+                // Direction flipped — record final PnL on the old alert before starting fresh
+                const oldEntry = parseFloat(prior.data.first_alert_price || prior.data.price);
+                const oldRaw = ((token.price - oldEntry) / oldEntry) * 100;
+                const flipPnl = priorDir === 'short' ? -oldRaw : oldRaw;
+                db.updateAlertPerformance(prior.id, {
+                  direction_flipped: true,
+                  flip_to: currentDir,
+                  flip_price: token.price,
+                  flip_pnl: parseFloat(flipPnl.toFixed(2)),
+                  flip_at: new Date().toISOString(),
+                  invalidated: true,
+                }).catch(() => {});
+                token._alertTracking = {
+                  firstAlertedAt: new Date().toISOString(),
+                  entryPrice: token.price,
+                  direction: currentDir,
+                  pnl: 0,
+                  bestPnl: 0,
+                  worstPnl: 0,
+                  alertCount: 0,
+                  flippedFrom: priorDir,
+                  flipPnl: parseFloat(flipPnl.toFixed(2)),
+                };
+                continue;
+              }
               const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
               const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
               const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;
@@ -674,7 +699,31 @@ async function main() {
             if (prior && prior.data?.price) {
               const priorDir = prior.data.direction || 'long';
               const currentDir = token.flow?.outflowCount > token.flow?.inflowCount ? 'long' : 'short';
-              if (priorDir !== currentDir) continue;
+              if (priorDir !== currentDir) {
+                const oldEntry = parseFloat(prior.data.first_alert_price || prior.data.price);
+                const oldRaw = ((token.price - oldEntry) / oldEntry) * 100;
+                const flipPnl = priorDir === 'short' ? -oldRaw : oldRaw;
+                db.updateAlertPerformance(prior.id, {
+                  direction_flipped: true,
+                  flip_to: currentDir,
+                  flip_price: token.price,
+                  flip_pnl: parseFloat(flipPnl.toFixed(2)),
+                  flip_at: new Date().toISOString(),
+                  invalidated: true,
+                }).catch(() => {});
+                token._alertTracking = {
+                  firstAlertedAt: new Date().toISOString(),
+                  entryPrice: token.price,
+                  direction: currentDir,
+                  pnl: 0,
+                  bestPnl: 0,
+                  worstPnl: 0,
+                  alertCount: 0,
+                  flippedFrom: priorDir,
+                  flipPnl: parseFloat(flipPnl.toFixed(2)),
+                };
+                continue;
+              }
               const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
               const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
               const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;

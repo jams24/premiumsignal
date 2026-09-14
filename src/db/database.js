@@ -820,7 +820,9 @@ async function getAlertPerformance(alertTypes, days = 7) {
        round(avg((data->>'pnl_4h')::float) FILTER (WHERE (data->>'has_flow')::boolean = false)::numeric, 2) as noflow_avg_4h,
        -- Score
        round(avg((data->>'score')::float)::numeric, 1) as avg_score,
-       count(*) FILTER (WHERE (data->>'invalidated')::boolean = true) as invalidated
+       count(*) FILTER (WHERE (data->>'invalidated')::boolean = true) as invalidated,
+       count(*) FILTER (WHERE (data->>'direction_flipped')::boolean = true) as direction_flips,
+       round(avg((data->>'flip_pnl')::float) FILTER (WHERE (data->>'direction_flipped')::boolean = true)::numeric, 2) as avg_flip_pnl
      FROM alert_log
      WHERE alert_type = ANY($1) AND created_at > NOW() - ($2 || ' days')::interval
      GROUP BY alert_type`,
