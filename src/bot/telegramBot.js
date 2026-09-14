@@ -4556,7 +4556,7 @@ class TelegramBot {
       await ctx.answerCbQuery();
       await this.showExchangesPanel(ctx);
     });
-    const exchangeIds = ['binance', 'bybit', 'mexc'];
+    const exchangeIds = ['binance', 'bybit'];
     for (const exId of exchangeIds) {
       this.bot.action(`cfg_ex_${exId}`, async (ctx) => {
         const t = te();
@@ -5040,7 +5040,7 @@ class TelegramBot {
 
   async showExchangesPanel(ctx) {
     const t = this.tradeExecutor;
-    const exchanges = ['binance', 'bybit', 'mexc'];
+    const exchanges = ['binance', 'bybit'];
     let desc = `🏦 <b>EXCHANGE TOGGLE</b>\n\n`;
     desc += `Enable/disable exchanges for auto-trading.\n`;
     desc += `Disabled exchanges won't receive new trades.\n\n`;

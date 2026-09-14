@@ -13,7 +13,6 @@ class ListingMonitor {
 
   async init() {
     const exchangeConfigs = [
-      { id: 'mexc', class: ccxt.mexc },
       { id: 'binance', class: ccxt.binance },
       { id: 'bybit', class: ccxt.bybit, options: { accountType: 'UNIFIED' } },
     ];
