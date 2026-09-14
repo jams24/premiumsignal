@@ -3417,6 +3417,7 @@ class TelegramBot {
         `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
         `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+        `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
@@ -3427,6 +3428,8 @@ class TelegramBot {
          Markup.button.callback(`${te.enabled ? '✅ ON' : '⛔ OFF'}`, 'dz_cfg_toggle')],
         [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'dz_cfg_size'),
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'dz_cfg_lev')],
+        [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'dz_cfg_dailyloss'),
+         Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'dz_cfg_tradeloss')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos'),
          Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
@@ -3699,6 +3702,64 @@ class TelegramBot {
           await ctx.answerCbQuery(`Leverage: ${lev}x`);
           await showDzSettings(ctx);
         } catch (e) { logger.error(`dz_lev error: ${e.message}`); }
+      });
+    }
+
+    // dz_ DAILY LOSS LIMIT
+    this.bot.action('dz_cfg_dailyloss', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — DAILY LOSS LIMIT</b>\n\nCurrent: <b>$${te.maxDailyLoss}</b>\nToday P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n\n<i>Trading stops for the day when losses hit this limit.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$10${ocCheck(10, te.maxDailyLoss)}`, 'dz_dl_10'),
+             Markup.button.callback(`$25${ocCheck(25, te.maxDailyLoss)}`, 'dz_dl_25'),
+             Markup.button.callback(`$50${ocCheck(50, te.maxDailyLoss)}`, 'dz_dl_50')],
+            [Markup.button.callback(`$100${ocCheck(100, te.maxDailyLoss)}`, 'dz_dl_100'),
+             Markup.button.callback(`$200${ocCheck(200, te.maxDailyLoss)}`, 'dz_dl_200'),
+             Markup.button.callback(`$500${ocCheck(500, te.maxDailyLoss)}`, 'dz_dl_500')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_dailyloss error: ${e.message}`); }
+    });
+    for (const dl of [10, 25, 50, 100, 200, 500]) {
+      this.bot.action(`dz_dl_${dl}`, async (ctx) => {
+        try {
+          dzte().maxDailyLoss = dl; dzte().saveConfig();
+          await ctx.answerCbQuery(`Daily loss limit: $${dl}`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_dl error: ${e.message}`); }
+      });
+    }
+
+    // dz_ PER-TRADE LOSS CAP
+    this.bot.action('dz_cfg_tradeloss', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — PER-TRADE LOSS CAP</b>\n\nCurrent: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n\n<i>Each trade is auto-closed if its unrealized loss reaches this amount.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'dz_tl_0'),
+             Markup.button.callback(`$5${ocCheck(5, te.maxLossPerTrade)}`, 'dz_tl_5'),
+             Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'dz_tl_10')],
+            [Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'dz_tl_20'),
+             Markup.button.callback(`$50${ocCheck(50, te.maxLossPerTrade)}`, 'dz_tl_50'),
+             Markup.button.callback(`$100${ocCheck(100, te.maxLossPerTrade)}`, 'dz_tl_100')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_tradeloss error: ${e.message}`); }
+    });
+    for (const tl of [0, 5, 10, 20, 50, 100]) {
+      this.bot.action(`dz_tl_${tl}`, async (ctx) => {
+        try {
+          dzte().maxLossPerTrade = tl; dzte().saveConfig();
+          await ctx.answerCbQuery(tl > 0 ? `Trade cap: $${tl}` : 'Trade cap disabled');
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_tl error: ${e.message}`); }
       });
     }
 

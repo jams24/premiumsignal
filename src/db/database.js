@@ -510,11 +510,13 @@ async function getTradeStats() {
   return rows;
 }
 
-async function getTodayPnL(mode) {
-  const sql = mode
-    ? `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= CURRENT_DATE AND mode = $1`
-    : `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE status = 'closed' AND closed_at >= CURRENT_DATE`;
-  const { rows } = await query(sql, mode ? [mode] : []);
+async function getTodayPnL(mode, source) {
+  const conditions = [`status = 'closed'`, `closed_at >= CURRENT_DATE`];
+  const params = [];
+  if (mode) { params.push(mode); conditions.push(`mode = $${params.length}`); }
+  if (source) { params.push(source); conditions.push(`source = $${params.length}`); }
+  const sql = `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE ${conditions.join(' AND ')}`;
+  const { rows } = await query(sql, params);
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
 

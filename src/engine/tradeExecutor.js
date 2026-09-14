@@ -87,7 +87,7 @@ class TradeExecutor {
 
   async recalcDailyPnL() {
     try {
-      const result = await db.getTodayPnL();
+      const result = await db.getTodayPnL(null, this.settingsKey);
       this.dailyPnL = result || 0;
       this.dailyPnLResetDate = new Date().toISOString().slice(0, 10);
     } catch (e) { logger.warn(`Failed to recalc daily PnL: ${e.message}`); }
