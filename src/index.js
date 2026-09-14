@@ -356,15 +356,17 @@ async function main() {
           for (const token of hotTokens) {
             const prior = priorBySymbol[token.symbol];
             if (prior && prior.data?.price) {
+              const priorDir = prior.data.direction || 'long';
+              const currentDir = token._tradeSetup?.direction || (token.fundingBias === 'bullish' || token.priceChange > 0 ? 'long' : 'short');
+              if (priorDir !== currentDir) continue;
               const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
               const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
               const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;
-              const dir = prior.data.direction || 'long';
               token._alertTracking = {
                 firstAlertedAt,
                 entryPrice,
-                direction: dir,
-                pnl: dir === 'short' ? -rawPnl : rawPnl,
+                direction: priorDir,
+                pnl: priorDir === 'short' ? -rawPnl : rawPnl,
                 bestPnl: parseFloat(prior.data.best_pnl) || 0,
                 worstPnl: parseFloat(prior.data.worst_pnl) || 0,
                 alertCount: parseInt(prior.data.alert_count) || 1,
@@ -606,15 +608,17 @@ async function main() {
           for (const token of significant) {
             const prior = priorBySymbol[token.symbol];
             if (prior && prior.data?.price) {
+              const priorDir = prior.data.direction || 'long';
+              const currentDir = token.flow?.outflowCount > token.flow?.inflowCount ? 'long' : 'short';
+              if (priorDir !== currentDir) continue;
               const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
               const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
               const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;
-              const dir = prior.data.direction || 'long';
               token._alertTracking = {
                 firstAlertedAt,
                 entryPrice,
-                direction: dir,
-                pnl: dir === 'short' ? -rawPnl : rawPnl,
+                direction: priorDir,
+                pnl: priorDir === 'short' ? -rawPnl : rawPnl,
                 bestPnl: parseFloat(prior.data.best_pnl) || 0,
                 worstPnl: parseFloat(prior.data.worst_pnl) || 0,
                 alertCount: parseInt(prior.data.alert_count) || 1,
