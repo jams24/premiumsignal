@@ -472,7 +472,8 @@ class UserPaperEngine {
 
     for (const key of priceData.keys()) {
       const [exId, sym] = key.split(':');
-      const exchange = this.exchanges[exId];
+      let exchange = this.exchanges[exId];
+      if (!exchange) exchange = Object.values(this.exchanges)[0];
       if (!exchange) continue;
       const pairs = [`${sym}/USDT:USDT`, `${sym}/USDT`];
       for (const pair of pairs) {
@@ -566,7 +567,7 @@ class UserPaperEngine {
       if (Date.now() - lastRecheck > 15 * 60 * 1000) {
         t._lastSmcRecheck = Date.now();
         try {
-          const exchange = this.exchanges[t.exchange];
+          let exchange = this.exchanges[t.exchange] || Object.values(this.exchanges)[0];
           const pair = [`${t.symbol}/USDT:USDT`, `${t.symbol}/USDT`].find(p => exchange?.markets?.[p]);
           if (pair && exchange) {
             const ohlcv1h = await exchange.fetchOHLCV(pair, '1h', undefined, 100);

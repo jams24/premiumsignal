@@ -1045,7 +1045,8 @@ class TradeExecutor {
 
     for (const trade of trades) {
       try {
-        const exchange = this.exchanges[trade.exchange];
+        let exchange = this.exchanges[trade.exchange];
+        if (!exchange) exchange = Object.values(this.exchanges)[0];
         if (!exchange) continue;
 
         const pairs = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`];
@@ -1527,16 +1528,23 @@ class TradeExecutor {
     const trade = trades.find(t => t.id === parseInt(tradeId));
     if (!trade) return null;
 
-    const exchange = this.exchanges[trade.exchange];
-    if (!exchange) throw new Error(`Exchange ${trade.exchange} not available`);
+    let exchange = this.exchanges[trade.exchange];
+    if (!exchange) {
+      if (trade.mode === 'live') throw new Error(`Exchange ${trade.exchange} not available for live close`);
+      exchange = Object.values(this.exchanges)[0];
+    }
 
     const pairs = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`];
     let currentPrice = null;
-    for (const pair of pairs) {
-      if (exchange.markets?.[pair]) {
-        const ticker = await exchange.fetchTicker(pair);
-        currentPrice = ticker.last;
-        break;
+    if (exchange) {
+      for (const pair of pairs) {
+        try {
+          if (exchange.markets?.[pair]) {
+            const ticker = await exchange.fetchTicker(pair);
+            currentPrice = ticker.last;
+            break;
+          }
+        } catch (e) { /* fallback to entry price */ }
       }
     }
 
@@ -1566,16 +1574,23 @@ class TradeExecutor {
     const trades = await db.getOpenTrades(this.settingsKey);
     for (const trade of trades) {
       try {
-        const exchange = this.exchanges[trade.exchange];
-        if (!exchange) continue;
+        let exchange = this.exchanges[trade.exchange];
+        if (!exchange) {
+          if (trade.mode === 'live') { logger.error(`Cannot close live ${trade.symbol} — exchange ${trade.exchange} unavailable`); continue; }
+          exchange = Object.values(this.exchanges)[0];
+        }
 
         const pairs = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`];
         let currentPrice = null;
-        for (const pair of pairs) {
-          if (exchange.markets?.[pair]) {
-            const ticker = await exchange.fetchTicker(pair);
-            currentPrice = ticker.last;
-            break;
+        if (exchange) {
+          for (const pair of pairs) {
+            try {
+              if (exchange.markets?.[pair]) {
+                const ticker = await exchange.fetchTicker(pair);
+                currentPrice = ticker.last;
+                break;
+              }
+            } catch (e) { /* fallback to entry price */ }
           }
         }
 
