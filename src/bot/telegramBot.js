@@ -3413,8 +3413,8 @@ class TelegramBot {
       const openTrades = await db.getOpenTrades('demandzone').catch(() => []);
 
       const text =
-        `🎯 <b>DEMAND ZONE SETTINGS</b> (Paper Only)\n\n` +
-        `📝 Mode: <b>PAPER</b> (analytics only)\n` +
+        `🎯 <b>DEMAND ZONE SETTINGS</b>\n\n` +
+        `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
         `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
@@ -3423,6 +3423,8 @@ class TelegramBot {
         `Tap any button to configure:`;
 
       const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(`${te.mode === 'paper' ? '📝' : '🔴'} Mode: ${te.mode.toUpperCase()}`, 'dz_cfg_mode'),
+         Markup.button.callback(`${te.enabled ? '✅ ON' : '⛔ OFF'}`, 'dz_cfg_toggle')],
         [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'dz_cfg_size'),
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'dz_cfg_lev')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos'),
@@ -3447,6 +3449,75 @@ class TelegramBot {
     this.bot.action('dz_refresh', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showDzSettings(ctx); } catch (e) { logger.error(`dz_refresh error: ${e.message}`); }
+    });
+
+    // dz_ MODE
+    this.bot.action('dz_cfg_mode', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — TRADE MODE</b>\n\n` +
+          `Current: <b>${te.mode.toUpperCase()}</b> ${te.mode === 'paper' ? '📝' : '💰'}\n\n` +
+          `📝 <b>Paper</b> — Simulated trades, no real funds\n` +
+          `💰 <b>Live</b> — Real orders on exchange`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`📝 Paper${ocCheck('paper', te.mode)}`, 'dz_mode_paper'),
+             Markup.button.callback(`💰 Live${ocCheck('live', te.mode)}`, 'dz_mode_live')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_mode error: ${e.message}`); }
+    });
+    this.bot.action('dz_mode_paper', async (ctx) => {
+      try {
+        dzte().mode = 'paper'; dzte().enabled = true; dzte().saveConfig();
+        await ctx.answerCbQuery('Paper mode activated');
+        await showDzSettings(ctx);
+      } catch (e) { logger.error(`dz_mode_paper error: ${e.message}`); }
+    });
+    this.bot.action('dz_mode_live', async (ctx) => {
+      try {
+        const te = dzte();
+        await ctx.editMessageText(
+          `⚠️ <b>SWITCH DZ TO LIVE?</b>\n\n` +
+          `Real funds will be used for demand zone trades.\n\n` +
+          `💵 Size: $${te.maxPositionSize}/trade\n` +
+          `⚡ Leverage: ${te.defaultLeverage}x\n` +
+          `📊 Max positions: ${te.maxConcurrentPositions}`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Yes, go LIVE', 'dz_mode_live_yes')],
+            [Markup.button.callback('❌ Cancel', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_mode_live error: ${e.message}`); }
+    });
+    this.bot.action('dz_mode_live_yes', async (ctx) => {
+      try {
+        dzte().mode = 'live'; dzte().enabled = true; dzte().saveConfig();
+        await ctx.answerCbQuery('🔴 LIVE TRADING ACTIVATED');
+        await showDzSettings(ctx);
+      } catch (e) { logger.error(`dz_mode_live_yes error: ${e.message}`); }
+    });
+
+    // dz_ TOGGLE
+    this.bot.action('dz_cfg_toggle', async (ctx) => {
+      try {
+        const te = dzte();
+        te.enabled = !te.enabled; te.saveConfig();
+        await ctx.answerCbQuery(te.enabled ? 'DZ trading enabled' : 'DZ trading disabled');
+        await showDzSettings(ctx);
+      } catch (e) { logger.error(`dz_cfg_toggle error: ${e.message}`); }
+    });
+
+    // /dzsetsize custom command
+    this.bot.command('dzsetsize', async (ctx) => {
+      const amount = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!amount || amount < 1 || amount > 10000) {
+        return ctx.replyWithHTML('Usage: <code>/dzsetsize 75</code>\nMin $1, Max $10000');
+      }
+      dzte().maxPositionSize = amount; dzte().saveConfig();
+      ctx.replyWithHTML(`✅ DZ position size set to <b>$${amount}</b>`);
     });
 
     this.bot.action('dz_trades', async (ctx) => {
@@ -3577,7 +3648,7 @@ class TelegramBot {
         await ctx.answerCbQuery();
         const te = dzte();
         await ctx.editMessageText(
-          `🎯 <b>DZ — POSITION SIZE</b>\n\nCurrent: <b>$${te.maxPositionSize}</b> per trade`,
+          `🎯 <b>DZ — POSITION SIZE</b>\n\nCurrent: <b>$${te.maxPositionSize}</b> per trade\n\n<i>Custom: type /dzsetsize 75 for any amount</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`$5${ocCheck(5, te.maxPositionSize)}`, 'dz_size_5'),
              Markup.button.callback(`$10${ocCheck(10, te.maxPositionSize)}`, 'dz_size_10'),
@@ -3585,12 +3656,15 @@ class TelegramBot {
             [Markup.button.callback(`$20${ocCheck(20, te.maxPositionSize)}`, 'dz_size_20'),
              Markup.button.callback(`$25${ocCheck(25, te.maxPositionSize)}`, 'dz_size_25'),
              Markup.button.callback(`$50${ocCheck(50, te.maxPositionSize)}`, 'dz_size_50')],
+            [Markup.button.callback(`$100${ocCheck(100, te.maxPositionSize)}`, 'dz_size_100'),
+             Markup.button.callback(`$250${ocCheck(250, te.maxPositionSize)}`, 'dz_size_250'),
+             Markup.button.callback(`$500${ocCheck(500, te.maxPositionSize)}`, 'dz_size_500')],
             [Markup.button.callback('⬅️ Back', 'dz_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`dz_cfg_size error: ${e.message}`); }
     });
-    for (const size of [5, 10, 15, 20, 25, 50]) {
+    for (const size of [5, 10, 15, 20, 25, 50, 100, 250, 500]) {
       this.bot.action(`dz_size_${size}`, async (ctx) => {
         try {
           dzte().maxPositionSize = size; dzte().saveConfig();
