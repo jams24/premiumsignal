@@ -1279,11 +1279,8 @@ class TradeExecutor {
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP1 hit, closed 33% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
         }
-        // --- TRAILING STOP: after TP1, trail SL below peak price ---
-        // Post-TP3 runner uses 3x ATR trail (wide, lets it ride big moves)
-        // Pre-TP3 uses 1.5x ATR trail (tighter, locks in gains)
+        // --- TRAILING STOP: after TP1, trail tightens proportionally to profit ---
         if (!action && trade.hit_tp1 && trade.atr) {
-          const trailDist = trade.hit_tp3 ? trade.atr * this.trailAtrMultPost : trade.atr * this.trailAtrMultPre;
           const peak = trade.peak_price || trade.entry_price;
           const newPeak = isLong
             ? Math.max(peak, currentPrice)
@@ -1294,15 +1291,26 @@ class TradeExecutor {
             trade.peak_price = newPeak;
           }
 
+          const profitDist = Math.abs(newPeak - trade.entry_price);
+          let trailDist;
+          if (trade.hit_tp3) {
+            trailDist = Math.min(trade.atr * this.trailAtrMultPost, profitDist * 0.25);
+          } else if (trade.hit_tp2) {
+            trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.3);
+          } else {
+            trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.4);
+          }
+
           const trailSL = isLong ? newPeak - trailDist : newPeak + trailDist;
           const currentSL = trade.stop_loss;
-          const shouldUpdate = isLong ? trailSL > currentSL : trailSL < currentSL;
+          const aboveBE = isLong ? trailSL > trade.entry_price : trailSL < trade.entry_price;
+          const shouldUpdate = (isLong ? trailSL > currentSL : trailSL < currentSL) && aboveBE;
           if (shouldUpdate) {
             await db.updateTradeStopLoss(trade.id, trailSL);
             await this.updateExchangeSL(trade, trailSL);
             trade.stop_loss = trailSL;
             action = 'trail';
-            logger.info(`${trade.symbol}: trailing SL → $${trailSL.toPrecision(6)} (peak $${newPeak.toPrecision(6)}, ATR trail ${trailDist.toPrecision(4)})`);
+            logger.info(`${trade.symbol}: trailing SL → $${trailSL.toPrecision(6)} (peak $${newPeak.toPrecision(6)}, protects ${((1 - trailDist / profitDist) * 100).toFixed(0)}%)`);
           }
         }
 
