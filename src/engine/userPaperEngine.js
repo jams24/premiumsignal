@@ -689,9 +689,8 @@ class UserPaperEngine {
         `Closed 33% (+$${partialPnl.toFixed(2)})\nSL → breakeven ($${entry.toPrecision(6)})`);
     }
 
-    // --- TRAILING SL (after TP1) ---
+    // --- TRAILING SL (after TP1) — tightens proportionally to profit ---
     if (!action && t.hit_tp1 && atr) {
-      const trailDist = t.hit_tp3 ? atr * 3 : atr * 1.5;
       const peak = parseFloat(t.peak_price) || entry;
       const newPeak = isLong ? Math.max(peak, price) : Math.min(peak, price);
 
@@ -700,9 +699,20 @@ class UserPaperEngine {
         t.peak_price = newPeak;
       }
 
+      const profitDist = Math.abs(newPeak - entry);
+      let trailDist;
+      if (t.hit_tp3) {
+        trailDist = Math.min(atr * 2, profitDist * 0.25);
+      } else if (t.hit_tp2) {
+        trailDist = Math.min(atr * 1.5, profitDist * 0.3);
+      } else {
+        trailDist = Math.min(atr * 1.5, profitDist * 0.4);
+      }
+
       const trailSL = isLong ? newPeak - trailDist : newPeak + trailDist;
       const currentSL = parseFloat(t.stop_loss);
-      const shouldUpdate = isLong ? trailSL > currentSL : trailSL < currentSL;
+      const aboveBE = isLong ? trailSL > entry : trailSL < entry;
+      const shouldUpdate = (isLong ? trailSL > currentSL : trailSL < currentSL) && aboveBE;
       if (shouldUpdate) {
         await db.updateUserPaperTrade(t.id, { stop_loss: trailSL });
         t.stop_loss = trailSL;
