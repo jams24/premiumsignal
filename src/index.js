@@ -1154,6 +1154,11 @@ async function main() {
       logger.error(`Swing trade tracker error: ${err.message}`);
     }
     try {
+      await swingTradeExecutor.checkPendingEntries();
+    } catch (err) {
+      logger.error(`Swing pending entry check error: ${err.message}`);
+    }
+    try {
       await dzTradeExecutor.checkOpenTrades();
     } catch (err) {
       logger.error(`DZ trade tracker error: ${err.message}`);
