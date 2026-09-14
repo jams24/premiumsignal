@@ -781,7 +781,29 @@ class OnchainScanner {
           msg += `   • ${sig}\n`;
         }
       }
-      msg += `   📊 ${r.exchange.toUpperCase()}\n\n`;
+      msg += `   📊 ${r.exchange.toUpperCase()}\n`;
+
+      if (r._alertTracking) {
+        const t = r._alertTracking;
+        const ageMs = Date.now() - new Date(t.firstAlertedAt).getTime();
+        const ageHrs = ageMs / 3600000;
+        const ageStr = ageHrs >= 24 ? `${Math.floor(ageHrs / 24)}d ${Math.floor(ageHrs % 24)}h` : ageHrs >= 1 ? `${Math.floor(ageHrs)}h ${Math.floor((ageHrs % 1) * 60)}m` : `${Math.floor(ageHrs * 60)}m`;
+        const pnlIcon = t.pnl > 0 ? '🟢' : '🔴';
+        const pnlStr = `${t.pnl > 0 ? '+' : ''}${t.pnl.toFixed(2)}%`;
+        const entryStr = t.entryPrice >= 1 ? `$${t.entryPrice.toFixed(2)}` : `$${t.entryPrice.toPrecision(4)}`;
+        msg += `   ━━━━━━━━━━━━━━━━━━━━\n`;
+        msg += `   📍 <b>ALERT TRACKING</b> (${t.direction.toUpperCase()})\n`;
+        msg += `   First alerted ${ageStr} ago at ${entryStr}\n`;
+        msg += `   ${pnlIcon} Current PnL: <b>${pnlStr}</b>`;
+        if (t.bestPnl > 0) msg += ` | Peak: +${t.bestPnl.toFixed(1)}%`;
+        if (t.worstPnl < 0) msg += ` | Dip: ${t.worstPnl.toFixed(1)}%`;
+        msg += '\n';
+        if (t.tp1Hit) msg += `   ✅ TP1 hit`;
+        if (t.tp2Hit) msg += ` | ✅ TP2 hit`;
+        if (t.slHit) msg += ` | ❌ SL hit`;
+        if (t.tp1Hit || t.tp2Hit || t.slHit) msg += '\n';
+      }
+      msg += '\n';
     }
 
     msg += '━━━━━━━━━━━━━━━━━━━━\n';

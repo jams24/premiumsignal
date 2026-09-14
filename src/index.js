@@ -582,6 +582,34 @@ async function main() {
         } catch (e) { /* skip */ }
       }
 
+      // Attach prior alert tracking data for inline PnL display
+      try {
+        const priorDzAlerts = await db.getActiveAlerts(['DEMAND_ZONE'], 48);
+        const priorBySymbol = {};
+        for (const a of priorDzAlerts) priorBySymbol[a.symbol] = a;
+        for (const token of qualified) {
+          const prior = priorBySymbol[token.symbol];
+          if (prior && prior.data?.price) {
+            const priorDir = prior.data.direction || 'long';
+            const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
+            const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
+            const rawPnl = ((token.price - entryPrice) / entryPrice) * 100;
+            token._alertTracking = {
+              firstAlertedAt,
+              entryPrice,
+              direction: priorDir,
+              pnl: priorDir === 'short' ? -rawPnl : rawPnl,
+              bestPnl: parseFloat(prior.data.best_pnl) || 0,
+              worstPnl: parseFloat(prior.data.worst_pnl) || 0,
+              alertCount: parseInt(prior.data.alert_count) || 1,
+              tp1Hit: prior.data.tp1_hit || false,
+              tp2Hit: prior.data.tp2_hit || false,
+              slHit: prior.data.sl_hit || false,
+            };
+          }
+        }
+      } catch (e) { logger.debug(`DZ alert tracking lookup failed: ${e.message}`); }
+
       const dzOpenTrades = await db.getOpenTrades('demandzone').catch(() => []);
       const msg = onchainScanner.formatDemandZoneAlerts(qualified, 5, dzOpenTrades);
       if (msg) {
@@ -593,6 +621,7 @@ async function main() {
         const dir = token.zone?.breakoutDir || 'long';
         if (!shouldLogAlert('DEMAND_ZONE', token.symbol, dir)) continue;
         const setup = token._tradeSetup;
+        const priorCount = token._alertTracking?.alertCount || 0;
         await db.logAlert('DEMAND_ZONE', token.symbol, {
           score: token.score, price: token.price, direction: dir,
           exchange: token.exchange, pair: token.pair,
@@ -604,6 +633,9 @@ async function main() {
           tp1: setup?.tp1, tp2: setup?.tp2, tp3: setup?.tp3,
           stopLoss: setup?.stopLoss, atr: setup?.atr,
           confidence: setup?.confidence,
+          alert_count: priorCount + 1,
+          first_alert_price: token._alertTracking?.entryPrice || token.price,
+          first_alert_at: token._alertTracking?.firstAlertedAt || new Date().toISOString(),
         }, `DEMAND_ZONE ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
       }
 
@@ -653,15 +685,44 @@ async function main() {
       const results = await swingScanner.scan();
       const qualified = results.filter(r => r.score >= 35);
 
+      // Load prior swing alerts for PnL tracking
+      let swingPriorBySymbol = {};
+      try {
+        const priorSwAlerts = await db.getActiveAlerts(['SWING'], 336);
+        for (const a of priorSwAlerts) swingPriorBySymbol[a.symbol] = a;
+      } catch (e) { logger.debug(`Swing alert tracking lookup failed: ${e.message}`); }
+
       for (const candidate of qualified.slice(0, 5)) {
         try {
           const setup = await swingScanner.buildSwingSetup(candidate);
           if (!setup) continue;
 
+          // Attach alert tracking for inline PnL
+          const prior = swingPriorBySymbol[setup.symbol];
+          if (prior && prior.data?.price) {
+            const entryPrice = parseFloat(prior.data.first_alert_price || prior.data.price);
+            const firstAlertedAt = prior.data.first_alert_at || prior.created_at;
+            const rawPnl = ((setup.currentPrice - entryPrice) / entryPrice) * 100;
+            const dir = prior.data.direction || 'long';
+            setup._alertTracking = {
+              firstAlertedAt,
+              entryPrice,
+              direction: dir,
+              pnl: dir === 'short' ? -rawPnl : rawPnl,
+              bestPnl: parseFloat(prior.data.best_pnl) || 0,
+              worstPnl: parseFloat(prior.data.worst_pnl) || 0,
+              alertCount: parseInt(prior.data.alert_count) || 1,
+              tp1Hit: prior.data.tp1_hit || false,
+              tp2Hit: prior.data.tp2_hit || false,
+              slHit: prior.data.sl_hit || false,
+            };
+          }
+
           const msg = swingScanner.formatSwingAlert(setup, candidate);
           await bot.sendRaw(msg);
           await bot.broadcastToUsers(msg);
 
+          const priorCount = setup._alertTracking?.alertCount || 0;
           await db.logAlert('SWING', setup.symbol, {
             score: setup.score, price: setup.currentPrice,
             direction: 'long', exchange: setup.exchange, pair: setup.pair,
@@ -670,6 +731,9 @@ async function main() {
             signals: candidate.signals,
             ninetyDayHigh: candidate.ninetyDayHigh,
             ninetyDayLow: candidate.ninetyDayLow,
+            alert_count: priorCount + 1,
+            first_alert_price: setup._alertTracking?.entryPrice || setup.currentPrice,
+            first_alert_at: setup._alertTracking?.firstAlertedAt || new Date().toISOString(),
           }, `SWING long ${setup.symbol} score=${setup.score}`).catch(() => {});
 
           swingScanner.addToWatchlist(setup);
@@ -860,7 +924,7 @@ async function main() {
   // === Alert Performance Tracker — check prices for past alerts every 5 min ===
   cron.schedule('*/5 * * * *', async () => {
     try {
-      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 10);
+      const unchecked = await db.getUncheckedAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE', 'DEMAND_ZONE', 'SWING'], 10);
       if (!unchecked.length) return;
 
       for (const alert of unchecked) {
@@ -962,7 +1026,7 @@ async function main() {
   // === Alert Invalidation Checker — every 10 min, checks if active alerts flipped ===
   cron.schedule('3,13,23,33,43,53 * * * *', async () => {
     try {
-      const activeAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE'], 2);
+      const activeAlerts = await db.getActiveAlerts(['ONCHAIN', 'FLOW', 'OI_SPIKE', 'SUPPLY_MOVE', 'DEMAND_ZONE', 'SWING'], 2);
       if (!activeAlerts.length) return;
 
       for (const alert of activeAlerts) {
@@ -982,8 +1046,20 @@ async function main() {
           const pricePnl = ((currentPrice - alertPrice) / alertPrice) * 100;
           const dirPnl = origDir === 'short' ? -pricePnl : pricePnl;
 
-          // Invalidate if price moved >3% against the direction
-          if (dirPnl < -3) {
+          // Invalidate threshold: swing/DZ use SL level if available, otherwise wider threshold
+          const alertSl = parseFloat(alert.data?.stopLoss || alert.data?.sl);
+          let invalidateThreshold = -3;
+          if (alert.alert_type === 'SWING' || alert.alert_type === 'DEMAND_ZONE') {
+            if (alertSl) {
+              const slPct = origDir === 'long'
+                ? ((alertSl - alertPrice) / alertPrice) * 100
+                : ((alertPrice - alertSl) / alertPrice) * 100;
+              invalidateThreshold = slPct;
+            } else {
+              invalidateThreshold = -8;
+            }
+          }
+          if (dirPnl < invalidateThreshold) {
             await db.updateAlertPerformance(alert.id, { invalidated: true, invalidated_at: new Date().toISOString(), invalidation_pnl: parseFloat(dirPnl.toFixed(2)) });
 
             const emoji = origDir === 'long' ? '📉' : '📈';

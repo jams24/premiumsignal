@@ -505,7 +505,30 @@ class SwingScanner {
     msg += `<b>TP2:</b> $${setup.tp2.toPrecision(4)} (+${tp2Pct}%)\n`;
     msg += `<b>TP3:</b> $${setup.tp3.toPrecision(4)} (+${tp3Pct}%)\n`;
     msg += `<b>R:R:</b> ${setup.rr}:1\n\n`;
-    msg += `<b>Signals:</b>\n${candidate.signals.map(s => `  • ${s}`).join('\n')}\n\n`;
+    msg += `<b>Signals:</b>\n${candidate.signals.map(s => `  • ${s}`).join('\n')}\n`;
+
+    if (setup._alertTracking) {
+      const t = setup._alertTracking;
+      const ageMs = Date.now() - new Date(t.firstAlertedAt).getTime();
+      const ageHrs = ageMs / 3600000;
+      const ageStr = ageHrs >= 24 ? `${Math.floor(ageHrs / 24)}d ${Math.floor(ageHrs % 24)}h` : ageHrs >= 1 ? `${Math.floor(ageHrs)}h ${Math.floor((ageHrs % 1) * 60)}m` : `${Math.floor(ageHrs * 60)}m`;
+      const pnlIcon = t.pnl > 0 ? '🟢' : '🔴';
+      const pnlStr = `${t.pnl > 0 ? '+' : ''}${t.pnl.toFixed(2)}%`;
+      const entryStr = t.entryPrice >= 1 ? `$${t.entryPrice.toFixed(2)}` : `$${t.entryPrice.toPrecision(4)}`;
+      msg += `\n━━━━━━━━━━━━━━━━━━━━\n`;
+      msg += `📍 <b>ALERT TRACKING</b> (${t.direction.toUpperCase()})\n`;
+      msg += `First alerted ${ageStr} ago at ${entryStr}\n`;
+      msg += `${pnlIcon} Current PnL: <b>${pnlStr}</b>`;
+      if (t.bestPnl > 0) msg += ` | Peak: +${t.bestPnl.toFixed(1)}%`;
+      if (t.worstPnl < 0) msg += ` | Dip: ${t.worstPnl.toFixed(1)}%`;
+      msg += '\n';
+      if (t.tp1Hit) msg += `✅ TP1 hit`;
+      if (t.tp2Hit) msg += ` | ✅ TP2 hit`;
+      if (t.slHit) msg += ` | ❌ SL hit`;
+      if (t.tp1Hit || t.tp2Hit || t.slHit) msg += '\n';
+    }
+
+    msg += `\n`;
     const holdLabel = setup.setupType === 'continuation' ? 'days to weeks' : 'weeks to months';
     msg += `<i>Swing trade — hold for ${holdLabel}.</i>\n`;
     msg += `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
