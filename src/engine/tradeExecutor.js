@@ -132,17 +132,23 @@ class TradeExecutor {
       }
     } catch (e) { /* DB error, skip check */ }
 
-    const cooldownUntil = this.cooldowns.get(signal.symbol?.toUpperCase());
-    if (cooldownUntil && Date.now() < cooldownUntil) {
-      const minsLeft = Math.ceil((cooldownUntil - Date.now()) / 60000);
-      return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
+    const cooldownData = this.cooldowns.get(signal.symbol?.toUpperCase());
+    if (cooldownData && Date.now() < cooldownData.until) {
+      const priceDrift = cooldownData.entryPrice && signal.currentPrice
+        ? Math.abs(signal.currentPrice - cooldownData.entryPrice) / cooldownData.entryPrice * 100 : 0;
+      if (priceDrift < 3) {
+        const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
+        return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
+      }
+      logger.info(`${signal.symbol}: cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry (${cooldownData.entryPrice} → ${signal.currentPrice})`);
     }
 
     // Re-entry guard (DB-based, survives restarts):
     // 4h after SL/max_loss/invalidation, 2h after direction flip, 1h after profitable close
+    // Bypassed if price moved >3% from last entry (different setup)
     try {
       const { rows: lastTrades } = await db.query(
-        `SELECT direction, closed_at, close_reason, pnl_usd FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        `SELECT direction, closed_at, close_reason, pnl_usd, entry_price FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
         [signal.symbol]
       );
       if (lastTrades.length) {
@@ -159,9 +165,16 @@ class TradeExecutor {
         else cooldownMs = 1 * 60 * 60 * 1000;
         const reentryUntil = closedAt + cooldownMs;
         if (Date.now() < reentryUntil) {
-          const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
-          const label = wasLoss ? 'loss cooldown' : isFlip ? 'direction flip cooldown' : 're-entry cooldown';
-          return { ok: false, reason: `${signal.symbol} blocked — ${label} (${minsLeft}m remaining)` };
+          const lastEntry = parseFloat(lastTrades[0].entry_price);
+          const priceDrift = lastEntry && signal.currentPrice
+            ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
+          if (priceDrift >= 3) {
+            logger.info(`${signal.symbol}: DB cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry ($${lastEntry} → $${signal.currentPrice})`);
+          } else {
+            const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
+            const label = wasLoss ? 'loss cooldown' : isFlip ? 'direction flip cooldown' : 're-entry cooldown';
+            return { ok: false, reason: `${signal.symbol} blocked — ${label} (${minsLeft}m remaining)` };
+          }
         }
       }
     } catch (e) { /* DB error, skip check */ }
@@ -472,10 +485,10 @@ class TradeExecutor {
       }
     } catch (e) { logger.debug(`Queue DB check failed: ${e.message}`); }
 
-    // Check cooldown before queuing — don't send misleading notifications
+    // Check cooldown before queuing — bypassed if price moved >3% (different setup)
     try {
       const { rows: lastTrades } = await db.query(
-        `SELECT direction, closed_at, close_reason, pnl_usd FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        `SELECT direction, closed_at, close_reason, pnl_usd, entry_price FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
         [signal.symbol]
       );
       if (lastTrades.length) {
@@ -491,9 +504,15 @@ class TradeExecutor {
         else if (isFlip) cooldownMs = 2 * 60 * 60 * 1000;
         else cooldownMs = 1 * 60 * 60 * 1000;
         if (Date.now() < closedAt + cooldownMs) {
-          const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
-          logger.info(`Queue skip ${signal.symbol}: cooldown (${minsLeft}m remaining)`);
-          return;
+          const lastEntry = parseFloat(lastTrades[0].entry_price);
+          const priceDrift = lastEntry && signal.currentPrice
+            ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
+          if (priceDrift < 3) {
+            const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
+            logger.info(`Queue skip ${signal.symbol}: cooldown (${minsLeft}m remaining)`);
+            return;
+          }
+          logger.info(`Queue ${signal.symbol}: cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry`);
         }
       }
     } catch (e) { /* proceed */ }
@@ -1053,7 +1072,7 @@ class TradeExecutor {
             await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'time_exit');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-            this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 1 * 60 * 60 * 1000);
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 1 * 60 * 60 * 1000, entryPrice: trade.entry_price });
             logger.info(`${trade.symbol}: ${this.timeExitMinutes}min+ no TP1 — time exit at $${currentPrice} (${pnlPct.toFixed(2)}%, $${pnlUsd.toFixed(2)})`);
           }
         }
@@ -1082,7 +1101,7 @@ class TradeExecutor {
                       await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'thesis_broken');
                       this.dailyPnL += pnlUsd;
                       if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-                      this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
+                      this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
                       logger.info(`${trade.symbol}: SMC structure flipped ${result.structureBias} with ChoCH — thesis broken, closing`);
                     }
                   }
@@ -1105,7 +1124,7 @@ class TradeExecutor {
             await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-            this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
           }
         }
 
@@ -1115,7 +1134,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp4');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 2 * 60 * 60 * 1000, entryPrice: trade.entry_price });
         }
         // --- TP3 CHECK: close 50% remaining, keep ~25% original as runner, SL to TP2 ---
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
@@ -1217,7 +1236,7 @@ class TradeExecutor {
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
           if (trade.mode === 'live') await this.closeExchangePosition(trade);
-          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
           logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${this.maxLossPerTrade})`);
         }
         // --- SL CHECK ---
@@ -1232,7 +1251,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, slExitPrice, slPnlPct, slPnlUsd, 'sl');
           this.dailyPnL += slPnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + slPnlUsd;
-          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 4 * 60 * 60 * 1000);
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
         }
         // --- AUTO-CLOSE AFTER maxTradeAge ---
         else if (!action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
@@ -1240,7 +1259,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-          this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 2 * 60 * 60 * 1000, entryPrice: trade.entry_price });
         }
 
         if (action) {
@@ -1463,7 +1482,7 @@ class TradeExecutor {
     if (trade.mode === 'paper') { this.paperBalance += (trade.position_size || 0) + pnlUsd; this.saveConfig(); }
     this.dailyPnL += pnlUsd;
     await db.closeTrade(trade.id, currentPrice || trade.entry_price, pnlPct, pnlUsd, 'manual_close');
-    this.cooldowns.set(trade.symbol.toUpperCase(), Date.now() + 2 * 60 * 60 * 1000);
+    this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 2 * 60 * 60 * 1000, entryPrice: trade.entry_price });
 
     return { trade, currentPrice, pnlPct, pnlUsd };
   }
