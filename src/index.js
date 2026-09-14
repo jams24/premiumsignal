@@ -1158,6 +1158,11 @@ async function main() {
     } catch (err) {
       logger.error(`DZ trade tracker error: ${err.message}`);
     }
+    try {
+      await dzTradeExecutor.checkPendingEntries();
+    } catch (err) {
+      logger.error(`DZ pending entry check error: ${err.message}`);
+    }
   });
 
   cron.schedule('*/2 * * * *', async () => {
