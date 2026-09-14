@@ -597,6 +597,7 @@ async function main() {
       }
 
       for (const token of qualified) {
+        if (token.score < 45) continue;
         const setup = token._tradeSetup;
         if (!setup) continue;
         try {
