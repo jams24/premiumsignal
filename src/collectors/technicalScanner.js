@@ -41,7 +41,7 @@ class TechnicalScanner {
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const sorted = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 5000000)
+          .filter(([, t]) => t.quoteVolume > 2000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .sort((a, b) => Math.abs(b[1].percentage || 0) - Math.abs(a[1].percentage || 0))
           .slice(0, 100);
@@ -561,7 +561,7 @@ class TechnicalScanner {
 
         // Filter: decent volume, NOT already pumping hard (that's the breakout scanner's job)
         const filtered = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 5000000)
+          .filter(([, t]) => t.quoteVolume > 2000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .filter(([, t]) => {
             const chg = Math.abs(t.percentage || 0);

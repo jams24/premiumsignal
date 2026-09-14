@@ -73,7 +73,7 @@ class OnchainScanner {
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const filtered = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 3000000)
+          .filter(([, t]) => t.quoteVolume > 2000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .sort((a, b) => (b[1].quoteVolume || 0) - (a[1].quoteVolume || 0))
           .slice(0, 60);
@@ -337,10 +337,10 @@ class OnchainScanner {
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const top = Object.entries(tickers)
-          .filter(([, t]) => t.quoteVolume > 5000000)
+          .filter(([, t]) => t.quoteVolume > 2000000)
           .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
           .sort((a, b) => (b[1].quoteVolume || 0) - (a[1].quoteVolume || 0))
-          .slice(0, 30);
+          .slice(0, 50);
 
         for (const [symbol, ticker] of top) {
           try {
