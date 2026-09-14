@@ -189,6 +189,16 @@ class TradeExecutor {
       return { ok: false, reason: `Already in position on ${signal.symbol} (${existing.exchange})` };
     }
 
+    if (this.mode === 'live') {
+      try {
+        const allOpen = await db.getOpenTrades();
+        const liveConflict = allOpen.find(p => p.symbol === signal.symbol && p.source !== this.settingsKey);
+        if (liveConflict) {
+          return { ok: false, reason: `${signal.symbol} already open in ${liveConflict.source} — skipping to avoid exchange conflict` };
+        }
+      } catch (e) { /* skip cross-check */ }
+    }
+
     // Cross-exchange duplicate: same token listed under different names (e.g. PUMP vs PUMPFUN)
     // Check if any open position has a very similar entry price on the same direction
     const priceTolerance = 0.02; // 2%
@@ -482,6 +492,14 @@ class TradeExecutor {
       if (existing) {
         logger.info(`Queue skip ${signal.symbol}: already in position (${existing.exchange})`);
         return;
+      }
+      if (this.mode === 'live') {
+        const allOpen = await db.getOpenTrades();
+        const crossConflict = allOpen.find(p => p.symbol === signal.symbol && p.source !== this.settingsKey);
+        if (crossConflict) {
+          logger.info(`Queue skip ${signal.symbol}: open in ${crossConflict.source} — avoiding exchange conflict`);
+          return;
+        }
       }
     } catch (e) { logger.debug(`Queue DB check failed: ${e.message}`); }
 
