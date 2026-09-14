@@ -648,7 +648,7 @@ async function main() {
         const setup = token._tradeSetup;
         if (!setup) continue;
         try {
-          await dzTradeExecutor.executeSignal(setup);
+          await dzTradeExecutor.queueSignal(setup);
         } catch (e) {
           logger.debug(`DZ paper-trade failed for ${token.symbol}: ${e.message}`);
         }
