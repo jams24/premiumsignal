@@ -670,11 +670,11 @@ class TradeExecutor {
         const exchange = this.exchanges[signal.exchange];
         if (!exchange) { this.pendingEntries.delete(key); continue; }
 
-        const candles = await exchange.fetchOHLCV(signal.pair, '5m', undefined, 6);
-        if (!candles?.length) continue;
+        const candles = await exchange.fetchOHLCV(signal.pair, '5m', undefined, 8);
+        if (!candles || candles.length < 3) continue;
 
         const latest = candles[candles.length - 1];
-        const [, open, high, low, close] = latest;
+        const [, , , , close] = latest;
 
         // Price ran away 5%+ from signal (either direction) → cancel
         const ranAwayWithTrend = isLong ? close > signalPrice * 1.05 : close < signalPrice * 0.95;
@@ -704,15 +704,56 @@ class TradeExecutor {
           }
         }
 
-        // Pullback to demand zone + recovery candle → enter at structure
+        // Zone sweep + strong confirmation on COMPLETED candles
         const dz = entry.demandZone;
-        const pulledBack = dz
-          ? (isLong ? low <= dz : high >= dz)
-          : (isLong ? low < signalPrice * 0.99 : high > signalPrice * 1.01);
-        const recovering = isLong ? close > open : close < open;
+        const completed = candles.slice(0, -1);
+        let confirmed = false;
+        let sweepLow = null;
 
-        if (pulledBack && recovering) {
+        for (let i = completed.length - 1; i >= Math.max(0, completed.length - 4); i--) {
+          const [, cO, cH, cL, cC] = completed[i];
+          const touchedZone = dz
+            ? (isLong ? cL <= dz * 1.003 : cH >= dz * 0.997)
+            : (isLong ? cL < signalPrice * 0.99 : cH > signalPrice * 1.01);
+          if (!touchedZone) continue;
+
+          const body = Math.abs(cC - cO);
+          const range = cH - cL;
+          if (range <= 0) continue;
+          const bodyRatio = body / range;
+          const lowerWick = Math.min(cO, cC) - cL;
+          const upperWick = cH - Math.max(cO, cC);
+
+          if (isLong) {
+            const greenClose = cC > cO;
+            const zoneReclaim = dz ? cC > dz : true;
+            const strongBody = bodyRatio >= 0.3;
+            const hammerWick = lowerWick >= body * 1.5 && body > 0;
+            if (greenClose && zoneReclaim && (strongBody || hammerWick)) {
+              confirmed = true;
+              sweepLow = cL;
+              break;
+            }
+          } else {
+            const redClose = cC < cO;
+            const zoneReclaim = dz ? cC < dz : true;
+            const strongBody = bodyRatio >= 0.3;
+            const hammerWick = upperWick >= body * 1.5 && body > 0;
+            if (redClose && zoneReclaim && (strongBody || hammerWick)) {
+              confirmed = true;
+              sweepLow = cH;
+              break;
+            }
+          }
+        }
+
+        if (confirmed) {
           signal.currentPrice = close;
+          if (sweepLow && signal.stopLoss) {
+            const tightSL = isLong ? sweepLow * 0.998 : sweepLow * 1.002;
+            const tighter = isLong ? tightSL > signal.stopLoss : tightSL < signal.stopLoss;
+            if (tighter) signal.stopLoss = tightSL;
+          }
           this.pendingEntries.delete(key);
           const result = await this.executeSignal(signal);
           if (result) {
@@ -728,18 +769,21 @@ class TradeExecutor {
           continue;
         }
 
-        // Timeout after 30 min — only enter if current candle confirms direction
+        // Timeout after 30 min — only enter if last completed candle is strong
         if (ageMin >= 30) {
           this.pendingEntries.delete(key);
-          if (recovering) {
+          const prev = completed[completed.length - 1];
+          const [, pO, , , pC] = prev;
+          const lastGreen = isLong ? pC > pO : pC < pO;
+          if (lastGreen) {
             signal.currentPrice = close;
             logger.info(`Pending ${signal.symbol}: timeout entry at $${close} (candle confirms direction)`);
             await this.executeSignal(signal);
           } else {
-            logger.info(`Pending ${signal.symbol}: timeout cancelled — no recovery candle after ${ageMin.toFixed(0)}m`);
+            logger.info(`Pending ${signal.symbol}: timeout cancelled — no confirmation after ${ageMin.toFixed(0)}m`);
             await this.notify(
               `⏭ <b>ENTRY EXPIRED</b> $${escapeHtml(signal.symbol)}\n\n` +
-              `No pullback + recovery after 30m\nPrice still moving against — skipping.`
+              `No zone sweep + confirmation after 30m\nPrice still moving against — skipping.`
             );
           }
           continue;
