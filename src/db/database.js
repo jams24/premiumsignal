@@ -855,4 +855,41 @@ async function getAlertPerformanceBySymbol(alertTypes, days = 7, limit = 15) {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource };
+async function getSwingTradePerformance(days = 30) {
+  const { rows } = await query(`
+    SELECT
+      count(*) as total,
+      count(*) FILTER (WHERE status = 'open') as open_count,
+      count(*) FILTER (WHERE status = 'closed') as closed_count,
+      count(*) FILTER (WHERE pnl_usd > 0 AND status = 'closed') as wins,
+      count(*) FILTER (WHERE pnl_usd <= 0 AND status = 'closed') as losses,
+      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      COALESCE(MAX(pnl_usd), 0) as best_trade,
+      COALESCE(MIN(pnl_usd) FILTER (WHERE status = 'closed'), 0) as worst_trade,
+      round(AVG(pnl_usd) FILTER (WHERE status = 'closed')::numeric, 2) as avg_pnl,
+      round(AVG(pnl_pct) FILTER (WHERE pnl_usd > 0 AND status = 'closed')::numeric, 2) as avg_win_pct,
+      round(AVG(pnl_pct) FILTER (WHERE pnl_usd <= 0 AND status = 'closed')::numeric, 2) as avg_loss_pct,
+      round(AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 3600) FILTER (WHERE status = 'closed')::numeric, 1) as avg_hold_hours,
+      count(*) FILTER (WHERE hit_tp1 = true) as tp1_hits,
+      count(*) FILTER (WHERE hit_tp2 = true) as tp2_hits,
+      count(*) FILTER (WHERE hit_tp3 = true) as tp3_hits
+    FROM trades
+    WHERE source = 'swing' AND created_at > NOW() - ($1 || ' days')::interval
+  `, [String(days)]);
+  return rows[0] || {};
+}
+
+async function getSwingOpenTrades() {
+  const { rows } = await query(`
+    SELECT symbol, direction, entry_price, quantity, leverage,
+      tp1, tp2, tp3, stop_loss, hit_tp1, hit_tp2, hit_tp3,
+      pnl_usd, pnl_pct, peak_price, created_at,
+      onchain_context
+    FROM trades
+    WHERE source = 'swing' AND status = 'open'
+    ORDER BY created_at DESC
+  `);
+  return rows;
+}
+
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades };

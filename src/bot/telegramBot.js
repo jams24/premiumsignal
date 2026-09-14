@@ -39,7 +39,7 @@ class TelegramBot {
       'trade', 'stop', 'trademode', 'setsize', 'setleverage', 'setloss', 'setmaxloss',
       'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
       'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop', 'onchainsettings',
-      'swingtrade', 'swingsize', 'swinglev', 'swingopen', 'swingclose', 'swingstats', 'swingwatchlist',
+      'swingtrade', 'swingsize', 'swinglev', 'swingopen', 'swingclose', 'swingstats', 'swingperf', 'swingwatchlist',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
@@ -2638,6 +2638,73 @@ class TelegramBot {
         `P&L: <b>$${parseFloat(s.total_pnl || 0).toFixed(2)}</b>\n` +
         `Best: $${parseFloat(s.best_trade || 0).toFixed(2)} | Worst: $${parseFloat(s.worst_trade || 0).toFixed(2)}`;
       ctx.replyWithHTML(msg);
+    });
+
+    this.bot.command('swingperf', async (ctx) => {
+      try {
+        const days = parseInt(ctx.message.text.split(' ')[1]) || 30;
+        const perf = await db.getSwingTradePerformance(days);
+        const openTrades = await db.getSwingOpenTrades();
+
+        const total = parseInt(perf.total) || 0;
+        const closed = parseInt(perf.closed_count) || 0;
+        const wins = parseInt(perf.wins) || 0;
+        const losses = parseInt(perf.losses) || 0;
+        const winRate = closed > 0 ? ((wins / closed) * 100).toFixed(0) : '—';
+        const totalPnl = parseFloat(perf.total_pnl) || 0;
+        const avgPnl = parseFloat(perf.avg_pnl) || 0;
+        const avgWin = parseFloat(perf.avg_win_pct) || 0;
+        const avgLoss = parseFloat(perf.avg_loss_pct) || 0;
+        const bestTrade = parseFloat(perf.best_trade) || 0;
+        const worstTrade = parseFloat(perf.worst_trade) || 0;
+        const avgHold = parseFloat(perf.avg_hold_hours) || 0;
+        const tp1Hits = parseInt(perf.tp1_hits) || 0;
+        const tp2Hits = parseInt(perf.tp2_hits) || 0;
+        const tp3Hits = parseInt(perf.tp3_hits) || 0;
+
+        let msg = `🌊 <b>SWING TRADE PERFORMANCE</b> (${days}d)\n\n`;
+        msg += `📊 <b>Overview</b>\n`;
+        msg += `Total: ${total} | Open: ${perf.open_count || 0} | Closed: ${closed}\n`;
+        msg += `Wins: ${wins} | Losses: ${losses} | Win Rate: <b>${winRate}%</b>\n\n`;
+
+        msg += `💰 <b>P&L</b>\n`;
+        msg += `Total: <b>${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>\n`;
+        msg += `Avg/trade: $${avgPnl.toFixed(2)}\n`;
+        msg += `Best: $${bestTrade.toFixed(2)} | Worst: $${worstTrade.toFixed(2)}\n`;
+        if (avgWin || avgLoss) msg += `Avg win: +${avgWin.toFixed(1)}% | Avg loss: ${avgLoss.toFixed(1)}%\n`;
+        msg += '\n';
+
+        msg += `🎯 <b>TP Hit Rates</b>\n`;
+        msg += `TP1: ${tp1Hits}/${total} (${total > 0 ? ((tp1Hits / total) * 100).toFixed(0) : 0}%)`;
+        msg += ` | TP2: ${tp2Hits}/${total} (${total > 0 ? ((tp2Hits / total) * 100).toFixed(0) : 0}%)`;
+        msg += ` | TP3: ${tp3Hits}/${total} (${total > 0 ? ((tp3Hits / total) * 100).toFixed(0) : 0}%)\n`;
+        if (avgHold > 0) msg += `⏱ Avg hold time: ${avgHold >= 24 ? `${(avgHold / 24).toFixed(1)}d` : `${avgHold.toFixed(0)}h`}\n`;
+        msg += '\n';
+
+        if (openTrades.length) {
+          msg += `📈 <b>Open Positions (${openTrades.length})</b>\n`;
+          for (const t of openTrades.slice(0, 5)) {
+            const entry = parseFloat(t.entry_price);
+            const pnl = parseFloat(t.pnl_pct) || 0;
+            const pnlUsd = parseFloat(t.pnl_usd) || 0;
+            const ageMs = Date.now() - new Date(t.created_at).getTime();
+            const ageHrs = ageMs / 3600000;
+            const ageStr = ageHrs >= 24 ? `${Math.floor(ageHrs / 24)}d` : `${Math.floor(ageHrs)}h`;
+            const pnlIcon = pnl >= 0 ? '🟢' : '🔴';
+            const tpStr = [t.hit_tp1 && 'TP1', t.hit_tp2 && 'TP2', t.hit_tp3 && 'TP3'].filter(Boolean).join(' ');
+            msg += `${pnlIcon} <b>${t.symbol}</b> ${t.direction.toUpperCase()} @ $${entry >= 1 ? entry.toFixed(4) : entry.toPrecision(4)}`;
+            msg += ` → <b>${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)})`;
+            msg += ` | ${ageStr}`;
+            if (tpStr) msg += ` | ${tpStr} ✅`;
+            msg += '\n';
+          }
+        }
+
+        msg += `\n<i>Usage: /swingperf [days] — default 30</i>`;
+        ctx.replyWithHTML(msg);
+      } catch (e) {
+        ctx.reply(`Error: ${e.message}`);
+      }
     });
 
     this.bot.command('swingwatchlist', async (ctx) => {

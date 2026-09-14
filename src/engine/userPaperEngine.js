@@ -527,6 +527,14 @@ class UserPaperEngine {
       : ((entry - price) / entry) * 100;
     const pnlUsd = (pnlPct / 100) * posSize;
 
+    // Always track peak price
+    const prevPeak = parseFloat(t.peak_price) || entry;
+    const curPeak = isLong ? Math.max(prevPeak, price) : Math.min(prevPeak, price);
+    if (curPeak !== prevPeak) {
+      await db.updateUserPaperTrade(t.id, { peak_price: curPeak });
+      t.peak_price = curPeak;
+    }
+
     let action = null;
 
     // --- TIME-BASED EXIT: edge decays after 45-90 min ---
@@ -659,7 +667,7 @@ class UserPaperEngine {
 
     // --- PROFIT PROTECTION (pre-TP1) ---
     const leveragedPnl = pnlPct * leverage;
-    if (!action && !t.hit_tp1 && (pnlPct > 5 || leveragedPnl > 25)) {
+    if (!action && !t.hit_tp1 && (pnlPct > 2.5 || leveragedPnl > 12)) {
       const currentSL = parseFloat(t.stop_loss);
       const atBreakeven = isLong ? currentSL >= entry : currentSL <= entry;
       if (!atBreakeven) {

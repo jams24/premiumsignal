@@ -1,5 +1,5 @@
 const logger = require('../utils/logger');
-const { EMA } = require('technicalindicators');
+const { EMA, ATR } = require('technicalindicators');
 const https = require('https');
 const { STOCK_TOKENS } = require('./technicalScanner');
 
@@ -306,9 +306,8 @@ class OnchainScanner {
     else if (Math.abs(priceChange) > 10) { score += 5; signals.push(`📈 Strong ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(0)}% move`); }
 
     // === 4. Volume Explosion Detection ===
-    // Skip if OI/funding already scored well (saves API call)
     let volRatio = null;
-    if (score < 25) try {
+    try {
       const dailyOHLCV = await exchange.fetchOHLCV(symbol, '1d', undefined, 21);
       if (dailyOHLCV && dailyOHLCV.length >= 10) {
         const pastVols = dailyOHLCV.slice(0, -1).map(c => c[5]);
@@ -333,6 +332,14 @@ class OnchainScanner {
       score += 10; signals.push(`⚡ Volume + strong ${priceChange.toFixed(0)}% momentum`);
     } else if (volRatio >= 3 && priceChange < -10) {
       score += 8; signals.push(`📉 Volume explosion + ${priceChange.toFixed(0)}% drop — capitulation or reversal`);
+    }
+
+    // === 6. OI vs Spot Volume Validation ===
+    // Arslan: OI surge without spot volume = leverage trap, vulnerable to wipeout
+    if (oiChange4h > 15 && Math.abs(priceChange) > 3 && volRatio !== null && volRatio < 1.3) {
+      const penalty = oiChange4h > 30 ? 8 : 5;
+      score -= penalty;
+      signals.push(`⚠️ OI +${oiChange4h.toFixed(0)}% but spot volume flat (${volRatio?.toFixed(1) || '?'}x) — leverage-driven move, wipeout risk (-${penalty}pts)`);
     }
 
     if (score === 0) return null;
@@ -454,6 +461,325 @@ class OnchainScanner {
     }
 
     return { boost, signals };
+  }
+
+  // === Demand Zone Scanner ===
+  // Detects 4H consolidation zones (pre-breakout bases) and scores them
+  // with onchain data. Catches entries BEFORE pumps with tight structural SL.
+
+  async scanDemandZones() {
+    const results = [];
+    for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
+      try {
+        const perpMarkets = Object.values(exchange.markets)
+          .filter(m => m.swap && m.quote === 'USDT' && m.active);
+        const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
+        const filtered = Object.entries(tickers)
+          .filter(([, t]) => t.quoteVolume > 2000000)
+          .filter(([s]) => !s.includes('STOCK') && !isStockToken(s.split('/')[0]))
+          .sort((a, b) => (b[1].quoteVolume || 0) - (a[1].quoteVolume || 0))
+          .slice(0, 50);
+        for (const [symbol, ticker] of filtered) {
+          try {
+            const result = await this.analyzeDemandZone(exchange, exchangeId, symbol, ticker);
+            if (result && result.score >= 25) results.push(result);
+          } catch (e) { /* skip */ }
+          await new Promise(r => setTimeout(r, 200));
+        }
+      } catch (e) {
+        logger.error(`Demand zone scan failed for ${exchangeId}: ${e.message}`);
+      }
+    }
+    const best = new Map();
+    for (const r of results) {
+      const existing = best.get(r.symbol);
+      if (!existing || r.score > existing.score) best.set(r.symbol, r);
+    }
+    const sorted = [...best.values()].sort((a, b) => b.score - a.score);
+
+    // Enrich top candidates with onchain data
+    for (const token of sorted.slice(0, 10)) {
+      const cached = this.oiCache.get(token.pair);
+      if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+        token.oiChange1h = cached.oiChange1h;
+        token.oiChange4h = cached.oiChange4h;
+        if (cached.oiChange4h > 5 && cached.oiChange4h <= 20 && Math.abs(token.priceChange) < 5) {
+          token.score += 10;
+          token.signals.push(`📈 OI quietly building +${cached.oiChange4h.toFixed(1)}% while price flat — stealth accumulation`);
+        } else if (cached.oiChange4h > 20) {
+          token.score += 5;
+          token.signals.push(`📈 OI rising +${cached.oiChange4h.toFixed(1)}%`);
+        }
+      }
+      if (this.onchainTracker) {
+        try {
+          const contract = await this.onchainTracker.resolveContractAddress(token.symbol);
+          if (contract) {
+            const chainKey = this.mapCoinGeckoChain(contract.chain);
+            if (chainKey) {
+              const flow = await this.onchainTracker.analyzeExchangeFlows(contract.address, token.symbol, chainKey);
+              if (flow) {
+                token.exchangeFlow = flow;
+                if (flow.outflowCount > flow.inflowCount && flow.outflowCount >= 3) {
+                  const boost = flow.outflowCount >= 8 ? 20 : flow.outflowCount >= 5 ? 15 : 10;
+                  token.score += boost;
+                  token.signals.push(`🏦 Exchange outflows: ${flow.outflowCount} withdrawals — accumulation at demand`);
+                }
+              }
+              await new Promise(r => setTimeout(r, 1500));
+            }
+          }
+        } catch (e) { /* skip */ }
+      }
+      try {
+        const ls = await this.fetchLongShortRatio(token.pair);
+        if (ls && ls.topTraderAcctRatio != null) {
+          token.lsData = ls;
+          if (ls.topTraderAcctRatio > 1.2 && (ls.globalRatio || 1) < 0.9) {
+            token.score += 10;
+            token.signals.push(`📊 Smart money long (${ls.topTraderAcctRatio.toFixed(2)}) vs retail short (${ls.globalRatio?.toFixed(2)})`);
+          } else if (ls.topTraderAcctRatio > 1.1) {
+            token.score += 5;
+            token.signals.push(`📊 Top traders leaning long (${ls.topTraderAcctRatio.toFixed(2)})`);
+          }
+        }
+      } catch (e) { /* skip */ }
+    }
+    sorted.sort((a, b) => b.score - a.score);
+    logger.info(`Demand zone scan: ${sorted.length} zones found${sorted.length ? `, top=${sorted[0].symbol} score=${sorted[0].score}` : ''}`);
+    return sorted;
+  }
+
+  async analyzeDemandZone(exchange, exchangeId, symbol, ticker) {
+    const base = symbol.split('/')[0];
+    const price = ticker.last;
+    const priceChange = ticker.percentage || 0;
+    if (Math.abs(priceChange) > 15) return null;
+
+    const ohlcv4h = await exchange.fetchOHLCV(symbol, '4h', undefined, 100);
+    if (!ohlcv4h || ohlcv4h.length < 30) return null;
+
+    const closes = ohlcv4h.map(c => c[4]);
+    const highs4h = ohlcv4h.map(c => c[2]);
+    const lows4h = ohlcv4h.map(c => c[3]);
+    const atrValues = ATR.calculate({ high: highs4h, low: lows4h, close: closes, period: 14 });
+    if (!atrValues.length) return null;
+    const currentATR = atrValues[atrValues.length - 1];
+
+    // Find demand zones: consolidation clusters followed by impulsive breakout
+    const zones = [];
+    for (let i = 2; i < ohlcv4h.length - 2; i++) {
+      const atrIdx = Math.min(i, atrValues.length - 1);
+      const refATR = atrValues[atrIdx] || currentATR;
+
+      let clusterEnd = i;
+      while (clusterEnd < ohlcv4h.length - 1) {
+        const c = ohlcv4h[clusterEnd];
+        if (Math.abs(c[4] - c[1]) > refATR * 0.6) break;
+        clusterEnd++;
+      }
+      const clusterLen = clusterEnd - i;
+      if (clusterLen < 3) continue;
+
+      const clusterCandles = ohlcv4h.slice(i, clusterEnd);
+      const zoneLow = Math.min(...clusterCandles.map(c => c[3]));
+      const zoneHigh = Math.max(...clusterCandles.map(c => c[2]));
+      const zoneRange = ((zoneHigh - zoneLow) / zoneLow) * 100;
+      if (zoneRange > 8) continue;
+
+      if (clusterEnd >= ohlcv4h.length) continue;
+      const breakout = ohlcv4h[clusterEnd];
+      const breakoutBody = breakout[4] - breakout[1];
+      if (Math.abs(breakoutBody) < refATR * 0.8 && (Math.abs(breakoutBody) / zoneLow * 100) < 2) continue;
+      const breakoutDir = breakoutBody > 0 ? 'long' : 'short';
+
+      let retested = false, retestBounced = false;
+      for (let j = clusterEnd + 1; j < ohlcv4h.length; j++) {
+        if (breakoutDir === 'long' && ohlcv4h[j][3] <= zoneHigh) {
+          retested = true;
+          retestBounced = ohlcv4h[j][4] > zoneLow;
+          break;
+        }
+        if (breakoutDir === 'short' && ohlcv4h[j][2] >= zoneLow) {
+          retested = true;
+          retestBounced = ohlcv4h[j][4] < zoneHigh;
+          break;
+        }
+      }
+
+      zones.push({ zoneLow, zoneHigh, zoneRange, breakoutDir, clusterLen, retested, retestBounced, age: ohlcv4h.length - clusterEnd });
+    }
+    if (!zones.length) return null;
+
+    // Find zone closest to current price
+    let bestZone = null, bestDist = Infinity;
+    for (const zone of zones) {
+      if (zone.age > 75) continue;
+      const mid = (zone.zoneLow + zone.zoneHigh) / 2;
+      const dist = Math.abs(price - mid) / mid * 100;
+      if (dist > 10) continue;
+      if (dist < bestDist) { bestDist = dist; bestZone = zone; }
+    }
+    if (!bestZone) return null;
+
+    let score = 0;
+    const signals = [];
+
+    // Zone quality (up to 25)
+    if (bestZone.clusterLen >= 8) { score += 10; signals.push(`Tight ${bestZone.clusterLen}-candle consolidation`); }
+    else if (bestZone.clusterLen >= 5) { score += 7; signals.push(`${bestZone.clusterLen}-candle consolidation`); }
+    else { score += 4; signals.push(`${bestZone.clusterLen}-candle base`); }
+    if (bestZone.zoneRange < 3) { score += 5; signals.push(`Ultra-tight zone (${bestZone.zoneRange.toFixed(1)}% range)`); }
+    else if (bestZone.zoneRange < 5) { score += 3; signals.push(`Tight zone (${bestZone.zoneRange.toFixed(1)}% range)`); }
+    if (bestZone.retestBounced) { score += 5; signals.push('Zone retested & held — confirmed demand'); }
+
+    // Price proximity (up to 20)
+    const inZone = bestZone.breakoutDir === 'long'
+      ? price >= bestZone.zoneLow * 0.97 && price <= bestZone.zoneHigh * 1.02
+      : price <= bestZone.zoneHigh * 1.03 && price >= bestZone.zoneLow * 0.98;
+    const distToZone = bestZone.breakoutDir === 'long'
+      ? ((price - bestZone.zoneHigh) / bestZone.zoneHigh) * 100
+      : ((bestZone.zoneLow - price) / bestZone.zoneLow) * 100;
+
+    if (inZone) { score += 20; signals.push(`📍 Price IN demand zone ($${bestZone.zoneLow.toPrecision(4)}-$${bestZone.zoneHigh.toPrecision(4)})`); }
+    else if (Math.abs(distToZone) < 3) { score += 15; signals.push(`Price ${distToZone > 0 ? '+' : ''}${distToZone.toFixed(1)}% from demand zone`); }
+    else if (Math.abs(distToZone) < 5) { score += 10; signals.push(`Price ${distToZone > 0 ? '+' : ''}${distToZone.toFixed(1)}% from zone`); }
+    else if (Math.abs(distToZone) < 10) { score += 5; signals.push(`Price ${distToZone > 0 ? '+' : ''}${distToZone.toFixed(1)}% from zone`); }
+    else return null;
+
+    // Volatility compression (up to 10)
+    const recentATRs = atrValues.slice(-5);
+    const olderATRs = atrValues.slice(-20, -5);
+    if (olderATRs.length >= 5) {
+      const recentAvg = recentATRs.reduce((a, b) => a + b, 0) / recentATRs.length;
+      const olderAvg = olderATRs.reduce((a, b) => a + b, 0) / olderATRs.length;
+      const compression = recentAvg / olderAvg;
+      if (compression < 0.4) { score += 10; signals.push(`Volatility compressed ${(compression * 100).toFixed(0)}% — coiling for breakout`); }
+      else if (compression < 0.6) { score += 7; signals.push(`Volatility narrowing (${(compression * 100).toFixed(0)}%)`); }
+      else if (compression < 0.8) { score += 4; signals.push('Range tightening'); }
+    }
+
+    // 4H higher lows (up to 5)
+    const pivotLows = [];
+    for (let i = Math.max(1, ohlcv4h.length - 20); i < ohlcv4h.length - 1; i++) {
+      if (ohlcv4h[i][3] <= ohlcv4h[i - 1][3] && ohlcv4h[i][3] <= ohlcv4h[i + 1][3])
+        pivotLows.push(ohlcv4h[i][3]);
+    }
+    if (pivotLows.length >= 2 && pivotLows[pivotLows.length - 1] > pivotLows[pivotLows.length - 2]) {
+      score += 5; signals.push('Higher lows on 4H — bullish structure');
+    }
+
+    // 4H EMA proximity (up to 5)
+    const ema20 = EMA.calculate({ values: closes, period: 20 });
+    if (ema20.length) {
+      const emaDist = ((price - ema20[ema20.length - 1]) / ema20[ema20.length - 1]) * 100;
+      if (Math.abs(emaDist) < 2) { score += 5; signals.push('At 4H EMA20 — coiling at support'); }
+    }
+
+    if (score < 20) return null;
+
+    return {
+      type: 'DEMAND_ZONE', symbol: base, pair: symbol, exchange: exchangeId,
+      score, signals, price, priceChange, volume: ticker.quoteVolume,
+      zone: bestZone, atr: currentATR, inZone, distToZone,
+      oiChange1h: null, oiChange4h: null, lsData: null, exchangeFlow: null,
+    };
+  }
+
+  buildDemandZoneSetup(token) {
+    const { zone, price, atr, pair, exchange: exchangeId } = token;
+    if (!zone) return null;
+    const direction = zone.breakoutDir;
+    const mult = direction === 'long' ? 1 : -1;
+
+    const entryPrice = token.inZone ? (zone.zoneLow + zone.zoneHigh) / 2 : price;
+    const slBuffer = direction === 'long' ? 0.97 : 1.03;
+    const sl = direction === 'long' ? zone.zoneLow * slBuffer : zone.zoneHigh * slBuffer;
+    const slDist = Math.abs((entryPrice - sl) / entryPrice) * 100;
+    if (slDist > 12 || slDist < 2) return null;
+
+    const risk = Math.abs(entryPrice - sl);
+    const tp1 = entryPrice + mult * risk * 1.5;
+    const tp2 = entryPrice + mult * risk * 3;
+    const tp3 = entryPrice + mult * risk * 5;
+    const rr = 1.5;
+
+    const confidence = token.score >= 55 ? 5 : token.score >= 40 ? 4 : 3;
+
+    return {
+      type: 'DEMAND_ZONE_SETUP', symbol: token.symbol, exchange: exchangeId, pair, direction,
+      currentPrice: entryPrice, entryLow: zone.zoneLow, entryHigh: zone.zoneHigh,
+      tp1, tp2, tp3, stopLoss: sl, atr, confidence,
+      rr: parseFloat(rr.toFixed(1)),
+      catalyst: `DEMAND_ZONE: ${token.signals.slice(0, 3).join(', ')}`,
+      suggestedLeverage: null,
+      volumeInfo: `Vol $${(token.volume / 1e6).toFixed(1)}M`,
+      onchainScore: token.score,
+      onchainContext: {
+        score: token.score, signals: token.signals,
+        zone: { low: zone.zoneLow, high: zone.zoneHigh, range: zone.zoneRange, direction: zone.breakoutDir, clusterLen: zone.clusterLen, retested: zone.retested, retestBounced: zone.retestBounced },
+        oiChange4h: token.oiChange4h,
+        exchangeFlow: token.exchangeFlow || null,
+        lsData: token.lsData || null,
+      },
+    };
+  }
+
+  formatDemandZoneAlerts(results, limit = 5) {
+    if (!results.length) return null;
+    const top = results.slice(0, limit);
+    let msg = '🎯 <b>DEMAND ZONE SCANNER</b>\n';
+    msg += '<i>4H consolidation zones with onchain accumulation signals — pre-breakout entries with tight structural stops.</i>\n\n';
+
+    for (const r of top) {
+      const arrow = r.priceChange >= 0 ? '🟢' : '🔴';
+      const tier = r.score >= 50 ? '🔥' : r.score >= 35 ? '⚡' : '👀';
+      msg += `${arrow} <b><code>${r.symbol}</code></b> — Score: ${r.score}/100 ${tier}\n`;
+
+      const priceStr = r.price >= 1 ? `$${r.price.toFixed(4)}` : `$${r.price.toPrecision(4)}`;
+      msg += `   💰 ${priceStr} (${r.priceChange >= 0 ? '+' : ''}${r.priceChange.toFixed(1)}%)\n`;
+
+      if (r.zone) {
+        const fmt = p => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
+        msg += `   📍 <b>Zone:</b> ${fmt(r.zone.zoneLow)} — ${fmt(r.zone.zoneHigh)}`;
+        if (r.inZone) msg += ' ← <b>IN ZONE</b>';
+        else msg += ` (${Math.abs(r.distToZone).toFixed(1)}% away)`;
+        msg += ` | ${r.zone.clusterLen} candles, ${r.zone.zoneRange.toFixed(1)}% range`;
+        if (r.zone.retestBounced) msg += ' ✅';
+        msg += '\n';
+      }
+
+      if (r._tradeSetup) {
+        const s = r._tradeSetup;
+        const fmt = p => p >= 1 ? `$${p.toFixed(4)}` : `$${p.toPrecision(4)}`;
+        const dir = s.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+        const slPct = Math.abs((s.currentPrice - s.stopLoss) / s.currentPrice * 100).toFixed(1);
+        msg += `   🎯 <b>${dir}</b> R:R ${s.rr}:1\n`;
+        msg += `   Entry: ${fmt(s.entryLow)} — ${fmt(s.entryHigh)}\n`;
+        msg += `   SL: ${fmt(s.stopLoss)} (${slPct}% — below zone structure)\n`;
+        msg += `   TP1: ${fmt(s.tp1)} | TP2: ${fmt(s.tp2)} | TP3: ${fmt(s.tp3)}\n`;
+      }
+
+      if (r.oiChange4h) msg += `   📈 OI ${r.oiChange4h > 0 ? '+' : ''}${r.oiChange4h.toFixed(1)}% 4h\n`;
+      if (r.exchangeFlow && r.exchangeFlow.outflowCount > (r.exchangeFlow.inflowCount || 0)) {
+        msg += `   🏦 Outflows: ${r.exchangeFlow.outflowCount} withdrawals\n`;
+      }
+      if (r.lsData?.topTraderAcctRatio) msg += `   📊 Top L/S: ${r.lsData.topTraderAcctRatio.toFixed(2)} | Retail: ${r.lsData.globalRatio?.toFixed(2) || '—'}\n`;
+
+      for (const sig of r.signals) {
+        if (!sig.startsWith('📍') && !sig.startsWith('📈') && !sig.startsWith('🏦') && !sig.startsWith('📊')) {
+          msg += `   • ${sig}\n`;
+        }
+      }
+      msg += `   📊 ${r.exchange.toUpperCase()}\n\n`;
+    }
+
+    msg += '━━━━━━━━━━━━━━━━━━━━\n';
+    msg += '📍 <b>Demand Zone</b> = 4H consolidation before breakout — structural support\n';
+    msg += '🔒 <b>Tight Zone</b> = Narrow range = precise entry + tight SL\n';
+    msg += '⚡ <b>Coiling</b> = Volatility compressing at support = breakout imminent\n';
+    msg += `\n<i>${new Date().toUTCString().slice(0, -4)}</i>`;
+    return msg;
   }
 
   // Format top alerts for Telegram
@@ -798,6 +1124,34 @@ class OnchainScanner {
           logger.info(`${token.symbol}: SL below swing ${direction === 'long' ? 'low' : 'high'} $${bestSwing.toPrecision(6)} → SL $${swingSL.toPrecision(6)} (${swingDistPct.toFixed(1)}%)`);
         }
       }
+
+      // 1b) 4H structural support — deeper swing levels than 1H captures
+      try {
+        const ohlcv4h = await exchange.fetchOHLCV(token.pair, '4h', undefined, 50);
+        if (ohlcv4h && ohlcv4h.length >= 20) {
+          const swing4h = [];
+          for (let i = 2; i < ohlcv4h.length - 1; i++) {
+            const prev = ohlcv4h[i - 1], curr = ohlcv4h[i], next = ohlcv4h[i + 1];
+            if (direction === 'long' && curr[3] <= prev[3] && curr[3] <= next[3] && curr[3] < price)
+              swing4h.push(curr[3]);
+            else if (direction === 'short' && curr[2] >= prev[2] && curr[2] >= next[2] && curr[2] > price)
+              swing4h.push(curr[2]);
+          }
+          if (direction === 'long') swing4h.sort((a, b) => b - a);
+          else swing4h.sort((a, b) => a - b);
+
+          for (const level of swing4h) {
+            const buf4h = direction === 'long' ? 0.99 : 1.01;
+            const sl4h = level * buf4h;
+            const dist4h = Math.abs((price - sl4h) / price) * 100;
+            if (dist4h >= 3 && dist4h <= 15 && (direction === 'long' ? sl4h > sl : sl4h < sl)) {
+              logger.info(`${token.symbol}: SL tightened via 4H swing $${level.toPrecision(6)} → $${sl4h.toPrecision(6)} (${dist4h.toFixed(1)}%)`);
+              sl = sl4h;
+              break;
+            }
+          }
+        }
+      } catch (e) { logger.debug(`${token.symbol}: 4H SL check failed: ${e.message}`); }
 
       // 2) Order book walls — upgrade SL if a wall sits closer and confirms support
       if (snap.levels?.length) {

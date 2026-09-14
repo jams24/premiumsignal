@@ -521,6 +521,70 @@ async function main() {
       logger.error(`Onchain scan error: ${err.message}`);
     }
   });
+  // === Demand Zone Scanner — 4H pre-breakout zone detection every 15 min ===
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const results = await onchainScanner.scanDemandZones();
+      const qualified = results.filter(r => r.score >= 30);
+      if (!qualified.length) return;
+
+      for (const token of qualified) {
+        try {
+          token._tradeSetup = onchainScanner.buildDemandZoneSetup(token);
+        } catch (e) { /* skip */ }
+      }
+
+      const msg = onchainScanner.formatDemandZoneAlerts(qualified, 5);
+      if (msg) {
+        await bot.sendRaw(msg);
+        await bot.broadcastToUsers(msg);
+      }
+
+      for (const token of qualified) {
+        const dir = token.zone?.breakoutDir || 'long';
+        if (!shouldLogAlert('DEMAND_ZONE', token.symbol, dir)) continue;
+        const setup = token._tradeSetup;
+        await db.logAlert('DEMAND_ZONE', token.symbol, {
+          score: token.score, price: token.price, direction: dir,
+          exchange: token.exchange, pair: token.pair,
+          zone: token.zone ? { low: token.zone.zoneLow, high: token.zone.zoneHigh, range: token.zone.zoneRange } : null,
+          inZone: token.inZone, distToZone: token.distToZone,
+          signals: token.signals,
+          oiChange4h: token.oiChange4h, exchangeFlow: token.exchangeFlow || null,
+          lsData: token.lsData || null,
+          tp1: setup?.tp1, tp2: setup?.tp2, tp3: setup?.tp3,
+          stopLoss: setup?.stopLoss, atr: setup?.atr,
+          confidence: setup?.confidence,
+        }, `DEMAND_ZONE ${dir} ${token.symbol} score=${token.score}`).catch(() => {});
+      }
+
+      // Auto-trade demand zone signals
+      const dzMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
+      for (const token of qualified) {
+        if (token.score < dzMinScore || !onchainTradeExecutor.enabled) continue;
+        const setup = token._tradeSetup;
+        if (!setup) continue;
+        try {
+          await onchainTradeExecutor.queueSignal(setup);
+        } catch (e) {
+          logger.debug(`Demand zone auto-trade failed for ${token.symbol}: ${e.message}`);
+        }
+      }
+
+      for (const token of qualified) {
+        const setup = token._tradeSetup;
+        if (!setup) continue;
+        try {
+          await userPaperEngine.openForOnchainFollowers(setup, token.score);
+        } catch (e) { logger.debug(`User demand zone paper failed ${token.symbol}: ${e.message}`); }
+      }
+
+      logger.info(`Demand zone scan: ${qualified.length} zones, top=${qualified[0]?.symbol} score=${qualified[0]?.score}`);
+    } catch (err) {
+      logger.error(`Demand zone scan error: ${err.message}`);
+    }
+  });
+
   // === Swing Scanner — daily timeframe accumulation reversal detection every 2h ===
   cron.schedule('0 */2 * * *', async () => {
     logger.info('Running swing scan...');
@@ -549,7 +613,8 @@ async function main() {
 
           swingScanner.addToWatchlist(setup);
 
-          if (setup.score >= 55 && swingTradeExecutor.enabled) {
+          // Always paper-trade swing setups for analytics — score 45+ auto-enters
+          if (setup.score >= 45) {
             await swingTradeExecutor.queueSignal(setup);
           }
 
@@ -575,9 +640,8 @@ async function main() {
     try {
       const entered = await swingScanner.checkWatchlist();
       for (const setup of entered) {
-        if (swingTradeExecutor.enabled) {
-          await swingTradeExecutor.queueSignal(setup);
-        }
+        // Always paper-trade watchlist zone entries for analytics
+        await swingTradeExecutor.queueSignal(setup);
         const msg = `🌊 <b>SWING ENTRY ZONE</b> — $${setup.symbol}\n\n` +
           `Price entered buy zone: $${setup.currentPrice.toPrecision(4)}\n` +
           `Zone: $${setup.entryLow.toPrecision(4)} — $${setup.entryHigh.toPrecision(4)}`;

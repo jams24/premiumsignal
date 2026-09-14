@@ -52,8 +52,8 @@ class TradeExecutor {
     // Parameterized trade management (swing trades override these)
     this.maxTradeAge = config.maxTradeAge || 48 * 60 * 60 * 1000;
     this.timeExitMinutes = config.timeExitMinutes ?? 90;
-    this.profitProtectPct = config.profitProtectPct || 5;
-    this.profitProtectLevPnl = config.profitProtectLevPnl || 25;
+    this.profitProtectPct = config.profitProtectPct || 2.5;
+    this.profitProtectLevPnl = config.profitProtectLevPnl || 12;
     this.trailAtrMultPre = config.trailAtrMultPre || 1.5;
     this.trailAtrMultPost = config.trailAtrMultPost || 3;
     this.dcaSpreadMult1 = config.dcaSpreadMult1 || 1.0;
@@ -1018,6 +1018,16 @@ class TradeExecutor {
           : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
         const pnlUsd = (pnlPct / 100) * trade.position_size;
 
+        // Always track peak price — regardless of TP/protection state
+        const prevPeak = trade.peak_price || trade.entry_price;
+        const curPeak = isLong
+          ? Math.max(prevPeak, currentPrice)
+          : Math.min(prevPeak, currentPrice);
+        if (curPeak !== prevPeak) {
+          await db.updateTradePeakPrice(trade.id, curPeak);
+          trade.peak_price = curPeak;
+        }
+
         let action = null;
 
         const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
@@ -1165,7 +1175,7 @@ class TradeExecutor {
         }
 
         // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
-        // Trigger at 5% price move OR 25% leveraged ROI (whichever comes first)
+        // Trigger at 2.5% price move OR 12% leveraged ROI (whichever comes first)
         const leveragedPnl = pnlPct * (trade.leverage || 1);
         if (!action && !trade.hit_tp1 && (pnlPct > this.profitProtectPct || leveragedPnl > this.profitProtectLevPnl)) {
           const currentSL = trade.stop_loss;

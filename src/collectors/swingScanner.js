@@ -203,6 +203,32 @@ class SwingScanner {
       score += 3; signals.push(`Volume accumulating (up ${(upVol / downVol).toFixed(1)}x vs down)`);
     }
 
+    // Liquidity sweep detection — V-shape recovery after stop hunt below support
+    const last21 = ohlcvDaily.slice(-21);
+    for (let i = Math.max(2, last21.length - 10); i < last21.length - 1; i++) {
+      const candle = last21[i];
+      const body = Math.abs(candle[4] - candle[1]);
+      const lowerWick = Math.min(candle[1], candle[4]) - candle[3];
+      const totalRange = candle[2] - candle[3];
+      if (totalRange <= 0 || body <= 0) continue;
+
+      // Sweep candle: long lower wick (>60% of range) dipping below prior lows
+      if (lowerWick / totalRange < 0.6) continue;
+      const priorLow = Math.min(...last21.slice(Math.max(0, i - 5), i).map(c => c[3]));
+      if (candle[3] >= priorLow) continue; // Didn't sweep below support
+
+      // V-recovery: closed back above support
+      if (candle[4] <= priorLow) continue;
+
+      // Higher low forming after sweep
+      const postSweepCandles = last21.slice(i + 1);
+      if (postSweepCandles.length && Math.min(...postSweepCandles.map(c => c[3])) > candle[3]) {
+        const sweepDepth = ((priorLow - candle[3]) / priorLow * 100).toFixed(1);
+        score += 7; signals.push(`🔻 Liquidity sweep -${sweepDepth}% below support + V-recovery — weak hands flushed`);
+        break;
+      }
+    }
+
     // === AXIS 3: Onchain Confirmation (up to 35 pts) ===
 
     const flowMem = this.flowScanner?.flowMemory?.get(sym);
@@ -311,12 +337,22 @@ class SwingScanner {
         const lastOI = oiHist[oiHist.length - 1].openInterestValue || oiHist[oiHist.length - 1].openInterest;
         const oiChange = ((lastOI - firstOI) / firstOI) * 100;
         const priceChange7d = ticker.percentage || 0;
+
+        // OI rising while price flat = accumulation (best signal, unaffected by volume check)
         if (oiChange > 10 && Math.abs(priceChange7d) < 5) {
           score += 8; signals.push(`OI rising +${oiChange.toFixed(0)}% while price flat — accumulation`);
-        } else if (oiChange > 50) {
-          score += 7; signals.push(`OI surge +${oiChange.toFixed(0)}% — fresh money flooding in`);
         } else if (oiChange > 20) {
-          score += 5; signals.push(`OI expanding +${oiChange.toFixed(0)}%`);
+          // Arslan: OI surge without spot volume = leverage trap, vulnerable to wipeout
+          const spotBacked = avgVol20 > 0 && currentVol > avgVol20 * 1.3;
+          if (oiChange > 50 && spotBacked) {
+            score += 7; signals.push(`OI surge +${oiChange.toFixed(0)}% backed by spot volume — real expansion`);
+          } else if (oiChange > 50) {
+            score += 2; signals.push(`⚠️ OI surge +${oiChange.toFixed(0)}% but spot volume flat — leverage-driven, wipeout risk`);
+          } else if (spotBacked) {
+            score += 5; signals.push(`OI expanding +${oiChange.toFixed(0)}% with spot confirmation`);
+          } else {
+            score += 2; signals.push(`OI expanding +${oiChange.toFixed(0)}% — no spot volume backing`);
+          }
         } else if (oiChange > 5) {
           score += 3; signals.push(`OI building +${oiChange.toFixed(0)}%`);
         }
@@ -361,8 +397,20 @@ class SwingScanner {
         const last14Lows = ohlcvDaily.slice(-14).map(c => c[3]);
         const recentSwingLow = Math.min(...last14Lows);
         stopLoss = recentSwingLow * 0.97;
+        // Cap continuation SL at 15% — beyond that, 5x leverage wipes the position
+        const maxSLDist = currentPrice * 0.85;
+        if (stopLoss < maxSLDist) {
+          stopLoss = maxSLDist;
+          logger.info(`Swing ${candidate.symbol}: SL capped at 15% ($${stopLoss.toPrecision(4)}) — structural low too far for leveraged entry`);
+        }
       } else {
         stopLoss = ninetyDayLow * 0.97;
+        // Cap accumulation SL at 25% — 3x leverage max for these
+        const maxSLDist = currentPrice * 0.75;
+        if (stopLoss < maxSLDist) {
+          stopLoss = maxSLDist;
+          logger.info(`Swing ${candidate.symbol}: SL capped at 25% ($${stopLoss.toPrecision(4)}) — 90d low too far`);
+        }
       }
 
       const swingHighs = [];
