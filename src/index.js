@@ -110,12 +110,12 @@ async function main() {
   // Init swing trade executor — daily timeframe, wide stops, long hold
   const swingTradeExecutor = new TradeExecutor(listingMonitor.exchanges, {
     settingsKey: 'swing',
-    mode: 'paper',
-    maxPositionSize: 50,
+    mode: 'live',
+    maxPositionSize: 10,
     maxDailyLoss: 50,
     maxLossPerTrade: 15,
     maxConcurrentPositions: 3,
-    defaultLeverage: 3,
+    defaultLeverage: 20,
     minConfidence: 3,
     paperBalance: 500,
     dynamicLeverage: false,

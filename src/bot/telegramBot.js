@@ -41,11 +41,12 @@ class TelegramBot {
       'onchaintrade', 'onchainsize', 'onchainlev', 'onchainloss', 'onchainmaxloss',
       'onchainpositions', 'onchainminscore', 'onchainstats', 'onchainopen', 'onchainclose', 'onchainstop', 'onchainsettings',
       'swingtrade', 'swingsize', 'swinglev', 'swingopen', 'swingclose', 'swingstats', 'swingperf', 'swingwatchlist',
-      'dzopen', 'dzclose', 'dzstats', 'dzperf',
+      'dzopen', 'dzclose', 'dzstats', 'dzperf', 'dzsettings',
+      'panel', 'swingsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
     ]);
-    const ADMIN_ACTIONS = /^cfg_/;
+    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_)/;
     const PUBLIC_COMMANDS = new Set([
       'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
@@ -2172,7 +2173,8 @@ class TelegramBot {
          Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback('🔄 Refresh', 'oc_settings')],
-        [Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
+        [Markup.button.callback('⬅️ Panel', 'panel_main'),
+         Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
       ]);
 
       if (isNew) {
@@ -2828,6 +2830,476 @@ class TelegramBot {
       } catch (e) {
         ctx.reply(`Error: ${e.message}`);
       }
+    });
+
+    // === UNIFIED TRADING CONTROL PANEL ===
+    const showPanel = async (ctx, isNew = false) => {
+      const text =
+        `⚙️ <b>TRADING CONTROL PANEL</b>\n\n` +
+        `Manage all trading systems from here.`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📊 Main Trading', 'cfg_main_new'),
+         Markup.button.callback('🔗 Onchain', 'oc_settings')],
+        [Markup.button.callback('🌊 Swing Trade', 'sw_settings'),
+         Markup.button.callback('🎯 Demand Zone', 'dz_settings')],
+      ]);
+      if (isNew) {
+        await ctx.replyWithHTML(text, keyboard);
+      } else {
+        try { await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }); } catch (e) { await ctx.replyWithHTML(text, keyboard); }
+      }
+    };
+
+    this.bot.command('panel', async (ctx) => { await showPanel(ctx, true); });
+    this.bot.action('panel_main', async (ctx) => {
+      try { await ctx.answerCbQuery(); } catch (e) {}
+      try { await showPanel(ctx); } catch (e) { logger.error(`panel_main error: ${e.message}`); }
+    });
+
+    // === SWING TRADE SETTINGS PANEL (sw_ prefix) ===
+    const swte = () => this.swingTradeExecutor;
+    const showSwSettings = async (ctx, isNew = false) => {
+      const te = swte();
+      if (!te) return;
+      await te.recalcDailyPnL?.();
+      const openTrades = await db.getOpenTrades('swing').catch(() => []);
+
+      const text =
+        `🌊 <b>SWING TRADE SETTINGS</b>\n\n` +
+        `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+        `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
+        `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+        `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+        `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+        `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
+        `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+        `Tap any button to configure:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(`${te.mode === 'paper' ? '📝' : '🔴'} Mode: ${te.mode.toUpperCase()}`, 'sw_cfg_mode'),
+         Markup.button.callback(`${te.enabled ? '✅ ON' : '⛔ OFF'}`, 'sw_cfg_toggle')],
+        [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'sw_cfg_size'),
+         Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'sw_cfg_lev')],
+        [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'sw_cfg_dailyloss'),
+         Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'sw_cfg_tradeloss')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'sw_cfg_maxpos')],
+        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'sw_refresh'),
+         Markup.button.callback('🔄 Refresh', 'sw_settings')],
+        [Markup.button.callback('⬅️ Panel', 'panel_main'),
+         Markup.button.callback('🛑 Close All & Stop', 'sw_closeall')],
+      ]);
+
+      if (isNew) {
+        await ctx.replyWithHTML(text, keyboard);
+      } else {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      }
+    };
+
+    this.bot.command('swingsettings', async (ctx) => { await showSwSettings(ctx, true); });
+    this.bot.action('sw_settings', async (ctx) => {
+      try { await ctx.answerCbQuery(); } catch (e) {}
+      try { await showSwSettings(ctx); } catch (e) { logger.error(`sw_settings error: ${e.message}`); }
+    });
+    this.bot.action('sw_refresh', async (ctx) => {
+      try { await ctx.answerCbQuery(); } catch (e) {}
+      try { await showSwSettings(ctx); } catch (e) { logger.error(`sw_refresh error: ${e.message}`); }
+    });
+
+    // sw_ MODE
+    this.bot.action('sw_cfg_mode', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        await ctx.editMessageText(
+          `🌊 <b>SWING — TRADE MODE</b>\n\n` +
+          `Current: <b>${te.mode.toUpperCase()}</b> ${te.mode === 'paper' ? '📝' : '💰'}\n\n` +
+          `📝 <b>Paper</b> — Simulated trades, no real funds\n` +
+          `💰 <b>Live</b> — Real orders on exchange`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`📝 Paper${ocCheck('paper', te.mode)}`, 'sw_mode_paper'),
+             Markup.button.callback(`💰 Live${ocCheck('live', te.mode)}`, 'sw_mode_live')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_mode error: ${e.message}`); }
+    });
+    this.bot.action('sw_mode_paper', async (ctx) => {
+      try {
+        swte().mode = 'paper'; swte().enabled = true; swte().saveConfig();
+        await ctx.answerCbQuery('Paper mode activated');
+        await showSwSettings(ctx);
+      } catch (e) { logger.error(`sw_mode_paper error: ${e.message}`); }
+    });
+    this.bot.action('sw_mode_live', async (ctx) => {
+      try {
+        const te = swte();
+        await ctx.editMessageText(
+          `⚠️ <b>SWITCH SWING TO LIVE?</b>\n\n` +
+          `Real funds will be used for swing trades.\n\n` +
+          `💵 Size: $${te.maxPositionSize}/trade\n` +
+          `⚡ Leverage: ${te.defaultLeverage}x\n` +
+          `🔒 Max loss/trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'No cap ⚠️'}\n` +
+          `🛡️ Daily loss limit: $${te.maxDailyLoss}`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Yes, go LIVE', 'sw_mode_live_yes')],
+            [Markup.button.callback('❌ Cancel', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_mode_live error: ${e.message}`); }
+    });
+    this.bot.action('sw_mode_live_yes', async (ctx) => {
+      try {
+        swte().mode = 'live'; swte().enabled = true; swte().saveConfig();
+        await ctx.answerCbQuery('🔴 LIVE TRADING ACTIVATED');
+        await showSwSettings(ctx);
+      } catch (e) { logger.error(`sw_mode_live_yes error: ${e.message}`); }
+    });
+
+    // sw_ TOGGLE
+    this.bot.action('sw_cfg_toggle', async (ctx) => {
+      try {
+        const te = swte();
+        te.enabled = !te.enabled; te.saveConfig();
+        await ctx.answerCbQuery(te.enabled ? 'Trading ENABLED' : 'Trading DISABLED');
+        await showSwSettings(ctx);
+      } catch (e) { logger.error(`sw_cfg_toggle error: ${e.message}`); }
+    });
+
+    // sw_ SIZE
+    this.bot.action('sw_cfg_size', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        await ctx.editMessageText(
+          `🌊 <b>SWING — POSITION SIZE</b>\n\nCurrent: <b>$${te.maxPositionSize}</b> per trade`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$5${ocCheck(5, te.maxPositionSize)}`, 'sw_size_5'),
+             Markup.button.callback(`$10${ocCheck(10, te.maxPositionSize)}`, 'sw_size_10'),
+             Markup.button.callback(`$15${ocCheck(15, te.maxPositionSize)}`, 'sw_size_15')],
+            [Markup.button.callback(`$20${ocCheck(20, te.maxPositionSize)}`, 'sw_size_20'),
+             Markup.button.callback(`$25${ocCheck(25, te.maxPositionSize)}`, 'sw_size_25'),
+             Markup.button.callback(`$50${ocCheck(50, te.maxPositionSize)}`, 'sw_size_50')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_size error: ${e.message}`); }
+    });
+    for (const size of [5, 10, 15, 20, 25, 50]) {
+      this.bot.action(`sw_size_${size}`, async (ctx) => {
+        try {
+          swte().maxPositionSize = size; swte().saveConfig();
+          await ctx.answerCbQuery(`Size: $${size}`);
+          await showSwSettings(ctx);
+        } catch (e) { logger.error(`sw_size error: ${e.message}`); }
+      });
+    }
+
+    // sw_ LEVERAGE
+    this.bot.action('sw_cfg_lev', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        await ctx.editMessageText(
+          `🌊 <b>SWING — LEVERAGE</b>\n\nCurrent: <b>${te.defaultLeverage}x</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3x${ocCheck(3, te.defaultLeverage)}`, 'sw_lev_3'),
+             Markup.button.callback(`5x${ocCheck(5, te.defaultLeverage)}`, 'sw_lev_5'),
+             Markup.button.callback(`10x${ocCheck(10, te.defaultLeverage)}`, 'sw_lev_10')],
+            [Markup.button.callback(`15x${ocCheck(15, te.defaultLeverage)}`, 'sw_lev_15'),
+             Markup.button.callback(`20x${ocCheck(20, te.defaultLeverage)}`, 'sw_lev_20'),
+             Markup.button.callback(`25x${ocCheck(25, te.defaultLeverage)}`, 'sw_lev_25')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_lev error: ${e.message}`); }
+    });
+    for (const lev of [3, 5, 10, 15, 20, 25]) {
+      this.bot.action(`sw_lev_${lev}`, async (ctx) => {
+        try {
+          swte().defaultLeverage = lev; swte().saveConfig();
+          await ctx.answerCbQuery(`Leverage: ${lev}x`);
+          await showSwSettings(ctx);
+        } catch (e) { logger.error(`sw_lev error: ${e.message}`); }
+      });
+    }
+
+    // sw_ DAILY LOSS
+    this.bot.action('sw_cfg_dailyloss', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        await ctx.editMessageText(
+          `🌊 <b>SWING — DAILY LOSS LIMIT</b>\n\nCurrent: <b>$${te.maxDailyLoss}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$10${ocCheck(10, te.maxDailyLoss)}`, 'sw_dloss_10'),
+             Markup.button.callback(`$20${ocCheck(20, te.maxDailyLoss)}`, 'sw_dloss_20'),
+             Markup.button.callback(`$30${ocCheck(30, te.maxDailyLoss)}`, 'sw_dloss_30')],
+            [Markup.button.callback(`$50${ocCheck(50, te.maxDailyLoss)}`, 'sw_dloss_50'),
+             Markup.button.callback(`$100${ocCheck(100, te.maxDailyLoss)}`, 'sw_dloss_100')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_dailyloss error: ${e.message}`); }
+    });
+    for (const loss of [10, 20, 30, 50, 100]) {
+      this.bot.action(`sw_dloss_${loss}`, async (ctx) => {
+        try {
+          swte().maxDailyLoss = loss; swte().saveConfig();
+          await ctx.answerCbQuery(`Daily loss: $${loss}`);
+          await showSwSettings(ctx);
+        } catch (e) { logger.error(`sw_dloss error: ${e.message}`); }
+      });
+    }
+
+    // sw_ PER-TRADE LOSS
+    this.bot.action('sw_cfg_tradeloss', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        await ctx.editMessageText(
+          `🌊 <b>SWING — PER-TRADE MAX LOSS</b>\n\nCurrent: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$6${ocCheck(6, te.maxLossPerTrade)}`, 'sw_tloss_6'),
+             Markup.button.callback(`$10${ocCheck(10, te.maxLossPerTrade)}`, 'sw_tloss_10'),
+             Markup.button.callback(`$15${ocCheck(15, te.maxLossPerTrade)}`, 'sw_tloss_15')],
+            [Markup.button.callback(`$20${ocCheck(20, te.maxLossPerTrade)}`, 'sw_tloss_20'),
+             Markup.button.callback(`$30${ocCheck(30, te.maxLossPerTrade)}`, 'sw_tloss_30'),
+             Markup.button.callback(`Off${ocCheck(0, te.maxLossPerTrade)}`, 'sw_tloss_0')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_tradeloss error: ${e.message}`); }
+    });
+    for (const loss of [0, 6, 10, 15, 20, 30]) {
+      this.bot.action(`sw_tloss_${loss}`, async (ctx) => {
+        try {
+          swte().maxLossPerTrade = loss; swte().saveConfig();
+          await ctx.answerCbQuery(loss > 0 ? `Max loss/trade: $${loss}` : 'Per-trade cap disabled');
+          await showSwSettings(ctx);
+        } catch (e) { logger.error(`sw_tloss error: ${e.message}`); }
+      });
+    }
+
+    // sw_ MAX POSITIONS
+    this.bot.action('sw_cfg_maxpos', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        await ctx.editMessageText(
+          `🌊 <b>SWING — MAX CONCURRENT POSITIONS</b>\n\nCurrent: <b>${te.maxConcurrentPositions}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`1${ocCheck(1, te.maxConcurrentPositions)}`, 'sw_pos_1'),
+             Markup.button.callback(`2${ocCheck(2, te.maxConcurrentPositions)}`, 'sw_pos_2'),
+             Markup.button.callback(`3${ocCheck(3, te.maxConcurrentPositions)}`, 'sw_pos_3')],
+            [Markup.button.callback(`5${ocCheck(5, te.maxConcurrentPositions)}`, 'sw_pos_5')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_maxpos error: ${e.message}`); }
+    });
+    for (const pos of [1, 2, 3, 5]) {
+      this.bot.action(`sw_pos_${pos}`, async (ctx) => {
+        try {
+          swte().maxConcurrentPositions = pos; swte().saveConfig();
+          await ctx.answerCbQuery(`Max positions: ${pos}`);
+          await showSwSettings(ctx);
+        } catch (e) { logger.error(`sw_pos error: ${e.message}`); }
+      });
+    }
+
+    // sw_ CLOSE ALL
+    this.bot.action('sw_closeall', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        await ctx.editMessageText(
+          `⚠️ <b>CLOSE ALL SWING POSITIONS?</b>\n\nThis will close all open swing trades and disable swing auto-trading.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('✅ Yes, close all', 'sw_closeall_yes')],
+            [Markup.button.callback('❌ Cancel', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_closeall error: ${e.message}`); }
+    });
+    this.bot.action('sw_closeall_yes', async (ctx) => {
+      try {
+        const count = await swte().closeAllPositions();
+        swte().enabled = false; swte().saveConfig();
+        await ctx.answerCbQuery(`${count} position(s) closed`);
+        await showSwSettings(ctx);
+      } catch (e) { logger.error(`sw_closeall_yes error: ${e.message}`); }
+    });
+
+    // === DEMAND ZONE SETTINGS PANEL (dz_ prefix) — paper only ===
+    const dzte = () => this.dzTradeExecutor;
+    const showDzSettings = async (ctx, isNew = false) => {
+      const te = dzte();
+      if (!te) return;
+      await te.recalcDailyPnL?.();
+      const openTrades = await db.getOpenTrades('demandzone').catch(() => []);
+
+      const text =
+        `🎯 <b>DEMAND ZONE SETTINGS</b> (Paper Only)\n\n` +
+        `📝 Mode: <b>PAPER</b> (analytics only)\n` +
+        `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
+        `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+        `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+        `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
+        `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+        `Tap any button to configure:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'dz_cfg_size'),
+         Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'dz_cfg_lev')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos'),
+         Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
+        [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_refresh'),
+         Markup.button.callback('🔄 Refresh', 'dz_settings')],
+        [Markup.button.callback('⬅️ Panel', 'panel_main')],
+      ]);
+
+      if (isNew) {
+        await ctx.replyWithHTML(text, keyboard);
+      } else {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      }
+    };
+
+    this.bot.command('dzsettings', async (ctx) => { await showDzSettings(ctx, true); });
+    this.bot.action('dz_settings', async (ctx) => {
+      try { await ctx.answerCbQuery(); } catch (e) {}
+      try { await showDzSettings(ctx); } catch (e) { logger.error(`dz_settings error: ${e.message}`); }
+    });
+    this.bot.action('dz_refresh', async (ctx) => {
+      try { await ctx.answerCbQuery(); } catch (e) {}
+      try { await showDzSettings(ctx); } catch (e) { logger.error(`dz_refresh error: ${e.message}`); }
+    });
+
+    // dz_ SIZE
+    this.bot.action('dz_cfg_size', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — POSITION SIZE</b>\n\nCurrent: <b>$${te.maxPositionSize}</b> per trade`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$5${ocCheck(5, te.maxPositionSize)}`, 'dz_size_5'),
+             Markup.button.callback(`$10${ocCheck(10, te.maxPositionSize)}`, 'dz_size_10'),
+             Markup.button.callback(`$15${ocCheck(15, te.maxPositionSize)}`, 'dz_size_15')],
+            [Markup.button.callback(`$20${ocCheck(20, te.maxPositionSize)}`, 'dz_size_20'),
+             Markup.button.callback(`$25${ocCheck(25, te.maxPositionSize)}`, 'dz_size_25'),
+             Markup.button.callback(`$50${ocCheck(50, te.maxPositionSize)}`, 'dz_size_50')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_size error: ${e.message}`); }
+    });
+    for (const size of [5, 10, 15, 20, 25, 50]) {
+      this.bot.action(`dz_size_${size}`, async (ctx) => {
+        try {
+          dzte().maxPositionSize = size; dzte().saveConfig();
+          await ctx.answerCbQuery(`Size: $${size}`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_size error: ${e.message}`); }
+      });
+    }
+
+    // dz_ LEVERAGE
+    this.bot.action('dz_cfg_lev', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — LEVERAGE</b>\n\nCurrent: <b>${te.defaultLeverage}x</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3x${ocCheck(3, te.defaultLeverage)}`, 'dz_lev_3'),
+             Markup.button.callback(`5x${ocCheck(5, te.defaultLeverage)}`, 'dz_lev_5'),
+             Markup.button.callback(`10x${ocCheck(10, te.defaultLeverage)}`, 'dz_lev_10')],
+            [Markup.button.callback(`15x${ocCheck(15, te.defaultLeverage)}`, 'dz_lev_15'),
+             Markup.button.callback(`20x${ocCheck(20, te.defaultLeverage)}`, 'dz_lev_20')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_lev error: ${e.message}`); }
+    });
+    for (const lev of [3, 5, 10, 15, 20]) {
+      this.bot.action(`dz_lev_${lev}`, async (ctx) => {
+        try {
+          dzte().defaultLeverage = lev; dzte().saveConfig();
+          await ctx.answerCbQuery(`Leverage: ${lev}x`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_lev error: ${e.message}`); }
+      });
+    }
+
+    // dz_ MAX POSITIONS
+    this.bot.action('dz_cfg_maxpos', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — MAX CONCURRENT POSITIONS</b>\n\nCurrent: <b>${te.maxConcurrentPositions}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3${ocCheck(3, te.maxConcurrentPositions)}`, 'dz_pos_3'),
+             Markup.button.callback(`5${ocCheck(5, te.maxConcurrentPositions)}`, 'dz_pos_5'),
+             Markup.button.callback(`7${ocCheck(7, te.maxConcurrentPositions)}`, 'dz_pos_7')],
+            [Markup.button.callback(`10${ocCheck(10, te.maxConcurrentPositions)}`, 'dz_pos_10'),
+             Markup.button.callback(`15${ocCheck(15, te.maxConcurrentPositions)}`, 'dz_pos_15')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_maxpos error: ${e.message}`); }
+    });
+    for (const pos of [3, 5, 7, 10, 15]) {
+      this.bot.action(`dz_pos_${pos}`, async (ctx) => {
+        try {
+          dzte().maxConcurrentPositions = pos; dzte().saveConfig();
+          await ctx.answerCbQuery(`Max positions: ${pos}`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_pos error: ${e.message}`); }
+      });
+    }
+
+    // dz_ PERF STATS BUTTON
+    this.bot.action('dz_perf_btn', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const perf = await db.getDemandZonePerformance(30);
+        const total = parseInt(perf.total) || 0;
+        if (total === 0) {
+          await ctx.editMessageText(
+            `🎯 <b>DEMAND ZONE PERFORMANCE</b>\n\nNo trades yet — data will appear after the first demand zone signal is paper-traded.`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('⬅️ Back', 'dz_settings')],
+            ]).reply_markup }
+          );
+          return;
+        }
+        const closed = parseInt(perf.closed_count) || 0;
+        const wins = parseInt(perf.wins) || 0;
+        const losses = parseInt(perf.losses) || 0;
+        const winRate = closed > 0 ? ((wins / closed) * 100).toFixed(0) : '0';
+        const totalPnl = parseFloat(perf.total_pnl) || 0;
+        const avgPnl = parseFloat(perf.avg_pnl) || 0;
+        const avgWin = parseFloat(perf.avg_win_pct) || 0;
+        const avgLoss = parseFloat(perf.avg_loss_pct) || 0;
+        const avgHold = parseFloat(perf.avg_hold_hours) || 0;
+        const tp1 = parseInt(perf.tp1_hits) || 0;
+        const tp2 = parseInt(perf.tp2_hits) || 0;
+        const tp3 = parseInt(perf.tp3_hits) || 0;
+
+        let msg = `🎯 <b>DEMAND ZONE PERFORMANCE</b> (30d)\n\n`;
+        msg += `📊 ${total} trades | ${closed} closed | ${parseInt(perf.open_count) || 0} open\n`;
+        msg += `✅ ${wins}W / ${losses}L — <b>${winRate}% win rate</b>\n`;
+        msg += `💰 Total P&L: <b>$${totalPnl.toFixed(2)}</b>\n`;
+        msg += `📈 Avg: $${avgPnl.toFixed(2)} | Win: +${avgWin.toFixed(1)}% | Loss: ${avgLoss.toFixed(1)}%\n`;
+        msg += `⏱ Avg hold: ${avgHold.toFixed(1)}h\n`;
+        msg += `🎯 TP hits: TP1 ${tp1} | TP2 ${tp2} | TP3 ${tp3}`;
+
+        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('⬅️ Back', 'dz_settings')],
+        ]).reply_markup });
+      } catch (e) { logger.error(`dz_perf_btn error: ${e.message}`); }
     });
 
     this.bot.command('whale', async (ctx) => {
@@ -3788,7 +4260,8 @@ class TelegramBot {
       [Markup.button.callback(`🏦 Exchanges${t.disabledExchanges?.size ? ` (${t.disabledExchanges.size} off)` : ''}`, 'cfg_exchanges')],
       [Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades'),
        Markup.button.callback('🔄 Refresh', 'cfg_main')],
-      [Markup.button.callback('🛑 Kill Switch', 'action_stop')],
+      [Markup.button.callback('⬅️ Panel', 'panel_main'),
+       Markup.button.callback('🛑 Kill Switch', 'action_stop')],
     ]);
 
     if (isNewMessage) {
@@ -4170,6 +4643,9 @@ class TelegramBot {
       { command: 'dzperf', description: 'Demand zone performance stats' },
       { command: 'dzstats', description: 'Demand zone quick P&L' },
       { command: 'dzclose', description: 'Close a DZ paper trade' },
+      { command: 'panel', description: 'Trading control panel' },
+      { command: 'swingsettings', description: 'Swing trade settings' },
+      { command: 'dzsettings', description: 'Demand zone settings' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 
