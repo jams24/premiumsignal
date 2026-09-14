@@ -58,6 +58,12 @@ class TradeExecutor {
     this.trailAtrMultPost = config.trailAtrMultPost || 3;
     this.dcaSpreadMult1 = config.dcaSpreadMult1 || 1.0;
     this.dcaSpreadMult2 = config.dcaSpreadMult2 || 1.5;
+
+    // Circuit breaker: pause after consecutive losses
+    this.cbEnabled = config.cbEnabled !== false;
+    this.cbStreak = config.cbStreak || 3;
+    this.cbPauseMinutes = config.cbPauseMinutes || 120;
+    this.cbOverrideUntil = 0; // manual override timestamp — skip CB until this time
   }
 
   onTradeUpdate(callback) {
@@ -112,25 +118,27 @@ class TradeExecutor {
       return { ok: false, reason: `Exchange ${signal.exchange} is disabled` };
     }
 
-    // Losing streak circuit breaker: pause 2h after 3 consecutive losses
-    try {
-      const recentTrades = await db.query(
-        `SELECT pnl_usd, close_reason, closed_at FROM trades WHERE status = 'closed' AND mode = 'live' ORDER BY closed_at DESC LIMIT 5`
-      );
-      let streak = 0;
-      for (const t of recentTrades.rows) {
-        if (parseFloat(t.pnl_usd) < -0.01) streak++;
-        else break;
-      }
-      if (streak >= 3) {
-        const lastClose = new Date(recentTrades.rows[0].closed_at).getTime();
-        const cooldownEnd = lastClose + 2 * 60 * 60 * 1000;
-        if (Date.now() < cooldownEnd) {
-          const minsLeft = Math.ceil((cooldownEnd - Date.now()) / 60000);
-          return { ok: false, reason: `Losing streak (${streak} losses) — paused ${minsLeft}m` };
+    // Losing streak circuit breaker
+    if (this.cbEnabled && Date.now() > this.cbOverrideUntil) {
+      try {
+        const recentTrades = await db.query(
+          `SELECT pnl_usd, close_reason, closed_at FROM trades WHERE status = 'closed' AND mode = 'live' ORDER BY closed_at DESC LIMIT 5`
+        );
+        let streak = 0;
+        for (const t of recentTrades.rows) {
+          if (parseFloat(t.pnl_usd) < -0.01) streak++;
+          else break;
         }
-      }
-    } catch (e) { /* DB error, skip check */ }
+        if (streak >= this.cbStreak) {
+          const lastClose = new Date(recentTrades.rows[0].closed_at).getTime();
+          const cooldownEnd = lastClose + this.cbPauseMinutes * 60 * 1000;
+          if (Date.now() < cooldownEnd) {
+            const minsLeft = Math.ceil((cooldownEnd - Date.now()) / 60000);
+            return { ok: false, reason: `Losing streak (${streak} losses) — paused ${minsLeft}m` };
+          }
+        }
+      } catch (e) { /* DB error, skip check */ }
+    }
 
     const cooldownData = this.cooldowns.get(signal.symbol?.toUpperCase());
     if (cooldownData && Date.now() < cooldownData.until) {
@@ -375,6 +383,9 @@ class TradeExecutor {
       trailAtrMultPost: this.trailAtrMultPost,
       dcaSpreadMult1: this.dcaSpreadMult1,
       dcaSpreadMult2: this.dcaSpreadMult2,
+      cbEnabled: this.cbEnabled,
+      cbStreak: this.cbStreak,
+      cbPauseMinutes: this.cbPauseMinutes,
     };
   }
 
@@ -404,6 +415,33 @@ class TradeExecutor {
     if (cfg.trailAtrMultPost != null) this.trailAtrMultPost = cfg.trailAtrMultPost;
     if (cfg.dcaSpreadMult1 != null) this.dcaSpreadMult1 = cfg.dcaSpreadMult1;
     if (cfg.dcaSpreadMult2 != null) this.dcaSpreadMult2 = cfg.dcaSpreadMult2;
+    if (cfg.cbEnabled != null) this.cbEnabled = cfg.cbEnabled;
+    if (cfg.cbStreak != null) this.cbStreak = cfg.cbStreak;
+    if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
+  }
+
+  async getCircuitBreakerStatus() {
+    if (!this.cbEnabled) return { active: false, enabled: false };
+    if (Date.now() < this.cbOverrideUntil) return { active: false, enabled: true, overrideUntil: this.cbOverrideUntil };
+    try {
+      const recentTrades = await db.query(
+        `SELECT pnl_usd, closed_at FROM trades WHERE status = 'closed' AND mode = 'live' ORDER BY closed_at DESC LIMIT 5`
+      );
+      let streak = 0;
+      for (const t of recentTrades.rows) {
+        if (parseFloat(t.pnl_usd) < -0.01) streak++;
+        else break;
+      }
+      if (streak >= this.cbStreak) {
+        const lastClose = new Date(recentTrades.rows[0].closed_at).getTime();
+        const cooldownEnd = lastClose + this.cbPauseMinutes * 60 * 1000;
+        if (Date.now() < cooldownEnd) {
+          const minsLeft = Math.ceil((cooldownEnd - Date.now()) / 60000);
+          return { active: true, enabled: true, streak, minsLeft, cooldownEnd };
+        }
+      }
+      return { active: false, enabled: true, streak };
+    } catch (e) { return { active: false, enabled: true }; }
   }
 
   async saveConfig() {

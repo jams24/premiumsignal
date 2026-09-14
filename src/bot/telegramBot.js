@@ -2149,6 +2149,13 @@ class TelegramBot {
       if (!te) return;
       await te.recalcDailyPnL?.();
       const openTrades = await db.getOpenTrades('onchain').catch(() => []);
+      const cbStatus = await te.getCircuitBreakerStatus().catch(() => ({ active: false, enabled: true }));
+      const cbLine = !cbStatus.enabled ? '🔓 Circuit Breaker: <b>OFF</b>'
+        : cbStatus.active ? `🚨 Circuit Breaker: <b>PAUSED ${cbStatus.minsLeft}m</b> (${cbStatus.streak} losses)`
+        : cbStatus.overrideUntil ? '⏭️ Circuit Breaker: <b>OVERRIDDEN</b>'
+        : `🛡️ Circuit Breaker: <b>ON</b> (${te.cbStreak} losses → ${te.cbPauseMinutes}m pause)`;
+      const cbBtnLabel = cbStatus.active ? `🚨 CB: PAUSED ${cbStatus.minsLeft}m`
+        : !cbStatus.enabled ? '🔓 CB: OFF' : '🛡️ CB: ON';
 
       const text =
         `🔗 <b>ONCHAIN SETTINGS</b>\n\n` +
@@ -2159,7 +2166,8 @@ class TelegramBot {
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
-        `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+        `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
+        `${cbLine}\n\n` +
         `Tap any button to configure:`;
 
       const keyboard = Markup.inlineKeyboard([
@@ -2171,6 +2179,7 @@ class TelegramBot {
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
          Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore')],
+        [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback('🔄 Refresh', 'oc_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
@@ -2439,6 +2448,80 @@ class TelegramBot {
           await ctx.answerCbQuery(`Min score: ${ocScoreLabel(conf)}`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_score error: ${e.message}`); }
+      });
+    }
+
+    // ── CIRCUIT BREAKER ──
+    this.bot.action('oc_cfg_cb', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cb = await te.getCircuitBreakerStatus().catch(() => ({ active: false, enabled: true }));
+        let text = '🛡️ <b>CIRCUIT BREAKER</b>\n\n';
+        text += `Status: ${cb.active ? `🚨 <b>PAUSED</b> — ${cb.minsLeft}m remaining (${cb.streak} losses)` : cb.enabled ? '✅ Armed' : '🔓 Disabled'}\n`;
+        text += `Trigger: <b>${te.cbStreak} consecutive losses</b>\n`;
+        text += `Pause: <b>${te.cbPauseMinutes} minutes</b>\n\n`;
+        if (cb.active) text += '<i>Trading is paused. Override to resume immediately.</i>';
+        else if (!cb.enabled) text += '<i>Circuit breaker is disabled — no pause on losing streaks.</i>';
+        else text += '<i>Will auto-pause trading after consecutive losses.</i>';
+
+        const buttons = [];
+        if (cb.active) {
+          buttons.push([Markup.button.callback('⏭️ Override — Resume Now', 'oc_cb_override')]);
+        }
+        buttons.push([
+          Markup.button.callback(`${te.cbEnabled ? '🔓 Disable' : '✅ Enable'}`, 'oc_cb_toggle'),
+        ]);
+        buttons.push([
+          Markup.button.callback('3 losses', `oc_cb_streak_3`),
+          Markup.button.callback('4 losses', `oc_cb_streak_4`),
+          Markup.button.callback('5 losses', `oc_cb_streak_5`),
+        ]);
+        buttons.push([
+          Markup.button.callback('30m pause', `oc_cb_pause_30`),
+          Markup.button.callback('60m', `oc_cb_pause_60`),
+          Markup.button.callback('120m', `oc_cb_pause_120`),
+        ]);
+        buttons.push([Markup.button.callback('⬅️ Back', 'oc_settings')]);
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup });
+      } catch (e) { logger.error(`oc_cfg_cb error: ${e.message}`); }
+    });
+
+    this.bot.action('oc_cb_toggle', async (ctx) => {
+      try {
+        const te = octe();
+        te.cbEnabled = !te.cbEnabled;
+        te.saveConfig();
+        await ctx.answerCbQuery(`Circuit breaker ${te.cbEnabled ? 'enabled' : 'disabled'}`);
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_cb_toggle error: ${e.message}`); }
+    });
+
+    this.bot.action('oc_cb_override', async (ctx) => {
+      try {
+        const te = octe();
+        te.cbOverrideUntil = Date.now() + 4 * 60 * 60 * 1000;
+        await ctx.answerCbQuery('Circuit breaker overridden — trading resumed');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_cb_override error: ${e.message}`); }
+    });
+
+    for (const n of [3, 4, 5]) {
+      this.bot.action(`oc_cb_streak_${n}`, async (ctx) => {
+        try {
+          octe().cbStreak = n; octe().saveConfig();
+          await ctx.answerCbQuery(`CB triggers after ${n} losses`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_cb_streak error: ${e.message}`); }
+      });
+    }
+    for (const m of [30, 60, 120]) {
+      this.bot.action(`oc_cb_pause_${m}`, async (ctx) => {
+        try {
+          octe().cbPauseMinutes = m; octe().saveConfig();
+          await ctx.answerCbQuery(`CB pause: ${m} minutes`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_cb_pause error: ${e.message}`); }
       });
     }
 
