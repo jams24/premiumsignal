@@ -662,6 +662,8 @@ class TelegramBot {
         const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
         const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
         const ageStr = age < 60 ? `${age}m` : age < 1440 ? `${Math.round(age / 60)}h` : `${Math.round(age / 1440)}d`;
+        const _d = new Date(t.created_at);
+        const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
 
         const curPrice = prices.get(`${t.exchange}:${t.symbol}`);
         let unrealizedPct = 0, unrealizedUsd = 0;
@@ -678,7 +680,7 @@ class TelegramBot {
         const pnlEmoji = combinedPnl >= 0 ? '🟩' : '🟥';
         const tpHits = [t.hit_tp1 ? '✅1' : '⬜1', t.hit_tp2 ? '✅2' : '⬜2', t.hit_tp3 ? '✅3' : '⬜3'].join(' ');
 
-        msg += `${isLong ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src} · ${ageStr}\n`;
+        msg += `${isLong ? '🟢' : '🔴'} <b>$${escapeHtml(t.symbol)}</b> ${src} · ${ageStr} · ${openTime}\n`;
         msg += `  Entry: $${entry.toPrecision(6)}`;
         if (curPrice) msg += ` → Now: $${curPrice.toPrecision(6)}`;
         msg += `\n`;
@@ -2045,6 +2047,8 @@ class TelegramBot {
         const modeTag = t.mode === 'paper' ? '📝' : '💰';
         const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
         const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
+        const _d = new Date(t.created_at);
+        const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
         const slTrailed = t.original_stop_loss && t.stop_loss !== t.original_stop_loss;
         // Fetch current price for live PnL
         let pnlStr = '';
@@ -2063,7 +2067,7 @@ class TelegramBot {
             }
           }
         } catch (e) { /* skip live price */ }
-        msg += `${modeTag} ${dir} <b>$${t.symbol}</b> (${t.exchange}) — ${ageStr}\n`;
+        msg += `${modeTag} ${dir} <b>$${t.symbol}</b> (${t.exchange}) — ${ageStr} · ${openTime}\n`;
         msg += `   Entry: $${t.entry_price} | Size: $${t.position_size} (${t.leverage}x)\n`;
         msg += pnlStr;
         msg += `   TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}${t.hit_tp3 ? ' ✅' : ''}\n`;
@@ -2698,9 +2702,11 @@ class TelegramBot {
       let msg = `🌊 <b>OPEN SWING TRADES</b> (${trades.length})\n\n`;
       for (const t of trades) {
         const age = ((Date.now() - new Date(t.created_at).getTime()) / (60 * 60 * 1000)).toFixed(0);
+        const _d = new Date(t.created_at);
+        const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
         msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(t.symbol)}</b> ${t.direction.toUpperCase()}\n`;
         msg += `  Entry: $${t.entry_price} | SL: $${t.stop_loss}\n`;
-        msg += `  Size: $${(t.position_size || 0).toFixed(0)} (${t.leverage}x) | Age: ${age}h\n`;
+        msg += `  Size: $${(t.position_size || 0).toFixed(0)} (${t.leverage}x) | Age: ${age}h · ${openTime}\n`;
         msg += `  TP1: $${t.tp1} | TP2: $${t.tp2} | TP3: $${t.tp3}\n\n`;
       }
       ctx.replyWithHTML(msg);
@@ -2835,11 +2841,13 @@ class TelegramBot {
       let msg = `🎯 <b>OPEN DZ PAPER TRADES</b> (${trades.length})\n\n`;
       for (const t of trades) {
         const age = ((Date.now() - new Date(t.created_at).getTime()) / (60 * 60 * 1000)).toFixed(0);
+        const _d = new Date(t.created_at);
+        const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
         const ctx_ = t.onchain_context || {};
         const scoreStr = ctx_.score ? ` | Score: ${ctx_.score}` : '';
         msg += `${t.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(t.symbol)}</b> ${t.direction.toUpperCase()}${scoreStr}\n`;
         msg += `  Entry: $${t.entry_price} | SL: $${t.stop_loss}\n`;
-        msg += `  Size: $${(t.position_size || 0).toFixed(0)} (${t.leverage}x) | Age: ${age}h\n`;
+        msg += `  Size: $${(t.position_size || 0).toFixed(0)} (${t.leverage}x) | Age: ${age}h · ${openTime}\n`;
         msg += `  TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}${t.hit_tp3 ? ' ✅' : ''}\n`;
         if (t.pnl_usd != null) msg += `  P&L: <b>$${parseFloat(t.pnl_usd).toFixed(2)}</b> (${parseFloat(t.pnl_pct).toFixed(1)}%)\n`;
         msg += '\n';
@@ -3048,7 +3056,11 @@ class TelegramBot {
           const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';
           const dir = isLong ? '⬆️' : '⬇️';
           const tpHit = [t.hit_tp1 ? 'TP1✅' : '', t.hit_tp2 ? 'TP2✅' : '', t.hit_tp3 ? 'TP3✅' : ''].filter(Boolean).join(' ') || 'none';
-          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange || 'unknown'})\n`;
+          const _age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+          const _ageStr = _age < 60 ? `${_age}m` : _age < 1440 ? `${Math.round(_age / 60)}h` : `${Math.round(_age / 1440)}d`;
+          const _d = new Date(t.created_at);
+          const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
+          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange || 'unknown'}) · ${_ageStr} · ${openTime}\n`;
           msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
           msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
           msg += `TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
@@ -3582,7 +3594,11 @@ class TelegramBot {
           const icon = pnlPct > 0 ? '🟢' : pnlPct < -5 ? '🔴' : '🟡';
           const dir = isLong ? '⬆️' : '⬇️';
           const tpHit = [t.hit_tp1 ? 'TP1✅' : '', t.hit_tp2 ? 'TP2✅' : '', t.hit_tp3 ? 'TP3✅' : ''].filter(Boolean).join(' ') || 'none';
-          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange || 'unknown'})\n`;
+          const _age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+          const _ageStr = _age < 60 ? `${_age}m` : _age < 1440 ? `${Math.round(_age / 60)}h` : `${Math.round(_age / 1440)}d`;
+          const _d = new Date(t.created_at);
+          const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
+          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange || 'unknown'}) · ${_ageStr} · ${openTime}\n`;
           msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
           msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
           msg += `TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
@@ -4657,8 +4673,12 @@ class TelegramBot {
           const dir = isLong ? '⬆️' : '⬇️';
           const dca = t.dca_filled_3 ? '3/3' : t.dca_filled_2 ? '2/3' : '1/3';
           const tpHit = [t.hit_tp1 ? 'TP1✅' : '', t.hit_tp2 ? 'TP2✅' : '', t.hit_tp3 ? 'TP3✅' : ''].filter(Boolean).join(' ') || 'none';
+          const _age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
+          const _ageStr = _age < 60 ? `${_age}m` : _age < 1440 ? `${Math.round(_age / 60)}h` : `${Math.round(_age / 1440)}d`;
+          const _d = new Date(t.created_at);
+          const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
 
-          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange})\n`;
+          msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange}) · ${_ageStr} · ${openTime}\n`;
           msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
           msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
           msg += `DCA: ${dca} | TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
