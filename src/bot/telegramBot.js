@@ -2175,6 +2175,7 @@ class TelegramBot {
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
+        `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
@@ -2193,7 +2194,8 @@ class TelegramBot {
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol: ON' : '⚡ Vol: OFF'}`, 'oc_cfg_volfilt')],
-        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore')],
+        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore'),
+         Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback('🔄 Refresh', 'oc_settings')],
@@ -2570,6 +2572,46 @@ class TelegramBot {
       } catch (e) { logger.error(`oc_cfg_confscale error: ${e.message}`); }
     });
 
+    // oc_ EXCHANGES
+    this.bot.action('oc_cfg_exchanges', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const exchanges = ['binance', 'bybit'];
+        let desc = `🔗 <b>ONCHAIN — EXCHANGES</b>\n\n`;
+        desc += `Enable/disable exchanges for onchain trades.\nDisabled exchanges won't receive new trades.\n\n`;
+        for (const ex of exchanges) {
+          const disabled = te.disabledExchanges?.has(ex);
+          const hasKey = !!(te.exchanges[ex]?.apiKey);
+          desc += `${disabled ? '❌' : '✅'} <b>${ex}</b>${hasKey ? '' : ' (no API key)'}\n`;
+        }
+        await ctx.editMessageText(desc, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            exchanges.map(ex => {
+              const disabled = te.disabledExchanges?.has(ex);
+              return Markup.button.callback(`${disabled ? '❌' : '✅'} ${ex}`, `oc_ex_${ex}`);
+            }),
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup,
+        });
+      } catch (e) { logger.error(`oc_cfg_exchanges error: ${e.message}`); }
+    });
+    for (const exId of ['binance', 'bybit']) {
+      this.bot.action(`oc_ex_${exId}`, async (ctx) => {
+        try {
+          const te = octe();
+          if (!te.disabledExchanges) te.disabledExchanges = new Set();
+          if (te.disabledExchanges.has(exId)) { te.disabledExchanges.delete(exId); }
+          else { te.disabledExchanges.add(exId); }
+          te.saveConfig();
+          await ctx.answerCbQuery(`${exId}: ${te.disabledExchanges.has(exId) ? 'disabled' : 'enabled'}`);
+          await ctx.deleteMessage().catch(() => {});
+          await showOcSettings(ctx, true);
+        } catch (e) { logger.error(`oc_ex toggle error: ${e.message}`); }
+      });
+    }
+
     // oc_ LOSS BUFFER
     this.bot.action('oc_cfg_lossbuf', async (ctx) => {
       try {
@@ -2763,6 +2805,7 @@ class TelegramBot {
           `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
           `⏱️ Max Hold: <b>${Math.round(te.maxTradeAge / (24 * 60 * 60 * 1000))}d</b> | Time Exit: <b>${te.timeExitMinutes > 0 ? te.timeExitMinutes + 'min' : 'Off'}</b>\n` +
           `🎯 Profit Protect: <b>${te.profitProtectPct}%</b> | Trail: <b>${te.trailAtrMultPre}x/${te.trailAtrMultPost}x ATR</b>\n` +
+          `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
           `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
           `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
           `👁️ Watchlist: <b>${watchlist.length}</b> symbols\n\n` +
@@ -3068,6 +3111,7 @@ class TelegramBot {
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+        `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
         `Tap any button to configure:`;
@@ -3087,6 +3131,7 @@ class TelegramBot {
          Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'sw_cfg_maxpos')],
         [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'sw_cfg_riskfit'),
          Markup.button.callback(swCbLabel, 'sw_cfg_cb')],
+        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'sw_cfg_exchanges')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'sw_trades'),
          Markup.button.callback('🔄 Refresh', 'sw_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
@@ -3584,6 +3629,46 @@ class TelegramBot {
       });
     }
 
+    // sw_ EXCHANGES
+    this.bot.action('sw_cfg_exchanges', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        const exchanges = ['binance', 'bybit'];
+        let desc = `🌊 <b>SWING — EXCHANGES</b>\n\n`;
+        desc += `Enable/disable exchanges for swing trades.\nDisabled exchanges won't receive new trades.\n\n`;
+        for (const ex of exchanges) {
+          const disabled = te.disabledExchanges?.has(ex);
+          const hasKey = !!(te.exchanges[ex]?.apiKey);
+          desc += `${disabled ? '❌' : '✅'} <b>${ex}</b>${hasKey ? '' : ' (no API key)'}\n`;
+        }
+        await ctx.editMessageText(desc, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            exchanges.map(ex => {
+              const disabled = te.disabledExchanges?.has(ex);
+              return Markup.button.callback(`${disabled ? '❌' : '✅'} ${ex}`, `sw_ex_${ex}`);
+            }),
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup,
+        });
+      } catch (e) { logger.error(`sw_cfg_exchanges error: ${e.message}`); }
+    });
+    for (const exId of ['binance', 'bybit']) {
+      this.bot.action(`sw_ex_${exId}`, async (ctx) => {
+        try {
+          const te = swte();
+          if (!te.disabledExchanges) te.disabledExchanges = new Set();
+          if (te.disabledExchanges.has(exId)) { te.disabledExchanges.delete(exId); }
+          else { te.disabledExchanges.add(exId); }
+          te.saveConfig();
+          await ctx.answerCbQuery(`${exId}: ${te.disabledExchanges.has(exId) ? 'disabled' : 'enabled'}`);
+          await ctx.deleteMessage().catch(() => {});
+          await showSwSettings(ctx, true);
+        } catch (e) { logger.error(`sw_ex toggle error: ${e.message}`); }
+      });
+    }
+
     // === DEMAND ZONE SETTINGS PANEL (dz_ prefix) — paper only ===
     const dzte = () => this.dzTradeExecutor;
     const showDzSettings = async (ctx, isNew = false) => {
@@ -3616,6 +3701,7 @@ class TelegramBot {
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `📈 Paper P&L: <b>$${paperPnl.toFixed(2)}</b> (${paperTrades.length} open)\n` +
         `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
+        `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
         `Tap any button to configure:`;
@@ -3633,6 +3719,7 @@ class TelegramBot {
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'dz_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'dz_cfg_confscale'),
          Markup.button.callback(dzCbLabel, 'dz_cfg_cb')],
+        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'dz_cfg_exchanges')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -4138,6 +4225,46 @@ class TelegramBot {
           await ctx.answerCbQuery(`CB pause: ${m} minutes`);
           await showDzSettings(ctx);
         } catch (e) { logger.error(`dz_cb_pause error: ${e.message}`); }
+      });
+    }
+
+    // dz_ EXCHANGES
+    this.bot.action('dz_cfg_exchanges', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        const exchanges = ['binance', 'bybit'];
+        let desc = `🎯 <b>DZ — EXCHANGES</b>\n\n`;
+        desc += `Enable/disable exchanges for demand zone trades.\nDisabled exchanges won't receive new trades.\n\n`;
+        for (const ex of exchanges) {
+          const disabled = te.disabledExchanges?.has(ex);
+          const hasKey = !!(te.exchanges[ex]?.apiKey);
+          desc += `${disabled ? '❌' : '✅'} <b>${ex}</b>${hasKey ? '' : ' (no API key)'}\n`;
+        }
+        await ctx.editMessageText(desc, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            exchanges.map(ex => {
+              const disabled = te.disabledExchanges?.has(ex);
+              return Markup.button.callback(`${disabled ? '❌' : '✅'} ${ex}`, `dz_ex_${ex}`);
+            }),
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup,
+        });
+      } catch (e) { logger.error(`dz_cfg_exchanges error: ${e.message}`); }
+    });
+    for (const exId of ['binance', 'bybit']) {
+      this.bot.action(`dz_ex_${exId}`, async (ctx) => {
+        try {
+          const te = dzte();
+          if (!te.disabledExchanges) te.disabledExchanges = new Set();
+          if (te.disabledExchanges.has(exId)) { te.disabledExchanges.delete(exId); }
+          else { te.disabledExchanges.add(exId); }
+          te.saveConfig();
+          await ctx.answerCbQuery(`${exId}: ${te.disabledExchanges.has(exId) ? 'disabled' : 'enabled'}`);
+          await ctx.deleteMessage().catch(() => {});
+          await showDzSettings(ctx, true);
+        } catch (e) { logger.error(`dz_ex toggle error: ${e.message}`); }
       });
     }
 
