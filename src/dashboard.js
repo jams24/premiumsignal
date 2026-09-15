@@ -811,7 +811,7 @@ function renderSignals() {
     var agoStr = agoMin < 60 ? agoMin + 'm ago' : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
     var sim = simPnl(s);
     var pnlClass = sim.pnl >= 0 ? 'pos' : 'neg';
-    var pnlSign = sim.pnl >= 0 ? '+' : '';
+    var pnlSign = sim.pnl >= 0 ? '+' : '-';
     var ts = s._status || getTradeStatus(s, levels);
 
     var html = '<div class="signal-card conviction-' + conv + '" id="' + id + '">';
