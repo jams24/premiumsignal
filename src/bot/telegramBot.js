@@ -2265,6 +2265,7 @@ class TelegramBot {
       }
     };
 
+    this._showOcSettings = showOcSettings;
     this.bot.action('oc_settings', async (ctx) => {
       if (!octe()) return ctx.answerCbQuery('Not initialized.');
       try { await ctx.answerCbQuery(); } catch (e) {}
@@ -3202,6 +3203,7 @@ class TelegramBot {
       }
     };
 
+    this._showSwSettings = showSwSettings;
     this.bot.command('swingsettings', async (ctx) => { await showSwSettings(ctx, true); });
     this.bot.action('sw_settings', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
@@ -3794,6 +3796,7 @@ class TelegramBot {
       }
     };
 
+    this._showDzSettings = showDzSettings;
     this.bot.command('dzsettings', async (ctx) => { await showDzSettings(ctx, true); });
     this.bot.action('dz_settings', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
@@ -5209,9 +5212,9 @@ class TelegramBot {
 
     // Register for all modes
     registerHoursHandlers('cfg', () => te(), (ctx) => this.showSettingsMain(ctx));
-    registerHoursHandlers('oc_cfg', octe, (ctx) => showOcSettings(ctx));
-    registerHoursHandlers('sw_cfg', swte, (ctx) => showSwSettings(ctx));
-    registerHoursHandlers('dz_cfg', dzte, (ctx) => showDzSettings(ctx));
+    registerHoursHandlers('oc_cfg', () => this.onchainTradeExecutor, (ctx) => this._showOcSettings(ctx));
+    registerHoursHandlers('sw_cfg', () => this.swingTradeExecutor, (ctx) => this._showSwSettings(ctx));
+    registerHoursHandlers('dz_cfg', () => this.dzTradeExecutor, (ctx) => this._showDzSettings(ctx));
 
     // /sethours command: /sethours [mode] 8-14,20-23
     this.bot.command('sethours', async (ctx) => {
@@ -5220,7 +5223,14 @@ class TelegramBot {
       if (args.length === 0) {
         return ctx.replyWithHTML('Usage: <code>/sethours [mode] hours</code>\nMode: main, onchain, swing, dz (default: main)\nHours: <code>8-14,20-23</code> or <code>off</code> for 24/7\nExamples:\n<code>/sethours 8-14,20-23</code>\n<code>/sethours dz 13-21</code>\n<code>/sethours swing off</code>');
       }
-      const modeMap = { main: () => te(), onchain: octe, oc: octe, swing: swte, sw: swte, dz: dzte };
+      const modeMap = {
+        main: () => this.tradeExecutor,
+        onchain: () => this.onchainTradeExecutor,
+        oc: () => this.onchainTradeExecutor,
+        swing: () => this.swingTradeExecutor,
+        sw: () => this.swingTradeExecutor,
+        dz: () => this.dzTradeExecutor,
+      };
       let modeName = 'main', hoursStr;
       if (modeMap[args[0]?.toLowerCase()]) {
         modeName = args[0].toLowerCase();
@@ -5228,7 +5238,7 @@ class TelegramBot {
       } else {
         hoursStr = args[0];
       }
-      const executor = (modeMap[modeName] || (() => te()))();
+      const executor = (modeMap[modeName] || (() => this.tradeExecutor))();
       if (!executor) return ctx.reply('Executor not available');
       if (hoursStr === 'off' || hoursStr === '24/7') {
         executor.tradingHours = [];
