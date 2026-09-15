@@ -147,7 +147,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .chart-tf-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
 .chart-tf-btn { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; font-family: var(--font-mono); cursor: pointer; font-weight: 600; }
 .chart-tf-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-.chart-container { width: 100%; height: 320px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); background: #131722; position: relative; }
+.chart-container { width: 100%; height: 400px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); background: #131722; position: relative; transition: height 0.3s; }
+.chart-container.expanded { height: 600px; }
+.chart-expand-btn { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; font-family: var(--font-mono); cursor: pointer; }
+.chart-expand-btn:hover { border-color: var(--text2); color: var(--text2); }
 .chart-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-family: var(--font-mono); font-size: 12px; z-index: 2; }
 .chart-legend { display: flex; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
 .chart-legend-item { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 10px; color: var(--text2); }
@@ -807,8 +810,9 @@ function renderSignals() {
     html += '<button class="chart-tf-btn active" data-tf="15m" data-idx="' + i + '" onclick="loadChart(this)">15m</button>';
     html += '<button class="chart-tf-btn" data-tf="1h" data-idx="' + i + '" onclick="loadChart(this)">1h</button>';
     html += '<button class="chart-tf-btn" data-tf="4h" data-idx="' + i + '" onclick="loadChart(this)">4h</button>';
-    html += '<button class="chart-tf-btn" data-idx="' + i + '" onclick="reloadChart(' + i + ')" style="margin-left:auto">Refresh</button>';
-    html += '<span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">Snapshot (not live)</span>';
+    html += '<button class="chart-expand-btn" onclick="toggleChartSize(' + i + ')" style="margin-left:auto" id="expand-btn-' + i + '">Expand</button>';
+    html += '<button class="chart-tf-btn" data-idx="' + i + '" onclick="reloadChart(' + i + ')">Refresh</button>';
+    html += '<span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">Snapshot</span>';
     html += '</div>';
     html += '<div class="chart-container" id="chart-' + i + '"><div class="chart-loading" id="chart-load-' + i + '">Click a timeframe to load chart</div></div>';
     html += '<div class="chart-legend">';
@@ -852,6 +856,17 @@ function renderSignals() {
 }
 
 var chartInstances = {};
+
+function toggleChartSize(idx) {
+  var container = document.getElementById('chart-' + idx);
+  var btn = document.getElementById('expand-btn-' + idx);
+  container.classList.toggle('expanded');
+  var isExpanded = container.classList.contains('expanded');
+  btn.textContent = isExpanded ? 'Collapse' : 'Expand';
+  if (chartInstances[idx]) {
+    chartInstances[idx].applyOptions({ height: isExpanded ? 600 : 400 });
+  }
+}
 
 function reloadChart(idx) {
   var activeBtn = document.querySelector('#tf-tabs-' + idx + ' .chart-tf-btn.active');
@@ -905,7 +920,7 @@ function renderChart(containerId, idx, candles, signal, tf) {
 
   var chart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
-    height: 320,
+    height: container.classList.contains('expanded') ? 600 : 400,
     layout: { background: { type: 'solid', color: '#131722' }, textColor: '#9ca3af', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
     grid: { vertLines: { color: 'rgba(42,46,57,0.5)' }, horzLines: { color: 'rgba(42,46,57,0.5)' } },
     crosshair: { mode: 0 },
@@ -931,22 +946,22 @@ function renderChart(containerId, idx, candles, signal, tf) {
   var entryPrice = parseFloat(signal.price);
   var levels = calcLevels(signal);
 
-  candleSeries.createPriceLine({ price: entryPrice, color: '#f59e0b', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
-  candleSeries.createPriceLine({ price: levels.sl, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
-  candleSeries.createPriceLine({ price: levels.tp1, color: '#10b981', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP1' });
-  candleSeries.createPriceLine({ price: levels.tp2, color: '#10b981', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP2' });
-  candleSeries.createPriceLine({ price: levels.tp3, color: '#10b981', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP3' });
+  candleSeries.createPriceLine({ price: entryPrice, color: '#f59e0b', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' });
+  candleSeries.createPriceLine({ price: levels.sl, color: 'rgba(239,68,68,0.4)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: 'SL' });
+  candleSeries.createPriceLine({ price: levels.tp1, color: 'rgba(16,185,129,0.4)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: 'TP1' });
+  candleSeries.createPriceLine({ price: levels.tp2, color: 'rgba(16,185,129,0.3)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: 'TP2' });
+  candleSeries.createPriceLine({ price: levels.tp3, color: 'rgba(16,185,129,0.25)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: 'TP3' });
 
-  var sigTime = Math.floor(new Date(signal.created_at).getTime() / 1000);
+  var sigTimeSec = Math.floor(new Date(signal.created_at).getTime() / 1000);
+
   candleSeries.setMarkers([{
-    time: sigTime,
+    time: sigTimeSec,
     position: signal.direction === 'short' ? 'aboveBar' : 'belowBar',
     color: signal.direction === 'short' ? '#ef4444' : '#10b981',
     shape: signal.direction === 'short' ? 'arrowDown' : 'arrowUp',
-    text: signal.direction.toUpperCase() + ' ' + (parseInt(signal.score) || 0),
+    text: signal.direction.toUpperCase() + ' @ ' + fmtPrice(signal.price),
+    size: 2,
   }]);
-
-  var sigTimeSec = Math.floor(new Date(signal.created_at).getTime() / 1000);
   var tfSec = tf === '4h' ? 14400 : tf === '1h' ? 3600 : tf === '15m' ? 900 : 300;
   var paddingBefore = tfSec * 30;
   var paddingAfter = tfSec * 40;
