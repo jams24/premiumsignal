@@ -202,6 +202,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <span class="rule-item"><span class="rule-x">-</span> Funding against direction</span>
       <span class="rule-item"><span class="rule-x">-</span> Hold 45-90 min for best results</span>
     </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;font-family:var(--font-mono);padding:0 2px;">Signals = onchain alerts detected by scanner. P&L = simulated profit if you entered at alert price. Not live bot trades.</div>
     <div class="refresh-bar">
       <span class="refresh-left" id="refresh-timer">Updated just now</span>
       <div class="filter-row">
@@ -661,7 +662,10 @@ function renderSignals() {
     var matched = getMatchedPatterns(s);
     var positiveMatches = matched.filter(function(m) { return !PATTERN_RULES[m].negative; });
     var negativeMatches = matched.filter(function(m) { return PATTERN_RULES[m].negative; });
-    var timeStr = new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    var dt = new Date(s.created_at);
+    var timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    var agoMin = Math.floor((Date.now() - dt.getTime()) / 60000);
+    var agoStr = agoMin < 60 ? agoMin + 'm ago' : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
     var sim = simPnl(s);
     var pnlClass = sim.pnl >= 0 ? 'pos' : 'neg';
     var pnlSign = sim.pnl >= 0 ? '+' : '';
@@ -671,7 +675,7 @@ function renderSignals() {
     html += '<div class="signal-left">';
     html += '<span class="signal-dir ' + s.direction + '">' + s.direction + '</span>';
     html += '<span class="signal-symbol">' + s.symbol + '</span>';
-    html += '<span class="signal-price">' + fmtPrice(s.price) + ' \\u00b7 ' + timeStr + ' UTC</span>';
+    html += '<span class="signal-price">' + fmtPrice(s.price) + ' \\u00b7 ' + timeStr + ' \\u00b7 ' + agoStr + '</span>';
     html += '</div><div class="signal-right">';
     html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
     html += '<span class="conviction-badge ' + conv + '">' + (conv === 'high' ? 'HIGH' : conv === 'med' ? 'MED' : 'LOW') + '</span>';
@@ -700,7 +704,7 @@ function renderSignals() {
     html += '<div class="level-row"><span class="level-label">TP2 (+9%)</span><span class="level-val tp">' + fmtPrice(levels.tp2) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">TP3 (+15%)</span><span class="level-val tp">' + fmtPrice(levels.tp3) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">R:R</span><span class="rr-badge">' + levels.rr + ':1</span></div>';
-    html += '</div><div class="setup-box"><h4>Simulated P&L</h4>';
+    html += '</div><div class="setup-box"><h4>If You Entered ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
     var tp1Pnl = NOTIONAL * 0.045, tp2Pnl = NOTIONAL * 0.09, tp3Pnl = NOTIONAL * 0.15;
     var slPnl = NOTIONAL * 0.06;
     html += '<div class="level-row"><span class="level-label">If TP1 hit</span><span class="level-val tp">+$' + tp1Pnl.toFixed(0) + '</span></div>';
