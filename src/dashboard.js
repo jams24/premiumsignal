@@ -87,7 +87,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .signal-pnl.pos { background: var(--accent-dim); color: var(--accent); }
 .signal-pnl.neg { background: var(--danger-dim); color: var(--danger); }
 
-.trade-setup { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.trade-setup { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 600px) { .trade-setup { grid-template-columns: 1fr; } }
 .setup-box { background: var(--bg); border-radius: 8px; padding: 12px; }
 .setup-box h4 { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
@@ -241,6 +241,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <span class="sizing-input-label">Lev</span>
       <input class="sizing-input" id="custom-lev" type="number" min="1" max="125" step="1" style="width:50px" oninput="applyCustom()">
       <span class="sizing-input-label">x</span>
+      <div class="sizing-sep"></div>
+      <span class="sizing-input-label">Risk $</span>
+      <input class="sizing-input" id="custom-risk" type="number" min="1" step="5" placeholder="50" style="width:70px" oninput="applyRisk()">
       <span class="sizing-notional" id="notional-display"></span>
     </div>
     <div class="stats-bar" id="stats-bar"></div>
@@ -535,22 +538,25 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 </div>
 
 <script>
-var MARGIN = 2000, LEVERAGE = 20, NOTIONAL = 40000, SCORE_FILTER = 0;
+var MARGIN = 2000, LEVERAGE = 20, NOTIONAL = 40000, SCORE_FILTER = 0, RISK_AMOUNT = 0;
 
 function loadSizing() {
   try {
     var s = JSON.parse(localStorage.getItem('sc_sizing'));
     if (s && s.m > 0 && s.l > 0) { MARGIN = s.m; LEVERAGE = s.l; }
+    if (s && s.r > 0) RISK_AMOUNT = s.r;
   } catch(e) {}
   NOTIONAL = MARGIN * LEVERAGE;
 }
 function saveSizing() {
-  localStorage.setItem('sc_sizing', JSON.stringify({ m: MARGIN, l: LEVERAGE }));
+  localStorage.setItem('sc_sizing', JSON.stringify({ m: MARGIN, l: LEVERAGE, r: RISK_AMOUNT }));
   NOTIONAL = MARGIN * LEVERAGE;
 }
 function updateSizingUI() {
   document.getElementById('custom-margin').value = MARGIN;
   document.getElementById('custom-lev').value = LEVERAGE;
+  var riskInput = document.getElementById('custom-risk');
+  if (riskInput) riskInput.value = RISK_AMOUNT || '';
   document.getElementById('notional-display').textContent = '$' + NOTIONAL.toLocaleString() + ' notional';
   document.querySelectorAll('.sizing-bar .preset-btn').forEach(function(b) {
     b.classList.toggle('active', parseInt(b.dataset.m) === MARGIN && parseInt(b.dataset.l) === LEVERAGE);
@@ -566,6 +572,12 @@ function applyCustom() {
   if (m < 10) m = 10; if (l < 1) l = 1; if (l > 125) l = 125;
   MARGIN = m; LEVERAGE = l;
   saveSizing(); updateSizingUI(); renderStats(); renderSignals();
+}
+function applyRisk() {
+  var r = parseInt(document.getElementById('custom-risk').value) || 0;
+  if (r < 0) r = 0;
+  RISK_AMOUNT = r;
+  saveSizing(); renderSignals();
 }
 function toggleRoster() {
   var panel = document.getElementById('roster-panel');
@@ -1058,7 +1070,49 @@ function renderSignals() {
     html += '<div class="level-row"><span class="level-label">If SL hit</span><span class="level-val sl">-$' + slPnl.toFixed(0) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">Current Move P&L</span><span class="level-val ' + (sim.pnl >= 0 ? 'tp' : 'sl') + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">Hold Target</span><span class="level-val">45-90 min</span></div>';
-    html += '</div></div>';
+    html += '</div>';
+
+    if (RISK_AMOUNT > 0) {
+      var riskEntry = entryP;
+      var riskSL = levels.sl;
+      var slDistPct = Math.abs(riskEntry - riskSL) / riskEntry;
+      var lossAtSL = NOTIONAL * slDistPct;
+      var liqDistPct = 1 / LEVERAGE;
+      var liqPrice = s.direction === 'long' ? riskEntry * (1 - liqDistPct) : riskEntry * (1 + liqDistPct);
+      var marginForSL = Math.ceil(lossAtSL);
+      var slSafe = MARGIN >= marginForSL;
+      var liqBeforeSL = s.direction === 'long' ? (liqPrice > riskSL) : (liqPrice < riskSL);
+      var riskSLPrice, riskSLPct;
+      if (s.direction === 'long') {
+        riskSLPrice = riskEntry * (1 - (RISK_AMOUNT / NOTIONAL));
+        riskSLPct = ((riskEntry - riskSLPrice) / riskEntry * 100).toFixed(1);
+      } else {
+        riskSLPrice = riskEntry * (1 + (RISK_AMOUNT / NOTIONAL));
+        riskSLPct = ((riskSLPrice - riskEntry) / riskEntry * 100).toFixed(1);
+      }
+      var riskSLCovers = s.direction === 'long' ? (riskSLPrice <= riskSL) : (riskSLPrice >= riskSL);
+      var neededRisk = Math.ceil(NOTIONAL * slDistPct);
+      html += '<div class="setup-box"><h4>Risk Analysis ($' + RISK_AMOUNT + ' Risk)</h4>';
+      html += '<div class="level-row"><span class="level-label">Your Risk</span><span class="level-val" style="color:var(--gold)">$' + RISK_AMOUNT + '</span></div>';
+      html += '<div class="level-row"><span class="level-label">Position Size</span><span class="level-val">$' + NOTIONAL.toLocaleString() + '</span></div>';
+      html += '<div class="level-row"><span class="level-label">Your SL ($' + RISK_AMOUNT + ' loss)</span><span class="level-val ' + (riskSLCovers ? 'tp' : 'sl') + '">' + fmtPrice(riskSLPrice) + ' (' + riskSLPct + '%)</span></div>';
+      html += '<div class="level-row"><span class="level-label">System SL</span><span class="level-val sl">' + fmtPrice(riskSL) + ' (' + levels.slPct + '%)</span></div>';
+      html += '<div class="level-row"><span class="level-label">Liq Price (' + LEVERAGE + 'x)</span><span class="level-val ' + (liqBeforeSL ? 'sl' : '') + '">' + fmtPrice(liqPrice) + '</span></div>';
+      if (riskSLCovers) {
+        html += '<div class="level-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px"><span class="level-label" style="color:var(--green);font-weight:600">SAFE</span><span class="level-val tp">$' + RISK_AMOUNT + ' covers system SL</span></div>';
+      } else {
+        html += '<div class="level-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px"><span class="level-label" style="color:var(--danger);font-weight:600">WARNING</span><span class="level-val sl">SL loss = $' + lossAtSL.toFixed(0) + ' &gt; $' + RISK_AMOUNT + ' risk</span></div>';
+        html += '<div class="level-row"><span class="level-label">Risk needed for SL</span><span class="level-val" style="color:var(--gold)">$' + neededRisk + '</span></div>';
+      }
+      if (liqBeforeSL) {
+        html += '<div class="level-row"><span class="level-label" style="color:var(--danger);font-weight:600">DANGER</span><span class="level-val sl">Liquidated at ' + fmtPrice(liqPrice) + ' before SL hits</span></div>';
+        var safeLev = Math.floor(1 / slDistPct);
+        if (safeLev >= 1) html += '<div class="level-row"><span class="level-label">Max safe leverage</span><span class="level-val" style="color:var(--gold)">' + safeLev + 'x</span></div>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
 
     html += '<div class="reasons-grid">';
     reasons.forEach(function(r) { html += '<div class="reason-row"><span class="reason-icon">' + r.icon + '</span><span class="reason-text">' + r.text + '</span></div>'; });
