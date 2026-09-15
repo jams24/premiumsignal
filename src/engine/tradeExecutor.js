@@ -1069,7 +1069,7 @@ class TradeExecutor {
         exchange: signal.exchange,
         direction: signal.direction,
         mode: 'live',
-        entryPrice: order.average || entryPrice,
+        entryPrice: order.average || order.price || entryPrice,
         quantity: parseFloat(roundedQty),
         positionSize: usedFullEntry ? positionSize : positionSize / 3,
         leverage,
@@ -1141,11 +1141,21 @@ class TradeExecutor {
 
         const pairs = [`${trade.symbol}/USDT:USDT`, `${trade.symbol}/USDT`];
         let currentPrice = null;
+        let exitPrice = null;
         let ohlcv = null;
         for (const pair of pairs) {
           if (exchange.markets?.[pair]) {
             const ticker = await exchange.fetchTicker(pair);
             currentPrice = ticker.last;
+            // For live trades, use bid/ask for realistic exit pricing
+            // Long sells at bid, short covers at ask
+            if (trade.mode === 'live') {
+              exitPrice = trade.direction === 'long'
+                ? (ticker.bid || ticker.last)
+                : (ticker.ask || ticker.last);
+            } else {
+              exitPrice = currentPrice;
+            }
             try {
               ohlcv = await exchange.fetchOHLCV(pair, '4h', undefined, 2);
             } catch (e) { /* ok — invalidation check will be skipped */ }
@@ -1160,6 +1170,9 @@ class TradeExecutor {
               if (exchange.markets?.[pair]) {
                 const ticker = await exchange.fetchTicker(pair);
                 currentPrice = ticker.last;
+                exitPrice = trade.mode === 'live'
+                  ? (trade.direction === 'long' ? (ticker.bid || ticker.last) : (ticker.ask || ticker.last))
+                  : currentPrice;
                 break;
               }
             }
@@ -1190,10 +1203,10 @@ class TradeExecutor {
         // --- DCA CHECK: fill DCA 2 and DCA 3 if price reaches levels ---
         await this.checkDCAFills(trade, currentPrice, isLong);
 
-        // Recalculate P&L based on current avg entry (may have changed from DCA)
+        // P&L uses exitPrice (bid/ask for live, last for paper) for realistic tracking
         const pnlPct = isLong
-          ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
-          : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
+          ? ((exitPrice - trade.entry_price) / trade.entry_price) * 100
+          : ((trade.entry_price - exitPrice) / trade.entry_price) * 100;
         const pnlUsd = (pnlPct / 100) * trade.position_size;
 
         // Always track peak price — regardless of TP/protection state
@@ -1228,7 +1241,7 @@ class TradeExecutor {
           } else if (tradeAgeMs > this.timeExitMinutes * 60 * 1000) {
             // Full time, no TP1: close the trade — edge is gone
             action = 'time_exit';
-            await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'time_exit');
+            await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'time_exit');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 1 * 60 * 60 * 1000, entryPrice: trade.entry_price });
@@ -1257,7 +1270,7 @@ class TradeExecutor {
                       : result.chochEvents.some(e => e.type === 'CHOCH_BULLISH');
                     if (structureConflict && hasChoch && pnlUsd < 0) {
                       action = 'thesis_broken';
-                      await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'thesis_broken');
+                      await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'thesis_broken');
                       this.dailyPnL += pnlUsd;
                       if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
                       this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
@@ -1280,7 +1293,7 @@ class TradeExecutor {
             : prevClose > trade.invalidation;
           if (invalidated) {
             action = 'invalidated';
-            await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'invalidated');
+            await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
@@ -1290,7 +1303,7 @@ class TradeExecutor {
         // --- TP4 CHECK: close remaining runner ---
         if (!action && trade.tp4 && (isLong ? currentPrice >= trade.tp4 : currentPrice <= trade.tp4)) {
           action = 'tp4';
-          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'tp4');
+          await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'tp4');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 2 * 60 * 60 * 1000, entryPrice: trade.entry_price });
@@ -1299,7 +1312,7 @@ class TradeExecutor {
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
           action = 'tp3';
           await db.updateTradeHit(trade.id, 'hit_tp3');
-          const partialPnl = await this.partialClosePosition(trade, 0.5, currentPrice);
+          const partialPnl = await this.partialClosePosition(trade, 0.5, exitPrice);
           const newSL = trade.tp2;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
@@ -1309,7 +1322,7 @@ class TradeExecutor {
         else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
           action = 'tp2';
           await db.updateTradeHit(trade.id, 'hit_tp2');
-          const partialPnl = await this.partialClosePosition(trade, 0.5, currentPrice);
+          const partialPnl = await this.partialClosePosition(trade, 0.5, exitPrice);
           const newSL = trade.tp1;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
@@ -1319,7 +1332,7 @@ class TradeExecutor {
         else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
-          const partialPnl = await this.partialClosePosition(trade, 0.33, currentPrice);
+          const partialPnl = await this.partialClosePosition(trade, 0.33, exitPrice);
           const newSL = trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
@@ -1401,7 +1414,7 @@ class TradeExecutor {
           const effectiveCap = this.maxLossPerTrade * (this.lossBufferPct / 100);
           if (Math.abs(pnlUsd) >= effectiveCap) {
             action = 'max_loss';
-            await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'max_loss');
+            await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'max_loss');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             if (trade.mode === 'live') await this.closeExchangePosition(trade);
@@ -1412,8 +1425,8 @@ class TradeExecutor {
         // --- SL CHECK ---
         else if (!action && trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {
           action = 'sl';
-          // Paper trades: use SL price as exit (not gap price) for realistic simulation
-          const slExitPrice = trade.mode === 'paper' ? trade.stop_loss : currentPrice;
+          // Paper: SL price as exit; Live: bid/ask for realistic fill
+          const slExitPrice = trade.mode === 'paper' ? trade.stop_loss : exitPrice;
           const slPnlPct = isLong
             ? ((slExitPrice - trade.entry_price) / trade.entry_price) * 100
             : ((trade.entry_price - slExitPrice) / trade.entry_price) * 100;
@@ -1426,7 +1439,7 @@ class TradeExecutor {
         // --- AUTO-CLOSE AFTER maxTradeAge ---
         else if (!action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
           action = 'expired';
-          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'expired');
+          await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 2 * 60 * 60 * 1000, entryPrice: trade.entry_price });
@@ -1542,7 +1555,7 @@ class TradeExecutor {
 
   async closeExchangePosition(trade) {
     const exchange = this.exchanges[trade.exchange];
-    if (!exchange || !exchange.apiKey) return;
+    if (!exchange || !exchange.apiKey) return null;
 
     try {
       const pair = `${trade.symbol}/USDT:USDT`;
@@ -1563,11 +1576,12 @@ class TradeExecutor {
           qty = Math.abs(pos.notional / pos.contractSize);
         } else if (!pos) {
           logger.info(`No open position found for ${pair} — already closed on exchange`);
-          return;
+          return null;
         }
       } catch (e) { logger.warn(`Could not fetch position for ${pair}, using trade.quantity: ${e.message}`); }
 
       const side = trade.direction === 'long' ? 'sell' : 'buy';
+      let fillPrice = null;
 
       // Try limit order first (0.3% tolerance) to avoid slippage on thin books
       try {
@@ -1577,8 +1591,9 @@ class TradeExecutor {
           ? ticker.last * (1 - slipTol)
           : ticker.last * (1 + slipTol);
         const precisePrice = exchange.priceToPrecision(pair, limitPrice);
-        await exchange.createOrder(pair, 'limit', side, qty, precisePrice, { reduceOnly: true, timeInForce: 'IOC' });
-        logger.info(`Closed live position with IOC limit: ${pair} at $${precisePrice} on ${trade.exchange}`);
+        const order = await exchange.createOrder(pair, 'limit', side, qty, precisePrice, { reduceOnly: true, timeInForce: 'IOC' });
+        fillPrice = order.average || order.price || parseFloat(precisePrice);
+        logger.info(`Closed live position with IOC limit: ${pair} at $${precisePrice} (fill: $${fillPrice}) on ${trade.exchange}`);
 
         // Verify fully closed — fetch position again
         try {
@@ -1587,17 +1602,38 @@ class TradeExecutor {
           if (rem && Math.abs(rem.contracts) > 0) {
             const remQty = Math.abs(rem.contracts);
             logger.warn(`${pair}: ${remQty} remaining after IOC limit — sending market order for residual`);
-            await exchange.createOrder(pair, 'market', side, remQty, undefined, { reduceOnly: true });
+            const mktOrder = await exchange.createOrder(pair, 'market', side, remQty, undefined, { reduceOnly: true });
+            if (mktOrder.average) fillPrice = mktOrder.average;
           }
         } catch (e) { logger.warn(`Residual position check failed for ${pair}: ${e.message}`); }
       } catch (limitErr) {
         logger.warn(`Limit close failed for ${pair}: ${limitErr.message} — falling back to market`);
-        await exchange.createOrder(pair, 'market', side, qty, undefined, { reduceOnly: true });
+        const mktOrder = await exchange.createOrder(pair, 'market', side, qty, undefined, { reduceOnly: true });
+        fillPrice = mktOrder.average || mktOrder.price || null;
       }
 
-      logger.info(`Closed live position: ${pair} on ${trade.exchange}`);
+      logger.info(`Closed live position: ${pair} on ${trade.exchange} (fillPrice: $${fillPrice})`);
+
+      // Update DB with actual fill price if available
+      if (fillPrice && trade.id) {
+        const isLong = trade.direction === 'long';
+        const realPnlPct = isLong
+          ? ((fillPrice - trade.entry_price) / trade.entry_price) * 100
+          : ((trade.entry_price - fillPrice) / trade.entry_price) * 100;
+        const realPnlUsd = (realPnlPct / 100) * (trade.position_size || 0);
+        try {
+          await db.query(
+            `UPDATE trades SET close_price = $1, pnl_pct = $2, pnl_usd = $3 WHERE id = $4`,
+            [fillPrice, realPnlPct, realPnlUsd, trade.id]
+          );
+          logger.info(`${pair}: DB updated with actual fill — close $${fillPrice}, P&L $${realPnlUsd.toFixed(2)} (${realPnlPct.toFixed(2)}%)`);
+        } catch (e) { logger.warn(`Failed to update trade ${trade.id} with fill price: ${e.message}`); }
+      }
+
+      return fillPrice;
     } catch (err) {
       logger.error(`Failed to close position ${trade.symbol}: ${err.message}`);
+      return null;
     }
   }
 
