@@ -174,6 +174,25 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .edu-term .how { font-size: 12px; color: var(--text2); line-height: 1.6; padding: 8px 10px; background: var(--bg); border-radius: 6px; margin-top: 4px; }
 .edu-term .example { font-size: 12px; color: var(--gold); font-family: var(--font-mono); margin-top: 6px; padding: 6px 10px; background: var(--gold-dim); border-radius: 6px; border-left: 3px solid var(--gold); }
 .edu-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+/* Morning Roster */
+.roster-panel { display:none; margin-bottom:16px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px 16px; }
+.roster-panel.open { display:block; }
+.roster-title { font-family:var(--font-mono); font-size:15px; font-weight:700; color:var(--text); margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+.roster-section { margin-bottom:16px; }
+.roster-section:last-child { margin-bottom:0; }
+.roster-section h4 { font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; }
+.roster-item { display:flex; align-items:flex-start; gap:8px; font-size:13px; color:var(--text2); line-height:1.7; margin-bottom:2px; }
+.roster-item .ri-icon { flex-shrink:0; font-size:14px; width:20px; text-align:center; }
+.roster-badge { display:inline-block; padding:1px 6px; border-radius:4px; font-family:var(--font-mono); font-size:11px; font-weight:600; }
+.rb-green { background:var(--green-dim); color:var(--green); }
+.rb-red { background:rgba(239,68,68,0.15); color:#ef4444; }
+.rb-gold { background:var(--gold-dim); color:var(--gold); }
+.rb-blue { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.roster-stat { font-family:var(--font-mono); font-weight:600; }
+.roster-divider { border:none; border-top:1px solid var(--border); margin:14px 0; }
+.roster-btn { padding:5px 12px; border-radius:5px; border:1px solid var(--gold); background:var(--gold-dim); color:var(--gold); font-size:12px; font-family:var(--font-mono); cursor:pointer; font-weight:600; }
+.roster-btn:hover { background:var(--gold); color:var(--bg); }
 </style>
 </head>
 <body>
@@ -246,12 +265,91 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div class="refresh-bar">
       <span class="refresh-left" id="refresh-timer">Updated just now</span>
       <div class="filter-row">
+        <button class="roster-btn" onclick="toggleRoster()">Morning Roster</button>
         <button class="filter-btn" data-filter="active" onclick="setFilter(this)">Enterable</button>
         <button class="filter-btn active" data-filter="high" onclick="setFilter(this)">High Only</button>
         <button class="filter-btn" data-filter="all" onclick="setFilter(this)">All</button>
         <button class="filter-btn" data-filter="profit" onclick="setFilter(this)">In Profit</button>
         <button class="filter-btn" data-filter="short" onclick="setFilter(this)">Shorts</button>
         <button class="filter-btn" data-filter="long" onclick="setFilter(this)">Longs</button>
+      </div>
+    </div>
+    <div class="roster-panel" id="roster-panel">
+      <div class="roster-title">DAILY TRADING ROSTER</div>
+
+      <div class="roster-section">
+        <h4>Pre-Trade Checklist (Do This Every Morning)</h4>
+        <div class="roster-item"><span class="ri-icon">1.</span> Open dashboard at <span class="roster-badge rb-gold">7:00 AM WAT</span> &mdash; check overnight signals, note any that hit TP while you slept</div>
+        <div class="roster-item"><span class="ri-icon">2.</span> Set score filter to <span class="roster-badge rb-green">55+</span> &mdash; your sweet spot is score 55-64 (65% win rate, +$112 total)</div>
+        <div class="roster-item"><span class="ri-icon">3.</span> Check <span class="roster-badge rb-blue">DEMAND ZONE</span> signals first &mdash; they have 62% win rate vs 48% for main scanner</div>
+        <div class="roster-item"><span class="ri-icon">4.</span> Confirm funding is <b>not against</b> your direction &mdash; skip INVALID signals</div>
+        <div class="roster-item"><span class="ri-icon">5.</span> Check 4H chart trend aligns with signal direction before entering</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="roster-section">
+        <h4>Best Trading Windows (WAT) &mdash; Based on 393 Trades</h4>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">1:00 AM WAT</span> &mdash; 69% win rate, +$23.70 &mdash; overnight US session close momentum</div>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">6:00 AM WAT</span> &mdash; 75% win rate, +$9.40 &mdash; early morning before Asia close</div>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">9:00 AM WAT</span> &mdash; 62% win rate, +$8.59 &mdash; London open momentum</div>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">1:00 PM WAT</span> &mdash; 58% win rate, +$51.49 &mdash; US pre-market, highest avg P&L</div>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">2:00 PM WAT</span> &mdash; 56% win rate, +$30.59 &mdash; US market open</div>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">3:00 PM WAT</span> &mdash; 67% win rate, +$14.42 &mdash; US session strong start</div>
+        <div class="roster-item"><span class="ri-icon">&#9733;</span> <span class="roster-badge rb-green">9:00 PM WAT</span> &mdash; 50% WR but +$93.23 total &mdash; biggest winners come from here</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="roster-section">
+        <h4>Danger Zones &mdash; Avoid or Size Down</h4>
+        <div class="roster-item"><span class="ri-icon">&#9888;</span> <span class="roster-badge rb-red">4:00 AM WAT</span> &mdash; 46% WR, -$30 total &mdash; low liquidity dead hour</div>
+        <div class="roster-item"><span class="ri-icon">&#9888;</span> <span class="roster-badge rb-red">5:00 PM WAT</span> &mdash; 31% WR, -$34 total &mdash; worst win rate of any hour</div>
+        <div class="roster-item"><span class="ri-icon">&#9888;</span> <span class="roster-badge rb-red">6:00 PM WAT</span> &mdash; 23% WR, -$63 total &mdash; absolute worst hour, SKIP trades here</div>
+        <div class="roster-item"><span class="ri-icon">&#9888;</span> <span class="roster-badge rb-red">7:00 AM WAT</span> &mdash; 48% WR, -$29 total &mdash; choppy open, wait for 8-9 AM</div>
+        <div class="roster-item"><span class="ri-icon">&#9888;</span> <span class="roster-badge rb-red">Weekends</span> &mdash; 48% WR, -$97 total vs weekdays +$17 &mdash; reduce size or skip</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="roster-section">
+        <h4>Score Rules &mdash; What the Data Says</h4>
+        <div class="roster-item"><span class="ri-icon">&#10003;</span> Score <span class="roster-badge rb-green">55-64</span> &mdash; <b>Best band:</b> 65% win rate, +$1.50 avg, +$112 total from 75 trades</div>
+        <div class="roster-item"><span class="ri-icon">&#10003;</span> Score <span class="roster-badge rb-green">65-74</span> &mdash; Good: 58% WR, +$1.23 avg, 12 trades</div>
+        <div class="roster-item"><span class="ri-icon">&#9888;</span> Score <span class="roster-badge rb-red">75+</span> &mdash; Trap! Only 27% WR, -$2.85 avg &mdash; often late entries after pump</div>
+        <div class="roster-item"><span class="ri-icon">&#10005;</span> Score <span class="roster-badge rb-red">Below 45</span> &mdash; Skip: 45% WR, -$0.60 avg, -$137 total</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="roster-section">
+        <h4>Trade Management Rules</h4>
+        <div class="roster-item"><span class="ri-icon">1.</span> <b>Size:</b> Use the sizing bar above. Never risk more than you can lose today ($10 daily limit)</div>
+        <div class="roster-item"><span class="ri-icon">2.</span> <b>Entries:</b> Only enter LONG signals &mdash; 52% WR vs shorts 49% and more volume</div>
+        <div class="roster-item"><span class="ri-icon">3.</span> <b>Source priority:</b> Demand Zone &gt; Main scanner &gt; Onchain (DZ: 62% WR, +$222 total)</div>
+        <div class="roster-item"><span class="ri-icon">4.</span> <b>Max loss exit:</b> Biggest P&L drain is max_loss exits (-$585 from 54 trades). If a trade is losing, close manually before $6 cap hits</div>
+        <div class="roster-item"><span class="ri-icon">5.</span> <b>Take partials:</b> At TP1, take 33%. Don't get greedy waiting for TP3+</div>
+        <div class="roster-item"><span class="ri-icon">6.</span> <b>STALE signals:</b> If signal is 6h+ old and hasn't moved, skip it &mdash; momentum is gone</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="roster-section">
+        <h4>Your Daily Schedule (WAT)</h4>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>6:00-7:00 AM</b> &mdash; Wake up scan. Check overnight winners. DZ signals here are 86% WR</div>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>8:00-10:00 AM</b> &mdash; London session. Good for entries (58-62% WR). Set score filter 55+</div>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>12:00 PM</b> &mdash; <span class="roster-badge rb-red">SKIP</span> Worst lunch hour (28% WR). Do not enter trades</div>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>1:00-3:00 PM</b> &mdash; <span class="roster-badge rb-green">PRIME TIME</span> US open. Best P&L window. Focus here</div>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>5:00-6:00 PM</b> &mdash; <span class="roster-badge rb-red">DANGER</span> Worst hours (23-31% WR). Close and walk away</div>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>9:00 PM</b> &mdash; Final check. DZ signals at this hour are your biggest winners (+$125)</div>
+        <div class="roster-item"><span class="ri-icon">&#9203;</span> <b>10:00 PM+</b> &mdash; Set alerts, don't enter new trades. Night hours are inconsistent</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="roster-section">
+        <h4>Golden Rule</h4>
+        <div class="roster-item" style="font-size:14px;color:var(--gold);font-weight:600"><span class="ri-icon">&#9733;</span> Score 55-64 + Demand Zone + 1-3 PM WAT = your highest edge combo. Prioritize these setups above everything else.</div>
       </div>
     </div>
     <div class="signals-grid" id="signals-grid"></div>
@@ -469,6 +567,11 @@ function applyCustom() {
   MARGIN = m; LEVERAGE = l;
   saveSizing(); updateSizingUI(); renderStats(); renderSignals();
 }
+function toggleRoster() {
+  var panel = document.getElementById('roster-panel');
+  panel.classList.toggle('open');
+}
+
 function setScoreFilter(btn) {
   document.querySelectorAll('.score-filter-bar .preset-btn').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
