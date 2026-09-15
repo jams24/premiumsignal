@@ -748,9 +748,10 @@ class UserPaperEngine {
       }
     }
 
-    // --- MAX LOSS CAP (per-user setting or scaled default) ---
+    // --- MAX LOSS CAP (per-user setting or scaled default, 80% buffer to avoid overshoot) ---
     const userPerTradeLoss = t._perTradeLoss || (6 * (posSize / 800));
-    if (!action && pnlUsd < 0 && Math.abs(pnlUsd) >= userPerTradeLoss) {
+    const effectiveUserCap = userPerTradeLoss * 0.8;
+    if (!action && pnlUsd < 0 && Math.abs(pnlUsd) >= effectiveUserCap) {
       action = 'max_loss';
       await db.closeUserPaperTrade(t.id, price, pnlPct, pnlUsd + parseFloat(t.realized_pnl_usd || 0), 'max_loss');
       const bal = await this.getBalance(t.telegram_id);

@@ -73,6 +73,9 @@ class TradeExecutor {
 
     // Confidence scaling: reduce position for low-confidence signals (default on)
     this.confidenceScaling = config.confidenceScaling !== false;
+
+    // Loss buffer: close at this % of maxLossPerTrade to avoid overshoot (default 80%)
+    this.lossBufferPct = config.lossBufferPct ?? 80;
   }
 
   onTradeUpdate(callback) {
@@ -400,6 +403,7 @@ class TradeExecutor {
       volatilityFilter: this.volatilityFilter,
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
+      lossBufferPct: this.lossBufferPct,
     };
   }
 
@@ -435,6 +439,7 @@ class TradeExecutor {
     if (cfg.volatilityFilter != null) this.volatilityFilter = cfg.volatilityFilter;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
+    if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
   }
 
   async getCircuitBreakerStatus() {
@@ -1356,15 +1361,18 @@ class TradeExecutor {
             }
           }
         }
-        // --- PER-TRADE LOSS CAP ---
-        if (!action && this.maxLossPerTrade > 0 && pnlUsd < 0 && Math.abs(pnlUsd) >= this.maxLossPerTrade) {
-          action = 'max_loss';
-          await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'max_loss');
-          this.dailyPnL += pnlUsd;
-          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-          if (trade.mode === 'live') await this.closeExchangePosition(trade);
-          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
-          logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${this.maxLossPerTrade})`);
+        // --- PER-TRADE LOSS CAP (with buffer to avoid overshoot) ---
+        if (!action && this.maxLossPerTrade > 0 && pnlUsd < 0) {
+          const effectiveCap = this.maxLossPerTrade * (this.lossBufferPct / 100);
+          if (Math.abs(pnlUsd) >= effectiveCap) {
+            action = 'max_loss';
+            await db.closeTrade(trade.id, currentPrice, pnlPct, pnlUsd, 'max_loss');
+            this.dailyPnL += pnlUsd;
+            if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+            if (trade.mode === 'live') await this.closeExchangePosition(trade);
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
+            logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${effectiveCap.toFixed(2)}, cap $${this.maxLossPerTrade} × ${this.lossBufferPct}%)`);
+          }
         }
         // --- SL CHECK ---
         else if (!action && trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {

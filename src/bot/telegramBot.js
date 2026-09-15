@@ -2169,6 +2169,7 @@ class TelegramBot {
         `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+        `🔰 Loss Buffer: <b>${te.lossBufferPct}%</b> (closes at $${te.maxLossPerTrade > 0 ? (te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1) : '—'})\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
@@ -2185,9 +2186,10 @@ class TelegramBot {
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'oc_cfg_lev')],
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
+        [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'oc_cfg_lossbuf'),
+         Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos')],
         [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit'),
          Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale')],
-        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos')],
         [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore'),
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol Filter: ON' : '⚡ Vol Filter: OFF'}`, 'oc_cfg_volfilt')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
@@ -2565,6 +2567,37 @@ class TelegramBot {
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_confscale error: ${e.message}`); }
     });
+
+    // oc_ LOSS BUFFER
+    this.bot.action('oc_cfg_lossbuf', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const effCap = te.maxLossPerTrade > 0 ? `$${(te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1)}` : '—';
+        await ctx.editMessageText(
+          `🔗 <b>ONCHAIN — LOSS BUFFER</b>\n\n` +
+          `Current: <b>${te.lossBufferPct}%</b> (closes at ${effCap} of $${te.maxLossPerTrade} cap)\n\n` +
+          `<i>Closes trade early to avoid overshooting the loss cap.\n100% = close exactly at cap (may overshoot).\n80% = close at 80% of cap (safer).</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`60%${ocCheck(60, te.lossBufferPct)}`, 'oc_buf_60'),
+             Markup.button.callback(`70%${ocCheck(70, te.lossBufferPct)}`, 'oc_buf_70'),
+             Markup.button.callback(`80%${ocCheck(80, te.lossBufferPct)}`, 'oc_buf_80')],
+            [Markup.button.callback(`90%${ocCheck(90, te.lossBufferPct)}`, 'oc_buf_90'),
+             Markup.button.callback(`100%${ocCheck(100, te.lossBufferPct)}`, 'oc_buf_100')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_lossbuf error: ${e.message}`); }
+    });
+    for (const pct of [60, 70, 80, 90, 100]) {
+      this.bot.action(`oc_buf_${pct}`, async (ctx) => {
+        try {
+          octe().lossBufferPct = pct; octe().saveConfig();
+          await ctx.answerCbQuery(`Loss buffer: ${pct}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_buf error: ${e.message}`); }
+      });
+    }
 
     // Also wire /onchainsettings command to show the inline panel
     this.bot.command('onchainsettings', async (ctx) => {
@@ -3015,9 +3048,10 @@ class TelegramBot {
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'sw_cfg_lev')],
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'sw_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'sw_cfg_tradeloss')],
-        [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'sw_cfg_riskfit'),
+        [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'sw_cfg_lossbuf'),
          Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'sw_cfg_maxpos')],
-        [Markup.button.callback(swCbLabel, 'sw_cfg_cb')],
+        [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'sw_cfg_riskfit'),
+         Markup.button.callback(swCbLabel, 'sw_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'sw_trades'),
          Markup.button.callback('🔄 Refresh', 'sw_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
@@ -3360,6 +3394,37 @@ class TelegramBot {
       ctx.replyWithHTML(`✅ Swing per-trade loss cap set to <b>$${loss}</b>`);
     });
 
+    // sw_ LOSS BUFFER
+    this.bot.action('sw_cfg_lossbuf', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = swte();
+        const effCap = te.maxLossPerTrade > 0 ? `$${(te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1)}` : '—';
+        await ctx.editMessageText(
+          `🌊 <b>SWING — LOSS BUFFER</b>\n\n` +
+          `Current: <b>${te.lossBufferPct}%</b> (closes at ${effCap} of $${te.maxLossPerTrade} cap)\n\n` +
+          `<i>Closes trade early to avoid overshooting the loss cap.\n100% = close exactly at cap (may overshoot).\n80% = close at 80% of cap (safer).</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`60%${ocCheck(60, te.lossBufferPct)}`, 'sw_buf_60'),
+             Markup.button.callback(`70%${ocCheck(70, te.lossBufferPct)}`, 'sw_buf_70'),
+             Markup.button.callback(`80%${ocCheck(80, te.lossBufferPct)}`, 'sw_buf_80')],
+            [Markup.button.callback(`90%${ocCheck(90, te.lossBufferPct)}`, 'sw_buf_90'),
+             Markup.button.callback(`100%${ocCheck(100, te.lossBufferPct)}`, 'sw_buf_100')],
+            [Markup.button.callback('⬅️ Back', 'sw_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`sw_cfg_lossbuf error: ${e.message}`); }
+    });
+    for (const pct of [60, 70, 80, 90, 100]) {
+      this.bot.action(`sw_buf_${pct}`, async (ctx) => {
+        try {
+          swte().lossBufferPct = pct; swte().saveConfig();
+          await ctx.answerCbQuery(`Loss buffer: ${pct}%`);
+          await showSwSettings(ctx);
+        } catch (e) { logger.error(`sw_buf error: ${e.message}`); }
+      });
+    }
+
     // sw_ MAX POSITIONS
     this.bot.action('sw_cfg_maxpos', async (ctx) => {
       try {
@@ -3494,6 +3559,13 @@ class TelegramBot {
       const liveTrades = openTrades.filter(t => t.mode === 'live');
       const paperPnl = await db.getTodayPnL('paper', 'demandzone').catch(() => 0);
       const livePnl = await db.getTodayPnL('live', 'demandzone').catch(() => 0);
+      const cbStatus = await te.getCircuitBreakerStatus().catch(() => ({ active: false, enabled: true }));
+      const cbLine = !cbStatus.enabled ? '🔓 Circuit Breaker: <b>OFF</b>'
+        : cbStatus.active ? `🚨 Circuit Breaker: <b>PAUSED ${cbStatus.minsLeft}m</b> (${cbStatus.streak} losses)`
+        : cbStatus.overrideUntil ? '⏭️ Circuit Breaker: <b>OVERRIDDEN</b>'
+        : `🛡️ Circuit Breaker: <b>ON</b> (${te.cbStreak} losses → ${te.cbPauseMinutes}m pause)`;
+      const dzCbLabel = cbStatus.active ? `🚨 CB: PAUSED ${cbStatus.minsLeft}m`
+        : !cbStatus.enabled ? '🔓 CB: OFF' : '🛡️ CB: ON';
 
       const text =
         `🎯 <b>DEMAND ZONE SETTINGS</b>\n\n` +
@@ -3501,12 +3573,14 @@ class TelegramBot {
         `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+        `🔰 Loss Buffer: <b>${te.lossBufferPct}%</b> (closes at $${te.maxLossPerTrade > 0 ? (te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1) : '—'})\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `📈 Paper P&L: <b>$${paperPnl.toFixed(2)}</b> (${paperTrades.length} open)\n` +
         `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
-        `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
+        `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
+        `${cbLine}\n\n` +
         `Tap any button to configure:`;
 
       const keyboard = Markup.inlineKeyboard([
@@ -3516,9 +3590,11 @@ class TelegramBot {
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'dz_cfg_lev')],
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'dz_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'dz_cfg_tradeloss')],
+        [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'dz_cfg_lossbuf'),
+         Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos')],
         [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'dz_cfg_riskfit'),
          Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'dz_cfg_confscale')],
-        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos')],
+        [Markup.button.callback(dzCbLabel, 'dz_cfg_cb')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -3888,6 +3964,110 @@ class TelegramBot {
       dzte().maxLossPerTrade = loss; dzte().saveConfig();
       ctx.replyWithHTML(`✅ DZ per-trade loss cap set to <b>$${loss}</b>`);
     });
+
+    // dz_ LOSS BUFFER
+    this.bot.action('dz_cfg_lossbuf', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        const effCap = te.maxLossPerTrade > 0 ? `$${(te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1)}` : '—';
+        await ctx.editMessageText(
+          `🔰 <b>DZ — LOSS BUFFER</b>\n\n` +
+          `Current: <b>${te.lossBufferPct}%</b> (closes at ${effCap} of $${te.maxLossPerTrade} cap)\n\n` +
+          `<i>Closes trade early to avoid overshooting the loss cap.\n100% = close exactly at cap (may overshoot).\n80% = close at 80% of cap (safer).</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`60%${ocCheck(60, te.lossBufferPct)}`, 'dz_buf_60'),
+             Markup.button.callback(`70%${ocCheck(70, te.lossBufferPct)}`, 'dz_buf_70'),
+             Markup.button.callback(`80%${ocCheck(80, te.lossBufferPct)}`, 'dz_buf_80')],
+            [Markup.button.callback(`90%${ocCheck(90, te.lossBufferPct)}`, 'dz_buf_90'),
+             Markup.button.callback(`100%${ocCheck(100, te.lossBufferPct)}`, 'dz_buf_100')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_lossbuf error: ${e.message}`); }
+    });
+    for (const pct of [60, 70, 80, 90, 100]) {
+      this.bot.action(`dz_buf_${pct}`, async (ctx) => {
+        try {
+          dzte().lossBufferPct = pct; dzte().saveConfig();
+          await ctx.answerCbQuery(`Loss buffer: ${pct}%`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_buf error: ${e.message}`); }
+      });
+    }
+
+    // dz_ CIRCUIT BREAKER
+    this.bot.action('dz_cfg_cb', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        const cb = await te.getCircuitBreakerStatus().catch(() => ({ active: false, enabled: true }));
+        let text = '🎯 <b>DZ — CIRCUIT BREAKER</b>\n\n';
+        text += `Status: ${cb.active ? `🚨 <b>PAUSED</b> — ${cb.minsLeft}m remaining (${cb.streak} losses)` : cb.enabled ? '✅ Armed' : '🔓 Disabled'}\n`;
+        text += `Trigger: <b>${te.cbStreak} consecutive losses</b>\n`;
+        text += `Pause: <b>${te.cbPauseMinutes} minutes</b>\n\n`;
+        if (cb.active) text += '<i>Trading is paused. Override to resume immediately.</i>';
+        else if (!cb.enabled) text += '<i>Circuit breaker is disabled — no pause on losing streaks.</i>';
+        else text += '<i>Will auto-pause trading after consecutive losses.</i>';
+
+        const buttons = [];
+        if (cb.active) {
+          buttons.push([Markup.button.callback('⏭️ Override — Resume Now', 'dz_cb_override')]);
+        }
+        buttons.push([
+          Markup.button.callback(`${te.cbEnabled ? '🔓 Disable' : '✅ Enable'}`, 'dz_cb_toggle'),
+        ]);
+        buttons.push([
+          Markup.button.callback('3 losses', 'dz_cb_streak_3'),
+          Markup.button.callback('4 losses', 'dz_cb_streak_4'),
+          Markup.button.callback('5 losses', 'dz_cb_streak_5'),
+        ]);
+        buttons.push([
+          Markup.button.callback('30m pause', 'dz_cb_pause_30'),
+          Markup.button.callback('60m', 'dz_cb_pause_60'),
+          Markup.button.callback('120m', 'dz_cb_pause_120'),
+        ]);
+        buttons.push([Markup.button.callback('⬅️ Back', 'dz_settings')]);
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup });
+      } catch (e) { logger.error(`dz_cfg_cb error: ${e.message}`); }
+    });
+
+    this.bot.action('dz_cb_toggle', async (ctx) => {
+      try {
+        const te = dzte();
+        te.cbEnabled = !te.cbEnabled; te.saveConfig();
+        await ctx.answerCbQuery(`Circuit breaker ${te.cbEnabled ? 'enabled' : 'disabled'}`);
+        await showDzSettings(ctx);
+      } catch (e) { logger.error(`dz_cb_toggle error: ${e.message}`); }
+    });
+
+    this.bot.action('dz_cb_override', async (ctx) => {
+      try {
+        const te = dzte();
+        te.cbOverrideUntil = Date.now() + 4 * 60 * 60 * 1000;
+        await ctx.answerCbQuery('Circuit breaker overridden — trading resumed');
+        await showDzSettings(ctx);
+      } catch (e) { logger.error(`dz_cb_override error: ${e.message}`); }
+    });
+
+    for (const n of [3, 4, 5]) {
+      this.bot.action(`dz_cb_streak_${n}`, async (ctx) => {
+        try {
+          dzte().cbStreak = n; dzte().saveConfig();
+          await ctx.answerCbQuery(`CB triggers after ${n} losses`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_cb_streak error: ${e.message}`); }
+      });
+    }
+    for (const m of [30, 60, 120]) {
+      this.bot.action(`dz_cb_pause_${m}`, async (ctx) => {
+        try {
+          dzte().cbPauseMinutes = m; dzte().saveConfig();
+          await ctx.answerCbQuery(`CB pause: ${m} minutes`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_cb_pause error: ${e.message}`); }
+      });
+    }
 
     // dz_ MAX POSITIONS
     this.bot.action('dz_cfg_maxpos', async (ctx) => {
