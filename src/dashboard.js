@@ -819,7 +819,29 @@ function renderSignals() {
     html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#f59e0b"></span>Entry</span>';
     html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#10b981"></span>TP1/TP2/TP3</span>';
     html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#ef4444"></span>Stop Loss</span>';
+    html += '</div>';
+
+    var watDate = new Date(new Date(s.created_at).getTime() + 3600000);
+    var watDay = watDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    var watTime = watDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' });
+    var tvSymbol = s.symbol.replace(/\\/.*/, '') + 'USDT.P';
+    html += '<div style="margin-top:8px;padding:10px 12px;background:var(--surface2);border-radius:6px;border:1px solid var(--border);font-size:12px;line-height:1.7">';
+    html += '<div style="font-family:var(--font-mono);font-size:11px;color:var(--gold);font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.04em">Find This Candle on TradingView</div>';
+    html += '<div style="color:var(--text2)">';
+    html += '<strong style="color:var(--text)">1. Search:</strong> <span style="color:var(--accent);font-family:var(--font-mono)">' + tvSymbol + '</span> on Bybit (or just <span style="font-family:var(--font-mono)">' + s.symbol.replace(/\\/.*/, '') + 'USDT</span> perp)<br>';
+    html += '<strong style="color:var(--text)">2. Date:</strong> <span style="font-family:var(--font-mono);color:var(--gold)">' + watDay + '</span><br>';
+    html += '<strong style="color:var(--text)">3. Time (WAT):</strong> <span style="font-family:var(--font-mono);color:var(--gold)">' + watTime + ' WAT</span> (Nigeria timezone, UTC+1)<br>';
+    html += '<strong style="color:var(--text)">4. Timeframe:</strong> Start on <span style="font-family:var(--font-mono)">15m</span>, then check <span style="font-family:var(--font-mono)">1h</span> and <span style="font-family:var(--font-mono)">4h</span> for trend context<br>';
+    html += '<strong style="color:var(--text)">5. Look for:</strong> The candle at ' + watTime + ' WAT near <span style="font-family:var(--font-mono);color:var(--gold)">' + fmtPrice(s.price) + '</span>. ';
+    if (s.direction === 'short') {
+      html += 'This was a <span style="color:var(--danger);font-weight:600">SHORT</span> signal \\u2014 look for a red candle or rejection wick at this price. Price should have dropped after this candle.';
+    } else {
+      html += 'This was a <span style="color:var(--accent);font-weight:600">LONG</span> signal \\u2014 look for a green candle or bounce at this price. Price should have risen after this candle.';
+    }
+    html += '<br><strong style="color:var(--text)">6. Verify:</strong> Draw a horizontal line at ' + fmtPrice(s.price) + ' (entry), ' + fmtPrice(levels.sl) + ' (SL), and ' + fmtPrice(levels.tp1) + ' (TP1). See if the move played out as signaled.';
     html += '</div></div>';
+
+    html += '</div>';
 
     html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
     html += '<div class="level-row"><span class="level-label">Entry</span><span class="level-val entry">' + fmtPrice(s.price) + '</span></div>';
