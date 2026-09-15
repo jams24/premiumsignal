@@ -561,17 +561,23 @@ function renderStats() {
   var longPat = patterns.find(function(p) { return p.direction === 'long'; }) || {};
   var shortAcc = shortPat.with_data > 0 ? ((parseInt(shortPat.correct) / parseInt(shortPat.with_data)) * 100).toFixed(0) : '—';
   var longAcc = longPat.with_data > 0 ? ((parseInt(longPat.correct) / parseInt(longPat.with_data)) * 100).toFixed(0) : '—';
-  var shortHS = parseInt(shortPat.high_score_total) > 0 ? ((parseInt(shortPat.high_score_correct) / parseInt(shortPat.high_score_total)) * 100).toFixed(0) : '—';
-  var totalPnl = (trades.closed || []).reduce(function(s, t) { return s + (parseFloat(t.pnl_usd) || 0); }, 0);
-  var openCount = (trades.open || []).length;
   var highConv = signals.filter(function(s) { return getConviction(s) === 'high'; }).length;
+
+  var simTotal = 0, simWins = 0, simLosses = 0, winCount = 0, lossCount = 0;
+  signals.forEach(function(s) {
+    var sim = simPnl(s);
+    simTotal += sim.pnl;
+    if (sim.pnl > 0) { simWins += sim.pnl; winCount++; }
+    else if (sim.pnl < 0) { simLosses += sim.pnl; lossCount++; }
+  });
 
   bar.innerHTML =
     '<div class="stat-card"><div class="stat-label">High Conviction</div><div class="stat-value gold">' + highConv + '</div><div class="stat-sub">' + signals.length + ' total signals</div></div>' +
     '<div class="stat-card"><div class="stat-label">Short Acc (60+)</div><div class="stat-value green">' + shortAcc + '%</div><div class="stat-sub">' + (shortPat.correct || 0) + '/' + (shortPat.with_data || 0) + '</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Short 80+</div><div class="stat-value green">' + shortHS + '%</div><div class="stat-sub">' + (shortPat.high_score_correct || 0) + '/' + (shortPat.high_score_total || 0) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Long Acc (60+)</div><div class="stat-value ' + (parseInt(longAcc) >= 50 ? 'green' : 'red') + '">' + longAcc + '%</div><div class="stat-sub">' + (longPat.correct || 0) + '/' + (longPat.with_data || 0) + '</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Bot P&L</div><div class="stat-value ' + (totalPnl >= 0 ? 'green' : 'red') + '">$' + totalPnl.toFixed(0) + '</div><div class="stat-sub">' + (trades.closed || []).length + ' trades</div></div>';
+    '<div class="stat-card"><div class="stat-label">Sim Wins</div><div class="stat-value green">+$' + simWins.toFixed(0) + '</div><div class="stat-sub">' + winCount + ' winning</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Sim Losses</div><div class="stat-value red">-$' + Math.abs(simLosses).toFixed(0) + '</div><div class="stat-sub">' + lossCount + ' losing</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Sim Total ($' + MARGIN + '/' + LEVERAGE + 'x)</div><div class="stat-value ' + (simTotal >= 0 ? 'green' : 'red') + '">' + (simTotal >= 0 ? '+' : '') + '$' + simTotal.toFixed(0) + '</div><div class="stat-sub">' + signals.length + ' signals</div></div>';
 }
 
 function getConviction(s) {
