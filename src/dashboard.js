@@ -633,8 +633,7 @@ function calcLevels(s) {
 
 function getTradeStatus(s, levels) {
   var entry = parseFloat(s.price), dir = s.direction;
-  var pc = parseFloat(s.price_change) || 0;
-  var now = entry * (1 + pc / 100);
+  var now = parseFloat(s.current_price) || entry;
   var hitTP1 = false, hitTP2 = false, hitTP3 = false, hitSL = false;
   if (dir === 'long') {
     hitTP1 = now >= levels.tp1; hitTP2 = now >= levels.tp2; hitTP3 = now >= levels.tp3;
@@ -643,7 +642,8 @@ function getTradeStatus(s, levels) {
     hitTP1 = now <= levels.tp1; hitTP2 = now <= levels.tp2; hitTP3 = now <= levels.tp3;
     hitSL = now >= levels.sl;
   }
-  var movePct = dir === 'short' ? -pc : pc;
+  var rawPct = ((now - entry) / entry) * 100;
+  var movePct = dir === 'short' ? -rawPct : rawPct;
   var ageMin = Math.floor((Date.now() - new Date(s.created_at).getTime()) / 60000);
   var fundAgainst = s.funding_bias && s.funding_bias !== dir;
   var hasFlowConflict = flowAlerts.some(function(f) {
@@ -669,11 +669,9 @@ function getTradeStatus(s, levels) {
 }
 
 function simPnl(s) {
-  var priceChg = parseFloat(s.price_change) || 0;
-  var dir = s.direction;
-  var movePct = dir === 'short' ? -priceChg : priceChg;
-  if (dir === 'short') movePct = Math.abs(priceChg);
-  else movePct = priceChg;
+  var entry = parseFloat(s.price), now = parseFloat(s.current_price) || entry;
+  var rawPct = ((now - entry) / entry) * 100;
+  var movePct = s.direction === 'short' ? -rawPct : rawPct;
   var pnl = (movePct / 100) * NOTIONAL;
   return { pnl: pnl, pct: movePct };
 }
@@ -795,17 +793,19 @@ function renderSignals() {
     html += '<div class="tp-progress">';
     html += '<span class="tp-step ' + (ts.css === 'active' ? 'hit' : '') + '">Entry ' + fmtPrice(s.price) + '</span>';
     html += '<span style="color:var(--muted)">\\u2192</span>';
-    html += '<span class="tp-step ' + (ts.hitTP1 ? 'hit' : '') + '">TP1 ' + fmtPrice(levels.tp1) + '</span>';
+    html += '<span class="tp-step ' + (ts.hitTP1 ? 'hit' : '') + '" title="Take Profit 1 \\u2014 close 33% of position">TP1 ' + fmtPrice(levels.tp1) + '</span>';
     html += '<span style="color:var(--muted)">\\u2192</span>';
-    html += '<span class="tp-step ' + (ts.hitTP2 ? 'hit' : '') + '">TP2 ' + fmtPrice(levels.tp2) + '</span>';
+    html += '<span class="tp-step ' + (ts.hitTP2 ? 'hit' : '') + '" title="Take Profit 2 \\u2014 close 50% of remaining">TP2 ' + fmtPrice(levels.tp2) + '</span>';
     html += '<span style="color:var(--muted)">\\u2192</span>';
-    html += '<span class="tp-step ' + (ts.hitTP3 ? 'hit' : '') + '">TP3 ' + fmtPrice(levels.tp3) + '</span>';
+    html += '<span class="tp-step ' + (ts.hitTP3 ? 'hit' : '') + '" title="Take Profit 3 \\u2014 close remaining position">TP3 ' + fmtPrice(levels.tp3) + '</span>';
     html += '<span style="color:var(--muted);margin-left:4px">|</span>';
-    html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '">SL ' + fmtPrice(levels.sl) + '</span>';
+    html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '" title="Stop Loss \\u2014 exit entire position if breached">SL ' + fmtPrice(levels.sl) + '</span>';
     html += '</div>';
     var tipColor = ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : 'var(--gold)';
+    var movePctStr = ((Math.abs(ts.currentPrice - parseFloat(s.price)) / parseFloat(s.price)) * 100).toFixed(1);
+    var moveDir = ts.currentPrice >= parseFloat(s.price) ? '+' : '-';
     html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:6px 10px;background:var(--bg);border-radius:4px;border-left:3px solid ' + tipColor + '">';
-    html += ts.tip + ' \\u2014 Now: ' + fmtPrice(ts.currentPrice);
+    html += ts.tip + ' \\u2014 Now: ' + fmtPrice(ts.currentPrice) + ' (' + moveDir + movePctStr + '% from entry)';
     if (ts.invalidations.length > 1) {
       ts.invalidations.forEach(function(inv, idx) {
         if (idx > 0) html += '<br><span style="color:var(--danger)">\\u26a0 ' + inv + '</span>';

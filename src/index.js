@@ -109,8 +109,30 @@ async function main() {
           )
           SELECT * FROM ranked WHERE rn = 1 ORDER BY created_at DESC
         `, [hours]);
+        const allSignals = result.rows;
+        if (allSignals.length && listingMonitor?.exchanges) {
+          const byExchange = {};
+          for (const s of allSignals) {
+            const ex = s.exchange || 'bybit';
+            const pair = s.pair || s.symbol + '/USDT:USDT';
+            if (!byExchange[ex]) byExchange[ex] = [];
+            byExchange[ex].push({ sig: s, pair });
+          }
+          for (const [exName, items] of Object.entries(byExchange)) {
+            const ex = listingMonitor.exchanges[exName];
+            if (!ex) continue;
+            try {
+              const pairs = [...new Set(items.map(i => i.pair))];
+              const tickers = await ex.fetchTickers(pairs);
+              for (const item of items) {
+                const t = tickers[item.pair];
+                if (t && t.last) item.sig.current_price = t.last;
+              }
+            } catch (_) {}
+          }
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ signals: result.rows, flow_alerts: flowResult.rows, ts: Date.now() }));
+        return res.end(JSON.stringify({ signals: allSignals, flow_alerts: flowResult.rows, ts: Date.now() }));
       } catch (e) {
         res.writeHead(500);
         return res.end(JSON.stringify({ error: e.message }));
