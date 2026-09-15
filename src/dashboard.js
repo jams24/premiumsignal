@@ -236,7 +236,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div class="rules-banner">
       <span class="rule-title">Conviction Rules</span>
       <span class="rule-item"><span class="rule-check">+</span> Score 70+ with funding aligned</span>
-      <span class="rule-item"><span class="rule-check">+</span> Short alerts 12-18 UTC = 77% win</span>
+      <span class="rule-item"><span class="rule-check">+</span> Short alerts 12-18 UTC (1-7 PM WAT) = 77% win</span>
       <span class="rule-item"><span class="rule-check">+</span> OI spike 20%+ with direction</span>
       <span class="rule-item"><span class="rule-x">-</span> Funding against direction</span>
       <span class="rule-item"><span class="rule-x">-</span> Hold 45-90 min for best results</span>
@@ -396,7 +396,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>What Our Data Shows (From Real Signals)</h4>
             <div class="how">
-              <strong>Best Setup:</strong> Score 80+ short alert during 12-18 UTC with funding aligned = 87.5% accuracy<br><br>
+              <strong>Best Setup:</strong> Score 80+ short alert during 12-18 UTC (1-7 PM WAT) with funding aligned = 87.5% accuracy<br><br>
               <strong>Simulated P&L ($2K margin, 20x):</strong><br>
               • Score 70+ SHORTS: +$23,408 total in 1-4h exits (6 trades, avg 9.75% move)<br>
               • Score 70+ LONGS: -$4,604 in 1-4h BUT +$15,890 in 4-12h (longs need patience)<br><br>
@@ -407,7 +407,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
               <strong>What Kills Trades:</strong><br>
               • 20x leverage = highest loss rate (max_loss hits at -$27 avg)<br>
               • Funding AGAINST direction = ~30% accuracy (don't fight it)<br>
-              • Long signals at 00-06 UTC = 40% accuracy (dead hours)
+              • Long signals at 00-06 UTC (1-7 AM WAT) = 40% accuracy (dead hours)
             </div>
           </div>
           <hr class="edu-divider">
@@ -478,8 +478,8 @@ function setScoreFilter(btn) {
 
 var PATTERN_RULES = {
   short_high_score: { label: 'High-score shorts', accuracy: 87.5, desc: 'Score 80+ shorts hit 87.5% of the time' },
-  short_12_18: { label: 'EU/US session short', accuracy: 76.9, desc: 'Shorts 12-18 UTC have 77% accuracy' },
-  long_18_24: { label: 'Late session long', accuracy: 81.8, desc: 'Longs 18-24 UTC have 82% accuracy' },
+  short_12_18: { label: 'EU/US session short', accuracy: 76.9, desc: 'Shorts 12-18 UTC (1-7 PM WAT) have 77% accuracy' },
+  long_18_24: { label: 'Late session long', accuracy: 81.8, desc: 'Longs 18-24 UTC (7 PM-1 AM WAT) have 82% accuracy' },
   funding_aligned: { label: 'Funding aligned', accuracy: 65, desc: 'Funding matching direction improves win rate' },
   oi_spike: { label: 'OI spike', accuracy: 72.2, desc: 'Short + OI 4h >20% = 72% accuracy' },
   funding_against: { label: 'Funding against', accuracy: 30, desc: 'Funding opposing direction = ~30% accuracy', negative: true },
@@ -738,8 +738,8 @@ function buildReasons(s) {
 
   if (Math.abs(priceChg) > 20) reasons.push({ icon: priceChg > 0 ? '🚀' : '💀', text: '<strong>Price ' + (priceChg > 0 ? '+' : '') + priceChg.toFixed(1) + '% move</strong> — <span>' + (Math.abs(priceChg) > 40 ? 'Extreme — potential exhaustion' : 'Significant momentum') + '</span>' });
 
-  if (dir === 'short' && hour >= 12 && hour < 18) reasons.push({ icon: '🕐', text: '<strong>EU/US overlap (12-18 UTC)</strong> — <span>77% accuracy for shorts in this window</span>' });
-  else if (dir === 'long' && hour >= 18) reasons.push({ icon: '🕐', text: '<strong>Late session (18-24 UTC)</strong> — <span>82% accuracy for longs</span>' });
+  if (dir === 'short' && hour >= 12 && hour < 18) reasons.push({ icon: '🕐', text: '<strong>EU/US overlap (12-18 UTC / 1-7 PM WAT)</strong> — <span>77% accuracy for shorts in this window</span>' });
+  else if (dir === 'long' && hour >= 18) reasons.push({ icon: '🕐', text: '<strong>Late session (18-24 UTC / 7 PM-1 AM WAT)</strong> — <span>82% accuracy for longs</span>' });
 
   if (Math.abs(oi1h) > 15) reasons.push({ icon: '⏱️', text: '<strong>1h OI spike ' + (oi1h > 0 ? '+' : '') + oi1h.toFixed(1) + '%</strong> — <span>Rapid position buildup — immediate momentum</span>' });
 
