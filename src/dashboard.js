@@ -226,6 +226,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       </div>
     </div>
     <div class="signals-grid" id="signals-grid"></div>
+    <div id="flow-section" hidden>
+      <div style="margin-top:16px;padding:8px 0;border-top:1px solid var(--border)">
+        <div style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px">Raw Flow & Supply Alerts</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:var(--font-mono)">Early detection signals from exchange flow and supply moves. No score \\u2014 use as confirmation alongside scored signals.</div>
+      </div>
+      <div class="signals-grid" id="flow-grid"></div>
+    </div>
   </div>
 
   <!-- LEARN TAB -->
@@ -443,7 +450,7 @@ var PATTERN_RULES = {
   funding_against: { label: 'Funding against', accuracy: 30, desc: 'Funding opposing direction = ~30% accuracy', negative: true },
 };
 
-var apiKey = '', signals = [], patterns = {}, trades = {}, currentFilter = 'high', lastUpdate = 0, refreshInterval;
+var apiKey = '', signals = [], flowAlerts = [], patterns = {}, trades = {}, currentFilter = 'high', lastUpdate = 0, refreshInterval;
 
 function switchTab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
@@ -506,13 +513,15 @@ function refreshAll() {
     apiFetch('/api/trades'),
   ]).then(function(results) {
     signals = results[0].signals || [];
+    flowAlerts = results[0].flow_alerts || [];
     patterns = results[1].patterns || [];
     trades = results[2];
     dot.className = 'status-dot live';
-    label.textContent = 'Live \\u2014 ' + signals.length + ' signals';
+    label.textContent = 'Live \\u2014 ' + signals.length + ' signals, ' + flowAlerts.length + ' flow';
     lastUpdate = Date.now();
     renderStats();
     renderSignals();
+    renderFlowAlerts();
   }).catch(function(e) {
     dot.className = 'status-dot off';
     label.textContent = 'Error: ' + e.message;
@@ -611,14 +620,28 @@ function getTradeStatus(s, levels) {
     hitSL = now >= levels.sl;
   }
   var movePct = dir === 'short' ? -pc : pc;
+  var ageMin = Math.floor((Date.now() - new Date(s.created_at).getTime()) / 60000);
+  var fundAgainst = s.funding_bias && s.funding_bias !== dir;
+  var hasFlowConflict = flowAlerts.some(function(f) {
+    return f.symbol === s.symbol && f.direction !== dir
+      && new Date(f.created_at) > new Date(s.created_at);
+  });
+  var invalidations = [];
+  if (fundAgainst) invalidations.push('Funding flipped against (' + s.funding_bias + ')');
+  if (hasFlowConflict) invalidations.push('Flow alert reversed \\u2014 opposite direction detected after this signal');
+  if (ageMin > 360) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old \\u2014 conditions likely changed');
+  else if (ageMin > 120) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old \\u2014 re-check conditions');
+
   var status, css, tip;
   if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL \\u2014 do NOT enter'; }
   else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Already hit TP3 \\u2014 move is done'; }
   else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Already past TP2 \\u2014 most profit taken, late entry risky'; }
   else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 \\u2014 can still run but tighten SL to entry'; }
+  else if (invalidations.length && ageMin > 360) { status = 'INVALID'; css = 'stopped'; tip = invalidations[0]; }
+  else if (invalidations.length) { status = 'CAUTION'; css = 'late'; tip = invalidations[0]; }
   else if (movePct > 3) { status = 'LATE ENTRY'; css = 'late'; tip = 'Already moved ' + movePct.toFixed(1) + '% \\u2014 smaller R:R if entering now'; }
   else { status = 'ACTIVE'; css = 'active'; tip = 'Setup valid \\u2014 price near entry zone'; }
-  return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now };
+  return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now, invalidations: invalidations };
 }
 
 function simPnl(s) {
@@ -746,7 +769,15 @@ function renderSignals() {
     html += '<span style="color:var(--muted);margin-left:4px">|</span>';
     html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '">SL ' + fmtPrice(levels.sl) + '</span>';
     html += '</div>';
-    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:4px 8px;background:var(--bg);border-radius:4px;border-left:3px solid ' + (ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : 'var(--gold)') + '">' + ts.tip + ' \\u2014 Now: ' + fmtPrice(ts.currentPrice) + '</div>';
+    var tipColor = ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : 'var(--gold)';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:6px 10px;background:var(--bg);border-radius:4px;border-left:3px solid ' + tipColor + '">';
+    html += ts.tip + ' \\u2014 Now: ' + fmtPrice(ts.currentPrice);
+    if (ts.invalidations.length > 1) {
+      ts.invalidations.forEach(function(inv, idx) {
+        if (idx > 0) html += '<br><span style="color:var(--danger)">\\u26a0 ' + inv + '</span>';
+      });
+    }
+    html += '</div>';
 
     html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
     html += '<div class="level-row"><span class="level-label">Entry</span><span class="level-val entry">' + fmtPrice(s.price) + '</span></div>';
@@ -779,6 +810,32 @@ function renderSignals() {
 
     html += '</div></div>';
     return html;
+  }).join('');
+}
+
+function renderFlowAlerts() {
+  var section = document.getElementById('flow-section');
+  var grid = document.getElementById('flow-grid');
+  if (!flowAlerts.length) { section.hidden = true; return; }
+  section.hidden = false;
+  grid.innerHTML = flowAlerts.map(function(f) {
+    var dt = new Date(f.created_at);
+    var timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    var agoMin = Math.floor((Date.now() - dt.getTime()) / 60000);
+    var agoStr = agoMin < 60 ? agoMin + 'm ago' : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
+    var typeLabel = f.alert_type === 'SUPPLY_MOVE' ? 'SUPPLY' : 'FLOW';
+    var typeCss = f.alert_type === 'SUPPLY_MOVE' ? 'warn' : '';
+    var msg = f.message ? f.message.replace(/</g, '&lt;').substring(0, 200) : '';
+    return '<div class="signal-card conviction-low" style="opacity:0.85">' +
+      '<div class="signal-header" style="cursor:default">' +
+      '<div class="signal-left">' +
+      '<span class="signal-dir ' + f.direction + '">' + f.direction + '</span>' +
+      '<span class="ind-chip ' + typeCss + '" style="font-size:10px">' + typeLabel + '</span>' +
+      '<span class="signal-symbol">' + f.symbol + '</span>' +
+      '<span class="signal-price">' + fmtPrice(f.price) + ' \\u00b7 ' + agoStr + '</span>' +
+      '</div></div>' +
+      (msg ? '<div style="padding:0 16px 10px;font-size:12px;color:var(--text2)">' + msg + '</div>' : '') +
+      '</div>';
   }).join('');
 }
 

@@ -70,6 +70,7 @@ async function main() {
               (data->>'priceChange')::numeric as price_change,
               (data->>'fundingRate')::numeric as funding_rate,
               data->'lsData' as ls_data,
+              alert_type,
               created_at,
               ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY (data->>'score')::int DESC, created_at DESC) as rn
             FROM alert_log
@@ -79,8 +80,28 @@ async function main() {
           )
           SELECT * FROM ranked WHERE rn = 1 ORDER BY score DESC
         `, [minScore, hours]);
+        const flowResult = await db.query(`
+          WITH ranked AS (
+            SELECT symbol, data->>'direction' as direction,
+              0 as score,
+              (data->>'price')::numeric as price,
+              NULL as funding_bias, NULL as flow_bias,
+              NULL as oi_4h, NULL as oi_1h,
+              NULL as price_change, NULL as funding_rate,
+              NULL as ls_data,
+              alert_type,
+              message,
+              created_at,
+              ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction', alert_type ORDER BY created_at DESC) as rn
+            FROM alert_log
+            WHERE alert_type IN ('FLOW','SUPPLY_MOVE')
+              AND data->>'direction' IS NOT NULL
+              AND created_at >= NOW() - INTERVAL '1 hour' * $1
+          )
+          SELECT * FROM ranked WHERE rn = 1 ORDER BY created_at DESC
+        `, [hours]);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ signals: result.rows, ts: Date.now() }));
+        return res.end(JSON.stringify({ signals: result.rows, flow_alerts: flowResult.rows, ts: Date.now() }));
       } catch (e) {
         res.writeHead(500);
         return res.end(JSON.stringify({ error: e.message }));
