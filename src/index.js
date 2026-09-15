@@ -37,15 +37,155 @@ function shouldLogAlert(type, symbol, direction) {
 async function main() {
   logger.info('=== CryptoSignal Bot Starting ===');
 
-  // Start health check server FIRST so Deployzy doesn't kill the container
-  const server = http.createServer((req, res) => {
-    if (req.url === '/health') {
+  // Start health check + dashboard server
+  const dashboardHtml = require('./dashboard');
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const key = url.searchParams.get('key');
+    const authed = key === process.env.DASHBOARD_KEY;
+
+    if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', dbReady, uptime: process.uptime() }));
-    } else {
-      res.writeHead(200);
-      res.end('CryptoSignal Bot Running');
+      return res.end(JSON.stringify({ status: 'ok', dbReady, uptime: process.uptime() }));
     }
+
+    if (url.pathname === '/dashboard') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(dashboardHtml);
+    }
+
+    if (url.pathname === '/api/signals' && authed) {
+      try {
+        const hours = parseInt(url.searchParams.get('hours')) || 24;
+        const minScore = parseInt(url.searchParams.get('minScore')) || 30;
+        const result = await db.query(`
+          WITH ranked AS (
+            SELECT symbol, data->>'direction' as direction,
+              (data->>'score')::int as score,
+              (data->>'price')::numeric as price,
+              data->>'fundingBias' as funding_bias,
+              data->'exchangeFlow'->>'bias' as flow_bias,
+              (data->>'oiChange4h')::numeric as oi_4h,
+              (data->>'oiChange1h')::numeric as oi_1h,
+              (data->>'priceChange')::numeric as price_change,
+              (data->>'fundingRate')::numeric as funding_rate,
+              data->'lsData' as ls_data,
+              created_at,
+              ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY (data->>'score')::int DESC, created_at DESC) as rn
+            FROM alert_log
+            WHERE alert_type = 'ONCHAIN'
+              AND (data->>'score')::int >= $1
+              AND created_at >= NOW() - INTERVAL '1 hour' * $2
+          )
+          SELECT * FROM ranked WHERE rn = 1 ORDER BY score DESC
+        `, [minScore, hours]);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ signals: result.rows, ts: Date.now() }));
+      } catch (e) {
+        res.writeHead(500);
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+
+    if (url.pathname === '/api/patterns' && authed) {
+      try {
+        const result = await db.query(`
+          WITH scored AS (
+            SELECT symbol, data->>'direction' as dir,
+              (data->>'score')::int as score,
+              (data->>'price')::numeric as price,
+              data->>'fundingBias' as funding,
+              data->'exchangeFlow'->>'bias' as flow_bias,
+              (data->>'oiChange4h')::numeric as oi_4h,
+              created_at
+            FROM alert_log WHERE alert_type = 'ONCHAIN' AND (data->>'score')::int >= 60
+          ),
+          with_out AS (
+            SELECT a.*,
+              (SELECT (d.data->>'price')::numeric FROM alert_log d
+               WHERE d.symbol = a.symbol AND d.alert_type = 'ONCHAIN'
+               AND d.created_at BETWEEN a.created_at + INTERVAL '3 hours' AND a.created_at + INTERVAL '12 hours'
+               ORDER BY d.created_at LIMIT 1) as later_price
+            FROM scored a
+          )
+          SELECT dir as direction,
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE later_price IS NOT NULL AND
+              ((dir='long' AND later_price > price) OR (dir='short' AND later_price < price))) as correct,
+            COUNT(*) FILTER (WHERE later_price IS NOT NULL) as with_data,
+            COUNT(*) FILTER (WHERE funding = dir AND later_price IS NOT NULL AND
+              ((dir='long' AND later_price > price) OR (dir='short' AND later_price < price))) as fund_aligned_correct,
+            COUNT(*) FILTER (WHERE funding = dir AND later_price IS NOT NULL) as fund_aligned_total,
+            COUNT(*) FILTER (WHERE score >= 80 AND later_price IS NOT NULL AND
+              ((dir='long' AND later_price > price) OR (dir='short' AND later_price < price))) as high_score_correct,
+            COUNT(*) FILTER (WHERE score >= 80 AND later_price IS NOT NULL) as high_score_total
+          FROM with_out GROUP BY dir
+        `);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ patterns: result.rows, ts: Date.now() }));
+      } catch (e) {
+        res.writeHead(500);
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+
+    if (url.pathname === '/api/trades' && authed) {
+      try {
+        const result = await db.query(`
+          SELECT symbol, direction, entry_price, exit_price,
+            ROUND(pnl_pct::numeric, 2) as pnl_pct, ROUND(pnl_usd::numeric, 2) as pnl_usd,
+            leverage, close_reason, mode,
+            (onchain_context->>'score')::int as score,
+            onchain_context->>'fundingBias' as funding,
+            onchain_context->'exchangeFlow'->>'bias' as flow_bias,
+            (onchain_context->>'oiChange4h')::numeric as oi_4h,
+            (onchain_context->>'priceChange')::numeric as price_change,
+            created_at, closed_at
+          FROM trades WHERE source = 'onchain' AND status = 'closed'
+          ORDER BY created_at DESC LIMIT 50
+        `);
+        const open = await db.query(`
+          SELECT symbol, direction, entry_price, leverage, position_size, mode,
+            (onchain_context->>'score')::int as score,
+            onchain_context->>'fundingBias' as funding,
+            tp1, tp2, tp3, stop_loss, created_at
+          FROM trades WHERE source = 'onchain' AND status = 'open'
+        `);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ closed: result.rows, open: open.rows, ts: Date.now() }));
+      } catch (e) {
+        res.writeHead(500);
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+
+    if (url.pathname === '/api/history' && authed) {
+      try {
+        const symbol = url.searchParams.get('symbol');
+        if (!symbol) { res.writeHead(400); return res.end('{"error":"symbol required"}'); }
+        const result = await db.query(`
+          SELECT alert_type, data->>'direction' as direction,
+            (data->>'score')::int as score,
+            (data->>'price')::numeric as price,
+            data->>'fundingBias' as funding_bias,
+            data->'exchangeFlow'->>'bias' as flow_bias,
+            (data->>'oiChange4h')::numeric as oi_4h,
+            (data->>'priceChange')::numeric as price_change,
+            (data->>'fundingRate')::numeric as funding_rate,
+            created_at
+          FROM alert_log WHERE symbol = $1 AND alert_type = 'ONCHAIN'
+          ORDER BY created_at DESC LIMIT 100
+        `, [symbol]);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ history: result.rows, ts: Date.now() }));
+      } catch (e) {
+        res.writeHead(500);
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+
+    res.writeHead(200);
+    res.end('CryptoSignal Bot Running');
   });
   server.listen(process.env.PORT || 3000, () => {
     logger.info(`Health check server on port ${process.env.PORT || 3000}`);
