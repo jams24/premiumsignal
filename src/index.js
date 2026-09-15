@@ -55,6 +55,11 @@ async function main() {
       return res.end(dashboardHtml);
     }
 
+    if (url.pathname.startsWith('/api/') && !authed) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Invalid dashboard key' }));
+    }
+
     if (url.pathname === '/api/signals' && authed) {
       try {
         const hours = parseInt(url.searchParams.get('hours')) || 24;

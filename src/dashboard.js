@@ -778,6 +778,7 @@ function apiFetch(path, params) {
   params.key = apiKey;
   var qs = Object.keys(params).map(function(k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
   return fetch(path + '?' + qs).then(function(r) {
+    if (r.status === 401) { resetConfig(); throw new Error('Invalid key — please re-enter'); }
     if (!r.ok) throw new Error('API ' + r.status);
     return r.json();
   });
