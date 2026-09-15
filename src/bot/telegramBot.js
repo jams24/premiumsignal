@@ -2170,6 +2170,7 @@ class TelegramBot {
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `🔰 Loss Buffer: <b>${te.lossBufferPct}%</b> (closes at $${te.maxLossPerTrade > 0 ? (te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1) : '—'})\n` +
+        `🔄 Breakeven: <b>${te.profitProtectLevPnl}% ROI</b> (${(te.profitProtectLevPnl / te.defaultLeverage).toFixed(2)}% price @ ${te.defaultLeverage}x)\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
@@ -2187,11 +2188,12 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'oc_cfg_lossbuf'),
-         Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos')],
-        [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit'),
-         Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale')],
-        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore'),
-         Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol Filter: ON' : '⚡ Vol Filter: OFF'}`, 'oc_cfg_volfilt')],
+         Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'oc_cfg_be')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
+         Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
+        [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
+         Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol: ON' : '⚡ Vol: OFF'}`, 'oc_cfg_volfilt')],
+        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback('🔄 Refresh', 'oc_settings')],
@@ -2596,6 +2598,39 @@ class TelegramBot {
           await ctx.answerCbQuery(`Loss buffer: ${pct}%`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_buf error: ${e.message}`); }
+      });
+    }
+
+    // oc_ BREAKEVEN THRESHOLD
+    this.bot.action('oc_cfg_be', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const pricePct = (te.profitProtectLevPnl / te.defaultLeverage).toFixed(2);
+        await ctx.editMessageText(
+          `🔗 <b>ONCHAIN — BREAKEVEN TRIGGER</b>\n\n` +
+          `Current: <b>${te.profitProtectLevPnl}% leveraged ROI</b>\n` +
+          `At ${te.defaultLeverage}x leverage = <b>${pricePct}%</b> price move\n\n` +
+          `<i>Once a trade reaches this ROI, SL moves to entry (breakeven).\nLower = safer (triggers sooner), higher = gives more room.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3%${ocCheck(3, te.profitProtectLevPnl)}`, 'oc_be_3'),
+             Markup.button.callback(`5%${ocCheck(5, te.profitProtectLevPnl)}`, 'oc_be_5'),
+             Markup.button.callback(`8%${ocCheck(8, te.profitProtectLevPnl)}`, 'oc_be_8')],
+            [Markup.button.callback(`10%${ocCheck(10, te.profitProtectLevPnl)}`, 'oc_be_10'),
+             Markup.button.callback(`12%${ocCheck(12, te.profitProtectLevPnl)}`, 'oc_be_12'),
+             Markup.button.callback(`15%${ocCheck(15, te.profitProtectLevPnl)}`, 'oc_be_15')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_be error: ${e.message}`); }
+    });
+    for (const roi of [3, 5, 8, 10, 12, 15]) {
+      this.bot.action(`oc_be_${roi}`, async (ctx) => {
+        try {
+          octe().profitProtectLevPnl = roi; octe().saveConfig();
+          await ctx.answerCbQuery(`Breakeven at ${roi}% ROI`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_be error: ${e.message}`); }
       });
     }
 
@@ -3574,6 +3609,7 @@ class TelegramBot {
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `🔰 Loss Buffer: <b>${te.lossBufferPct}%</b> (closes at $${te.maxLossPerTrade > 0 ? (te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1) : '—'})\n` +
+        `🔄 Breakeven: <b>${te.profitProtectLevPnl}% ROI</b> (${(te.profitProtectLevPnl / te.defaultLeverage).toFixed(2)}% price @ ${te.defaultLeverage}x)\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
@@ -3591,10 +3627,11 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'dz_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'dz_cfg_tradeloss')],
         [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'dz_cfg_lossbuf'),
-         Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos')],
-        [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'dz_cfg_riskfit'),
-         Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'dz_cfg_confscale')],
-        [Markup.button.callback(dzCbLabel, 'dz_cfg_cb')],
+         Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'dz_cfg_be')],
+        [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'dz_cfg_maxpos'),
+         Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'dz_cfg_riskfit')],
+        [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'dz_cfg_confscale'),
+         Markup.button.callback(dzCbLabel, 'dz_cfg_cb')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -3993,6 +4030,39 @@ class TelegramBot {
           await ctx.answerCbQuery(`Loss buffer: ${pct}%`);
           await showDzSettings(ctx);
         } catch (e) { logger.error(`dz_buf error: ${e.message}`); }
+      });
+    }
+
+    // dz_ BREAKEVEN THRESHOLD
+    this.bot.action('dz_cfg_be', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        const pricePct = (te.profitProtectLevPnl / te.defaultLeverage).toFixed(2);
+        await ctx.editMessageText(
+          `🔄 <b>DZ — BREAKEVEN TRIGGER</b>\n\n` +
+          `Current: <b>${te.profitProtectLevPnl}% leveraged ROI</b>\n` +
+          `At ${te.defaultLeverage}x leverage = <b>${pricePct}%</b> price move\n\n` +
+          `<i>Once a trade reaches this ROI, SL moves to entry (breakeven).\nLower = safer (triggers sooner), higher = gives more room.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3%${ocCheck(3, te.profitProtectLevPnl)}`, 'dz_be_3'),
+             Markup.button.callback(`5%${ocCheck(5, te.profitProtectLevPnl)}`, 'dz_be_5'),
+             Markup.button.callback(`8%${ocCheck(8, te.profitProtectLevPnl)}`, 'dz_be_8')],
+            [Markup.button.callback(`10%${ocCheck(10, te.profitProtectLevPnl)}`, 'dz_be_10'),
+             Markup.button.callback(`12%${ocCheck(12, te.profitProtectLevPnl)}`, 'dz_be_12'),
+             Markup.button.callback(`15%${ocCheck(15, te.profitProtectLevPnl)}`, 'dz_be_15')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_be error: ${e.message}`); }
+    });
+    for (const roi of [3, 5, 8, 10, 12, 15]) {
+      this.bot.action(`dz_be_${roi}`, async (ctx) => {
+        try {
+          dzte().profitProtectLevPnl = roi; dzte().saveConfig();
+          await ctx.answerCbQuery(`Breakeven at ${roi}% ROI`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_be error: ${e.message}`); }
       });
     }
 

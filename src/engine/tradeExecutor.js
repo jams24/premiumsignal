@@ -52,8 +52,8 @@ class TradeExecutor {
     // Parameterized trade management (swing trades override these)
     this.maxTradeAge = config.maxTradeAge || 48 * 60 * 60 * 1000;
     this.timeExitMinutes = config.timeExitMinutes ?? 90;
-    this.profitProtectPct = config.profitProtectPct || 2.5;
-    this.profitProtectLevPnl = config.profitProtectLevPnl || 12;
+    this.profitProtectPct = config.profitProtectPct || 1.5;
+    this.profitProtectLevPnl = config.profitProtectLevPnl || 5;
     this.trailAtrMultPre = config.trailAtrMultPre || 1.5;
     this.trailAtrMultPost = config.trailAtrMultPost || 3;
     this.dcaSpreadMult1 = config.dcaSpreadMult1 || 1.0;
