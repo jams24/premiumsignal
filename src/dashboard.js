@@ -353,7 +353,7 @@ function renderStats() {
   var shortAcc = shortPat.with_data > 0 ? ((shortPat.correct / shortPat.with_data) * 100).toFixed(0) : '\\u2014';
   var longAcc = longPat.with_data > 0 ? ((longPat.correct / longPat.with_data) * 100).toFixed(0) : '\\u2014';
   var shortHS = shortPat.high_score_total > 0 ? ((shortPat.high_score_correct / shortPat.high_score_total) * 100).toFixed(0) : '\\u2014';
-  var totalPnl = (trades.closed || []).reduce(function(s, t) { return s + (t.pnl_usd || 0); }, 0);
+  var totalPnl = (trades.closed || []).reduce(function(s, t) { return s + (parseFloat(t.pnl_usd) || 0); }, 0);
   var openCount = (trades.open || []).length;
   var highConv = signals.filter(function(s) { return getConviction(s) === 'high'; }).length;
 
@@ -366,12 +366,12 @@ function renderStats() {
 }
 
 function getConviction(s) {
-  var score = s.score || 0;
+  var score = parseInt(s.score) || 0;
   var dir = s.direction;
   var fundAligned = s.funding_bias === dir;
   var fundAgainst = s.funding_bias && s.funding_bias !== dir;
   var hour = new Date(s.created_at).getUTCHours();
-  var oiSpike = Math.abs(s.oi_4h || 0) > 20;
+  var oiSpike = Math.abs(parseFloat(s.oi_4h) || 0) > 20;
   if (fundAgainst && dir === 'long' && s.funding_bias === 'short' && score < 75) return 'low';
   if (score >= 80 && fundAligned) return 'high';
   if (score >= 70 && fundAligned && oiSpike) return 'high';
@@ -385,11 +385,11 @@ function getConviction(s) {
 function getMatchedPatterns(s) {
   var matched = [];
   var dir = s.direction;
-  var score = s.score || 0;
+  var score = parseInt(s.score) || 0;
   var hour = new Date(s.created_at).getUTCHours();
   var fundAligned = s.funding_bias === dir;
   var fundAgainst = s.funding_bias && s.funding_bias !== dir;
-  var oiSpike = Math.abs(s.oi_4h || 0) > 20;
+  var oiSpike = Math.abs(parseFloat(s.oi_4h) || 0) > 20;
   if (dir === 'short' && score >= 80) matched.push('short_high_score');
   if (dir === 'short' && hour >= 12 && hour < 18) matched.push('short_12_18');
   if (dir === 'long' && hour >= 18) matched.push('long_18_24');
@@ -425,9 +425,9 @@ function calcLevels(s) {
 
 function buildReasons(s) {
   var reasons = [];
-  var dir = s.direction, score = s.score || 0;
-  var oi4h = s.oi_4h || 0, oi1h = s.oi_1h || 0;
-  var priceChg = s.price_change || 0, fundRate = s.funding_rate || 0;
+  var dir = s.direction, score = parseInt(s.score) || 0;
+  var oi4h = parseFloat(s.oi_4h) || 0, oi1h = parseFloat(s.oi_1h) || 0;
+  var priceChg = parseFloat(s.price_change) || 0, fundRate = parseFloat(s.funding_rate) || 0;
   var fundBias = s.funding_bias, flowBias = s.flow_bias;
   var hour = new Date(s.created_at).getUTCHours();
 
@@ -509,11 +509,15 @@ function renderSignals() {
 
     html += '<div class="signal-body">';
     html += '<div class="indicators-strip">';
-    html += '<span class="ind-chip ' + (s.funding_bias === s.direction ? 'bull' : s.funding_bias ? 'bear' : '') + '">Fund: ' + (s.funding_bias || 'neutral') + ' ' + (s.funding_rate ? (s.funding_rate * 100).toFixed(3) + '%' : '') + '</span>';
-    html += '<span class="ind-chip ' + ((s.oi_4h || 0) > 15 ? 'warn' : '') + '">OI 4h: ' + (s.oi_4h ? (s.oi_4h > 0 ? '+' : '') + parseFloat(s.oi_4h).toFixed(1) + '%' : '\\u2014') + '</span>';
-    html += '<span class="ind-chip ' + ((s.oi_1h || 0) > 10 ? 'warn' : '') + '">OI 1h: ' + (s.oi_1h ? (s.oi_1h > 0 ? '+' : '') + parseFloat(s.oi_1h).toFixed(1) + '%' : '\\u2014') + '</span>';
+    var _fr = parseFloat(s.funding_rate) || 0;
+    var _oi4 = parseFloat(s.oi_4h) || 0;
+    var _oi1 = parseFloat(s.oi_1h) || 0;
+    var _pc = parseFloat(s.price_change) || 0;
+    html += '<span class="ind-chip ' + (s.funding_bias === s.direction ? 'bull' : s.funding_bias ? 'bear' : '') + '">Fund: ' + (s.funding_bias || 'neutral') + ' ' + (_fr ? (_fr * 100).toFixed(3) + '%' : '') + '</span>';
+    html += '<span class="ind-chip ' + (_oi4 > 15 ? 'warn' : '') + '">OI 4h: ' + (_oi4 ? (_oi4 > 0 ? '+' : '') + _oi4.toFixed(1) + '%' : '\\u2014') + '</span>';
+    html += '<span class="ind-chip ' + (_oi1 > 10 ? 'warn' : '') + '">OI 1h: ' + (_oi1 ? (_oi1 > 0 ? '+' : '') + _oi1.toFixed(1) + '%' : '\\u2014') + '</span>';
     html += '<span class="ind-chip ' + (s.flow_bias === 'bullish' ? 'bull' : s.flow_bias === 'bearish' ? 'bear' : '') + '">Flow: ' + (s.flow_bias || '\\u2014') + '</span>';
-    html += '<span class="ind-chip ' + (Math.abs(s.price_change || 0) > 20 ? 'warn' : '') + '">Price: ' + (s.price_change ? (s.price_change > 0 ? '+' : '') + parseFloat(s.price_change).toFixed(1) + '%' : '\\u2014') + '</span>';
+    html += '<span class="ind-chip ' + (Math.abs(_pc) > 20 ? 'warn' : '') + '">Price: ' + (_pc ? (_pc > 0 ? '+' : '') + _pc.toFixed(1) + '%' : '\\u2014') + '</span>';
     html += '</div>';
 
     html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels</h4>';
