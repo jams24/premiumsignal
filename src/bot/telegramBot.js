@@ -3755,6 +3755,7 @@ class TelegramBot {
         `📈 Paper P&L: <b>$${paperPnl.toFixed(2)}</b> (${paperTrades.length} open)\n` +
         `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
+        `💧 Min Live Vol: <b>$${(te.minLiveVolume / 1e6).toFixed(0)}M</b>${te.minLiveVolume > 0 ? '' : ' (OFF)'}\n` +
         `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
         `Tap any button to configure:`;
@@ -3772,7 +3773,8 @@ class TelegramBot {
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'dz_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'dz_cfg_confscale'),
          Markup.button.callback(dzCbLabel, 'dz_cfg_cb')],
-        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'dz_cfg_exchanges')],
+        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'dz_cfg_exchanges'),
+         Markup.button.callback(`💧 Vol: $${(te.minLiveVolume / 1e6).toFixed(0)}M`, 'dz_cfg_minvol')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -3872,6 +3874,40 @@ class TelegramBot {
         await showDzSettings(ctx);
       } catch (e) { logger.error(`dz_cfg_confscale error: ${e.message}`); }
     });
+
+    // dz_ MIN LIVE VOLUME
+    this.bot.action('dz_cfg_minvol', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        const curM = (te.minLiveVolume / 1e6).toFixed(0);
+        await ctx.editMessageText(
+          `🎯 <b>DZ — MIN LIVE VOLUME</b>\n\n` +
+          `Current: <b>$${curM}M</b> 24h quote volume\n\n` +
+          `<i>Live trades are skipped if the token's 24h volume is below this threshold.\nLow volume = wide spreads = massive slippage on entry/exit.\nPaper trades are unaffected.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`Off${te.minLiveVolume === 0 ? ' ✓' : ''}`, 'dz_minvol_0'),
+             Markup.button.callback(`$2M${te.minLiveVolume === 2000000 ? ' ✓' : ''}`, 'dz_minvol_2'),
+             Markup.button.callback(`$5M${te.minLiveVolume === 5000000 ? ' ✓' : ''}`, 'dz_minvol_5')],
+            [Markup.button.callback(`$10M${te.minLiveVolume === 10000000 ? ' ✓' : ''}`, 'dz_minvol_10'),
+             Markup.button.callback(`$20M${te.minLiveVolume === 20000000 ? ' ✓' : ''}`, 'dz_minvol_20'),
+             Markup.button.callback(`$50M${te.minLiveVolume === 50000000 ? ' ✓' : ''}`, 'dz_minvol_50')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_minvol error: ${e.message}`); }
+    });
+    for (const vol of [0, 2, 5, 10, 20, 50]) {
+      this.bot.action(`dz_minvol_${vol}`, async (ctx) => {
+        try {
+          const te = dzte();
+          te.minLiveVolume = vol * 1000000;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Min live volume: ${vol === 0 ? 'OFF' : `$${vol}M`}`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_minvol set error: ${e.message}`); }
+      });
+    }
 
     // /dzsetsize custom command
     this.bot.command('dzsetsize', async (ctx) => {

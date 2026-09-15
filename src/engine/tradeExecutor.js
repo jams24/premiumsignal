@@ -76,6 +76,9 @@ class TradeExecutor {
 
     // Loss buffer: close at this % of maxLossPerTrade to avoid overshoot (default 80%)
     this.lossBufferPct = config.lossBufferPct ?? 80;
+
+    // Min 24h quote volume for live trades (skip low-liquidity tokens that slip badly)
+    this.minLiveVolume = config.minLiveVolume ?? 5000000;
   }
 
   onTradeUpdate(callback) {
@@ -404,6 +407,7 @@ class TradeExecutor {
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
+      minLiveVolume: this.minLiveVolume,
     };
   }
 
@@ -440,6 +444,7 @@ class TradeExecutor {
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
+    if (cfg.minLiveVolume != null) this.minLiveVolume = cfg.minLiveVolume;
   }
 
   async getCircuitBreakerStatus() {
@@ -947,6 +952,19 @@ class TradeExecutor {
         await this.notify(msg);
         logger.info(`${pair}: price drifted ${drift.toFixed(1)}% from signal, skipping`);
         return null;
+      }
+
+      // Liquidity check: skip low-volume tokens that cause massive slippage
+      if (this.minLiveVolume > 0) {
+        const vol24h = ticker.quoteVolume || 0;
+        if (vol24h < this.minLiveVolume) {
+          const volM = (vol24h / 1e6).toFixed(1);
+          const minM = (this.minLiveVolume / 1e6).toFixed(0);
+          const msg = `⚠️ <b>TRADE SKIPPED</b> $${escapeHtml(signal.symbol)}\n\n24h volume $${volM}M < $${minM}M minimum.\nLow liquidity = high slippage risk on live orders.`;
+          await this.notify(msg);
+          logger.info(`${pair}: 24h volume $${volM}M below live min $${minM}M, skipping`);
+          return null;
+        }
       }
 
       // DCA: enter 1/3 of position at market when enabled, otherwise full position
@@ -1533,7 +1551,33 @@ class TradeExecutor {
       } catch (e) { logger.warn(`Could not fetch position for ${pair}, using trade.quantity: ${e.message}`); }
 
       const side = trade.direction === 'long' ? 'sell' : 'buy';
-      await exchange.createOrder(pair, 'market', side, qty, undefined, { reduceOnly: true });
+
+      // Try limit order first (0.3% tolerance) to avoid slippage on thin books
+      try {
+        const ticker = await exchange.fetchTicker(pair);
+        const slipTol = 0.003;
+        const limitPrice = side === 'sell'
+          ? ticker.last * (1 - slipTol)
+          : ticker.last * (1 + slipTol);
+        const precisePrice = exchange.priceToPrecision(pair, limitPrice);
+        await exchange.createOrder(pair, 'limit', side, qty, precisePrice, { reduceOnly: true, timeInForce: 'IOC' });
+        logger.info(`Closed live position with IOC limit: ${pair} at $${precisePrice} on ${trade.exchange}`);
+
+        // Verify fully closed — fetch position again
+        try {
+          const remaining = await exchange.fetchPositions([pair]);
+          const rem = remaining.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+          if (rem && Math.abs(rem.contracts) > 0) {
+            const remQty = Math.abs(rem.contracts);
+            logger.warn(`${pair}: ${remQty} remaining after IOC limit — sending market order for residual`);
+            await exchange.createOrder(pair, 'market', side, remQty, undefined, { reduceOnly: true });
+          }
+        } catch (e) { logger.warn(`Residual position check failed for ${pair}: ${e.message}`); }
+      } catch (limitErr) {
+        logger.warn(`Limit close failed for ${pair}: ${limitErr.message} — falling back to market`);
+        await exchange.createOrder(pair, 'market', side, qty, undefined, { reduceOnly: true });
+      }
+
       logger.info(`Closed live position: ${pair} on ${trade.exchange}`);
     } catch (err) {
       logger.error(`Failed to close position ${trade.symbol}: ${err.message}`);
