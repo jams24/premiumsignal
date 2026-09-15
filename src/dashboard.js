@@ -193,6 +193,38 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .roster-divider { border:none; border-top:1px solid var(--border); margin:14px 0; }
 .roster-btn { padding:5px 12px; border-radius:5px; border:1px solid var(--gold); background:var(--gold-dim); color:var(--gold); font-size:12px; font-family:var(--font-mono); cursor:pointer; font-weight:600; }
 .roster-btn:hover { background:var(--gold); color:var(--bg); }
+
+/* Jotter */
+.jotter { margin-top:16px; }
+.jotter-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.jotter-header h4 { font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.06em; }
+.jotter-add-row { display:flex; gap:6px; margin-bottom:10px; }
+.jotter-input { flex:1; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; outline:none; }
+.jotter-input:focus { border-color:var(--accent); }
+.jotter-input::placeholder { color:var(--muted); }
+.jotter-type-btn { padding:6px 10px; border-radius:5px; border:1px solid var(--border); background:transparent; color:var(--text2); font-size:11px; font-family:var(--font-mono); cursor:pointer; font-weight:600; white-space:nowrap; }
+.jotter-type-btn.active { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+.jotter-type-btn:hover { border-color:var(--text2); }
+.jotter-add-btn { padding:6px 14px; border-radius:5px; border:none; background:var(--accent); color:var(--bg); font-size:12px; font-family:var(--font-mono); cursor:pointer; font-weight:700; }
+.jotter-add-btn:hover { opacity:0.85; }
+.jotter-list { list-style:none; padding:0; margin:0; }
+.jotter-item { display:flex; align-items:flex-start; gap:8px; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; margin-bottom:6px; font-size:12px; font-family:var(--font-mono); color:var(--text2); line-height:1.5; }
+.jotter-item.done { opacity:0.45; }
+.jotter-item.done .jotter-text { text-decoration:line-through; }
+.jotter-check { flex-shrink:0; width:16px; height:16px; border-radius:4px; border:1.5px solid var(--border); background:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; margin-top:1px; color:var(--green); font-size:11px; }
+.jotter-item.done .jotter-check { border-color:var(--green); background:var(--green-dim); }
+.jotter-tag { flex-shrink:0; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600; }
+.jotter-tag.watch { background:rgba(59,130,246,0.15); color:#3b82f6; }
+.jotter-tag.note { background:var(--gold-dim); color:var(--gold); }
+.jotter-tag.todo { background:rgba(168,85,247,0.15); color:#a855f7; }
+.jotter-text { flex:1; word-break:break-word; }
+.jotter-time { flex-shrink:0; font-size:10px; color:var(--muted); }
+.jotter-del { flex-shrink:0; background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:0 2px; line-height:1; }
+.jotter-del:hover { color:var(--danger); }
+.jotter-coin-row { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:8px; }
+.jotter-coin-btn { padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:transparent; color:var(--text2); font-size:11px; font-family:var(--font-mono); cursor:pointer; }
+.jotter-coin-btn:hover { border-color:var(--accent); color:var(--accent); }
+.jotter-empty { font-size:12px; color:var(--muted); text-align:center; padding:16px 0; }
 </style>
 </head>
 <body>
@@ -353,6 +385,26 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <div class="roster-section">
         <h4>Golden Rule</h4>
         <div class="roster-item" style="font-size:14px;color:var(--gold);font-weight:600"><span class="ri-icon">&#9733;</span> Score 55-64 + Demand Zone + 1-3 PM WAT = your highest edge combo. Prioritize these setups above everything else.</div>
+      </div>
+
+      <hr class="roster-divider">
+
+      <div class="jotter" id="jotter">
+        <div class="jotter-header">
+          <h4>Jotter &mdash; Watchlist &amp; Notes</h4>
+          <button class="jotter-del" onclick="clearDoneJotter()" title="Clear completed">&times; Clear done</button>
+        </div>
+        <div class="jotter-coin-row" id="jotter-coins"></div>
+        <div class="jotter-add-row">
+          <div style="display:flex;gap:4px">
+            <button class="jotter-type-btn active" data-type="watch" onclick="setJotterType(this)">Watch</button>
+            <button class="jotter-type-btn" data-type="note" onclick="setJotterType(this)">Note</button>
+            <button class="jotter-type-btn" data-type="todo" onclick="setJotterType(this)">To-do</button>
+          </div>
+          <input class="jotter-input" id="jotter-input" type="text" placeholder="e.g. Watch AIN for retest at $0.15..." onkeydown="if(event.key==='Enter')addJotter()">
+          <button class="jotter-add-btn" onclick="addJotter()">Add</button>
+        </div>
+        <ul class="jotter-list" id="jotter-list"></ul>
       </div>
     </div>
     <div class="signals-grid" id="signals-grid"></div>
@@ -582,6 +634,82 @@ function applyRisk() {
 function toggleRoster() {
   var panel = document.getElementById('roster-panel');
   panel.classList.toggle('open');
+  if (panel.classList.contains('open')) renderJotter();
+}
+
+var JOTTER_TYPE = 'watch';
+function setJotterType(btn) {
+  document.querySelectorAll('.jotter-type-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  JOTTER_TYPE = btn.dataset.type;
+}
+function getJotterItems() {
+  try { return JSON.parse(localStorage.getItem('sc_jotter')) || []; } catch(e) { return []; }
+}
+function saveJotterItems(items) {
+  try { localStorage.setItem('sc_jotter', JSON.stringify(items)); } catch(e) {}
+}
+function addJotter(prefill) {
+  var input = document.getElementById('jotter-input');
+  var text = prefill || (input ? input.value.trim() : '');
+  if (!text) return;
+  var items = getJotterItems();
+  var now = new Date();
+  var timeStr = now.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + ' ' + now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', hour12:false });
+  items.unshift({ id: Date.now(), type: prefill ? 'watch' : JOTTER_TYPE, text: text, done: false, time: timeStr });
+  saveJotterItems(items);
+  if (input && !prefill) input.value = '';
+  renderJotter();
+}
+function toggleJotter(id) {
+  var items = getJotterItems();
+  items.forEach(function(it) { if (it.id === id) it.done = !it.done; });
+  saveJotterItems(items);
+  renderJotter();
+}
+function deleteJotter(id) {
+  var items = getJotterItems().filter(function(it) { return it.id !== id; });
+  saveJotterItems(items);
+  renderJotter();
+}
+function clearDoneJotter() {
+  var items = getJotterItems().filter(function(it) { return !it.done; });
+  saveJotterItems(items);
+  renderJotter();
+}
+function renderJotter() {
+  var list = document.getElementById('jotter-list');
+  var coinRow = document.getElementById('jotter-coins');
+  if (!list) return;
+  var items = getJotterItems();
+
+  if (coinRow && signals && signals.length) {
+    var existing = items.map(function(it) { return it.text; }).join(' ');
+    var coins = [];
+    signals.forEach(function(s) {
+      var sym = s.symbol.replace('/USDT','').replace(':USDT','');
+      if (coins.indexOf(sym) === -1 && existing.indexOf(sym) === -1) coins.push(sym);
+    });
+    coinRow.innerHTML = coins.slice(0, 12).map(function(c) {
+      return '<button class="jotter-coin-btn" onclick="addJotter(\'Watch ' + c + '\')">' + c + '</button>';
+    }).join('');
+  }
+
+  if (!items.length) {
+    list.innerHTML = '<li class="jotter-empty">No notes yet. Add coins to watch or jot down trade ideas.</li>';
+    return;
+  }
+  list.innerHTML = items.map(function(it) {
+    var cls = it.done ? 'jotter-item done' : 'jotter-item';
+    var check = it.done ? '&#10003;' : '';
+    return '<li class="' + cls + '">' +
+      '<button class="jotter-check" onclick="toggleJotter(' + it.id + ')">' + check + '</button>' +
+      '<span class="jotter-tag ' + it.type + '">' + it.type + '</span>' +
+      '<span class="jotter-text">' + it.text + '</span>' +
+      '<span class="jotter-time">' + it.time + '</span>' +
+      '<button class="jotter-del" onclick="deleteJotter(' + it.id + ')" title="Delete">&times;</button>' +
+      '</li>';
+  }).join('');
 }
 
 function setScoreFilter(btn) {
@@ -678,6 +806,7 @@ function refreshAll() {
     lastUpdate = Date.now();
     renderStats();
     renderSignals();
+    renderJotter();
     renderFlowAlerts();
   }).catch(function(e) {
     dot.className = 'status-dot off';
