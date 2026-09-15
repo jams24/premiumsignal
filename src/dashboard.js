@@ -548,7 +548,10 @@ function refreshAll() {
     apiFetch('/api/trades'),
   ]).then(function(results) {
     signals = (results[0].signals || []).map(function(s) {
-      if (s.best_score && parseInt(s.best_score) > (parseInt(s.score) || 0)) s.score = s.best_score;
+      s.first_score = parseInt(s.score) || 0;
+      s.best_score = parseInt(s.best_score) || s.first_score;
+      s.current_score = parseInt(s.current_score) || s.first_score;
+      s.score = s.best_score;
       return s;
     });
     flowAlerts = results[0].flow_alerts || [];
@@ -868,19 +871,19 @@ function renderSignals() {
     }
     html += '</div>';
 
-    var bestScore = parseInt(s.best_score) || parseInt(s.score) || 0;
-    var initScore = parseInt(s.score) || 0;
-    if (bestScore > initScore && s.best_at) {
+    var initDt = new Date(s.created_at);
+    var initWat = initDt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+    html += '<div style="font-size:11px;font-family:var(--font-mono);color:var(--text2);padding:6px 10px;margin-bottom:10px;background:var(--bg);border-radius:4px;border-left:3px solid var(--accent)">';
+    html += '<span style="color:var(--muted)">SCORE TRACKER</span><br>';
+    html += 'First: <strong>' + s.first_score + '</strong> at ' + fmtPrice(s.price) + ' — ' + initWat + ' WAT';
+    if (s.best_at && s.best_score > s.first_score) {
       var bestDt = new Date(s.best_at);
       var bestWat = bestDt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
-      var initDt = new Date(s.created_at);
-      var initWat = initDt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
-      html += '<div style="font-size:11px;font-family:var(--font-mono);color:var(--text2);padding:6px 10px;margin-bottom:10px;background:var(--bg);border-radius:4px;border-left:3px solid var(--accent)">';
-      html += '<span style="color:var(--muted)">ALERT TIMELINE</span><br>';
-      html += 'First alert: score <strong>' + initScore + '</strong> at <strong style="color:var(--gold)">' + fmtPrice(s.price) + '</strong> — ' + initWat + ' WAT<br>';
-      html += 'Best score: <strong style="color:var(--accent)">' + bestScore + '</strong> at <strong style="color:var(--gold)">' + fmtPrice(s.best_price) + '</strong> — ' + bestWat + ' WAT';
-      html += '</div>';
+      html += '<br>Best: <strong style="color:var(--accent)">' + s.best_score + '</strong> at ' + fmtPrice(s.best_price) + ' — ' + bestWat + ' WAT';
     }
+    html += '<br>Now: <strong style="color:' + (s.current_score >= 60 ? 'var(--accent)' : 'var(--danger)') + '">' + s.current_score + '</strong>';
+    html += s.current_score >= 60 ? ' <span style="color:var(--accent)">TRADEABLE</span>' : ' <span style="color:var(--danger)">BELOW 60</span>';
+    html += '</div>';
 
     html += '<div class="chart-section">';
     html += '<div class="chart-tf-tabs" id="tf-tabs-' + i + '">';
