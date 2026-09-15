@@ -22,6 +22,7 @@ const TelegramBot = require('./bot/telegramBot');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
+let exchangeRef = null;
 
 // Alert cooldown — skip duplicate symbol+direction within 30 min
 const alertCooldowns = new Map();
@@ -205,6 +206,26 @@ async function main() {
       }
     }
 
+    if (url.pathname === '/api/chart' && authed) {
+      try {
+        const symbol = url.searchParams.get('symbol');
+        const tf = url.searchParams.get('tf') || '15m';
+        const since = url.searchParams.get('since');
+        if (!symbol) { res.writeHead(400); return res.end('{"error":"symbol required"}'); }
+        if (!exchangeRef) { res.writeHead(503); return res.end('{"error":"exchange not ready"}'); }
+        const validTf = ['5m','15m','1h','4h'];
+        if (!validTf.includes(tf)) { res.writeHead(400); return res.end('{"error":"tf must be 5m/15m/1h/4h"}'); }
+        const sinceMs = since ? parseInt(since) : Date.now() - (tf === '4h' ? 30*24*60*60*1000 : tf === '1h' ? 7*24*60*60*1000 : 2*24*60*60*1000);
+        const candles = await exchangeRef.fetchOHLCV(symbol, tf, sinceMs, 200);
+        const data = candles.map(c => ({ time: Math.floor(c[0]/1000), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ candles: data, symbol, tf }));
+      } catch (e) {
+        res.writeHead(500);
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+
     res.writeHead(200);
     res.end('CryptoSignal Bot Running');
   });
@@ -223,6 +244,7 @@ async function main() {
   // Init collectors
   const listingMonitor = new ListingMonitor();
   await listingMonitor.init();
+  exchangeRef = listingMonitor.exchanges?.bybit || listingMonitor.exchanges?.binance || Object.values(listingMonitor.exchanges || {})[0];
 
   const technicalScanner = new TechnicalScanner(listingMonitor.exchanges);
   const onchainTracker = new OnchainTracker();

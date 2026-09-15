@@ -5,6 +5,7 @@ module.exports = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Signal Command</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 :root {
   --bg: #0a0e17; --surface: #111827; --surface2: #1a2235; --border: #1e293b;
@@ -140,6 +141,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .tp-step { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
 .tp-step.hit { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .tp-step.blown { border-color: var(--danger); color: var(--danger); background: var(--danger-dim); }
+
+/* Chart section */
+.chart-section { margin-bottom: 14px; }
+.chart-tf-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.chart-tf-btn { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; font-family: var(--font-mono); cursor: pointer; font-weight: 600; }
+.chart-tf-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.chart-container { width: 100%; height: 320px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); background: #131722; position: relative; }
+.chart-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-family: var(--font-mono); font-size: 12px; z-index: 2; }
+.chart-legend { display: flex; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
+.chart-legend-item { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 10px; color: var(--text2); }
+.chart-legend-dot { width: 8px; height: 2px; border-radius: 1px; }
 
 /* Education section */
 .edu-section { margin-bottom: 20px; }
@@ -695,7 +707,17 @@ function setFilter(btn) {
   renderSignals();
 }
 
-function toggleCard(id) { document.getElementById(id).classList.toggle('expanded'); }
+function toggleCard(id) {
+  var card = document.getElementById(id);
+  card.classList.toggle('expanded');
+  if (card.classList.contains('expanded')) {
+    var idx = parseInt(id.replace('sig-', ''));
+    if (!chartInstances[idx]) {
+      var activeBtn = document.querySelector('#tf-tabs-' + idx + ' .chart-tf-btn.active');
+      if (activeBtn) loadChart(activeBtn);
+    }
+  }
+}
 
 function renderSignals() {
   var grid = document.getElementById('signals-grid');
@@ -779,6 +801,20 @@ function renderSignals() {
     }
     html += '</div>';
 
+    html += '<div class="chart-section">';
+    html += '<div class="chart-tf-tabs" id="tf-tabs-' + i + '">';
+    html += '<button class="chart-tf-btn" data-tf="5m" data-idx="' + i + '" onclick="loadChart(this)">5m</button>';
+    html += '<button class="chart-tf-btn active" data-tf="15m" data-idx="' + i + '" onclick="loadChart(this)">15m</button>';
+    html += '<button class="chart-tf-btn" data-tf="1h" data-idx="' + i + '" onclick="loadChart(this)">1h</button>';
+    html += '<button class="chart-tf-btn" data-tf="4h" data-idx="' + i + '" onclick="loadChart(this)">4h</button>';
+    html += '</div>';
+    html += '<div class="chart-container" id="chart-' + i + '"><div class="chart-loading" id="chart-load-' + i + '">Click a timeframe to load chart</div></div>';
+    html += '<div class="chart-legend">';
+    html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#f59e0b"></span>Entry</span>';
+    html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#10b981"></span>TP1/TP2/TP3</span>';
+    html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#ef4444"></span>Stop Loss</span>';
+    html += '</div></div>';
+
     html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
     html += '<div class="level-row"><span class="level-label">Entry</span><span class="level-val entry">' + fmtPrice(s.price) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">Stop Loss</span><span class="level-val sl">' + fmtPrice(levels.sl) + '</span></div>';
@@ -811,6 +847,102 @@ function renderSignals() {
     html += '</div></div>';
     return html;
   }).join('');
+}
+
+var chartInstances = {};
+
+function loadChart(btn) {
+  var tf = btn.dataset.tf, idx = parseInt(btn.dataset.idx);
+  var tabs = document.getElementById('tf-tabs-' + idx);
+  tabs.querySelectorAll('.chart-tf-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+
+  var filtered = signals.map(function(s) { return Object.assign({}, s, { conviction: getConviction(s) }); });
+  if (currentFilter === 'high') filtered = filtered.filter(function(s) { return s.conviction === 'high'; });
+  else if (currentFilter === 'short') filtered = filtered.filter(function(s) { return s.direction === 'short'; });
+  else if (currentFilter === 'long') filtered = filtered.filter(function(s) { return s.direction === 'long'; });
+  filtered.sort(function(a, b) {
+    var order = { high: 0, med: 1, low: 2 };
+    if (order[a.conviction] !== order[b.conviction]) return order[a.conviction] - order[b.conviction];
+    return (parseInt(b.score) || 0) - (parseInt(a.score) || 0);
+  });
+  var s = filtered[idx];
+  if (!s) return;
+
+  var containerId = 'chart-' + idx;
+  var loadEl = document.getElementById('chart-load-' + idx);
+  if (loadEl) loadEl.textContent = 'Loading ' + tf + ' candles...';
+
+  var sinceMs = new Date(s.created_at).getTime() - (tf === '4h' ? 7*24*3600000 : tf === '1h' ? 3*24*3600000 : 12*3600000);
+  apiFetch('/api/chart', { symbol: s.symbol, tf: tf, since: sinceMs }).then(function(data) {
+    if (!data.candles || !data.candles.length) {
+      if (loadEl) loadEl.textContent = 'No chart data available';
+      return;
+    }
+    renderChart(containerId, idx, data.candles, s);
+  }).catch(function(e) {
+    if (loadEl) loadEl.textContent = 'Chart error: ' + e.message;
+  });
+}
+
+function renderChart(containerId, idx, candles, signal) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+
+  if (chartInstances[idx]) {
+    chartInstances[idx].remove();
+    chartInstances[idx] = null;
+  }
+  container.innerHTML = '';
+
+  var chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 320,
+    layout: { background: { type: 'solid', color: '#131722' }, textColor: '#9ca3af', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
+    grid: { vertLines: { color: 'rgba(42,46,57,0.5)' }, horzLines: { color: 'rgba(42,46,57,0.5)' } },
+    crosshair: { mode: 0 },
+    rightPriceScale: { borderColor: '#1e293b' },
+    timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false },
+  });
+  chartInstances[idx] = chart;
+
+  var candleSeries = chart.addCandlestickSeries({
+    upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444',
+    wickUpColor: '#10b981', wickDownColor: '#ef4444',
+  });
+  candleSeries.setData(candles);
+
+  var volSeries = chart.addHistogramSeries({
+    color: 'rgba(59,130,246,0.2)', priceFormat: { type: 'volume' }, priceScaleId: 'vol',
+  });
+  chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+  volSeries.setData(candles.map(function(c) {
+    return { time: c.time, value: c.volume, color: c.close >= c.open ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)' };
+  }));
+
+  var entryPrice = parseFloat(signal.price);
+  var levels = calcLevels(signal);
+
+  candleSeries.createPriceLine({ price: entryPrice, color: '#f59e0b', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
+  candleSeries.createPriceLine({ price: levels.sl, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+  candleSeries.createPriceLine({ price: levels.tp1, color: '#10b981', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP1' });
+  candleSeries.createPriceLine({ price: levels.tp2, color: '#10b981', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP2' });
+  candleSeries.createPriceLine({ price: levels.tp3, color: '#10b981', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP3' });
+
+  var sigTime = Math.floor(new Date(signal.created_at).getTime() / 1000);
+  candleSeries.setMarkers([{
+    time: sigTime,
+    position: signal.direction === 'short' ? 'aboveBar' : 'belowBar',
+    color: signal.direction === 'short' ? '#ef4444' : '#10b981',
+    shape: signal.direction === 'short' ? 'arrowDown' : 'arrowUp',
+    text: signal.direction.toUpperCase() + ' ' + (parseInt(signal.score) || 0),
+  }]);
+
+  chart.timeScale().fitContent();
+
+  new ResizeObserver(function() {
+    if (chartInstances[idx]) chart.applyOptions({ width: container.clientWidth });
+  }).observe(container);
 }
 
 function renderFlowAlerts() {
