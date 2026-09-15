@@ -116,6 +116,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .filter-btn { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 11px; font-family: var(--font-mono); cursor: pointer; }
 .filter-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 
+/* Sizing config */
+.sizing-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
+.sizing-bar .slab { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-right: 4px; white-space: nowrap; }
+.preset-btn { padding: 5px 10px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text2); font-size: 12px; font-family: var(--font-mono); cursor: pointer; white-space: nowrap; }
+.preset-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.preset-btn:hover { border-color: var(--text2); }
+.sizing-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.sizing-input { width: 80px; padding: 5px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: var(--font-mono); font-size: 12px; text-align: right; outline: none; }
+.sizing-input:focus { border-color: var(--accent); }
+.sizing-input-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.sizing-notional { font-family: var(--font-mono); font-size: 13px; color: var(--accent); font-weight: 600; margin-left: auto; white-space: nowrap; }
+
 /* Education section */
 .edu-section { margin-bottom: 20px; }
 .edu-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
@@ -166,6 +178,21 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
   <!-- SIGNALS TAB -->
   <div class="tab-panel active" id="tab-signals">
+    <div class="sizing-bar" id="sizing-bar">
+      <span class="slab">Sizing</span>
+      <button class="preset-btn" data-m="100" data-l="5" onclick="applyPreset(this)">$100 / 5x</button>
+      <button class="preset-btn" data-m="500" data-l="10" onclick="applyPreset(this)">$500 / 10x</button>
+      <button class="preset-btn" data-m="1000" data-l="10" onclick="applyPreset(this)">$1K / 10x</button>
+      <button class="preset-btn" data-m="2000" data-l="20" onclick="applyPreset(this)">$2K / 20x</button>
+      <button class="preset-btn" data-m="5000" data-l="20" onclick="applyPreset(this)">$5K / 20x</button>
+      <div class="sizing-sep"></div>
+      <span class="sizing-input-label">Margin $</span>
+      <input class="sizing-input" id="custom-margin" type="number" min="10" step="10" onchange="applyCustom()">
+      <span class="sizing-input-label">Lev</span>
+      <input class="sizing-input" id="custom-lev" type="number" min="1" max="125" step="1" style="width:50px" onchange="applyCustom()">
+      <span class="sizing-input-label">x</span>
+      <span class="sizing-notional" id="notional-display"></span>
+    </div>
     <div class="stats-bar" id="stats-bar"></div>
     <div class="rules-banner">
       <span class="rule-title">Conviction Rules</span>
@@ -360,7 +387,38 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 </div>
 
 <script>
-var MARGIN = 2000, LEVERAGE = 20, NOTIONAL = 2000 * 20;
+var MARGIN = 2000, LEVERAGE = 20, NOTIONAL = 40000;
+
+function loadSizing() {
+  try {
+    var s = JSON.parse(localStorage.getItem('sc_sizing'));
+    if (s && s.m > 0 && s.l > 0) { MARGIN = s.m; LEVERAGE = s.l; }
+  } catch(e) {}
+  NOTIONAL = MARGIN * LEVERAGE;
+}
+function saveSizing() {
+  localStorage.setItem('sc_sizing', JSON.stringify({ m: MARGIN, l: LEVERAGE }));
+  NOTIONAL = MARGIN * LEVERAGE;
+}
+function updateSizingUI() {
+  document.getElementById('custom-margin').value = MARGIN;
+  document.getElementById('custom-lev').value = LEVERAGE;
+  document.getElementById('notional-display').textContent = '$' + NOTIONAL.toLocaleString() + ' notional';
+  document.querySelectorAll('.preset-btn').forEach(function(b) {
+    b.classList.toggle('active', parseInt(b.dataset.m) === MARGIN && parseInt(b.dataset.l) === LEVERAGE);
+  });
+}
+function applyPreset(btn) {
+  MARGIN = parseInt(btn.dataset.m); LEVERAGE = parseInt(btn.dataset.l);
+  saveSizing(); updateSizingUI(); renderStats(); renderSignals();
+}
+function applyCustom() {
+  var m = parseInt(document.getElementById('custom-margin').value) || 100;
+  var l = parseInt(document.getElementById('custom-lev').value) || 5;
+  if (m < 10) m = 10; if (l < 1) l = 1; if (l > 125) l = 125;
+  MARGIN = m; LEVERAGE = l;
+  saveSizing(); updateSizingUI(); renderStats(); renderSignals();
+}
 
 var PATTERN_RULES = {
   short_high_score: { label: 'High-score shorts', accuracy: 87.5, desc: 'Score 80+ shorts hit 87.5% of the time' },
@@ -381,11 +439,13 @@ function switchTab(tab, btn) {
 }
 
 function init() {
+  loadSizing();
   var saved = localStorage.getItem('sc_key');
   if (saved) {
     apiKey = saved;
     document.getElementById('setup-overlay').hidden = true;
     document.getElementById('main-app').hidden = false;
+    updateSizingUI();
     refreshAll();
     refreshInterval = setInterval(refreshAll, 300000);
     setInterval(updateTimer, 10000);
@@ -399,6 +459,7 @@ function saveConfig() {
   localStorage.setItem('sc_key', key);
   document.getElementById('setup-overlay').hidden = true;
   document.getElementById('main-app').hidden = false;
+  updateSizingUI();
   refreshAll();
   refreshInterval = setInterval(refreshAll, 300000);
   setInterval(updateTimer, 10000);
@@ -469,8 +530,7 @@ function renderStats() {
     '<div class="stat-card"><div class="stat-label">Short Acc (60+)</div><div class="stat-value green">' + shortAcc + '%</div><div class="stat-sub">' + (shortPat.correct || 0) + '/' + (shortPat.with_data || 0) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Short 80+</div><div class="stat-value green">' + shortHS + '%</div><div class="stat-sub">' + (shortPat.high_score_correct || 0) + '/' + (shortPat.high_score_total || 0) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Long Acc (60+)</div><div class="stat-value ' + (parseInt(longAcc) >= 50 ? 'green' : 'red') + '">' + longAcc + '%</div><div class="stat-sub">' + (longPat.correct || 0) + '/' + (longPat.with_data || 0) + '</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Bot P&L</div><div class="stat-value ' + (totalPnl >= 0 ? 'green' : 'red') + '">$' + totalPnl.toFixed(0) + '</div><div class="stat-sub">' + (trades.closed || []).length + ' trades</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Sizing</div><div class="stat-value" style="font-size:16px">$' + MARGIN + '/' + LEVERAGE + 'x</div><div class="stat-sub">$' + NOTIONAL.toLocaleString() + ' notional</div></div>';
+    '<div class="stat-card"><div class="stat-label">Bot P&L</div><div class="stat-value ' + (totalPnl >= 0 ? 'green' : 'red') + '">$' + totalPnl.toFixed(0) + '</div><div class="stat-sub">' + (trades.closed || []).length + ' trades</div></div>';
 }
 
 function getConviction(s) {
