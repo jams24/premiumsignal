@@ -71,6 +71,12 @@ async function main() {
               (data->>'priceChange')::numeric as price_change,
               (data->>'fundingRate')::numeric as funding_rate,
               data->'lsData' as ls_data,
+              (data->>'tp1')::numeric as tp1,
+              (data->>'tp2')::numeric as tp2,
+              (data->>'tp3')::numeric as tp3,
+              (data->>'stopLoss')::numeric as stop_loss,
+              (data->>'atr')::numeric as atr,
+              (data->>'confidence')::int as confidence,
               alert_type,
               created_at,
               ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY (data->>'score')::int DESC, created_at DESC) as rn

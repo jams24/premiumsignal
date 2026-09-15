@@ -616,15 +616,19 @@ function fmtPrice(p) {
 
 function calcLevels(s) {
   var price = parseFloat(s.price), dir = s.direction;
-  var absPc = Math.abs(parseFloat(s.price_change) || 0);
-  var volEst = Math.max(absPc * 0.3, 3);
-  var atrEst = price * (volEst / 100);
-  var sl, tp1, tp2, tp3;
-  if (dir === 'long') { sl = price - atrEst * 2; tp1 = price + atrEst * 1.5; tp2 = price + atrEst * 3; tp3 = price + atrEst * 5; }
-  else { sl = price + atrEst * 2; tp1 = price - atrEst * 1.5; tp2 = price - atrEst * 3; tp3 = price - atrEst * 5; }
+  var tp1 = parseFloat(s.tp1), tp2 = parseFloat(s.tp2), tp3 = parseFloat(s.tp3);
+  var sl = parseFloat(s.stop_loss);
+  var hasReal = tp1 > 0 && sl > 0;
+  if (!hasReal) {
+    var absPc = Math.abs(parseFloat(s.price_change) || 0);
+    var volEst = Math.max(absPc * 0.3, 3);
+    var atrEst = price * (volEst / 100);
+    if (dir === 'long') { sl = price - atrEst * 2; tp1 = price + atrEst * 1.5; tp2 = price + atrEst * 3; tp3 = price + atrEst * 5; }
+    else { sl = price + atrEst * 2; tp1 = price - atrEst * 1.5; tp2 = price - atrEst * 3; tp3 = price - atrEst * 5; }
+  }
   var risk = Math.abs(price - sl), reward = Math.abs(tp2 - price);
   var slPct = ((Math.abs(price - sl) / price) * 100).toFixed(1);
-  return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '\\u2014', slPct: slPct, volEst: volEst.toFixed(1) };
+  return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '\\u2014', slPct: slPct, estimated: !hasReal };
 }
 
 function getTradeStatus(s, levels) {
@@ -849,16 +853,23 @@ function renderSignals() {
 
     html += '</div>';
 
-    html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
+    var entryP = parseFloat(s.price);
+    var tp1Pct = ((Math.abs(levels.tp1 - entryP) / entryP) * 100).toFixed(1);
+    var tp2Pct = ((Math.abs(levels.tp2 - entryP) / entryP) * 100).toFixed(1);
+    var tp3Pct = ((Math.abs(levels.tp3 - entryP) / entryP) * 100).toFixed(1);
+    var srcLabel = levels.estimated ? ' <span style="color:var(--text2);font-weight:400;font-size:10px">(estimated)</span>' : '';
+    html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels ($' + MARGIN + ' @ ' + LEVERAGE + 'x)' + srcLabel + '</h4>';
     html += '<div class="level-row"><span class="level-label">Entry</span><span class="level-val entry">' + fmtPrice(s.price) + '</span></div>';
-    html += '<div class="level-row"><span class="level-label">Stop Loss</span><span class="level-val sl">' + fmtPrice(levels.sl) + '</span></div>';
-    html += '<div class="level-row"><span class="level-label">TP1 (+4.5%)</span><span class="level-val tp">' + fmtPrice(levels.tp1) + '</span></div>';
-    html += '<div class="level-row"><span class="level-label">TP2 (+9%)</span><span class="level-val tp">' + fmtPrice(levels.tp2) + '</span></div>';
-    html += '<div class="level-row"><span class="level-label">TP3 (+15%)</span><span class="level-val tp">' + fmtPrice(levels.tp3) + '</span></div>';
+    html += '<div class="level-row"><span class="level-label">Stop Loss (' + levels.slPct + '%)</span><span class="level-val sl">' + fmtPrice(levels.sl) + '</span></div>';
+    html += '<div class="level-row"><span class="level-label">TP1 (+' + tp1Pct + '%)</span><span class="level-val tp">' + fmtPrice(levels.tp1) + '</span></div>';
+    html += '<div class="level-row"><span class="level-label">TP2 (+' + tp2Pct + '%)</span><span class="level-val tp">' + fmtPrice(levels.tp2) + '</span></div>';
+    html += '<div class="level-row"><span class="level-label">TP3 (+' + tp3Pct + '%)</span><span class="level-val tp">' + fmtPrice(levels.tp3) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">R:R</span><span class="rr-badge">' + levels.rr + ':1</span></div>';
     html += '</div><div class="setup-box"><h4>If You Entered ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
-    var tp1Pnl = NOTIONAL * 0.045, tp2Pnl = NOTIONAL * 0.09, tp3Pnl = NOTIONAL * 0.15;
-    var slPnl = NOTIONAL * 0.06;
+    var tp1Pnl = NOTIONAL * parseFloat(tp1Pct) / 100;
+    var tp2Pnl = NOTIONAL * parseFloat(tp2Pct) / 100;
+    var tp3Pnl = NOTIONAL * parseFloat(tp3Pct) / 100;
+    var slPnl = NOTIONAL * parseFloat(levels.slPct) / 100;
     html += '<div class="level-row"><span class="level-label">If TP1 hit</span><span class="level-val tp">+$' + tp1Pnl.toFixed(0) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">If TP2 hit</span><span class="level-val tp">+$' + tp2Pnl.toFixed(0) + '</span></div>';
     html += '<div class="level-row"><span class="level-label">If TP3 hit</span><span class="level-val tp">+$' + tp3Pnl.toFixed(0) + '</span></div>';
