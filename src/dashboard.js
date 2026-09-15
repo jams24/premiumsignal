@@ -216,9 +216,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <button class="preset-btn" data-m="5000" data-l="20" onclick="applyPreset(this)">$5K / 20x</button>
       <div class="sizing-sep"></div>
       <span class="sizing-input-label">Margin $</span>
-      <input class="sizing-input" id="custom-margin" type="number" min="10" step="10" onchange="applyCustom()">
+      <input class="sizing-input" id="custom-margin" type="number" min="10" step="10" oninput="applyCustom()">
       <span class="sizing-input-label">Lev</span>
-      <input class="sizing-input" id="custom-lev" type="number" min="1" max="125" step="1" style="width:50px" onchange="applyCustom()">
+      <input class="sizing-input" id="custom-lev" type="number" min="1" max="125" step="1" style="width:50px" oninput="applyCustom()">
       <span class="sizing-input-label">x</span>
       <span class="sizing-notional" id="notional-display"></span>
     </div>
@@ -247,7 +247,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div id="flow-section" hidden>
       <div style="margin-top:16px;padding:8px 0;border-top:1px solid var(--border)">
         <div style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px">Raw Flow & Supply Alerts</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:var(--font-mono)">Early detection signals from exchange flow and supply moves. No score \\u2014 use as confirmation alongside scored signals.</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:var(--font-mono)">Early detection signals from exchange flow and supply moves. No score — use as confirmation alongside scored signals.</div>
       </div>
       <div class="signals-grid" id="flow-grid"></div>
     </div>
@@ -259,7 +259,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
       <div class="edu-card open">
         <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
-          <h3>\\ud83d\\udcda Core Concepts</h3><span class="edu-arrow">\\u25bc</span>
+          <h3>📚 Core Concepts</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
 
@@ -282,7 +282,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>Short Squeeze</h4>
             <div class="what">When price suddenly pumps and forces short sellers to buy back their positions to cut losses, which pushes price even higher in a chain reaction. It's like a stampede for the exit.</div>
-            <div class="how"><strong>How to spot one forming:</strong><br>1. Funding rate is deeply negative (crowded shorts)<br>2. OI is high and rising (lots of shorts opened)<br>3. Price starts moving up despite heavy shorts<br>4. Liquidations cascade \\u2014 one short getting liquidated pushes price up, liquidating the next<br><br><strong>Arslan's method:</strong> Check if retail is crowded short (L/S ratio below 0.85) while top traders are long (ratio above 1.50). That divergence is the squeeze setup.</div>
+            <div class="how"><strong>How to spot one forming:</strong><br>1. Funding rate is deeply negative (crowded shorts)<br>2. OI is high and rising (lots of shorts opened)<br>3. Price starts moving up despite heavy shorts<br>4. Liquidations cascade — one short getting liquidated pushes price up, liquidating the next<br><br><strong>Arslan's method:</strong> Check if retail is crowded short (L/S ratio below 0.85) while top traders are long (ratio above 1.50). That divergence is the squeeze setup.</div>
             <div class="example">BTW example: Shorts got trapped as price pushed from $0.60 to $0.80. The squeeze continued until whale supply hit the exchange hot wallet, crashing price to $0.54.</div>
           </div>
           <hr class="edu-divider">
@@ -299,13 +299,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
       <div class="edu-card">
         <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
-          <h3>\\ud83d\\udd17 Exchange Flow (Whale Tracking)</h3><span class="edu-arrow">\\u25bc</span>
+          <h3>🔗 Exchange Flow (Whale Tracking)</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
 
           <div class="edu-term">
             <h4>Exchange Outflow (Bullish Signal)</h4>
-            <div class="what">Tokens are being withdrawn FROM exchanges to personal wallets. This means someone is taking tokens OFF the market \\u2014 they're not planning to sell soon. This reduces the available supply on exchanges.</div>
+            <div class="what">Tokens are being withdrawn FROM exchanges to personal wallets. This means someone is taking tokens OFF the market — they're not planning to sell soon. This reduces the available supply on exchanges.</div>
             <div class="how"><strong>Why it matters:</strong> If a whale withdraws 500K tokens worth $350K from Binance to a cold wallet, that's $350K of sell pressure REMOVED from the market. Less supply available = price goes up easier.<br><br><strong>What Arslan checks:</strong> Follow where the tokens go. If they end up in a self-custody address that keeps the balance, it's real accumulation. If the receiving wallet sends tokens somewhere else shortly after, it might just be a pass-through router.</div>
             <div class="example">Our flow bias "bullish" = net outflow detected. Tokens leaving exchanges faster than entering. Accumulation is happening.</div>
           </div>
@@ -313,8 +313,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
           <div class="edu-term">
             <h4>Exchange Inflow (Bearish Signal)</h4>
-            <div class="what">Tokens are being deposited INTO exchanges from personal wallets. This means someone is moving tokens TO the market \\u2014 they're likely preparing to sell. This increases available supply.</div>
-            <div class="how"><strong>Critical detail from Arslan:</strong> A deposit arriving at an exchange DEPOSIT ADDRESS doesn't mean it's immediately for sale. Watch whether those deposits get swept into the exchange's MAIN HOT WALLET.<br><br>\\u2022 Deposit sitting in deposit address = supply queued but not yet active<br>\\u2022 Deposit swept to hot wallet = supply is NOW on the order book, ready to dump<br><br>This timing difference can be the difference between a squeeze continuing and a sudden crash.</div>
+            <div class="what">Tokens are being deposited INTO exchanges from personal wallets. This means someone is moving tokens TO the market — they're likely preparing to sell. This increases available supply.</div>
+            <div class="how"><strong>Critical detail from Arslan:</strong> A deposit arriving at an exchange DEPOSIT ADDRESS doesn't mean it's immediately for sale. Watch whether those deposits get swept into the exchange's MAIN HOT WALLET.<br><br>• Deposit sitting in deposit address = supply queued but not yet active<br>• Deposit swept to hot wallet = supply is NOW on the order book, ready to dump<br><br>This timing difference can be the difference between a squeeze continuing and a sudden crash.</div>
             <div class="example">BTW case: 15.6M tokens ($11.9M) were swept into Gate hot wallet in 9 batches. Price instantly crashed from $0.80 to $0.54. The deposits had been sitting in deposit addresses, and the moment they hit the hot wallet, they were dumped.</div>
           </div>
           <hr class="edu-divider">
@@ -322,14 +322,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>Hot Wallet vs Cold Wallet</h4>
             <div class="what"><strong>Hot wallet:</strong> An exchange's active wallet connected to the internet, used for daily trading. Tokens here are liquid and can be sold immediately.<br><strong>Cold wallet:</strong> Offline storage for long-term holding. Tokens here are locked away and not available for quick selling.</div>
-            <div class="how"><strong>Whale tracking flow:</strong><br>1. Cold wallet \\u2192 Hot wallet = Preparing to sell (bearish)<br>2. Hot wallet \\u2192 Self-custody = Accumulating (bullish)<br>3. Exchange deposit address \\u2192 Hot wallet = Supply about to hit market (dump incoming)<br>4. Multiple wallets \\u2192 One wallet = Consolidation, whale building a position</div>
+            <div class="how"><strong>Whale tracking flow:</strong><br>1. Cold wallet → Hot wallet = Preparing to sell (bearish)<br>2. Hot wallet → Self-custody = Accumulating (bullish)<br>3. Exchange deposit address → Hot wallet = Supply about to hit market (dump incoming)<br>4. Multiple wallets → One wallet = Consolidation, whale building a position</div>
           </div>
           <hr class="edu-divider">
 
           <div class="edu-term">
             <h4>Pass-Through / Router Wallet</h4>
-            <div class="what">A wallet that receives tokens from an exchange and then quickly sends them to another address. It goes back to near-zero balance. This is NOT the final destination \\u2014 the whale is routing tokens through intermediate wallets to hide their trail.</div>
-            <div class="how"><strong>How to trace:</strong><br>1. See big withdrawal from exchange to Wallet A<br>2. Wallet A sends everything to Wallet B within hours<br>3. Wallet A goes back to ~$0 balance<br>4. Follow Wallet B \\u2014 THAT's the actual holding wallet<br>5. Map all these routes to calculate the whale's real cost basis</div>
+            <div class="what">A wallet that receives tokens from an exchange and then quickly sends them to another address. It goes back to near-zero balance. This is NOT the final destination — the whale is routing tokens through intermediate wallets to hide their trail.</div>
+            <div class="how"><strong>How to trace:</strong><br>1. See big withdrawal from exchange to Wallet A<br>2. Wallet A sends everything to Wallet B within hours<br>3. Wallet A goes back to ~$0 balance<br>4. Follow Wallet B — THAT's the actual holding wallet<br>5. Map all these routes to calculate the whale's real cost basis</div>
           </div>
 
         </div>
@@ -337,7 +337,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
       <div class="edu-card">
         <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
-          <h3>\\ud83c\\udfaf Arslan's Execution Framework</h3><span class="edu-arrow">\\u25bc</span>
+          <h3>🎯 Arslan's Execution Framework</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
 
@@ -345,11 +345,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <h4>The 5-Step Confirmation Chain</h4>
             <div class="what">Never trade just because you found a big wallet or a single signal. Build the full thesis first:</div>
             <div class="how">
-              <strong>Step 1: On-Chain Flow</strong> \\u2014 Are tokens flowing OUT of exchanges (bullish) or INTO exchanges (bearish)?<br><br>
-              <strong>Step 2: Exchange Activity</strong> \\u2014 Has the supply actually reached the hot wallet? Or is it still sitting in deposit addresses?<br><br>
-              <strong>Step 3: Cost Basis</strong> \\u2014 Where did the whale actually enter? Map withdrawals, OTC moves, and proxy wallets to find their average entry price. If price is far above their cost basis and tokens move to exchange, they're taking profit.<br><br>
-              <strong>Step 4: Liquidity Setup</strong> \\u2014 Check the derivatives: Is funding extreme? Is OI elevated? Are retail traders on the wrong side? Is there a liquidation cascade waiting to trigger?<br><br>
-              <strong>Step 5: Price Structure</strong> \\u2014 Is there a clean entry? Look for the liquidity sweep (quick flush below support to wipe stops), then a V-shape recovery with a higher low. That's your floor.
+              <strong>Step 1: On-Chain Flow</strong> — Are tokens flowing OUT of exchanges (bullish) or INTO exchanges (bearish)?<br><br>
+              <strong>Step 2: Exchange Activity</strong> — Has the supply actually reached the hot wallet? Or is it still sitting in deposit addresses?<br><br>
+              <strong>Step 3: Cost Basis</strong> — Where did the whale actually enter? Map withdrawals, OTC moves, and proxy wallets to find their average entry price. If price is far above their cost basis and tokens move to exchange, they're taking profit.<br><br>
+              <strong>Step 4: Liquidity Setup</strong> — Check the derivatives: Is funding extreme? Is OI elevated? Are retail traders on the wrong side? Is there a liquidation cascade waiting to trigger?<br><br>
+              <strong>Step 5: Price Structure</strong> — Is there a clean entry? Look for the liquidity sweep (quick flush below support to wipe stops), then a V-shape recovery with a higher low. That's your floor.
             </div>
           </div>
           <hr class="edu-divider">
@@ -357,14 +357,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>The Liquidity Sweep & Reclaim</h4>
             <div class="what">Before a real move, market makers often push price down quickly to trigger stop losses of early longs and grab liquidity below support. If price immediately bounces back (V-shape) and forms a higher low, weak hands are cleared out.</div>
-            <div class="how"><strong>How to trade it:</strong><br>1. Wait for the sweep (quick wick below support)<br>2. Watch for immediate recovery above the sweep level<br>3. Enter on the consolidation base that forms after the bounce<br>4. Place stop below the sweep low \\u2014 tight and structural<br>5. Never chase the initial vertical green candle</div>
+            <div class="how"><strong>How to trade it:</strong><br>1. Wait for the sweep (quick wick below support)<br>2. Watch for immediate recovery above the sweep level<br>3. Enter on the consolidation base that forms after the bounce<br>4. Place stop below the sweep low — tight and structural<br>5. Never chase the initial vertical green candle</div>
           </div>
           <hr class="edu-divider">
 
           <div class="edu-term">
             <h4>L/S Ratio Divergence (Retail Trap)</h4>
             <div class="what">The Long/Short ratio shows how many traders are long vs short. The key is comparing RETAIL positions vs TOP TRADER positions.</div>
-            <div class="how"><strong>The classic squeeze setup:</strong><br>\\u2022 Overall retail L/S ratio drops below 0.85 (retail is crowded short)<br>\\u2022 Top Trader L/S ratio sits above 1.50 (smart money is stacked long)<br>\\u2022 Retail keeps trying to short the top while big accounts absorb every sell<br>\\u2022 Result: A violent squeeze upward as retail shorts get liquidated<br><br><strong>The reverse works too:</strong><br>\\u2022 Retail L/S above 2.0 (everyone is long) + Top traders below 0.7 = dump incoming</div>
+            <div class="how"><strong>The classic squeeze setup:</strong><br>• Overall retail L/S ratio drops below 0.85 (retail is crowded short)<br>• Top Trader L/S ratio sits above 1.50 (smart money is stacked long)<br>• Retail keeps trying to short the top while big accounts absorb every sell<br>• Result: A violent squeeze upward as retail shorts get liquidated<br><br><strong>The reverse works too:</strong><br>• Retail L/S above 2.0 (everyone is long) + Top traders below 0.7 = dump incoming</div>
           </div>
           <hr class="edu-divider">
 
@@ -379,7 +379,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
       <div class="edu-card">
         <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
-          <h3>\\ud83d\\udcca Our Historical Data Insights</h3><span class="edu-arrow">\\u25bc</span>
+          <h3>📊 Our Historical Data Insights</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
 
@@ -388,16 +388,16 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="how">
               <strong>Best Setup:</strong> Score 80+ short alert during 12-18 UTC with funding aligned = 87.5% accuracy<br><br>
               <strong>Simulated P&L ($2K margin, 20x):</strong><br>
-              \\u2022 Score 70+ SHORTS: +$23,408 total in 1-4h exits (6 trades, avg 9.75% move)<br>
-              \\u2022 Score 70+ LONGS: -$4,604 in 1-4h BUT +$15,890 in 4-12h (longs need patience)<br><br>
+              • Score 70+ SHORTS: +$23,408 total in 1-4h exits (6 trades, avg 9.75% move)<br>
+              • Score 70+ LONGS: -$4,604 in 1-4h BUT +$15,890 in 4-12h (longs need patience)<br><br>
               <strong>Optimal Hold Time:</strong><br>
-              \\u2022 0-15 min holds: 29% win rate, -$111 total (too early to exit)<br>
-              \\u2022 45-90 min holds: 83% win rate, +$39 total (sweet spot)<br>
-              \\u2022 Manual closes avg 20 min hold = $14 avg profit (best exit type)<br><br>
+              • 0-15 min holds: 29% win rate, -$111 total (too early to exit)<br>
+              • 45-90 min holds: 83% win rate, +$39 total (sweet spot)<br>
+              • Manual closes avg 20 min hold = $14 avg profit (best exit type)<br><br>
               <strong>What Kills Trades:</strong><br>
-              \\u2022 20x leverage = highest loss rate (max_loss hits at -$27 avg)<br>
-              \\u2022 Funding AGAINST direction = ~30% accuracy (don't fight it)<br>
-              \\u2022 Long signals at 00-06 UTC = 40% accuracy (dead hours)
+              • 20x leverage = highest loss rate (max_loss hits at -$27 avg)<br>
+              • Funding AGAINST direction = ~30% accuracy (don't fight it)<br>
+              • Long signals at 00-06 UTC = 40% accuracy (dead hours)
             </div>
           </div>
           <hr class="edu-divider">
@@ -406,15 +406,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <h4>Invalidation Signals (When to Exit)</h4>
             <div class="how">
               <strong>Exit immediately if:</strong><br>
-              \\u2022 OI drops >20% after your entry (positions are unwinding, the move is done)<br>
-              \\u2022 Funding flips against your direction mid-trade<br>
-              \\u2022 Exchange flow reverses (you're long but sudden massive inflow detected)<br>
-              \\u2022 Score drops below 40 on follow-up scans<br><br>
+              • OI drops >20% after your entry (positions are unwinding, the move is done)<br>
+              • Funding flips against your direction mid-trade<br>
+              • Exchange flow reverses (you're long but sudden massive inflow detected)<br>
+              • Score drops below 40 on follow-up scans<br><br>
               <strong>Hold if:</strong><br>
-              \\u2022 Funding stays aligned with your direction<br>
-              \\u2022 OI continues rising (the move has more fuel)<br>
-              \\u2022 Exchange flow confirms (outflow for longs, inflow for shorts)<br>
-              \\u2022 Price forms a higher low (long) or lower high (short) on 15m chart
+              • Funding stays aligned with your direction<br>
+              • OI continues rising (the move has more fuel)<br>
+              • Exchange flow confirms (outflow for longs, inflow for shorts)<br>
+              • Price forms a higher low (long) or lower high (short) on 15m chart
             </div>
           </div>
 
@@ -535,7 +535,7 @@ function refreshAll() {
     patterns = results[1].patterns || [];
     trades = results[2];
     dot.className = 'status-dot live';
-    label.textContent = 'Live \\u2014 ' + signals.length + ' signals, ' + flowAlerts.length + ' flow';
+    label.textContent = 'Live — ' + signals.length + ' signals, ' + flowAlerts.length + ' flow';
     lastUpdate = Date.now();
     renderStats();
     renderSignals();
@@ -559,9 +559,9 @@ function renderStats() {
   var bar = document.getElementById('stats-bar');
   var shortPat = patterns.find(function(p) { return p.direction === 'short'; }) || {};
   var longPat = patterns.find(function(p) { return p.direction === 'long'; }) || {};
-  var shortAcc = shortPat.with_data > 0 ? ((parseInt(shortPat.correct) / parseInt(shortPat.with_data)) * 100).toFixed(0) : '\\u2014';
-  var longAcc = longPat.with_data > 0 ? ((parseInt(longPat.correct) / parseInt(longPat.with_data)) * 100).toFixed(0) : '\\u2014';
-  var shortHS = parseInt(shortPat.high_score_total) > 0 ? ((parseInt(shortPat.high_score_correct) / parseInt(shortPat.high_score_total)) * 100).toFixed(0) : '\\u2014';
+  var shortAcc = shortPat.with_data > 0 ? ((parseInt(shortPat.correct) / parseInt(shortPat.with_data)) * 100).toFixed(0) : '—';
+  var longAcc = longPat.with_data > 0 ? ((parseInt(longPat.correct) / parseInt(longPat.with_data)) * 100).toFixed(0) : '—';
+  var shortHS = parseInt(shortPat.high_score_total) > 0 ? ((parseInt(shortPat.high_score_correct) / parseInt(shortPat.high_score_total)) * 100).toFixed(0) : '—';
   var totalPnl = (trades.closed || []).reduce(function(s, t) { return s + (parseFloat(t.pnl_usd) || 0); }, 0);
   var openCount = (trades.open || []).length;
   var highConv = signals.filter(function(s) { return getConviction(s) === 'high'; }).length;
@@ -630,7 +630,7 @@ function calcLevels(s) {
   }
   var risk = Math.abs(price - sl), reward = Math.abs(tp2 - price);
   var slPct = ((Math.abs(price - sl) / price) * 100).toFixed(1);
-  return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '\\u2014', slPct: slPct, estimated: !hasReal };
+  return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '—', slPct: slPct, estimated: !hasReal };
 }
 
 function getTradeStatus(s, levels) {
@@ -654,19 +654,19 @@ function getTradeStatus(s, levels) {
   });
   var invalidations = [];
   if (fundAgainst) invalidations.push('Funding flipped against (' + s.funding_bias + ')');
-  if (hasFlowConflict) invalidations.push('Flow alert reversed \\u2014 opposite direction detected after this signal');
-  if (ageMin > 360) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old \\u2014 conditions likely changed');
-  else if (ageMin > 120) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old \\u2014 re-check conditions');
+  if (hasFlowConflict) invalidations.push('Flow alert reversed — opposite direction detected after this signal');
+  if (ageMin > 360) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old — conditions likely changed');
+  else if (ageMin > 120) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old — re-check conditions');
 
   var status, css, tip;
-  if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL \\u2014 do NOT enter'; }
-  else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Already hit TP3 \\u2014 move is done'; }
-  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Already past TP2 \\u2014 most profit taken, late entry risky'; }
-  else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 \\u2014 can still run but tighten SL to entry'; }
+  if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL — do NOT enter'; }
+  else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Already hit TP3 — move is done'; }
+  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Already past TP2 — most profit taken, late entry risky'; }
+  else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 — can still run but tighten SL to entry'; }
   else if (invalidations.length && ageMin > 360) { status = 'INVALID'; css = 'stopped'; tip = invalidations[0]; }
   else if (invalidations.length) { status = 'CAUTION'; css = 'late'; tip = invalidations[0]; }
-  else if (movePct > 3) { status = 'LATE ENTRY'; css = 'late'; tip = 'Already moved ' + movePct.toFixed(1) + '% \\u2014 smaller R:R if entering now'; }
-  else { status = 'ACTIVE'; css = 'active'; tip = 'Setup valid \\u2014 price near entry zone'; }
+  else if (movePct > 3) { status = 'LATE ENTRY'; css = 'late'; tip = 'Already moved ' + movePct.toFixed(1) + '% — smaller R:R if entering now'; }
+  else { status = 'ACTIVE'; css = 'active'; tip = 'Setup valid — price near entry zone'; }
   return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now, invalidations: invalidations };
 }
 
@@ -694,28 +694,28 @@ function buildReasons(s) {
   var fundBias = s.funding_bias, flowBias = s.flow_bias;
   var hour = new Date(s.created_at).getUTCHours();
 
-  if (score >= 80) reasons.push({ icon: '\\ud83d\\udd25', text: '<strong>Very high score (' + score + ')</strong> \\u2014 <span>' + (dir === 'short' ? '87.5% historical accuracy on 80+ shorts' : 'Multiple onchain signals converging') + '</span>' });
-  else if (score >= 60) reasons.push({ icon: '\\u26a1', text: '<strong>Strong score (' + score + ')</strong> \\u2014 <span>Multiple signals converging</span>' });
+  if (score >= 80) reasons.push({ icon: '🔥', text: '<strong>Very high score (' + score + ')</strong> — <span>' + (dir === 'short' ? '87.5% historical accuracy on 80+ shorts' : 'Multiple onchain signals converging') + '</span>' });
+  else if (score >= 60) reasons.push({ icon: '⚡', text: '<strong>Strong score (' + score + ')</strong> — <span>Multiple signals converging</span>' });
 
-  if (fundBias === dir) reasons.push({ icon: '\\u2705', text: '<strong>Funding aligned ' + dir + '</strong> \\u2014 <span>' + (fundRate * 100).toFixed(3) + '% \\u2014 smart money confirms direction</span>' });
-  else if (fundBias && fundBias !== dir) reasons.push({ icon: '\\u26a0\\ufe0f', text: '<strong>Funding OPPOSES direction</strong> \\u2014 <span>Funding is ' + fundBias + ' but signal is ' + dir + ' \\u2014 drops accuracy to ~30%</span>' });
+  if (fundBias === dir) reasons.push({ icon: '✅', text: '<strong>Funding aligned ' + dir + '</strong> — <span>' + (fundRate * 100).toFixed(3) + '% — smart money confirms direction</span>' });
+  else if (fundBias && fundBias !== dir) reasons.push({ icon: '⚠️', text: '<strong>Funding OPPOSES direction</strong> — <span>Funding is ' + fundBias + ' but signal is ' + dir + ' — drops accuracy to ~30%</span>' });
 
   if (Math.abs(oi4h) > 20) {
     var oiDir = oi4h > 0 ? 'rising' : 'falling';
-    reasons.push({ icon: oi4h > 0 ? '\\ud83d\\udcc8' : '\\ud83d\\udcc9', text: '<strong>OI ' + oiDir + ' ' + Math.abs(oi4h).toFixed(1) + '% (4h)</strong> \\u2014 <span>' + (oi4h > 0 ? 'New positions opening aggressively' : 'Positions unwinding \\u2014 squeeze or reversal') + '</span>' });
+    reasons.push({ icon: oi4h > 0 ? '📈' : '📉', text: '<strong>OI ' + oiDir + ' ' + Math.abs(oi4h).toFixed(1) + '% (4h)</strong> — <span>' + (oi4h > 0 ? 'New positions opening aggressively' : 'Positions unwinding — squeeze or reversal') + '</span>' });
   }
 
-  if (flowBias === 'bullish') reasons.push({ icon: '\\ud83d\\udfe2', text: '<strong>Exchange outflow (bullish)</strong> \\u2014 <span>Tokens leaving exchanges = accumulation, sell pressure reduced</span>' });
-  else if (flowBias === 'bearish') reasons.push({ icon: '\\ud83d\\udd34', text: '<strong>Exchange inflow (bearish)</strong> \\u2014 <span>Tokens entering exchanges = distribution, sell pressure increasing</span>' });
+  if (flowBias === 'bullish') reasons.push({ icon: '🟢', text: '<strong>Exchange outflow (bullish)</strong> — <span>Tokens leaving exchanges = accumulation, sell pressure reduced</span>' });
+  else if (flowBias === 'bearish') reasons.push({ icon: '🔴', text: '<strong>Exchange inflow (bearish)</strong> — <span>Tokens entering exchanges = distribution, sell pressure increasing</span>' });
 
-  if (Math.abs(priceChg) > 20) reasons.push({ icon: priceChg > 0 ? '\\ud83d\\ude80' : '\\ud83d\\udc80', text: '<strong>Price ' + (priceChg > 0 ? '+' : '') + priceChg.toFixed(1) + '% move</strong> \\u2014 <span>' + (Math.abs(priceChg) > 40 ? 'Extreme \\u2014 potential exhaustion' : 'Significant momentum') + '</span>' });
+  if (Math.abs(priceChg) > 20) reasons.push({ icon: priceChg > 0 ? '🚀' : '💀', text: '<strong>Price ' + (priceChg > 0 ? '+' : '') + priceChg.toFixed(1) + '% move</strong> — <span>' + (Math.abs(priceChg) > 40 ? 'Extreme — potential exhaustion' : 'Significant momentum') + '</span>' });
 
-  if (dir === 'short' && hour >= 12 && hour < 18) reasons.push({ icon: '\\ud83d\\udd50', text: '<strong>EU/US overlap (12-18 UTC)</strong> \\u2014 <span>77% accuracy for shorts in this window</span>' });
-  else if (dir === 'long' && hour >= 18) reasons.push({ icon: '\\ud83d\\udd50', text: '<strong>Late session (18-24 UTC)</strong> \\u2014 <span>82% accuracy for longs</span>' });
+  if (dir === 'short' && hour >= 12 && hour < 18) reasons.push({ icon: '🕐', text: '<strong>EU/US overlap (12-18 UTC)</strong> — <span>77% accuracy for shorts in this window</span>' });
+  else if (dir === 'long' && hour >= 18) reasons.push({ icon: '🕐', text: '<strong>Late session (18-24 UTC)</strong> — <span>82% accuracy for longs</span>' });
 
-  if (Math.abs(oi1h) > 15) reasons.push({ icon: '\\u23f1\\ufe0f', text: '<strong>1h OI spike ' + (oi1h > 0 ? '+' : '') + oi1h.toFixed(1) + '%</strong> \\u2014 <span>Rapid position buildup \\u2014 immediate momentum</span>' });
+  if (Math.abs(oi1h) > 15) reasons.push({ icon: '⏱️', text: '<strong>1h OI spike ' + (oi1h > 0 ? '+' : '') + oi1h.toFixed(1) + '%</strong> — <span>Rapid position buildup — immediate momentum</span>' });
 
-  reasons.push({ icon: '\\u23f3', text: '<strong>Optimal hold: 45-90 min</strong> \\u2014 <span>83% win rate in this window vs 29% for 0-15 min exits. Don\\'t exit too early.</span>' });
+  reasons.push({ icon: '⏳', text: '<strong>Optimal hold: 45-90 min</strong> — <span>83% win rate in this window vs 29% for 0-15 min exits. Don\\'t exit too early.</span>' });
 
   return reasons;
 }
@@ -763,7 +763,7 @@ function renderSignals() {
   if (!filtered.length) {
     var filterNames = { high: 'high conviction', active: 'enterable', profit: 'in-profit', short: 'short', long: 'long' };
     var label = filterNames[currentFilter] || '';
-    grid.innerHTML = '<div class="empty-state"><div class="icon">\\ud83d\\udce1</div><h3>No ' + label + ' signals right now</h3><p>Scanner checks every 5 min. ' + (currentFilter !== 'all' ? 'Try "All" to see everything.' : '') + '</p></div>';
+    grid.innerHTML = '<div class="empty-state"><div class="icon">📡</div><h3>No ' + label + ' signals right now</h3><p>Scanner checks every 5 min. ' + (currentFilter !== 'all' ? 'Try "All" to see everything.' : '') + '</p></div>';
     return;
   }
 
@@ -787,12 +787,12 @@ function renderSignals() {
     html += '<span class="signal-dir ' + s.direction + '">' + s.direction + '</span>';
     html += '<span class="status-badge ' + ts.css + '">' + ts.status + '</span>';
     html += '<span class="signal-symbol">' + s.symbol + '</span>';
-    html += '<span class="signal-price">' + fmtPrice(s.price) + ' \\u2192 ' + fmtPrice(ts.currentPrice) + ' \\u00b7 ' + agoStr + '</span>';
+    html += '<span class="signal-price">' + fmtPrice(s.price) + ' → ' + fmtPrice(ts.currentPrice) + ' · ' + agoStr + '</span>';
     html += '</div><div class="signal-right">';
     html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
     html += '<span class="conviction-badge ' + conv + '">' + (conv === 'high' ? 'HIGH' : conv === 'med' ? 'MED' : 'LOW') + '</span>';
     html += '<span class="signal-score">' + (parseInt(s.score) || 0) + '</span>';
-    html += '<span class="signal-expand">\\u25bc</span>';
+    html += '<span class="signal-expand">▼</span>';
     html += '</div></div>';
 
     html += '<div class="signal-body">';
@@ -803,31 +803,31 @@ function renderSignals() {
     var _oi1 = parseFloat(s.oi_1h) || 0;
     var _pc = parseFloat(s.price_change) || 0;
     html += '<span class="ind-chip ' + (s.funding_bias === s.direction ? 'bull' : s.funding_bias ? 'bear' : '') + '">Fund: ' + (s.funding_bias || 'neutral') + ' ' + (_fr ? (_fr * 100).toFixed(3) + '%' : '') + '</span>';
-    html += '<span class="ind-chip ' + (_oi4 > 15 ? 'warn' : '') + '">OI 4h: ' + (_oi4 ? (_oi4 > 0 ? '+' : '') + _oi4.toFixed(1) + '%' : '\\u2014') + '</span>';
-    html += '<span class="ind-chip ' + (_oi1 > 10 ? 'warn' : '') + '">OI 1h: ' + (_oi1 ? (_oi1 > 0 ? '+' : '') + _oi1.toFixed(1) + '%' : '\\u2014') + '</span>';
-    html += '<span class="ind-chip ' + (s.flow_bias === 'bullish' ? 'bull' : s.flow_bias === 'bearish' ? 'bear' : '') + '">Flow: ' + (s.flow_bias || '\\u2014') + '</span>';
-    html += '<span class="ind-chip ' + (Math.abs(_pc) > 20 ? 'warn' : '') + '">Price: ' + (_pc ? (_pc > 0 ? '+' : '') + _pc.toFixed(1) + '%' : '\\u2014') + '</span>';
+    html += '<span class="ind-chip ' + (_oi4 > 15 ? 'warn' : '') + '">OI 4h: ' + (_oi4 ? (_oi4 > 0 ? '+' : '') + _oi4.toFixed(1) + '%' : '—') + '</span>';
+    html += '<span class="ind-chip ' + (_oi1 > 10 ? 'warn' : '') + '">OI 1h: ' + (_oi1 ? (_oi1 > 0 ? '+' : '') + _oi1.toFixed(1) + '%' : '—') + '</span>';
+    html += '<span class="ind-chip ' + (s.flow_bias === 'bullish' ? 'bull' : s.flow_bias === 'bearish' ? 'bear' : '') + '">Flow: ' + (s.flow_bias || '—') + '</span>';
+    html += '<span class="ind-chip ' + (Math.abs(_pc) > 20 ? 'warn' : '') + '">Price: ' + (_pc ? (_pc > 0 ? '+' : '') + _pc.toFixed(1) + '%' : '—') + '</span>';
     html += '</div>';
 
     html += '<div class="tp-progress">';
     html += '<span class="tp-step ' + (ts.css === 'active' ? 'hit' : '') + '">Entry ' + fmtPrice(s.price) + '</span>';
-    html += '<span style="color:var(--muted)">\\u2192</span>';
-    html += '<span class="tp-step ' + (ts.hitTP1 ? 'hit' : '') + '" title="Take Profit 1 \\u2014 close 33% of position">TP1 ' + fmtPrice(levels.tp1) + '</span>';
-    html += '<span style="color:var(--muted)">\\u2192</span>';
-    html += '<span class="tp-step ' + (ts.hitTP2 ? 'hit' : '') + '" title="Take Profit 2 \\u2014 close 50% of remaining">TP2 ' + fmtPrice(levels.tp2) + '</span>';
-    html += '<span style="color:var(--muted)">\\u2192</span>';
-    html += '<span class="tp-step ' + (ts.hitTP3 ? 'hit' : '') + '" title="Take Profit 3 \\u2014 close remaining position">TP3 ' + fmtPrice(levels.tp3) + '</span>';
+    html += '<span style="color:var(--muted)">→</span>';
+    html += '<span class="tp-step ' + (ts.hitTP1 ? 'hit' : '') + '" title="Take Profit 1 — close 33% of position">TP1 ' + fmtPrice(levels.tp1) + '</span>';
+    html += '<span style="color:var(--muted)">→</span>';
+    html += '<span class="tp-step ' + (ts.hitTP2 ? 'hit' : '') + '" title="Take Profit 2 — close 50% of remaining">TP2 ' + fmtPrice(levels.tp2) + '</span>';
+    html += '<span style="color:var(--muted)">→</span>';
+    html += '<span class="tp-step ' + (ts.hitTP3 ? 'hit' : '') + '" title="Take Profit 3 — close remaining position">TP3 ' + fmtPrice(levels.tp3) + '</span>';
     html += '<span style="color:var(--muted);margin-left:4px">|</span>';
-    html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '" title="Stop Loss \\u2014 exit entire position if breached">SL ' + fmtPrice(levels.sl) + '</span>';
+    html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '" title="Stop Loss — exit entire position if breached">SL ' + fmtPrice(levels.sl) + '</span>';
     html += '</div>';
     var tipColor = ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : 'var(--gold)';
     var movePctStr = ((Math.abs(ts.currentPrice - parseFloat(s.price)) / parseFloat(s.price)) * 100).toFixed(1);
     var moveDir = ts.currentPrice >= parseFloat(s.price) ? '+' : '-';
     html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:6px 10px;background:var(--bg);border-radius:4px;border-left:3px solid ' + tipColor + '">';
-    html += ts.tip + ' \\u2014 Now: ' + fmtPrice(ts.currentPrice) + ' (' + moveDir + movePctStr + '% from entry)';
+    html += ts.tip + ' — Now: ' + fmtPrice(ts.currentPrice) + ' (' + moveDir + movePctStr + '% from entry)';
     if (ts.invalidations.length > 1) {
       ts.invalidations.forEach(function(inv, idx) {
-        if (idx > 0) html += '<br><span style="color:var(--danger)">\\u26a0 ' + inv + '</span>';
+        if (idx > 0) html += '<br><span style="color:var(--danger)">⚠ ' + inv + '</span>';
       });
     }
     html += '</div>';
@@ -863,9 +863,9 @@ function renderSignals() {
     html += '<strong style="color:var(--text)">4. Timeframe:</strong> Start on <span style="font-family:var(--font-mono)">15m</span>, then check <span style="font-family:var(--font-mono)">1h</span> and <span style="font-family:var(--font-mono)">4h</span> for trend context<br>';
     html += '<strong style="color:var(--text)">5. Look for:</strong> The candle at ' + watTime + ' WAT near <span style="font-family:var(--font-mono);color:var(--gold)">' + fmtPrice(s.price) + '</span>. ';
     if (s.direction === 'short') {
-      html += 'This was a <span style="color:var(--danger);font-weight:600">SHORT</span> signal \\u2014 look for a red candle or rejection wick at this price. Price should have dropped after this candle.';
+      html += 'This was a <span style="color:var(--danger);font-weight:600">SHORT</span> signal — look for a red candle or rejection wick at this price. Price should have dropped after this candle.';
     } else {
-      html += 'This was a <span style="color:var(--accent);font-weight:600">LONG</span> signal \\u2014 look for a green candle or bounce at this price. Price should have risen after this candle.';
+      html += 'This was a <span style="color:var(--accent);font-weight:600">LONG</span> signal — look for a green candle or bounce at this price. Price should have risen after this candle.';
     }
     html += '<br><strong style="color:var(--text)">6. Verify:</strong> Draw a horizontal line at ' + fmtPrice(s.price) + ' (entry), ' + fmtPrice(levels.sl) + ' (SL), and ' + fmtPrice(levels.tp1) + ' (TP1). See if the move played out as signaled.';
     html += '</div></div>';
@@ -903,8 +903,8 @@ function renderSignals() {
 
     if (positiveMatches.length || negativeMatches.length) {
       html += '<div class="hist-match"><h4>Historical Pattern Match</h4><p>';
-      positiveMatches.forEach(function(m) { html += '<span class="match-stat" style="color:var(--accent)">\\u2713 ' + PATTERN_RULES[m].label + ' (' + PATTERN_RULES[m].accuracy + '%)</span> \\u2014 ' + PATTERN_RULES[m].desc + '<br>'; });
-      negativeMatches.forEach(function(m) { html += '<span class="match-stat" style="color:var(--danger)">\\u2717 ' + PATTERN_RULES[m].label + ' (~' + PATTERN_RULES[m].accuracy + '%)</span> \\u2014 ' + PATTERN_RULES[m].desc + '<br>'; });
+      positiveMatches.forEach(function(m) { html += '<span class="match-stat" style="color:var(--accent)">✓ ' + PATTERN_RULES[m].label + ' (' + PATTERN_RULES[m].accuracy + '%)</span> — ' + PATTERN_RULES[m].desc + '<br>'; });
+      negativeMatches.forEach(function(m) { html += '<span class="match-stat" style="color:var(--danger)">✗ ' + PATTERN_RULES[m].label + ' (~' + PATTERN_RULES[m].accuracy + '%)</span> — ' + PATTERN_RULES[m].desc + '<br>'; });
       html += '</p></div>';
     }
 
@@ -1071,9 +1071,9 @@ function renderChart(containerId, idx, candles, signal, tf) {
       var slStr = slTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
       html = '<span style="color:var(--danger);font-weight:600">SL WAS HIT</span> at ~' + slStr + ' WAT before any TP. ';
       html += 'Max adverse: ' + adversePct + '% against. This trade would have been a loss of -$' + (NOTIONAL * parseFloat(levels.slPct) / 100).toFixed(0) + '.';
-      if (tpTimeline.tp1) html += '<br><span style="color:var(--text2)">TP1 was reached later \\u2014 a wider SL would have survived.</span>';
+      if (tpTimeline.tp1) html += '<br><span style="color:var(--text2)">TP1 was reached later — a wider SL would have survived.</span>';
     } else if (tpTimeline.tp3) {
-      html = '<span style="color:var(--accent);font-weight:600">FULL WIN</span> \\u2014 TP1, TP2, TP3 all hit without SL being touched. Clean trade.';
+      html = '<span style="color:var(--accent);font-weight:600">FULL WIN</span> — TP1, TP2, TP3 all hit without SL being touched. Clean trade.';
     } else if (tpTimeline.tp2) {
       html = '<span style="color:var(--accent)">TP1 + TP2 hit</span> without SL being touched. Strong move.';
     } else if (tpTimeline.tp1) {
@@ -1109,7 +1109,7 @@ function renderFlowAlerts() {
       '<span class="signal-dir ' + f.direction + '">' + f.direction + '</span>' +
       '<span class="ind-chip ' + typeCss + '" style="font-size:10px">' + typeLabel + '</span>' +
       '<span class="signal-symbol">' + f.symbol + '</span>' +
-      '<span class="signal-price">' + fmtPrice(f.price) + ' \\u00b7 ' + agoStr + '</span>' +
+      '<span class="signal-price">' + fmtPrice(f.price) + ' · ' + agoStr + '</span>' +
       '</div></div>' +
       (msg ? '<div style="padding:0 16px 10px;font-size:12px;color:var(--text2)">' + msg + '</div>' : '') +
       '</div>';
