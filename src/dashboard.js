@@ -128,6 +128,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .sizing-input-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .sizing-notional { font-family: var(--font-mono); font-size: 13px; color: var(--accent); font-weight: 600; margin-left: auto; white-space: nowrap; }
 
+/* Trade status badges */
+.status-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+.status-badge.active { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(16,185,129,0.3); }
+.status-badge.tp1 { background: var(--gold-dim); color: var(--gold); border: 1px solid rgba(245,158,11,0.3); }
+.status-badge.tp2 { background: var(--gold-dim); color: var(--gold); border: 1px solid rgba(245,158,11,0.3); }
+.status-badge.played { background: rgba(107,114,128,0.15); color: var(--muted); border: 1px solid rgba(107,114,128,0.3); }
+.status-badge.stopped { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+.status-badge.late { background: rgba(245,158,11,0.08); color: var(--gold); border: 1px solid rgba(245,158,11,0.2); }
+.tp-progress { display: flex; gap: 4px; align-items: center; margin-bottom: 12px; }
+.tp-step { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
+.tp-step.hit { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.tp-step.blown { border-color: var(--danger); color: var(--danger); background: var(--danger-dim); }
+
 /* Education section */
 .edu-section { margin-bottom: 20px; }
 .edu-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
@@ -585,6 +598,29 @@ function calcLevels(s) {
   return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '\\u2014' };
 }
 
+function getTradeStatus(s, levels) {
+  var entry = parseFloat(s.price), dir = s.direction;
+  var pc = parseFloat(s.price_change) || 0;
+  var now = entry * (1 + pc / 100);
+  var hitTP1 = false, hitTP2 = false, hitTP3 = false, hitSL = false;
+  if (dir === 'long') {
+    hitTP1 = now >= levels.tp1; hitTP2 = now >= levels.tp2; hitTP3 = now >= levels.tp3;
+    hitSL = now <= levels.sl;
+  } else {
+    hitTP1 = now <= levels.tp1; hitTP2 = now <= levels.tp2; hitTP3 = now <= levels.tp3;
+    hitSL = now >= levels.sl;
+  }
+  var movePct = dir === 'short' ? -pc : pc;
+  var status, css, tip;
+  if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL \\u2014 do NOT enter'; }
+  else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Already hit TP3 \\u2014 move is done'; }
+  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Already past TP2 \\u2014 most profit taken, late entry risky'; }
+  else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 \\u2014 can still run but tighten SL to entry'; }
+  else if (movePct > 3) { status = 'LATE ENTRY'; css = 'late'; tip = 'Already moved ' + movePct.toFixed(1) + '% \\u2014 smaller R:R if entering now'; }
+  else { status = 'ACTIVE'; css = 'active'; tip = 'Setup valid \\u2014 price near entry zone'; }
+  return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now };
+}
+
 function simPnl(s) {
   var priceChg = parseFloat(s.price_change) || 0;
   var dir = s.direction;
@@ -669,13 +705,15 @@ function renderSignals() {
     var sim = simPnl(s);
     var pnlClass = sim.pnl >= 0 ? 'pos' : 'neg';
     var pnlSign = sim.pnl >= 0 ? '+' : '';
+    var ts = getTradeStatus(s, levels);
 
     var html = '<div class="signal-card conviction-' + conv + '" id="' + id + '">';
     html += '<div class="signal-header" onclick="toggleCard(\\'' + id + '\\')">';
     html += '<div class="signal-left">';
     html += '<span class="signal-dir ' + s.direction + '">' + s.direction + '</span>';
+    html += '<span class="status-badge ' + ts.css + '">' + ts.status + '</span>';
     html += '<span class="signal-symbol">' + s.symbol + '</span>';
-    html += '<span class="signal-price">' + fmtPrice(s.price) + ' \\u00b7 ' + timeStr + ' \\u00b7 ' + agoStr + '</span>';
+    html += '<span class="signal-price">' + fmtPrice(s.price) + ' \\u2192 ' + fmtPrice(ts.currentPrice) + ' \\u00b7 ' + agoStr + '</span>';
     html += '</div><div class="signal-right">';
     html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
     html += '<span class="conviction-badge ' + conv + '">' + (conv === 'high' ? 'HIGH' : conv === 'med' ? 'MED' : 'LOW') + '</span>';
@@ -696,6 +734,19 @@ function renderSignals() {
     html += '<span class="ind-chip ' + (s.flow_bias === 'bullish' ? 'bull' : s.flow_bias === 'bearish' ? 'bear' : '') + '">Flow: ' + (s.flow_bias || '\\u2014') + '</span>';
     html += '<span class="ind-chip ' + (Math.abs(_pc) > 20 ? 'warn' : '') + '">Price: ' + (_pc ? (_pc > 0 ? '+' : '') + _pc.toFixed(1) + '%' : '\\u2014') + '</span>';
     html += '</div>';
+
+    html += '<div class="tp-progress">';
+    html += '<span class="tp-step ' + (ts.css === 'active' ? 'hit' : '') + '">Entry ' + fmtPrice(s.price) + '</span>';
+    html += '<span style="color:var(--muted)">\\u2192</span>';
+    html += '<span class="tp-step ' + (ts.hitTP1 ? 'hit' : '') + '">TP1 ' + fmtPrice(levels.tp1) + '</span>';
+    html += '<span style="color:var(--muted)">\\u2192</span>';
+    html += '<span class="tp-step ' + (ts.hitTP2 ? 'hit' : '') + '">TP2 ' + fmtPrice(levels.tp2) + '</span>';
+    html += '<span style="color:var(--muted)">\\u2192</span>';
+    html += '<span class="tp-step ' + (ts.hitTP3 ? 'hit' : '') + '">TP3 ' + fmtPrice(levels.tp3) + '</span>';
+    html += '<span style="color:var(--muted);margin-left:4px">|</span>';
+    html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '">SL ' + fmtPrice(levels.sl) + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:4px 8px;background:var(--bg);border-radius:4px;border-left:3px solid ' + (ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : 'var(--gold)') + '">' + ts.tip + ' \\u2014 Now: ' + fmtPrice(ts.currentPrice) + '</div>';
 
     html += '<div class="trade-setup"><div class="setup-box"><h4>Trade Levels ($' + MARGIN + ' @ ' + LEVERAGE + 'x)</h4>';
     html += '<div class="level-row"><span class="level-label">Entry</span><span class="level-val entry">' + fmtPrice(s.price) + '</span></div>';
