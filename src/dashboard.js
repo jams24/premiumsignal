@@ -121,6 +121,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .sizing-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
 .sizing-bar .slab { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-right: 4px; white-space: nowrap; }
 .preset-btn { padding: 5px 10px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text2); font-size: 12px; font-family: var(--font-mono); cursor: pointer; white-space: nowrap; }
+.score-filter-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .preset-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .preset-btn:hover { border-color: var(--text2); }
 .sizing-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
@@ -223,6 +224,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <span class="sizing-notional" id="notional-display"></span>
     </div>
     <div class="stats-bar" id="stats-bar"></div>
+    <div class="score-filter-bar" id="score-filter-bar">
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-right:8px">SCORE</span>
+      <button class="preset-btn active" data-score="0" onclick="setScoreFilter(this)">All</button>
+      <button class="preset-btn" data-score="35" onclick="setScoreFilter(this)">35+</button>
+      <button class="preset-btn" data-score="45" onclick="setScoreFilter(this)">45+</button>
+      <button class="preset-btn" data-score="55" onclick="setScoreFilter(this)">55+</button>
+      <button class="preset-btn" data-score="65" onclick="setScoreFilter(this)">65+</button>
+      <button class="preset-btn" data-score="75" onclick="setScoreFilter(this)">75+</button>
+    </div>
     <div class="rules-banner">
       <span class="rule-title">Conviction Rules</span>
       <span class="rule-item"><span class="rule-check">+</span> Score 70+ with funding aligned</span>
@@ -426,7 +436,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 </div>
 
 <script>
-var MARGIN = 2000, LEVERAGE = 20, NOTIONAL = 40000;
+var MARGIN = 2000, LEVERAGE = 20, NOTIONAL = 40000, SCORE_FILTER = 0;
 
 function loadSizing() {
   try {
@@ -443,7 +453,7 @@ function updateSizingUI() {
   document.getElementById('custom-margin').value = MARGIN;
   document.getElementById('custom-lev').value = LEVERAGE;
   document.getElementById('notional-display').textContent = '$' + NOTIONAL.toLocaleString() + ' notional';
-  document.querySelectorAll('.preset-btn').forEach(function(b) {
+  document.querySelectorAll('.sizing-bar .preset-btn').forEach(function(b) {
     b.classList.toggle('active', parseInt(b.dataset.m) === MARGIN && parseInt(b.dataset.l) === LEVERAGE);
   });
 }
@@ -457,6 +467,12 @@ function applyCustom() {
   if (m < 10) m = 10; if (l < 1) l = 1; if (l > 125) l = 125;
   MARGIN = m; LEVERAGE = l;
   saveSizing(); updateSizingUI(); renderStats(); renderSignals();
+}
+function setScoreFilter(btn) {
+  document.querySelectorAll('.score-filter-bar .preset-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  SCORE_FILTER = parseInt(btn.dataset.score) || 0;
+  renderStats();
 }
 
 var PATTERN_RULES = {
@@ -563,21 +579,26 @@ function renderStats() {
   var longAcc = longPat.with_data > 0 ? ((parseInt(longPat.correct) / parseInt(longPat.with_data)) * 100).toFixed(0) : '—';
   var highConv = signals.filter(function(s) { return getConviction(s) === 'high'; }).length;
 
+  var filtered = SCORE_FILTER > 0 ? signals.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; }) : signals;
   var simTotal = 0, simWins = 0, simLosses = 0, winCount = 0, lossCount = 0;
-  signals.forEach(function(s) {
+  filtered.forEach(function(s) {
     var sim = simPnl(s);
     simTotal += sim.pnl;
     if (sim.pnl > 0) { simWins += sim.pnl; winCount++; }
     else if (sim.pnl < 0) { simLosses += sim.pnl; lossCount++; }
   });
+  var totalTrades = winCount + lossCount;
+  var winRate = totalTrades > 0 ? ((winCount / totalTrades) * 100).toFixed(0) : '—';
+  var scoreLabel = SCORE_FILTER > 0 ? ' (Score ' + SCORE_FILTER + '+)' : '';
 
   bar.innerHTML =
     '<div class="stat-card"><div class="stat-label">High Conviction</div><div class="stat-value gold">' + highConv + '</div><div class="stat-sub">' + signals.length + ' total signals</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Win Rate' + scoreLabel + '</div><div class="stat-value ' + (parseInt(winRate) >= 50 ? 'green' : parseInt(winRate) > 0 ? 'red' : '') + '">' + winRate + '%</div><div class="stat-sub">' + winCount + 'W / ' + lossCount + 'L of ' + filtered.length + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Short Acc (60+)</div><div class="stat-value green">' + shortAcc + '%</div><div class="stat-sub">' + (shortPat.correct || 0) + '/' + (shortPat.with_data || 0) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Long Acc (60+)</div><div class="stat-value ' + (parseInt(longAcc) >= 50 ? 'green' : 'red') + '">' + longAcc + '%</div><div class="stat-sub">' + (longPat.correct || 0) + '/' + (longPat.with_data || 0) + '</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Sim Wins</div><div class="stat-value green">+$' + simWins.toFixed(0) + '</div><div class="stat-sub">' + winCount + ' winning</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Sim Losses</div><div class="stat-value red">-$' + Math.abs(simLosses).toFixed(0) + '</div><div class="stat-sub">' + lossCount + ' losing</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Sim Total ($' + MARGIN + '/' + LEVERAGE + 'x)</div><div class="stat-value ' + (simTotal >= 0 ? 'green' : 'red') + '">' + (simTotal >= 0 ? '+' : '') + '$' + simTotal.toFixed(0) + '</div><div class="stat-sub">' + signals.length + ' signals</div></div>';
+    '<div class="stat-card"><div class="stat-label">Sim Wins' + scoreLabel + '</div><div class="stat-value green">+$' + simWins.toFixed(0) + '</div><div class="stat-sub">' + winCount + ' winning</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Sim Losses' + scoreLabel + '</div><div class="stat-value red">-$' + Math.abs(simLosses).toFixed(0) + '</div><div class="stat-sub">' + lossCount + ' losing</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Sim Total' + scoreLabel + '</div><div class="stat-value ' + (simTotal >= 0 ? 'green' : 'red') + '">' + (simTotal >= 0 ? '+' : '') + '$' + simTotal.toFixed(0) + '</div><div class="stat-sub">$' + MARGIN + '/' + LEVERAGE + 'x · ' + filtered.length + ' signals</div></div>';
 }
 
 function getConviction(s) {
