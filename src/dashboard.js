@@ -547,7 +547,10 @@ function refreshAll() {
     apiFetch('/api/patterns'),
     apiFetch('/api/trades'),
   ]).then(function(results) {
-    signals = results[0].signals || [];
+    signals = (results[0].signals || []).map(function(s) {
+      if (s.best_score && parseInt(s.best_score) > (parseInt(s.score) || 0)) s.score = s.best_score;
+      return s;
+    });
     flowAlerts = results[0].flow_alerts || [];
     patterns = results[1].patterns || [];
     trades = results[2];

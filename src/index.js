@@ -60,7 +60,7 @@ async function main() {
         const hours = parseInt(url.searchParams.get('hours')) || 24;
         const minScore = parseInt(url.searchParams.get('minScore')) || 30;
         const result = await db.query(`
-          WITH ranked AS (
+          WITH first_alert AS (
             SELECT symbol, data->>'direction' as direction,
               (data->>'score')::int as score,
               (data->>'price')::numeric as price,
@@ -81,13 +81,26 @@ async function main() {
               data->>'pair' as pair,
               alert_type,
               created_at,
-              ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY (data->>'score')::int DESC, created_at DESC) as rn
+              ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY created_at ASC) as rn
             FROM alert_log
             WHERE alert_type = 'ONCHAIN'
               AND (data->>'score')::int >= $1
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
+          ),
+          best_score AS (
+            SELECT symbol, data->>'direction' as direction,
+              MAX((data->>'score')::int) as max_score
+            FROM alert_log
+            WHERE alert_type = 'ONCHAIN'
+              AND (data->>'score')::int >= $1
+              AND created_at >= NOW() - INTERVAL '1 hour' * $2
+            GROUP BY symbol, data->>'direction'
           )
-          SELECT * FROM ranked WHERE rn = 1 ORDER BY score DESC
+          SELECT f.*, COALESCE(b.max_score, f.score) as best_score
+          FROM first_alert f
+          LEFT JOIN best_score b ON f.symbol = b.symbol AND f.direction = b.direction
+          WHERE f.rn = 1
+          ORDER BY COALESCE(b.max_score, f.score) DESC
         `, [minScore, hours]);
         const flowResult = await db.query(`
           WITH ranked AS (
