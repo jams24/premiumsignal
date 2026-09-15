@@ -2229,6 +2229,7 @@ class TelegramBot {
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
+        `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')}`).join(', ') : '24/7'}</b> UTC\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
@@ -2249,7 +2250,8 @@ class TelegramBot {
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol: ON' : '⚡ Vol: OFF'}`, 'oc_cfg_volfilt')],
         [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore'),
          Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
-        [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
+        [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours'),
+         Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback('🔄 Refresh', 'oc_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
@@ -3165,6 +3167,7 @@ class TelegramBot {
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
+        `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')}`).join(', ') : '24/7'}</b> UTC\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
         `Tap any button to configure:`;
@@ -3184,7 +3187,8 @@ class TelegramBot {
          Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'sw_cfg_maxpos')],
         [Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'sw_cfg_riskfit'),
          Markup.button.callback(swCbLabel, 'sw_cfg_cb')],
-        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'sw_cfg_exchanges')],
+        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'sw_cfg_exchanges'),
+         Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' win' : '24/7'}`, 'sw_cfg_hours')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'sw_trades'),
          Markup.button.callback('🔄 Refresh', 'sw_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
@@ -3756,6 +3760,7 @@ class TelegramBot {
         `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `💧 Min Live Vol: <b>$${(te.minLiveVolume / 1e6).toFixed(0)}M</b>${te.minLiveVolume > 0 ? '' : ' (OFF)'}\n` +
+        `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')}`).join(', ') : '24/7'}</b> UTC\n` +
         `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
         `Tap any button to configure:`;
@@ -3775,6 +3780,7 @@ class TelegramBot {
          Markup.button.callback(dzCbLabel, 'dz_cfg_cb')],
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'dz_cfg_exchanges'),
          Markup.button.callback(`💧 Vol: $${(te.minLiveVolume / 1e6).toFixed(0)}M`, 'dz_cfg_minvol')],
+        [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'dz_cfg_hours')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -5140,6 +5146,107 @@ class TelegramBot {
       });
     }
 
+    // ── TRADING HOURS (shared helper for all modes) ──
+    const presets = {
+      '24/7': [],
+      'US Session': [[13, 21]],
+      'EU Session': [[7, 16]],
+      'Asia Session': [[0, 8]],
+      'EU + US': [[7, 21]],
+      'Best Hours': [[8, 14], [20, 23]],
+    };
+
+    const showHoursPanel = async (ctx, executor, prefix, backAction) => {
+      const te = executor;
+      const h = new Date().getUTCHours();
+      const active = te.tradingHours?.length
+        ? te.tradingHours.some(([s, e]) => s <= e ? (h >= s && h < e) : (h >= s || h < e))
+        : true;
+      let text = `🕐 <b>TRADING HOURS</b>\n\n`;
+      text += `Current: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}:00-${String(e).padStart(2,'0')}:00`).join(', ') : '24/7 (no restriction)'}</b> UTC\n`;
+      text += `Now: <b>${String(h).padStart(2,'0')}:00 UTC</b> — ${active ? '✅ Trading active' : '❌ Outside hours'}\n\n`;
+      text += `<b>Presets:</b>\n`;
+      text += `• 24/7 — No restriction\n`;
+      text += `• US — 13:00-21:00 UTC (NY open → close)\n`;
+      text += `• EU — 07:00-16:00 UTC (London open → close)\n`;
+      text += `• Asia — 00:00-08:00 UTC (Tokyo/HK)\n`;
+      text += `• EU+US — 07:00-21:00 UTC (full western session)\n`;
+      text += `• Best — 08:00-14:00 + 20:00-23:00 UTC\n\n`;
+      text += `<i>Custom: /sethours ${prefix === 'cfg' ? '' : prefix.replace('_cfg','') + ' '}8-14,20-23</i>`;
+
+      const buttons = [
+        [Markup.button.callback('24/7', `${prefix}_hours_247`),
+         Markup.button.callback('US 13-21', `${prefix}_hours_us`),
+         Markup.button.callback('EU 7-16', `${prefix}_hours_eu`)],
+        [Markup.button.callback('Asia 0-8', `${prefix}_hours_asia`),
+         Markup.button.callback('EU+US 7-21', `${prefix}_hours_euus`),
+         Markup.button.callback('Best', `${prefix}_hours_best`)],
+        [Markup.button.callback('⬅️ Back', backAction)],
+      ];
+      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup });
+    };
+
+    const registerHoursHandlers = (prefix, getExecutor, refreshFn) => {
+      this.bot.action(`${prefix}_hours`, async (ctx) => {
+        try {
+          await ctx.answerCbQuery();
+          await showHoursPanel(ctx, getExecutor(), prefix, prefix === 'cfg' ? 'cfg_main' : prefix.replace('_cfg', '_settings'));
+        } catch (e) { logger.error(`${prefix}_hours error: ${e.message}`); }
+      });
+      const presetMap = { '247': '24/7', us: 'US Session', eu: 'EU Session', asia: 'Asia Session', euus: 'EU + US', best: 'Best Hours' };
+      for (const [key, name] of Object.entries(presetMap)) {
+        this.bot.action(`${prefix}_hours_${key}`, async (ctx) => {
+          try {
+            const te = getExecutor();
+            te.tradingHours = presets[name];
+            te.saveConfig();
+            await ctx.answerCbQuery(`Hours: ${name}`);
+            await refreshFn(ctx);
+          } catch (e) { logger.error(`${prefix}_hours_${key} error: ${e.message}`); }
+        });
+      }
+    };
+
+    // Register for all modes
+    registerHoursHandlers('cfg', () => te(), (ctx) => this.showSettingsMain(ctx));
+    registerHoursHandlers('oc_cfg', octe, (ctx) => showOcSettings(ctx));
+    registerHoursHandlers('sw_cfg', swte, (ctx) => showSwSettings(ctx));
+    registerHoursHandlers('dz_cfg', dzte, (ctx) => showDzSettings(ctx));
+
+    // /sethours command: /sethours [mode] 8-14,20-23
+    this.bot.command('sethours', async (ctx) => {
+      if (!this.isAdmin(ctx)) return;
+      const args = (ctx.message.text || '').split(/\s+/).slice(1);
+      if (args.length === 0) {
+        return ctx.replyWithHTML('Usage: <code>/sethours [mode] hours</code>\nMode: main, onchain, swing, dz (default: main)\nHours: <code>8-14,20-23</code> or <code>off</code> for 24/7\nExamples:\n<code>/sethours 8-14,20-23</code>\n<code>/sethours dz 13-21</code>\n<code>/sethours swing off</code>');
+      }
+      const modeMap = { main: () => te(), onchain: octe, oc: octe, swing: swte, sw: swte, dz: dzte };
+      let modeName = 'main', hoursStr;
+      if (modeMap[args[0]?.toLowerCase()]) {
+        modeName = args[0].toLowerCase();
+        hoursStr = args[1];
+      } else {
+        hoursStr = args[0];
+      }
+      const executor = (modeMap[modeName] || (() => te()))();
+      if (!executor) return ctx.reply('Executor not available');
+      if (hoursStr === 'off' || hoursStr === '24/7') {
+        executor.tradingHours = [];
+      } else {
+        const parsed = hoursStr.split(',').map(r => {
+          const [s, e] = r.split('-').map(Number);
+          return (!isNaN(s) && !isNaN(e) && s >= 0 && s <= 23 && e >= 0 && e <= 23) ? [s, e] : null;
+        }).filter(Boolean);
+        if (parsed.length === 0) return ctx.reply('Invalid format. Use: 8-14,20-23');
+        executor.tradingHours = parsed;
+      }
+      executor.saveConfig();
+      const display = executor.tradingHours.length
+        ? executor.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}:00-${String(e).padStart(2,'0')}:00`).join(', ')
+        : '24/7 (no restriction)';
+      ctx.replyWithHTML(`Trading hours for <b>${modeName}</b> set to: <b>${display}</b> UTC`);
+    });
+
     // ── BALANCE ──
     this.bot.action('cfg_balance', async (ctx) => {
       await ctx.answerCbQuery('Fetching balances...');
@@ -5474,7 +5581,8 @@ class TelegramBot {
        Markup.button.callback(`🚫 Excluded (${t.excludedSymbols?.size || 0})`, 'cfg_exclude')],
       [Markup.button.callback(`📐 Risk-Fit: ${t.riskFitSizing ? 'ON' : 'OFF'}`, 'cfg_riskfit'),
        Markup.button.callback(`🏦 Exchanges${t.disabledExchanges?.size ? ` (${t.disabledExchanges.size} off)` : ''}`, 'cfg_exchanges')],
-      [Markup.button.callback(cbBtnLabel, 'cfg_cb')],
+      [Markup.button.callback(`🕐 Hours: ${t.tradingHours?.length ? t.tradingHours.length + ' windows' : '24/7'}`, 'cfg_hours'),
+       Markup.button.callback(cbBtnLabel, 'cfg_cb')],
       [Markup.button.callback(`📋 Trades (${openTrades.length})`, 'cfg_trades'),
        Markup.button.callback('🔄 Refresh', 'cfg_main')],
       [Markup.button.callback('⬅️ Panel', 'panel_main'),

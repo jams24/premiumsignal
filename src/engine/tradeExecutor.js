@@ -79,6 +79,10 @@ class TradeExecutor {
 
     // Min 24h quote volume for live trades (skip low-liquidity tokens that slip badly)
     this.minLiveVolume = config.minLiveVolume ?? 5000000;
+
+    // Trading schedule: array of [startHour, endHour] UTC ranges when trading is allowed
+    // Empty = 24/7 (no restriction). Example: [[8,12],[13,20]] = trade 08-12 and 13-20 UTC only
+    this.tradingHours = config.tradingHours || [];
   }
 
   onTradeUpdate(callback) {
@@ -131,6 +135,17 @@ class TradeExecutor {
 
     if (this.disabledExchanges.size > 0 && this.disabledExchanges.has(signal.exchange?.toLowerCase())) {
       return { ok: false, reason: `Exchange ${signal.exchange} is disabled` };
+    }
+
+    // Trading schedule check
+    if (this.tradingHours.length > 0) {
+      const h = new Date().getUTCHours();
+      const inWindow = this.tradingHours.some(([start, end]) =>
+        start <= end ? (h >= start && h < end) : (h >= start || h < end)
+      );
+      if (!inWindow) {
+        return { ok: false, reason: `Outside trading hours (${h}:00 UTC)` };
+      }
     }
 
     // Losing streak circuit breaker
@@ -408,6 +423,7 @@ class TradeExecutor {
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
       minLiveVolume: this.minLiveVolume,
+      tradingHours: this.tradingHours,
     };
   }
 
@@ -445,6 +461,7 @@ class TradeExecutor {
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
     if (cfg.minLiveVolume != null) this.minLiveVolume = cfg.minLiveVolume;
+    if (cfg.tradingHours != null) this.tradingHours = cfg.tradingHours;
   }
 
   async getCircuitBreakerStatus() {
