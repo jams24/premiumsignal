@@ -137,6 +137,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .status-badge.tp2 { background: var(--gold-dim); color: var(--gold); border: 1px solid rgba(245,158,11,0.3); }
 .status-badge.played { background: rgba(107,114,128,0.15); color: var(--muted); border: 1px solid rgba(107,114,128,0.3); }
 .status-badge.stopped { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+.status-badge.stale { background: rgba(107,114,128,0.15); color: var(--muted); border: 1px solid rgba(107,114,128,0.3); }
 .status-badge.late { background: rgba(245,158,11,0.08); color: var(--gold); border: 1px solid rgba(245,158,11,0.2); }
 .tp-progress { display: flex; gap: 4px; align-items: center; margin-bottom: 12px; }
 .tp-step { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
@@ -686,22 +687,23 @@ function getTradeStatus(s, levels) {
     return f.symbol === s.symbol && f.direction !== dir
       && new Date(f.created_at) > new Date(s.created_at);
   });
-  var invalidations = [];
-  if (fundAgainst) invalidations.push('Funding flipped against (' + s.funding_bias + ')');
-  if (hasFlowConflict) invalidations.push('Flow alert reversed — opposite direction detected after this signal');
-  if (ageMin > 360) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old — conditions likely changed');
-  else if (ageMin > 120) invalidations.push('Signal is ' + Math.floor(ageMin / 60) + 'h old — re-check conditions');
+  var breakdowns = [];
+  if (fundAgainst) breakdowns.push('Funding flipped against (' + s.funding_bias + ')');
+  if (hasFlowConflict) breakdowns.push('Flow reversed — opposite direction detected');
+  var isStale = ageMin > 360;
+  var isAging = ageMin > 120;
 
   var status, css, tip;
   if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL — do NOT enter'; }
   else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Already hit TP3 — move is done'; }
   else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Already past TP2 — most profit taken, late entry risky'; }
   else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 — can still run but tighten SL to entry'; }
-  else if (invalidations.length && ageMin > 360) { status = 'INVALID'; css = 'stopped'; tip = invalidations[0]; }
-  else if (invalidations.length) { status = 'CAUTION'; css = 'late'; tip = invalidations[0]; }
+  else if (breakdowns.length) { status = 'INVALID'; css = 'stopped'; tip = breakdowns[0]; }
+  else if (isStale) { status = 'STALE'; css = 'stale'; tip = 'Signal is ' + Math.floor(ageMin / 60) + 'h old — conditions likely changed. Wait for fresh alert'; }
+  else if (isAging) { status = 'CAUTION'; css = 'late'; tip = 'Signal is ' + Math.floor(ageMin / 60) + 'h old — re-check conditions before entering'; }
   else if (movePct > 3) { status = 'LATE ENTRY'; css = 'late'; tip = 'Already moved ' + movePct.toFixed(1) + '% — smaller R:R if entering now'; }
   else { status = 'ACTIVE'; css = 'active'; tip = 'Setup valid — price near entry zone'; }
-  return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now, invalidations: invalidations };
+  return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now, invalidations: breakdowns.concat(isStale ? ['Signal is ' + Math.floor(ageMin / 60) + 'h old'] : []) };
 }
 
 function validateCurrentPrice(entry, current) {
@@ -793,9 +795,11 @@ function renderSignals() {
 
   if (SCORE_FILTER > 0) filtered = filtered.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; });
   filtered.sort(function(a, b) {
-    var order = { high: 0, med: 1, low: 2 };
-    if (order[a.conviction] !== order[b.conviction]) return order[a.conviction] - order[b.conviction];
-    return (parseInt(b.score) || 0) - (parseInt(a.score) || 0);
+    var statusOrder = { active: 0, tp1: 1, late: 2, tp2: 3, stale: 4, played: 5, stopped: 6 };
+    var aStatus = statusOrder[a._status.css] !== undefined ? statusOrder[a._status.css] : 3;
+    var bStatus = statusOrder[b._status.css] !== undefined ? statusOrder[b._status.css] : 3;
+    if (aStatus !== bStatus) return aStatus - bStatus;
+    return new Date(b.created_at) - new Date(a.created_at);
   });
 
   if (!filtered.length) {
@@ -859,7 +863,7 @@ function renderSignals() {
     html += '<span style="color:var(--muted);margin-left:4px">|</span>';
     html += '<span class="tp-step ' + (ts.hitSL ? 'blown' : '') + '" title="Stop Loss — exit entire position if breached">SL ' + fmtPrice(levels.sl) + '</span>';
     html += '</div>';
-    var tipColor = ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : 'var(--gold)';
+    var tipColor = ts.css === 'active' ? 'var(--accent)' : ts.css === 'stopped' ? 'var(--danger)' : ts.css === 'stale' ? 'var(--muted)' : 'var(--gold)';
     var movePctStr = ((Math.abs(ts.currentPrice - parseFloat(s.price)) / parseFloat(s.price)) * 100).toFixed(1);
     var moveDir = ts.currentPrice >= parseFloat(s.price) ? '+' : '-';
     html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:6px 10px;background:var(--bg);border-radius:4px;border-left:3px solid ' + tipColor + '">';
