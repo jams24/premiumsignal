@@ -691,7 +691,7 @@ function renderJotter() {
       if (coins.indexOf(sym) === -1 && existing.indexOf(sym) === -1) coins.push(sym);
     });
     coinRow.innerHTML = coins.slice(0, 12).map(function(c) {
-      return '<button class="jotter-coin-btn" onclick="addJotter(\'Watch ' + c + '\')">' + c + '</button>';
+      return '<button class="jotter-coin-btn" onclick="addJotter(&quot;Watch ' + c + '&quot;)">' + c + '</button>';
     }).join('');
   }
 
