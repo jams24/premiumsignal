@@ -32,11 +32,32 @@ class UserPaperEngine {
     return `\n${emoji} Balance: <b>$${bal.toFixed(2)}</b>`;
   }
 
+  _getUserDisabledExchanges(user) {
+    try {
+      if (!user.disabled_exchanges) return new Set();
+      const arr = typeof user.disabled_exchanges === 'string' ? JSON.parse(user.disabled_exchanges) : user.disabled_exchanges;
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+  }
+
   async openForFollowers(signal) {
     try {
       const followers = await db.getFollowers();
+      let queued = 0;
       for (const user of followers) {
         try {
+          const maxPos = parseInt(user.max_positions) || 5;
+          const openTrades = await db.getOpenUserTrades(user.telegram_id);
+          if (openTrades.length >= maxPos) continue;
+          if (openTrades.find(t => t.symbol === signal.symbol)) continue;
+
+          const disabled = this._getUserDisabledExchanges(user);
+          if (disabled.size > 0 && disabled.has(signal.exchange?.toLowerCase())) continue;
+
+          const dailyLossLimit = parseFloat(user.daily_loss_limit) || 100;
+          const dailyPnl = await db.getUserDailyPnL(user.telegram_id);
+          if (dailyPnl <= -dailyLossLimit) continue;
+
           await this._queueEntry(user.telegram_id, {
             signalId: signal.id || null,
             symbol: signal.symbol,
@@ -47,11 +68,12 @@ class UserPaperEngine {
             stopLoss: signal.stopLoss,
             atr: signal.atr || Math.abs(signal.stopLoss - signal.currentPrice) / 3,
           }, 'signal', user);
+          queued++;
         } catch (e) {
           logger.warn(`User paper queue failed for ${user.telegram_id}: ${e.message}`);
         }
       }
-      if (followers.length) logger.info(`User paper entries queued for ${followers.length} follower(s): ${signal.symbol}`);
+      if (queued) logger.info(`User paper entries queued for ${queued} follower(s): ${signal.symbol}`);
     } catch (e) {
       logger.error(`openForFollowers failed: ${e.message}`);
     }
@@ -70,6 +92,9 @@ class UserPaperEngine {
           const openTrades = await db.getOpenUserTrades(user.telegram_id);
           if (openTrades.length >= maxPos) continue;
           if (openTrades.find(t => t.symbol === setup.symbol)) continue;
+
+          const disabled = this._getUserDisabledExchanges(user);
+          if (disabled.size > 0 && disabled.has(setup.exchange?.toLowerCase())) continue;
 
           const dailyLossLimit = parseFloat(user.daily_loss_limit) || 100;
           const dailyPnl = await db.getUserDailyPnL(user.telegram_id);
@@ -110,6 +135,9 @@ class UserPaperEngine {
           const openTrades = await db.getOpenUserTrades(user.telegram_id);
           if (openTrades.length >= maxPos) continue;
           if (openTrades.find(t => t.symbol === setup.symbol)) continue;
+
+          const disabled = this._getUserDisabledExchanges(user);
+          if (disabled.size > 0 && disabled.has(setup.exchange?.toLowerCase())) continue;
 
           const dailyLossLimit = parseFloat(user.daily_loss_limit) || 100;
           const dailyPnl = await db.getUserDailyPnL(user.telegram_id);

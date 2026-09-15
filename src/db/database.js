@@ -267,6 +267,7 @@ async function init(retries = 3) {
     ['paper_balance', 'DOUBLE PRECISION DEFAULT 1000'],
     ['swing_follow', 'BOOLEAN DEFAULT FALSE'],
     ['swing_min_score', 'INTEGER DEFAULT 60'],
+    ['disabled_exchanges', "TEXT DEFAULT '[]'"],
   ];
   for (const [col, type] of userCols) {
     try { await p.query(`ALTER TABLE bot_users ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
@@ -676,6 +677,7 @@ async function setUserPaperConfig(telegramId, config) {
     swingFollow: 'swing_follow', swingMinScore: 'swing_min_score',
     maxPositions: 'max_positions', dailyLossLimit: 'daily_loss_limit',
     perTradeLoss: 'per_trade_loss', paperBalance: 'paper_balance',
+    disabledExchanges: 'disabled_exchanges',
   };
   const sets = [];
   const params = [telegramId];

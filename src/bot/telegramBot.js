@@ -882,6 +882,12 @@ class TelegramBot {
       const perTrade = parseFloat(user.per_trade_loss) || 20;
       const balance = parseFloat(user.paper_balance) || 1000;
       const balEmoji = balance >= 500 ? '💰' : balance >= 100 ? '⚠️' : '🔴';
+      let userDisabled;
+      try {
+        const raw = user.disabled_exchanges;
+        const arr = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : [];
+        userDisabled = new Set(Array.isArray(arr) ? arr : []);
+      } catch { userDisabled = new Set(); }
 
       const text =
         `⚙️ <b>YOUR SETTINGS</b>\n\n` +
@@ -891,6 +897,7 @@ class TelegramBot {
         `💵 Margin: <b>$${size}</b> | ⚡ Leverage: <b>${lev}x</b> | Notional: $${(size * lev).toFixed(0)}\n` +
         `🎯 Min score: <b>${score}</b> | 📊 Max pos: <b>${maxPos}</b>\n` +
         `🛡️ Daily limit: <b>$${dailyLimit}</b> | 🔒 Per-trade: <b>$${perTrade}</b>\n` +
+        `🏦 Exchanges: <b>${userDisabled.size ? `${userDisabled.size} off` : 'All ON'}</b>\n` +
         `📈 Today: <b>$${dailyPnl.toFixed(2)}</b> | Open: <b>${open.length}/${maxPos}</b>\n\n` +
         `Tap any button to configure:`;
 
@@ -903,6 +910,7 @@ class TelegramBot {
          Markup.button.callback(`🔒 Trade: $${perTrade}`, 'my_cfg_tradeloss')],
         [Markup.button.callback(`📊 Pos: ${maxPos}`, 'my_cfg_maxpos'),
          Markup.button.callback(`🎯 Score: ${score}`, 'my_cfg_score')],
+        [Markup.button.callback(`🏦 Exchanges${userDisabled.size ? ` (${userDisabled.size} off)` : ''}`, 'my_cfg_exchanges')],
         [Markup.button.callback(`📈 Positions (${open.length})`, 'my_cfg_positions'),
          Markup.button.callback('🔄 Refresh', 'my_settings')],
       ];
@@ -1118,6 +1126,51 @@ class TelegramBot {
           await ctx.answerCbQuery(`Max positions: ${pos}`);
           await showMySettings(ctx);
         } catch (e) { logger.error(`my_pos: ${e.message}`); }
+      });
+    }
+
+    // ── USER EXCHANGES ──
+    this.bot.action('my_cfg_exchanges', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const user = await db.getUser(ctx.from.id);
+        const exchanges = ['binance', 'bybit'];
+        let disabled;
+        try {
+          const raw = user.disabled_exchanges;
+          const arr = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : [];
+          disabled = new Set(Array.isArray(arr) ? arr : []);
+        } catch { disabled = new Set(); }
+        let desc = `🏦 <b>EXCHANGE TOGGLE</b>\n\n`;
+        desc += `Enable/disable exchanges for your paper trades.\nDisabled exchanges won't open new trades.\n\n`;
+        for (const ex of exchanges) {
+          desc += `${disabled.has(ex) ? '❌' : '✅'} <b>${ex}</b>\n`;
+        }
+        await ctx.editMessageText(desc, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            exchanges.map(ex =>
+              Markup.button.callback(`${disabled.has(ex) ? '❌' : '✅'} ${ex}`, `my_ex_${ex}`)
+            ),
+            [Markup.button.callback('⬅️ Back', 'my_settings')],
+          ]).reply_markup,
+        });
+      } catch (e) { logger.error(`my_cfg_exchanges: ${e.message}`); }
+    });
+    for (const exId of ['binance', 'bybit']) {
+      this.bot.action(`my_ex_${exId}`, async (ctx) => {
+        try {
+          const user = await db.getUser(ctx.from.id);
+          let arr;
+          try { arr = user.disabled_exchanges ? JSON.parse(user.disabled_exchanges) : []; } catch { arr = []; }
+          const disabled = new Set(Array.isArray(arr) ? arr : []);
+          if (disabled.has(exId)) { disabled.delete(exId); }
+          else { disabled.add(exId); }
+          await db.setUserPaperConfig(ctx.from.id, { disabledExchanges: JSON.stringify([...disabled]) });
+          await ctx.answerCbQuery(`${exId}: ${disabled.has(exId) ? 'disabled' : 'enabled'}`);
+          await ctx.deleteMessage().catch(() => {});
+          await showMySettings(ctx, true);
+        } catch (e) { logger.error(`my_ex toggle: ${e.message}`); }
       });
     }
 
