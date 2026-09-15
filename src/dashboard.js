@@ -235,8 +235,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div class="refresh-bar">
       <span class="refresh-left" id="refresh-timer">Updated just now</span>
       <div class="filter-row">
+        <button class="filter-btn" data-filter="active" onclick="setFilter(this)">Enterable</button>
         <button class="filter-btn active" data-filter="high" onclick="setFilter(this)">High Only</button>
-        <button class="filter-btn" data-filter="all" onclick="setFilter(this)">All Signals</button>
+        <button class="filter-btn" data-filter="all" onclick="setFilter(this)">All</button>
+        <button class="filter-btn" data-filter="profit" onclick="setFilter(this)">In Profit</button>
         <button class="filter-btn" data-filter="short" onclick="setFilter(this)">Shorts</button>
         <button class="filter-btn" data-filter="long" onclick="setFilter(this)">Longs</button>
       </div>
@@ -633,7 +635,7 @@ function calcLevels(s) {
 
 function getTradeStatus(s, levels) {
   var entry = parseFloat(s.price), dir = s.direction;
-  var now = parseFloat(s.current_price) || entry;
+  var now = validateCurrentPrice(entry, parseFloat(s.current_price));
   var hitTP1 = false, hitTP2 = false, hitTP3 = false, hitSL = false;
   if (dir === 'long') {
     hitTP1 = now >= levels.tp1; hitTP2 = now >= levels.tp2; hitTP3 = now >= levels.tp3;
@@ -668,8 +670,16 @@ function getTradeStatus(s, levels) {
   return { status: status, css: css, tip: tip, hitTP1: hitTP1, hitTP2: hitTP2, hitTP3: hitTP3, hitSL: hitSL, currentPrice: now, invalidations: invalidations };
 }
 
+function validateCurrentPrice(entry, current) {
+  if (!current || current <= 0) return entry;
+  var ratio = current / entry;
+  if (ratio > 10 || ratio < 0.1) return entry;
+  return current;
+}
+
 function simPnl(s) {
-  var entry = parseFloat(s.price), now = parseFloat(s.current_price) || entry;
+  var entry = parseFloat(s.price);
+  var now = validateCurrentPrice(entry, parseFloat(s.current_price));
   var rawPct = ((now - entry) / entry) * 100;
   var movePct = s.direction === 'short' ? -rawPct : rawPct;
   var pnl = (movePct / 100) * NOTIONAL;
@@ -731,11 +741,18 @@ function toggleCard(id) {
 
 function renderSignals() {
   var grid = document.getElementById('signals-grid');
-  var filtered = signals.map(function(s) { return Object.assign({}, s, { conviction: getConviction(s) }); });
+  var filtered = signals.map(function(s) {
+    var c = Object.assign({}, s, { conviction: getConviction(s) });
+    c._levels = calcLevels(c);
+    c._status = getTradeStatus(c, c._levels);
+    return c;
+  });
 
   if (currentFilter === 'high') filtered = filtered.filter(function(s) { return s.conviction === 'high'; });
   else if (currentFilter === 'short') filtered = filtered.filter(function(s) { return s.direction === 'short'; });
   else if (currentFilter === 'long') filtered = filtered.filter(function(s) { return s.direction === 'long'; });
+  else if (currentFilter === 'active') filtered = filtered.filter(function(s) { return s._status.css === 'active'; });
+  else if (currentFilter === 'profit') filtered = filtered.filter(function(s) { return s._status.hitTP1 || s._status.hitTP2 || s._status.hitTP3; });
 
   filtered.sort(function(a, b) {
     var order = { high: 0, med: 1, low: 2 };
@@ -744,12 +761,14 @@ function renderSignals() {
   });
 
   if (!filtered.length) {
-    grid.innerHTML = '<div class="empty-state"><div class="icon">\\ud83d\\udce1</div><h3>No ' + (currentFilter === 'high' ? 'high conviction ' : '') + 'signals right now</h3><p>Scanner checks every 5 min. ' + (currentFilter === 'high' ? 'Try "All Signals" for lower conviction.' : '') + '</p></div>';
+    var filterNames = { high: 'high conviction', active: 'enterable', profit: 'in-profit', short: 'short', long: 'long' };
+    var label = filterNames[currentFilter] || '';
+    grid.innerHTML = '<div class="empty-state"><div class="icon">\\ud83d\\udce1</div><h3>No ' + label + ' signals right now</h3><p>Scanner checks every 5 min. ' + (currentFilter !== 'all' ? 'Try "All" to see everything.' : '') + '</p></div>';
     return;
   }
 
   grid.innerHTML = filtered.map(function(s, i) {
-    var id = 'sig-' + i, conv = s.conviction, levels = calcLevels(s), reasons = buildReasons(s);
+    var id = 'sig-' + i, conv = s.conviction, levels = s._levels || calcLevels(s), reasons = buildReasons(s);
     var matched = getMatchedPatterns(s);
     var positiveMatches = matched.filter(function(m) { return !PATTERN_RULES[m].negative; });
     var negativeMatches = matched.filter(function(m) { return PATTERN_RULES[m].negative; });
@@ -760,7 +779,7 @@ function renderSignals() {
     var sim = simPnl(s);
     var pnlClass = sim.pnl >= 0 ? 'pos' : 'neg';
     var pnlSign = sim.pnl >= 0 ? '+' : '';
-    var ts = getTradeStatus(s, levels);
+    var ts = s._status || getTradeStatus(s, levels);
 
     var html = '<div class="signal-card conviction-' + conv + '" id="' + id + '">';
     html += '<div class="signal-header" onclick="toggleCard(\\'' + id + '\\')">';
@@ -918,10 +937,17 @@ function loadChart(btn) {
   tabs.querySelectorAll('.chart-tf-btn').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
 
-  var filtered = signals.map(function(s) { return Object.assign({}, s, { conviction: getConviction(s) }); });
+  var filtered = signals.map(function(s) {
+    var c = Object.assign({}, s, { conviction: getConviction(s) });
+    c._levels = calcLevels(c);
+    c._status = getTradeStatus(c, c._levels);
+    return c;
+  });
   if (currentFilter === 'high') filtered = filtered.filter(function(s) { return s.conviction === 'high'; });
   else if (currentFilter === 'short') filtered = filtered.filter(function(s) { return s.direction === 'short'; });
   else if (currentFilter === 'long') filtered = filtered.filter(function(s) { return s.direction === 'long'; });
+  else if (currentFilter === 'active') filtered = filtered.filter(function(s) { return s._status.css === 'active'; });
+  else if (currentFilter === 'profit') filtered = filtered.filter(function(s) { return s._status.hitTP1 || s._status.hitTP2 || s._status.hitTP3; });
   filtered.sort(function(a, b) {
     var order = { high: 0, med: 1, low: 2 };
     if (order[a.conviction] !== order[b.conviction]) return order[a.conviction] - order[b.conviction];

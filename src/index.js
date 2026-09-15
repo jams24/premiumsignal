@@ -126,7 +126,11 @@ async function main() {
               const tickers = await ex.fetchTickers(pairs);
               for (const item of items) {
                 const t = tickers[item.pair];
-                if (t && t.last) item.sig.current_price = t.last;
+                if (t && t.last) {
+                  const entry = parseFloat(item.sig.price);
+                  const ratio = t.last / entry;
+                  if (ratio < 10 && ratio > 0.1) item.sig.current_price = t.last;
+                }
               }
             } catch (_) {}
           }
