@@ -3178,6 +3178,7 @@ class TelegramBot {
           [Markup.button.callback('⬅️ Settings', 'sw_settings')],
         ]).reply_markup });
       } catch (e) {
+        if (e.message?.includes('message is not modified')) return;
         logger.error(`sw_trades error: ${e.message}`);
         ctx.editMessageText('❌ Failed to load trades.', { reply_markup: Markup.inlineKeyboard([
           [Markup.button.callback('⬅️ Back', 'sw_settings')],
@@ -3810,6 +3811,7 @@ class TelegramBot {
           [Markup.button.callback('⬅️ Settings', 'dz_settings')],
         ]).reply_markup });
       } catch (e) {
+        if (e.message?.includes('message is not modified')) return;
         logger.error(`dz_trades error: ${e.message}`);
         ctx.editMessageText('❌ Failed to load trades.', { reply_markup: Markup.inlineKeyboard([
           [Markup.button.callback('⬅️ Back', 'dz_settings')],
@@ -5054,6 +5056,7 @@ class TelegramBot {
           ]).reply_markup,
         });
       } catch (e) {
+        if (e.message?.includes('message is not modified')) return;
         logger.error(`Active trades panel error: ${e.message}`);
         ctx.editMessageText('❌ Failed to load trades.', {
           reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'cfg_main')]]).reply_markup,
