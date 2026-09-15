@@ -764,6 +764,9 @@ function toggleCard(id) {
       var activeBtn = document.querySelector('#tf-tabs-' + idx + ' .chart-tf-btn.active');
       if (activeBtn) loadChart(activeBtn);
     }
+    startChartAutoRefresh();
+  } else {
+    if (!document.querySelector('.signal-card.expanded')) stopChartAutoRefresh();
   }
 }
 
@@ -944,6 +947,22 @@ function renderSignals() {
 }
 
 var chartInstances = {};
+var chartAutoRefresh = null;
+
+function startChartAutoRefresh() {
+  if (chartAutoRefresh) return;
+  chartAutoRefresh = setInterval(function() {
+    var expanded = document.querySelectorAll('.signal-card.expanded');
+    expanded.forEach(function(card) {
+      var idx = parseInt(card.id.replace('sig-', ''));
+      if (chartInstances[idx]) reloadChart(idx);
+    });
+  }, 60000);
+}
+
+function stopChartAutoRefresh() {
+  if (chartAutoRefresh) { clearInterval(chartAutoRefresh); chartAutoRefresh = null; }
+}
 
 function toggleChartSize(idx) {
   var container = document.getElementById('chart-' + idx);
