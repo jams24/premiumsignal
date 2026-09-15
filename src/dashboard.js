@@ -807,6 +807,8 @@ function renderSignals() {
     html += '<button class="chart-tf-btn active" data-tf="15m" data-idx="' + i + '" onclick="loadChart(this)">15m</button>';
     html += '<button class="chart-tf-btn" data-tf="1h" data-idx="' + i + '" onclick="loadChart(this)">1h</button>';
     html += '<button class="chart-tf-btn" data-tf="4h" data-idx="' + i + '" onclick="loadChart(this)">4h</button>';
+    html += '<button class="chart-tf-btn" data-idx="' + i + '" onclick="reloadChart(' + i + ')" style="margin-left:auto">Refresh</button>';
+    html += '<span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">Snapshot (not live)</span>';
     html += '</div>';
     html += '<div class="chart-container" id="chart-' + i + '"><div class="chart-loading" id="chart-load-' + i + '">Click a timeframe to load chart</div></div>';
     html += '<div class="chart-legend">';
@@ -851,6 +853,11 @@ function renderSignals() {
 
 var chartInstances = {};
 
+function reloadChart(idx) {
+  var activeBtn = document.querySelector('#tf-tabs-' + idx + ' .chart-tf-btn.active');
+  if (activeBtn && activeBtn.dataset.tf) loadChart(activeBtn);
+}
+
 function loadChart(btn) {
   var tf = btn.dataset.tf, idx = parseInt(btn.dataset.idx);
   var tabs = document.getElementById('tf-tabs-' + idx);
@@ -873,19 +880,20 @@ function loadChart(btn) {
   var loadEl = document.getElementById('chart-load-' + idx);
   if (loadEl) loadEl.textContent = 'Loading ' + tf + ' candles...';
 
-  var sinceMs = new Date(s.created_at).getTime() - (tf === '4h' ? 7*24*3600000 : tf === '1h' ? 3*24*3600000 : 12*3600000);
+  var preSignal = tf === '4h' ? 5*24*3600000 : tf === '1h' ? 12*3600000 : tf === '15m' ? 4*3600000 : 2*3600000;
+  var sinceMs = new Date(s.created_at).getTime() - preSignal;
   apiFetch('/api/chart', { symbol: s.symbol, tf: tf, since: sinceMs }).then(function(data) {
     if (!data.candles || !data.candles.length) {
       if (loadEl) loadEl.textContent = 'No chart data available';
       return;
     }
-    renderChart(containerId, idx, data.candles, s);
+    renderChart(containerId, idx, data.candles, s, tf);
   }).catch(function(e) {
     if (loadEl) loadEl.textContent = 'Chart error: ' + e.message;
   });
 }
 
-function renderChart(containerId, idx, candles, signal) {
+function renderChart(containerId, idx, candles, signal, tf) {
   var container = document.getElementById(containerId);
   if (!container) return;
 
@@ -938,7 +946,14 @@ function renderChart(containerId, idx, candles, signal) {
     text: signal.direction.toUpperCase() + ' ' + (parseInt(signal.score) || 0),
   }]);
 
-  chart.timeScale().fitContent();
+  var sigTimeSec = Math.floor(new Date(signal.created_at).getTime() / 1000);
+  var tfSec = tf === '4h' ? 14400 : tf === '1h' ? 3600 : tf === '15m' ? 900 : 300;
+  var paddingBefore = tfSec * 30;
+  var paddingAfter = tfSec * 40;
+  chart.timeScale().setVisibleRange({
+    from: sigTimeSec - paddingBefore,
+    to: Math.min(sigTimeSec + paddingAfter, Math.floor(Date.now() / 1000) + tfSec * 5),
+  });
 
   new ResizeObserver(function() {
     if (chartInstances[idx]) chart.applyOptions({ width: container.clientWidth });
