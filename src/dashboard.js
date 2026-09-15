@@ -155,6 +155,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .chart-legend { display: flex; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
 .chart-legend-item { display: flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 10px; color: var(--text2); }
 .chart-legend-dot { width: 8px; height: 2px; border-radius: 1px; }
+.chart-verdict { margin-top: 8px; padding: 10px 12px; border-radius: 6px; font-size: 12px; line-height: 1.6; border: 1px solid var(--border); background: var(--surface2); }
 
 /* Education section */
 .edu-section { margin-bottom: 20px; }
@@ -614,12 +615,16 @@ function fmtPrice(p) {
 }
 
 function calcLevels(s) {
-  var price = parseFloat(s.price), dir = s.direction, atrEst = price * 0.03;
+  var price = parseFloat(s.price), dir = s.direction;
+  var absPc = Math.abs(parseFloat(s.price_change) || 0);
+  var volEst = Math.max(absPc * 0.3, 3);
+  var atrEst = price * (volEst / 100);
   var sl, tp1, tp2, tp3;
   if (dir === 'long') { sl = price - atrEst * 2; tp1 = price + atrEst * 1.5; tp2 = price + atrEst * 3; tp3 = price + atrEst * 5; }
   else { sl = price + atrEst * 2; tp1 = price - atrEst * 1.5; tp2 = price - atrEst * 3; tp3 = price - atrEst * 5; }
   var risk = Math.abs(price - sl), reward = Math.abs(tp2 - price);
-  return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '\\u2014' };
+  var slPct = ((Math.abs(price - sl) / price) * 100).toFixed(1);
+  return { sl: sl, tp1: tp1, tp2: tp2, tp3: tp3, rr: risk > 0 ? (reward / risk).toFixed(1) : '\\u2014', slPct: slPct, volEst: volEst.toFixed(1) };
 }
 
 function getTradeStatus(s, levels) {
@@ -820,6 +825,7 @@ function renderSignals() {
     html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#10b981"></span>TP1/TP2/TP3</span>';
     html += '<span class="chart-legend-item"><span class="chart-legend-dot" style="background:#ef4444"></span>Stop Loss</span>';
     html += '</div>';
+    html += '<div class="chart-verdict" id="chart-verdict-' + i + '" hidden></div>';
 
     var watDate = new Date(new Date(s.created_at).getTime() + 3600000);
     var watDay = watDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
@@ -926,7 +932,10 @@ function loadChart(btn) {
     }
     renderChart(containerId, idx, data.candles, s, tf);
   }).catch(function(e) {
-    if (loadEl) loadEl.textContent = 'Chart error: ' + e.message;
+    if (loadEl) {
+      if (e.message.indexOf('404') !== -1) loadEl.textContent = s.symbol + ' not listed on exchange — chart unavailable';
+      else loadEl.textContent = 'Chart error: ' + e.message;
+    }
   });
 }
 
@@ -991,6 +1000,51 @@ function renderChart(containerId, idx, candles, signal, tf) {
     from: sigTimeSec - paddingBefore,
     to: Math.min(sigTimeSec + paddingAfter, Math.floor(Date.now() / 1000) + tfSec * 5),
   });
+
+  var postSignalCandles = candles.filter(function(c) { return c.time >= sigTimeSec; });
+  var levels = calcLevels(signal);
+  var slBreached = false, slBreachTime = null, maxAdverse = 0;
+  var tpTimeline = { tp1: null, tp2: null, tp3: null };
+  postSignalCandles.forEach(function(c) {
+    if (signal.direction === 'short') {
+      if (c.high > maxAdverse) maxAdverse = c.high;
+      if (!slBreached && c.high >= levels.sl) { slBreached = true; slBreachTime = c.time; }
+      if (!tpTimeline.tp1 && c.low <= levels.tp1) tpTimeline.tp1 = c.time;
+      if (!tpTimeline.tp2 && c.low <= levels.tp2) tpTimeline.tp2 = c.time;
+      if (!tpTimeline.tp3 && c.low <= levels.tp3) tpTimeline.tp3 = c.time;
+    } else {
+      if (c.low < maxAdverse || maxAdverse === 0) maxAdverse = c.low;
+      if (!slBreached && c.low <= levels.sl) { slBreached = true; slBreachTime = c.time; }
+      if (!tpTimeline.tp1 && c.high >= levels.tp1) tpTimeline.tp1 = c.time;
+      if (!tpTimeline.tp2 && c.high >= levels.tp2) tpTimeline.tp2 = c.time;
+      if (!tpTimeline.tp3 && c.high >= levels.tp3) tpTimeline.tp3 = c.time;
+    }
+  });
+
+  var verdictEl = document.getElementById('chart-verdict-' + idx);
+  if (verdictEl) {
+    var html = '';
+    var adversePct = ((Math.abs(maxAdverse - parseFloat(signal.price)) / parseFloat(signal.price)) * 100).toFixed(1);
+    if (slBreached && tpTimeline.tp1 && slBreachTime > tpTimeline.tp1) {
+      html = '<span style="color:var(--gold)">SL was hit BUT after TP1 was reached. Partial profit possible with partials at TP1.</span>';
+    } else if (slBreached) {
+      var slTime = new Date((slBreachTime + 3600) * 1000);
+      var slStr = slTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+      html = '<span style="color:var(--danger);font-weight:600">SL WAS HIT</span> at ~' + slStr + ' WAT before any TP. ';
+      html += 'Max adverse: ' + adversePct + '% against. This trade would have been a loss of -$' + (NOTIONAL * parseFloat(levels.slPct) / 100).toFixed(0) + '.';
+      if (tpTimeline.tp1) html += '<br><span style="color:var(--text2)">TP1 was reached later \\u2014 a wider SL would have survived.</span>';
+    } else if (tpTimeline.tp3) {
+      html = '<span style="color:var(--accent);font-weight:600">FULL WIN</span> \\u2014 TP1, TP2, TP3 all hit without SL being touched. Clean trade.';
+    } else if (tpTimeline.tp2) {
+      html = '<span style="color:var(--accent)">TP1 + TP2 hit</span> without SL being touched. Strong move.';
+    } else if (tpTimeline.tp1) {
+      html = '<span style="color:var(--accent)">TP1 hit</span> without SL touched. Max drawdown before TP1: ' + adversePct + '%.';
+    } else {
+      html = '<span style="color:var(--text2)">No TP or SL hit yet on this timeframe. Max drawdown: ' + adversePct + '%.</span>';
+    }
+    verdictEl.innerHTML = html;
+    verdictEl.hidden = false;
+  }
 
   new ResizeObserver(function() {
     if (chartInstances[idx]) chart.applyOptions({ width: container.clientWidth });

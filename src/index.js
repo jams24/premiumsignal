@@ -216,6 +216,13 @@ async function main() {
         const validTf = ['5m','15m','1h','4h'];
         if (!validTf.includes(tf)) { res.writeHead(400); return res.end('{"error":"tf must be 5m/15m/1h/4h"}'); }
         if (!symbol.includes('/')) symbol = symbol + '/USDT:USDT';
+        if (!exchangeRef.markets[symbol]) {
+          await exchangeRef.loadMarkets(false);
+          if (!exchangeRef.markets[symbol]) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'not_listed', symbol }));
+          }
+        }
         const sinceMs = since ? parseInt(since) : Date.now() - (tf === '4h' ? 30*24*60*60*1000 : tf === '1h' ? 7*24*60*60*1000 : 2*24*60*60*1000);
         const candles = await exchangeRef.fetchOHLCV(symbol, tf, sinceMs, 200);
         const data = candles.map(c => ({ time: Math.floor(c[0]/1000), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
