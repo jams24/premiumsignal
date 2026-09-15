@@ -936,7 +936,9 @@ function loadChart(btn) {
 
   var preSignal = tf === '4h' ? 5*24*3600000 : tf === '1h' ? 12*3600000 : tf === '15m' ? 4*3600000 : 2*3600000;
   var sinceMs = new Date(s.created_at).getTime() - preSignal;
-  apiFetch('/api/chart', { symbol: s.symbol, tf: tf, since: sinceMs }).then(function(data) {
+  var chartParams = { symbol: s.symbol, tf: tf, since: sinceMs };
+  if (s.exchange) chartParams.exchange = s.exchange;
+  apiFetch('/api/chart', chartParams).then(function(data) {
     if (!data.candles || !data.candles.length) {
       if (loadEl) loadEl.textContent = 'No chart data available';
       return;

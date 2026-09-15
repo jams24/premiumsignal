@@ -77,6 +77,8 @@ async function main() {
               (data->>'stopLoss')::numeric as stop_loss,
               (data->>'atr')::numeric as atr,
               (data->>'confidence')::int as confidence,
+              data->>'exchange' as exchange,
+              data->>'pair' as pair,
               alert_type,
               created_at,
               ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY (data->>'score')::int DESC, created_at DESC) as rn
@@ -217,23 +219,34 @@ async function main() {
         let symbol = url.searchParams.get('symbol');
         const tf = url.searchParams.get('tf') || '15m';
         const since = url.searchParams.get('since');
+        const exchParam = url.searchParams.get('exchange');
         if (!symbol) { res.writeHead(400); return res.end('{"error":"symbol required"}'); }
-        if (!exchangeRef) { res.writeHead(503); return res.end('{"error":"exchange not ready"}'); }
+        if (!listingMonitor?.exchanges) { res.writeHead(503); return res.end('{"error":"exchange not ready"}'); }
         const validTf = ['5m','15m','1h','4h'];
         if (!validTf.includes(tf)) { res.writeHead(400); return res.end('{"error":"tf must be 5m/15m/1h/4h"}'); }
         if (!symbol.includes('/')) symbol = symbol + '/USDT:USDT';
-        if (!exchangeRef.markets[symbol]) {
-          await exchangeRef.loadMarkets(false);
-          if (!exchangeRef.markets[symbol]) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'not_listed', symbol }));
+        const allExchanges = listingMonitor.exchanges;
+        let exchange = exchParam && allExchanges[exchParam] ? allExchanges[exchParam] : null;
+        if (!exchange) {
+          for (const ex of Object.values(allExchanges)) {
+            if (ex.markets && ex.markets[symbol]) { exchange = ex; break; }
           }
         }
+        if (!exchange) {
+          for (const ex of Object.values(allExchanges)) {
+            try { await ex.loadMarkets(false); } catch (_) {}
+            if (ex.markets && ex.markets[symbol]) { exchange = ex; break; }
+          }
+        }
+        if (!exchange) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'not_listed', symbol }));
+        }
         const sinceMs = since ? parseInt(since) : Date.now() - (tf === '4h' ? 30*24*60*60*1000 : tf === '1h' ? 7*24*60*60*1000 : 2*24*60*60*1000);
-        const candles = await exchangeRef.fetchOHLCV(symbol, tf, sinceMs, 200);
+        const candles = await exchange.fetchOHLCV(symbol, tf, sinceMs, 200);
         const data = candles.map(c => ({ time: Math.floor(c[0]/1000), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ candles: data, symbol, tf }));
+        return res.end(JSON.stringify({ candles: data, symbol, tf, exchange: exchange.id }));
       } catch (e) {
         res.writeHead(500);
         return res.end(JSON.stringify({ error: e.message }));
