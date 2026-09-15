@@ -473,6 +473,7 @@ function setScoreFilter(btn) {
   btn.classList.add('active');
   SCORE_FILTER = parseInt(btn.dataset.score) || 0;
   renderStats();
+  renderSignals();
 }
 
 var PATTERN_RULES = {
@@ -781,6 +782,7 @@ function renderSignals() {
   else if (currentFilter === 'active') filtered = filtered.filter(function(s) { return s._status.css === 'active'; });
   else if (currentFilter === 'profit') filtered = filtered.filter(function(s) { return s._status.hitTP1 || s._status.hitTP2 || s._status.hitTP3; });
 
+  if (SCORE_FILTER > 0) filtered = filtered.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; });
   filtered.sort(function(a, b) {
     var order = { high: 0, med: 1, low: 2 };
     if (order[a.conviction] !== order[b.conviction]) return order[a.conviction] - order[b.conviction];
@@ -790,7 +792,8 @@ function renderSignals() {
   if (!filtered.length) {
     var filterNames = { high: 'high conviction', active: 'enterable', profit: 'in-profit', short: 'short', long: 'long' };
     var label = filterNames[currentFilter] || '';
-    grid.innerHTML = '<div class="empty-state"><div class="icon">📡</div><h3>No ' + label + ' signals right now</h3><p>Scanner checks every 5 min. ' + (currentFilter !== 'all' ? 'Try "All" to see everything.' : '') + '</p></div>';
+    if (SCORE_FILTER > 0) label = (label ? label + ' ' : '') + 'score ' + SCORE_FILTER + '+';
+    grid.innerHTML = '<div class="empty-state"><div class="icon">📡</div><h3>No ' + label + ' signals right now</h3><p>Scanner checks every 5 min. ' + ((currentFilter !== 'all' || SCORE_FILTER > 0) ? 'Try clearing filters to see everything.' : '') + '</p></div>';
     return;
   }
 
@@ -975,6 +978,9 @@ function loadChart(btn) {
   else if (currentFilter === 'long') filtered = filtered.filter(function(s) { return s.direction === 'long'; });
   else if (currentFilter === 'active') filtered = filtered.filter(function(s) { return s._status.css === 'active'; });
   else if (currentFilter === 'profit') filtered = filtered.filter(function(s) { return s._status.hitTP1 || s._status.hitTP2 || s._status.hitTP3; });
+
+  if (SCORE_FILTER > 0) filtered = filtered.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; });
+
   filtered.sort(function(a, b) {
     var order = { high: 0, med: 1, low: 2 };
     if (order[a.conviction] !== order[b.conviction]) return order[a.conviction] - order[b.conviction];
