@@ -780,6 +780,8 @@ function toggleCard(id) {
 
 function renderSignals() {
   var grid = document.getElementById('signals-grid');
+  Object.keys(chartInstances).forEach(function(k) { if (chartInstances[k]) { chartInstances[k].remove(); } });
+  chartInstances = {};
   var filtered = signals.map(function(s) {
     var c = Object.assign({}, s, { conviction: getConviction(s) });
     c._levels = calcLevels(c);
@@ -891,12 +893,13 @@ function renderSignals() {
 
     html += '<div class="chart-section">';
     html += '<div class="chart-tf-tabs" id="tf-tabs-' + i + '">';
-    html += '<button class="chart-tf-btn" data-tf="5m" data-idx="' + i + '" onclick="loadChart(this)">5m</button>';
-    html += '<button class="chart-tf-btn active" data-tf="15m" data-idx="' + i + '" onclick="loadChart(this)">15m</button>';
-    html += '<button class="chart-tf-btn" data-tf="1h" data-idx="' + i + '" onclick="loadChart(this)">1h</button>';
-    html += '<button class="chart-tf-btn" data-tf="4h" data-idx="' + i + '" onclick="loadChart(this)">4h</button>';
+    var chartAttrs = 'data-idx="' + i + '" data-symbol="' + s.symbol + '" data-dir="' + s.direction + '"';
+    html += '<button class="chart-tf-btn" data-tf="5m" ' + chartAttrs + ' onclick="loadChart(this)">5m</button>';
+    html += '<button class="chart-tf-btn active" data-tf="15m" ' + chartAttrs + ' onclick="loadChart(this)">15m</button>';
+    html += '<button class="chart-tf-btn" data-tf="1h" ' + chartAttrs + ' onclick="loadChart(this)">1h</button>';
+    html += '<button class="chart-tf-btn" data-tf="4h" ' + chartAttrs + ' onclick="loadChart(this)">4h</button>';
     html += '<button class="chart-expand-btn" onclick="toggleChartSize(' + i + ')" style="margin-left:auto" id="expand-btn-' + i + '">Expand</button>';
-    html += '<button class="chart-tf-btn" data-idx="' + i + '" onclick="reloadChart(' + i + ')">Refresh</button>';
+    html += '<button class="chart-tf-btn" ' + chartAttrs + ' onclick="reloadChart(' + i + ')">Refresh</button>';
     html += '<span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">Snapshot</span>';
     html += '</div>';
     html += '<div class="chart-container" id="chart-' + i + '"><div class="chart-loading" id="chart-load-' + i + '">Click a timeframe to load chart</div></div>';
@@ -1006,31 +1009,19 @@ function reloadChart(idx) {
 
 function loadChart(btn) {
   var tf = btn.dataset.tf, idx = parseInt(btn.dataset.idx);
+  var sym = btn.dataset.symbol, dir = btn.dataset.dir;
   var tabs = document.getElementById('tf-tabs-' + idx);
   tabs.querySelectorAll('.chart-tf-btn').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
 
-  var filtered = signals.map(function(s) {
-    var c = Object.assign({}, s, { conviction: getConviction(s) });
-    c._levels = calcLevels(c);
-    c._status = getTradeStatus(c, c._levels);
-    return c;
-  });
-  if (currentFilter === 'high') filtered = filtered.filter(function(s) { return s.conviction === 'high'; });
-  else if (currentFilter === 'short') filtered = filtered.filter(function(s) { return s.direction === 'short'; });
-  else if (currentFilter === 'long') filtered = filtered.filter(function(s) { return s.direction === 'long'; });
-  else if (currentFilter === 'active') filtered = filtered.filter(function(s) { return s._status.css === 'active'; });
-  else if (currentFilter === 'profit') filtered = filtered.filter(function(s) { return s._status.hitTP1 || s._status.hitTP2 || s._status.hitTP3; });
-
-  if (SCORE_FILTER > 0) filtered = filtered.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; });
-
-  filtered.sort(function(a, b) {
-    var order = { high: 0, med: 1, low: 2 };
-    if (order[a.conviction] !== order[b.conviction]) return order[a.conviction] - order[b.conviction];
-    return (parseInt(b.score) || 0) - (parseInt(a.score) || 0);
-  });
-  var s = filtered[idx];
+  var s = null;
+  for (var si = 0; si < signals.length; si++) {
+    if (signals[si].symbol === sym && signals[si].direction === dir) { s = signals[si]; break; }
+  }
   if (!s) return;
+  s = Object.assign({}, s, { conviction: getConviction(s) });
+  s._levels = calcLevels(s);
+  s._status = getTradeStatus(s, s._levels);
 
   var containerId = 'chart-' + idx;
   var loadEl = document.getElementById('chart-load-' + idx);
