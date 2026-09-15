@@ -868,6 +868,20 @@ function renderSignals() {
     }
     html += '</div>';
 
+    var bestScore = parseInt(s.best_score) || parseInt(s.score) || 0;
+    var initScore = parseInt(s.score) || 0;
+    if (bestScore > initScore && s.best_at) {
+      var bestDt = new Date(s.best_at);
+      var bestWat = bestDt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+      var initDt = new Date(s.created_at);
+      var initWat = initDt.toLocaleString('en-GB', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+      html += '<div style="font-size:11px;font-family:var(--font-mono);color:var(--text2);padding:6px 10px;margin-bottom:10px;background:var(--bg);border-radius:4px;border-left:3px solid var(--accent)">';
+      html += '<span style="color:var(--muted)">ALERT TIMELINE</span><br>';
+      html += 'First alert: score <strong>' + initScore + '</strong> at <strong style="color:var(--gold)">' + fmtPrice(s.price) + '</strong> — ' + initWat + ' WAT<br>';
+      html += 'Best score: <strong style="color:var(--accent)">' + bestScore + '</strong> at <strong style="color:var(--gold)">' + fmtPrice(s.best_price) + '</strong> — ' + bestWat + ' WAT';
+      html += '</div>';
+    }
+
     html += '<div class="chart-section">';
     html += '<div class="chart-tf-tabs" id="tf-tabs-' + i + '">';
     html += '<button class="chart-tf-btn" data-tf="5m" data-idx="' + i + '" onclick="loadChart(this)">5m</button>';

@@ -88,15 +88,19 @@ async function main() {
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
           ),
           best_score AS (
-            SELECT symbol, data->>'direction' as direction,
-              MAX((data->>'score')::int) as max_score
+            SELECT DISTINCT ON (symbol, data->>'direction')
+              symbol, data->>'direction' as direction,
+              (data->>'score')::int as max_score,
+              (data->>'price')::numeric as best_price,
+              created_at as best_at
             FROM alert_log
             WHERE alert_type = 'ONCHAIN'
               AND (data->>'score')::int >= $1
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
-            GROUP BY symbol, data->>'direction'
+            ORDER BY symbol, data->>'direction', (data->>'score')::int DESC, created_at ASC
           )
-          SELECT f.*, COALESCE(b.max_score, f.score) as best_score
+          SELECT f.*, COALESCE(b.max_score, f.score) as best_score,
+            b.best_price, b.best_at
           FROM first_alert f
           LEFT JOIN best_score b ON f.symbol = b.symbol AND f.direction = b.direction
           WHERE f.rn = 1
