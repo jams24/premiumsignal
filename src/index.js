@@ -255,28 +255,128 @@ async function main() {
 
     if (url.pathname === '/api/trades' && authed) {
       try {
+        const page = Math.max(1, parseInt(url.searchParams.get('page')) || 1);
+        const limit = Math.min(100, Math.max(10, parseInt(url.searchParams.get('limit')) || 25));
+        const period = url.searchParams.get('period') || 'all';
+        const source = url.searchParams.get('source') || 'all';
+        const offset = (page - 1) * limit;
+        let dateFilter = '';
+        if (period === 'today') dateFilter = "AND closed_at >= CURRENT_DATE";
+        else if (period === 'week') dateFilter = "AND closed_at >= CURRENT_DATE - INTERVAL '7 days'";
+        else if (period === 'month') dateFilter = "AND closed_at >= CURRENT_DATE - INTERVAL '30 days'";
+        const validSources = ['onchain', 'demandzone', 'main', 'swing'];
+        const sourceFilter = validSources.includes(source) ? `AND source = '${source}'` : '';
         const result = await db.query(`
-          SELECT symbol, direction, entry_price, exit_price,
+          SELECT symbol, direction, entry_price, exit_price, position_size, source,
             ROUND(pnl_pct::numeric, 2) as pnl_pct, ROUND(pnl_usd::numeric, 2) as pnl_usd,
-            leverage, close_reason, mode,
+            leverage, close_reason, mode, hit_tp1, hit_tp2, hit_tp3,
             (onchain_context->>'score')::int as score,
             onchain_context->>'fundingBias' as funding,
             onchain_context->'exchangeFlow'->>'bias' as flow_bias,
             (onchain_context->>'oiChange4h')::numeric as oi_4h,
             (onchain_context->>'priceChange')::numeric as price_change,
             created_at, closed_at
-          FROM trades WHERE source = 'onchain' AND status = 'closed'
-          ORDER BY created_at DESC LIMIT 50
-        `);
+          FROM trades WHERE status = 'closed' ${sourceFilter} ${dateFilter}
+          ORDER BY closed_at DESC LIMIT $1 OFFSET $2
+        `, [limit, offset]);
+        const countRes = await db.query(
+          `SELECT COUNT(*) as total FROM trades WHERE status = 'closed' ${sourceFilter} ${dateFilter}`
+        );
         const open = await db.query(`
-          SELECT symbol, direction, entry_price, leverage, position_size, mode,
+          SELECT symbol, direction, entry_price, leverage, position_size, mode, source,
             (onchain_context->>'score')::int as score,
             onchain_context->>'fundingBias' as funding,
-            tp1, tp2, tp3, stop_loss, created_at
-          FROM trades WHERE source = 'onchain' AND status = 'open'
+            tp1, tp2, tp3, stop_loss, peak_price, created_at
+          FROM trades WHERE status = 'open' ${sourceFilter}
         `);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ closed: result.rows, open: open.rows, ts: Date.now() }));
+        return res.end(JSON.stringify({
+          closed: result.rows, open: open.rows,
+          total: parseInt(countRes.rows[0].total),
+          page, limit, ts: Date.now()
+        }));
+      } catch (e) {
+        res.writeHead(500);
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+
+    if (url.pathname === '/api/trade-stats' && authed) {
+      try {
+        const source = url.searchParams.get('source') || 'all';
+        const validSources = ['onchain', 'demandzone', 'main', 'swing'];
+        const srcFilter = validSources.includes(source) ? `AND source = '${source}'` : '';
+        const stats = await db.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE) as today_count,
+            COALESCE(SUM(pnl_usd) FILTER (WHERE closed_at >= CURRENT_DATE), 0) as today_pnl,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE AND pnl_usd > 0) as today_wins,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE AND pnl_usd <= 0) as today_losses,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '7 days') as week_count,
+            COALESCE(SUM(pnl_usd) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '7 days'), 0) as week_pnl,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '7 days' AND pnl_usd > 0) as week_wins,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '7 days' AND pnl_usd <= 0) as week_losses,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '30 days') as month_count,
+            COALESCE(SUM(pnl_usd) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '30 days'), 0) as month_pnl,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '30 days' AND pnl_usd > 0) as month_wins,
+            COUNT(*) FILTER (WHERE closed_at >= CURRENT_DATE - INTERVAL '30 days' AND pnl_usd <= 0) as month_losses,
+            COUNT(*) as all_count,
+            COALESCE(SUM(pnl_usd), 0) as all_pnl,
+            COUNT(*) FILTER (WHERE pnl_usd > 0) as all_wins,
+            COUNT(*) FILTER (WHERE pnl_usd <= 0) as all_losses,
+            COALESCE(MAX(pnl_usd), 0) as best_trade,
+            COALESCE(MIN(pnl_usd), 0) as worst_trade,
+            COALESCE(AVG(pnl_usd) FILTER (WHERE pnl_usd > 0), 0) as avg_win,
+            COALESCE(AVG(pnl_usd) FILTER (WHERE pnl_usd <= 0), 0) as avg_loss,
+            COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 60), 0) as avg_hold_min
+          FROM trades WHERE status = 'closed' ${srcFilter}
+        `);
+        const byReason = await db.query(`
+          SELECT close_reason, COUNT(*) as cnt,
+            COALESCE(SUM(pnl_usd), 0) as pnl
+          FROM trades WHERE status = 'closed' ${srcFilter}
+          GROUP BY close_reason ORDER BY cnt DESC
+        `);
+        const byDirection = await db.query(`
+          SELECT direction, COUNT(*) as cnt,
+            COUNT(*) FILTER (WHERE pnl_usd > 0) as wins,
+            COALESCE(SUM(pnl_usd), 0) as pnl
+          FROM trades WHERE status = 'closed' ${srcFilter}
+          GROUP BY direction
+        `);
+        const dailyPnl = await db.query(`
+          SELECT DATE(closed_at) as day,
+            COUNT(*) as trades,
+            COALESCE(SUM(pnl_usd), 0) as pnl,
+            COUNT(*) FILTER (WHERE pnl_usd > 0) as wins
+          FROM trades WHERE status = 'closed' ${srcFilter}
+            AND closed_at >= CURRENT_DATE - INTERVAL '30 days'
+          GROUP BY DATE(closed_at) ORDER BY day DESC
+        `);
+        const topSymbols = await db.query(`
+          SELECT symbol, COUNT(*) as cnt,
+            COUNT(*) FILTER (WHERE pnl_usd > 0) as wins,
+            ROUND(COALESCE(SUM(pnl_usd), 0)::numeric, 2) as pnl
+          FROM trades WHERE status = 'closed' ${srcFilter}
+          GROUP BY symbol ORDER BY pnl DESC LIMIT 10
+        `);
+        const worstSymbols = await db.query(`
+          SELECT symbol, COUNT(*) as cnt,
+            COUNT(*) FILTER (WHERE pnl_usd > 0) as wins,
+            ROUND(COALESCE(SUM(pnl_usd), 0)::numeric, 2) as pnl
+          FROM trades WHERE status = 'closed' ${srcFilter}
+          GROUP BY symbol ORDER BY pnl ASC LIMIT 10
+        `);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          summary: stats.rows[0],
+          byReason: byReason.rows,
+          byDirection: byDirection.rows,
+          dailyPnl: dailyPnl.rows,
+          topSymbols: topSymbols.rows,
+          worstSymbols: worstSymbols.rows,
+          ts: Date.now()
+        }));
       } catch (e) {
         res.writeHead(500);
         return res.end(JSON.stringify({ error: e.message }));
@@ -414,6 +514,7 @@ async function main() {
     tp1ClosePct: 0.50,
     tp2ClosePct: 1.0,
     tradingHours: [[0, 4], [5, 16], [19, 24]],
+    entryMode: 'market',
   });
 
   // Init swing trade executor — daily timeframe, wide stops, long hold

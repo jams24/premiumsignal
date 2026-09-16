@@ -46,6 +46,10 @@ class TradeExecutor {
     // Cooldown: symbol → timestamp, prevents re-entry after invalidation/SL
     this.cooldowns = new Map();
 
+    // Entry mode: 'pullback' waits for 5m zone sweep + candle confirmation,
+    // 'market' enters immediately at signal price (no missed entries)
+    this.entryMode = config.entryMode || 'pullback';
+
     // Pending entries: wait for 5m pullback instead of market entry
     this.pendingEntries = new Map();
 
@@ -428,6 +432,7 @@ class TradeExecutor {
       lossBufferPct: this.lossBufferPct,
       minLiveVolume: this.minLiveVolume,
       tradingHours: this.tradingHours,
+      entryMode: this.entryMode,
     };
   }
 
@@ -468,6 +473,7 @@ class TradeExecutor {
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
     if (cfg.minLiveVolume != null) this.minLiveVolume = cfg.minLiveVolume;
     if (cfg.tradingHours != null) this.tradingHours = cfg.tradingHours;
+    if (cfg.entryMode != null) this.entryMode = cfg.entryMode;
   }
 
   async getCircuitBreakerStatus() {
@@ -624,7 +630,22 @@ class TradeExecutor {
       }
     } catch (e) { /* proceed */ }
 
-    // Find demand/supply zone from recent 5m candles for structural entry
+    // Market mode: enter immediately at signal price — no pullback queue
+    if (this.entryMode === 'market') {
+      logger.info(`Market entry ${signal.direction} ${signal.symbol} at $${signal.currentPrice}`);
+      const result = await this.executeSignal(signal);
+      if (result) {
+        this.notify(
+          `⚡ <b>MARKET ENTRY</b> $${escapeHtml(signal.symbol)}\n\n` +
+          `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — entered at signal\n` +
+          `Entry: $${signal.currentPrice}\n` +
+          `SL: $${signal.stopLoss?.toPrecision(6) || '?'}`
+        ).catch(() => {});
+      }
+      return;
+    }
+
+    // Pullback mode: find demand/supply zone from recent 5m candles for structural entry
     let demandZone = null;
     try {
       const exchange = this.exchanges[signal.exchange];
@@ -637,7 +658,6 @@ class TradeExecutor {
           const sl = signal.stopLoss;
 
           if (isLong) {
-            // Find swing lows: candle whose low < both neighbors
             const swingLows = [];
             for (let i = 1; i < completed.length - 1; i++) {
               if (completed[i][3] < completed[i - 1][3] && completed[i][3] < completed[i + 1][3]) {
@@ -645,11 +665,9 @@ class TradeExecutor {
                 if (lvl < price && lvl > sl) swingLows.push(lvl);
               }
             }
-            // Use the highest swing low (nearest demand above SL)
             if (swingLows.length) {
               demandZone = Math.max(...swingLows);
             } else {
-              // Fallback: midpoint between price and SL
               demandZone = price - (price - sl) * 0.4;
             }
           } else {

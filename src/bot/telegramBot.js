@@ -2225,6 +2225,7 @@ class TelegramBot {
         `🔰 Loss Buffer: <b>${te.lossBufferPct}%</b> (closes at $${te.maxLossPerTrade > 0 ? (te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1) : '—'})\n` +
         `🔄 Breakeven: <b>${te.profitProtectLevPnl}% ROI</b> (${(te.profitProtectLevPnl / te.defaultLeverage).toFixed(2)}% price @ ${te.defaultLeverage}x)\n` +
         `🎯 TP Exit: <b>TP1 ${(te.tp1ClosePct * 100).toFixed(0)}%</b> close, <b>TP2 ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}</b> close\n` +
+        `🚀 Entry: <b>${te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}</b>${te.entryMode === 'market' ? ' (instant at signal)' : ' (waits for zone sweep)'}\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
@@ -2247,6 +2248,7 @@ class TelegramBot {
          Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'oc_cfg_be')],
         [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'oc_cfg_tp1'),
          Markup.button.callback(`🎯 TP2: ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}`, 'oc_cfg_tp2')],
+        [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
@@ -2852,6 +2854,53 @@ class TelegramBot {
         await ctx.answerCbQuery('Hours: 24/7');
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+    });
+
+    // Entry mode toggle
+    this.bot.action('oc_cfg_entry', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        await ctx.editMessageText(
+          `🔗 <b>ONCHAIN — ENTRY MODE</b>\n\n` +
+          `Current: <b>${te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}</b>\n\n` +
+          `<b>⚡ MARKET</b> — Enter immediately when signal fires\n` +
+          `  + Never misses a trade — every signal = entry\n` +
+          `  + Catches fast runners that pump from signal\n` +
+          `  + Matches what the backtest simulates\n` +
+          `  - No price improvement from pullback\n` +
+          `  - May enter at worse price if signal fires mid-candle\n\n` +
+          `<b>🎯 PULLBACK</b> — Queue signal, wait for 5m zone sweep\n` +
+          `  + Better entry price when pullback happens\n` +
+          `  + Tighter SL placed below swept structure\n` +
+          `  - Misses runners that go straight up (5% cancel)\n` +
+          `  - 30min timeout can expire without entry\n` +
+          `  - Can miss 20-40% of signals\n\n` +
+          `<i>For auto-trading, Market is recommended — no missed entries.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`⚡ Market${te.entryMode === 'market' ? ' ✓' : ''}`, 'oc_entry_market')],
+            [Markup.button.callback(`🎯 Pullback${te.entryMode === 'pullback' ? ' ✓' : ''}`, 'oc_entry_pullback')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_entry error: ${e.message}`); }
+    });
+
+    this.bot.action('oc_entry_market', async (ctx) => {
+      try {
+        octe().entryMode = 'market';
+        octe().saveConfig();
+        await ctx.answerCbQuery('Entry: Market (instant)');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_entry error: ${e.message}`); }
+    });
+    this.bot.action('oc_entry_pullback', async (ctx) => {
+      try {
+        octe().entryMode = 'pullback';
+        octe().saveConfig();
+        await ctx.answerCbQuery('Entry: Pullback (zone sweep)');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_entry error: ${e.message}`); }
     });
 
     // Also wire /onchainsettings command to show the inline panel
