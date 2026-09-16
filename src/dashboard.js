@@ -354,6 +354,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <div class="hours-legend">
         <span><span class="dot on"></span>Active</span>
         <span><span class="dot off"></span>Blocked</span>
+        <button class="preset-btn" onclick="resetHoursToDefault()" style="padding:2px 8px;font-size:10px;margin-left:6px" title="Reset to Safe preset: block 5AM + 5-8PM WAT">Reset</button>
       </div>
     </div>
     <div class="stats-bar" id="stats-bar"></div>
@@ -861,6 +862,12 @@ function toggleHour(h) {
   else blockedHours.push(h);
   saveHours();
   renderHoursGrid();
+}
+function resetHoursToDefault() {
+  blockedHours = DEFAULT_BLOCKED.slice();
+  saveHours();
+  renderHoursGrid();
+  renderSignals();
 }
 function renderHoursGrid() {
   var grid = document.getElementById('hours-grid');

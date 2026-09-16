@@ -2833,27 +2833,27 @@ class TelegramBot {
 
     this.bot.action('oc_hrs_safe', async (ctx) => {
       try {
-        octe().tradingHours = [[0, 4], [5, 16], [19, 24]];
-        octe().saveConfig();
         await ctx.answerCbQuery('Hours: skip 5AM + 5-8PM WAT');
+        octe().tradingHours = [[0, 4], [5, 16], [19, 24]];
+        await octe().saveConfig();
         await showOcSettings(ctx);
-      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); await ctx.answerCbQuery('Error: ' + e.message).catch(() => {}); }
     });
     this.bot.action('oc_hrs_best', async (ctx) => {
       try {
-        octe().tradingHours = [[0, 4], [5, 9], [11, 16], [19, 24]];
-        octe().saveConfig();
         await ctx.answerCbQuery('Hours: best windows only');
+        octe().tradingHours = [[0, 4], [5, 9], [11, 16], [19, 24]];
+        await octe().saveConfig();
         await showOcSettings(ctx);
-      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); await ctx.answerCbQuery('Error: ' + e.message).catch(() => {}); }
     });
     this.bot.action('oc_hrs_247', async (ctx) => {
       try {
-        octe().tradingHours = [];
-        octe().saveConfig();
         await ctx.answerCbQuery('Hours: 24/7');
+        octe().tradingHours = [];
+        await octe().saveConfig();
         await showOcSettings(ctx);
-      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); await ctx.answerCbQuery('Error: ' + e.message).catch(() => {}); }
     });
 
     // Entry mode toggle
