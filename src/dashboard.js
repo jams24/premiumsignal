@@ -3016,7 +3016,7 @@ function drawFVGChart() {
   ctx.fillText('Fills gap', cx(10) + cw/2, y(37));
 
   ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
-  ctx.fillText('C1 high doesn\'t overlap C3 low → gap between them → price returns to fill it', W/2, H - 6);
+  ctx.fillText('C1 high does not overlap C3 low — gap between them — price returns to fill it', W/2, H - 6);
 }
 
 // Draw all educational charts when sections open
