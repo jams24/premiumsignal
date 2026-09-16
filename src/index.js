@@ -879,7 +879,7 @@ async function main() {
           try {
             const setup = token._tradeSetup;
             if (!setup) continue;
-            const pumpLimit = token.score >= 60 ? 40 : token.score >= 45 ? 30 : 20;
+            const pumpLimit = token.score >= 60 ? 200 : token.score >= 45 ? 150 : 80;
             if (Math.abs(token.priceChange) > pumpLimit) {
               logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${pumpLimit}% for score ${token.score}) — late entry risk`);
               continue;
@@ -896,7 +896,7 @@ async function main() {
               if (recentAlerts.length) {
                 const firstAlertPrice = parseFloat(recentAlerts[0].price);
                 const driftPct = ((token.price - firstAlertPrice) / firstAlertPrice) * 100;
-                const badDrift = setup.direction === 'long' ? driftPct < -2 : driftPct > 2;
+                const badDrift = setup.direction === 'long' ? driftPct < -5 : driftPct > 5;
                 if (badDrift) {
                   logger.info(`Onchain skip ${token.symbol}: entry drifted ${driftPct.toFixed(1)}% from first alert $${firstAlertPrice.toPrecision(4)} — falling knife`);
                   continue;
