@@ -930,13 +930,8 @@ function getTradeStatus(s, levels) {
   var movePct = dir === 'short' ? -rawPct : rawPct;
   var ageMin = Math.floor((Date.now() - new Date(s.created_at).getTime()) / 60000);
   var fundAgainst = s.funding_bias && s.funding_bias !== dir;
-  var hasFlowConflict = flowAlerts.some(function(f) {
-    return f.symbol === s.symbol && f.direction !== dir
-      && new Date(f.created_at) > new Date(s.created_at);
-  });
   var breakdowns = [];
   if (fundAgainst) breakdowns.push('Funding flipped against (' + s.funding_bias + ')');
-  if (hasFlowConflict) breakdowns.push('Flow reversed — opposite direction detected');
   var isStale = ageMin > 360;
   var isAging = ageMin > 120;
 

@@ -65,7 +65,7 @@ async function main() {
         const hours = parseInt(url.searchParams.get('hours')) || 24;
         const minScore = parseInt(url.searchParams.get('minScore')) || 30;
         const result = await db.query(`
-          WITH first_alert AS (
+          WITH raw_alerts AS (
             SELECT symbol, data->>'direction' as direction,
               (data->>'score')::int as score,
               (data->>'price')::numeric as price,
@@ -86,39 +86,48 @@ async function main() {
               data->>'pair' as pair,
               alert_type,
               created_at,
-              ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY created_at ASC) as rn
+              LAG(created_at) OVER (PARTITION BY symbol ORDER BY created_at) as prev_at,
+              LAG((data->>'price')::numeric) OVER (PARTITION BY symbol ORDER BY created_at) as prev_price
             FROM alert_log
             WHERE alert_type = 'ONCHAIN'
               AND (data->>'score')::int >= $1
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
+          ),
+          sessioned AS (
+            SELECT *,
+              SUM(CASE WHEN prev_at IS NULL
+                OR EXTRACT(EPOCH FROM (created_at - prev_at)) > 14400
+                OR (prev_price > 0 AND ABS((price - prev_price) / prev_price) > 0.10)
+                THEN 1 ELSE 0 END)
+              OVER (PARTITION BY symbol ORDER BY created_at) as sess
+            FROM raw_alerts
+          ),
+          first_alert AS (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY symbol, sess ORDER BY created_at ASC) as rn
+            FROM sessioned
           ),
           best_score AS (
-            SELECT DISTINCT ON (symbol, data->>'direction')
-              symbol, data->>'direction' as direction,
-              (data->>'score')::int as max_score,
-              (data->>'price')::numeric as best_price,
+            SELECT DISTINCT ON (symbol, sess)
+              symbol, sess,
+              score as max_score,
+              price as best_price,
               created_at as best_at
-            FROM alert_log
-            WHERE alert_type = 'ONCHAIN'
-              AND (data->>'score')::int >= $1
-              AND created_at >= NOW() - INTERVAL '1 hour' * $2
-            ORDER BY symbol, data->>'direction', (data->>'score')::int DESC, created_at ASC
+            FROM sessioned
+            ORDER BY symbol, sess, score DESC, created_at ASC
           ),
           latest_alert AS (
-            SELECT DISTINCT ON (symbol, data->>'direction')
-              symbol, data->>'direction' as direction,
-              (data->>'score')::int as latest_score
-            FROM alert_log
-            WHERE alert_type = 'ONCHAIN'
-              AND created_at >= NOW() - INTERVAL '1 hour' * $2
-            ORDER BY symbol, data->>'direction', created_at DESC
+            SELECT DISTINCT ON (symbol, sess)
+              symbol, sess,
+              score as latest_score
+            FROM sessioned
+            ORDER BY symbol, sess, created_at DESC
           )
           SELECT f.*, COALESCE(b.max_score, f.score) as best_score,
             b.best_price, b.best_at,
             COALESCE(l.latest_score, f.score) as current_score
           FROM first_alert f
-          LEFT JOIN best_score b ON f.symbol = b.symbol AND f.direction = b.direction
-          LEFT JOIN latest_alert l ON f.symbol = l.symbol AND f.direction = l.direction
+          LEFT JOIN best_score b ON f.symbol = b.symbol AND f.sess = b.sess
+          LEFT JOIN latest_alert l ON f.symbol = l.symbol AND f.sess = l.sess
           WHERE f.rn = 1
           ORDER BY COALESCE(b.max_score, f.score) DESC
         `, [minScore, hours]);
