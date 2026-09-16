@@ -178,14 +178,15 @@ async function main() {
           }
           // Fetch 4H OHLCV candles for peak/trough watermark (TP hit detection)
           const candleCache = {};
-          const since48h = Date.now() - 48 * 60 * 60 * 1000;
+          const candleWindow = Math.min(hours, 168);
+          const since48h = Date.now() - candleWindow * 60 * 60 * 1000;
           for (const [exName, items] of Object.entries(byExchange)) {
             const ex = listingMonitor.exchanges[exName];
             if (!ex) continue;
             const uniquePairs = [...new Set(items.map(i => i.pair))];
             try {
               await Promise.all(uniquePairs.map(pair =>
-                ex.fetchOHLCV(pair, '4h', since48h, 24)
+                ex.fetchOHLCV(pair, '4h', since48h, Math.ceil(candleWindow / 4))
                   .then(c => { if (c?.length) candleCache[pair] = c; })
                   .catch(() => {})
               ));

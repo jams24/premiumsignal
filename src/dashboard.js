@@ -1086,7 +1086,7 @@ function calcLevels(s) {
   var hasReal = tp1 > 0 && sl > 0;
   if (!hasReal) {
     var absPc = Math.abs(parseFloat(s.price_change) || 0);
-    var volEst = Math.max(absPc * 0.3, 3);
+    var volEst = Math.min(Math.max(absPc * 0.3, 3), 12);
     var atrEst = price * (volEst / 100);
     if (dir === 'long') { sl = price - atrEst * 2; tp1 = price + atrEst * 1.5; tp2 = price + atrEst * 3; tp3 = price + atrEst * 5; }
     else { sl = price + atrEst * 2; tp1 = price - atrEst * 1.5; tp2 = price - atrEst * 3; tp3 = price - atrEst * 5; }
@@ -1118,22 +1118,27 @@ function getTradeStatus(s, levels) {
   var isStale = ageMin > 360;
   var isAging = ageMin > 120;
 
-  // Check if price reverted past trailing SL after TP hit (trade is done)
+  // Breakeven protection: real executor trails SL to breakeven at +5%
+  var peakMovePct = dir === 'long' ? ((peak - entry) / entry) * 100 : ((entry - trough) / entry) * 100;
+  var beProtected = peakMovePct >= 5;
+
+  // Check if price reverted past trailing SL after TP hit or BE protection (trade is done)
   var reverted = false;
   if (dir === 'long') {
     if (hitTP3 && now < levels.tp2) reverted = true;
     else if (hitTP2 && now < levels.tp1) reverted = true;
-    else if (hitTP1 && now < entry) reverted = true;
+    else if ((hitTP1 || beProtected) && now < entry) reverted = true;
   } else {
     if (hitTP3 && now > levels.tp2) reverted = true;
     else if (hitTP2 && now > levels.tp1) reverted = true;
-    else if (hitTP1 && now > entry) reverted = true;
+    else if ((hitTP1 || beProtected) && now > entry) reverted = true;
   }
 
   var status, css, tip;
   if (reverted && hitTP3) { status = 'BANKED'; css = 'played'; tip = 'Trade done — all TPs hit, trail closed remaining at TP2'; }
   else if (reverted && hitTP2) { status = 'BANKED'; css = 'played'; tip = 'Trade done — TP1+TP2 banked, trail closed remaining at TP1'; }
   else if (reverted && hitTP1) { status = 'BANKED'; css = 'played'; tip = 'Trade done — TP1 banked, remaining closed at breakeven'; }
+  else if (reverted && beProtected) { status = 'BE CLOSE'; css = 'played'; tip = 'Trade done — hit +' + peakMovePct.toFixed(0) + '% then reversed, SL trailed to breakeven'; }
   else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Hit TP3 — move is done, profit banked'; }
   else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Past TP2 — most profit taken, SL trailing at TP1'; }
   else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 — 33% profit banked, SL at breakeven'; }
@@ -1166,6 +1171,9 @@ function simPnl(s) {
     return dir === 'short' ? -raw : raw;
   }
 
+  var peakMovePct = dir === 'long' ? ((peak - entry) / entry) * 100 : ((entry - trough) / entry) * 100;
+  var beProtected = peakMovePct >= 5;
+
   var hitTP1, hitTP2, hitTP3;
   if (dir === 'long') {
     hitTP1 = peak >= levels.tp1; hitTP2 = peak >= levels.tp2; hitTP3 = peak >= levels.tp3;
@@ -1179,7 +1187,7 @@ function simPnl(s) {
   if (hitTP3) { var tp3x = 0.50 * remaining; totalPct += tp3x * pctAt(levels.tp3); remaining -= tp3x; }
 
   var remainPct = pctAt(now);
-  if (hitTP1 && remainPct < 0) remainPct = 0;
+  if ((hitTP1 || beProtected) && remainPct < 0) remainPct = 0;
   if (hitTP2 && remainPct < pctAt(levels.tp1)) remainPct = pctAt(levels.tp1);
   totalPct += remaining * remainPct;
 
