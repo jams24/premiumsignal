@@ -43,7 +43,7 @@ class TradeExecutor {
     // Settings persistence key (default 'main', onchain executor uses 'onchain')
     this.settingsKey = config.settingsKey || 'main';
 
-    // Cooldown: symbol → { until, entryPrice, wasLoss?, wasProfit?, lastDir? }
+    // Cooldown: symbol → { until (next 01:00 UTC), entryPrice, lastDir }
     this.cooldowns = new Map();
     this._next1amUTC = () => {
       const n = new Date(); n.setUTCHours(1, 0, 0, 0);
@@ -182,35 +182,24 @@ class TradeExecutor {
       } catch (e) { /* DB error, skip check */ }
     }
 
+    // One coin, one shot per day — blocked until 01:00 UTC after any close
+    // Only exception: direction flip with score >= 70
     const cooldownData = this.cooldowns.get(signal.symbol?.toUpperCase());
     if (cooldownData && Date.now() < cooldownData.until) {
       const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
-      if (cooldownData.wasLoss) {
-        const elapsed = Date.now() - (cooldownData.until - 4 * 60 * 60 * 1000);
-        const freshThesis = (signal.onchainScore || 0) >= 60 && elapsed >= 30 * 60 * 1000;
-        if (!freshThesis) {
-          const need = elapsed < 30 * 60 * 1000 ? `need ${Math.ceil((30 * 60 * 1000 - elapsed) / 60000)}m more` : `need score >= 60, got ${signal.onchainScore || 0}`;
-          return { ok: false, reason: `${signal.symbol} on loss cooldown (${minsLeft}m left — ${need})` };
-        }
-        logger.info(`${signal.symbol}: loss cooldown bypassed — fresh thesis (score ${signal.onchainScore})`);
-      } else if (cooldownData.wasProfit) {
-        const isFlip = cooldownData.lastDir && cooldownData.lastDir !== signal.direction;
-        if (!isFlip) {
-          return { ok: false, reason: `${signal.symbol} blocked — same-dir re-entry after profit (${minsLeft}m until 01:00 UTC reset)` };
-        }
-        if ((signal.onchainScore || 0) < 70) {
-          return { ok: false, reason: `${signal.symbol} blocked — flip needs score >= 70, got ${signal.onchainScore || 0} (${minsLeft}m until reset)` };
-        }
-        logger.info(`${signal.symbol}: profit cooldown bypassed — direction flip (score ${signal.onchainScore})`);
+      const isFlip = cooldownData.lastDir && cooldownData.lastDir !== signal.direction;
+      if (isFlip && (signal.onchainScore || 0) >= 70) {
+        logger.info(`${signal.symbol}: daily cooldown bypassed — direction flip with strong thesis (score ${signal.onchainScore})`);
+      } else if (isFlip) {
+        return { ok: false, reason: `${signal.symbol} blocked — flip needs score >= 70, got ${signal.onchainScore || 0} (${minsLeft}m until 01:00 UTC)` };
       } else {
-        return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
+        return { ok: false, reason: `${signal.symbol} blocked — one trade per coin per day (${minsLeft}m until 01:00 UTC reset)` };
       }
     }
 
-    // Re-entry guard (DB-based, survives restarts):
-    // After loss: 30min + score >= 60 fresh thesis required
-    // After win (same dir): blocked until next 1:00 UTC — protect profits
-    // After win (dir flip): allowed if score >= 70 fresh onchain signal
+    // One coin, one shot per day (DB-based, survives restarts)
+    // After any close: blocked until next 01:00 UTC
+    // Only exception: direction flip with score >= 70
     try {
       const { rows: lastTrades } = await db.query(
         `SELECT direction, closed_at, close_reason, pnl_usd, entry_price FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
@@ -219,45 +208,18 @@ class TradeExecutor {
       if (lastTrades.length) {
         const closedAt = new Date(lastTrades[0].closed_at).getTime();
         const isFlip = lastTrades[0].direction !== signal.direction;
-        const pnl = parseFloat(lastTrades[0].pnl_usd) || 0;
-        const lossReasons = ['max_loss', 'invalidated', 'thesis_broken'];
-        const wasLoss = lossReasons.includes(lastTrades[0].close_reason)
-          || (lastTrades[0].close_reason === 'sl' && pnl < -0.01)
-          || pnl < -0.01;
-
-        if (wasLoss) {
-          const cooldownMs = 4 * 60 * 60 * 1000;
-          const reentryUntil = closedAt + cooldownMs;
-          if (Date.now() < reentryUntil) {
-            const minCooldownMs = 30 * 60 * 1000;
-            const elapsed = Date.now() - closedAt;
-            const freshThesis = (signal.onchainScore || 0) >= 60 && elapsed >= minCooldownMs;
-            if (freshThesis) {
-              logger.info(`${signal.symbol}: loss cooldown bypassed — fresh thesis (score ${signal.onchainScore}, ${Math.round(elapsed / 60000)}m since loss)`);
-            } else {
-              const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
-              const need = elapsed < minCooldownMs ? `need ${Math.ceil((minCooldownMs - elapsed) / 60000)}m more` : `need score >= 60, got ${signal.onchainScore || 0}`;
-              return { ok: false, reason: `${signal.symbol} blocked — loss cooldown (${minsLeft}m left — ${need})` };
-            }
-          }
-        } else if (pnl > 0) {
-          // Won: block same-dir until next 1:00 UTC, flips need score >= 70
-          const closeDate = new Date(closedAt);
-          const next1am = new Date(closeDate);
-          next1am.setUTCHours(1, 0, 0, 0);
-          if (next1am.getTime() <= closedAt) next1am.setUTCDate(next1am.getUTCDate() + 1);
-          if (Date.now() < next1am.getTime()) {
-            if (!isFlip) {
-              const minsLeft = Math.ceil((next1am.getTime() - Date.now()) / 60000);
-              return { ok: false, reason: `${signal.symbol} blocked — same-dir re-entry after profit (${minsLeft}m until 01:00 UTC reset)` };
-            }
-            const flipScore = signal.onchainScore || 0;
-            if (flipScore >= 70) {
-              logger.info(`${signal.symbol}: profit cooldown bypassed — direction flip with strong thesis (score ${flipScore})`);
-            } else {
-              const minsLeft = Math.ceil((next1am.getTime() - Date.now()) / 60000);
-              return { ok: false, reason: `${signal.symbol} blocked — flip re-entry needs score >= 70, got ${flipScore} (${minsLeft}m until reset)` };
-            }
+        const closeDate = new Date(closedAt);
+        const next1am = new Date(closeDate);
+        next1am.setUTCHours(1, 0, 0, 0);
+        if (next1am.getTime() <= closedAt) next1am.setUTCDate(next1am.getUTCDate() + 1);
+        if (Date.now() < next1am.getTime()) {
+          const minsLeft = Math.ceil((next1am.getTime() - Date.now()) / 60000);
+          if (isFlip && (signal.onchainScore || 0) >= 70) {
+            logger.info(`${signal.symbol}: daily cooldown bypassed — direction flip with strong thesis (score ${signal.onchainScore})`);
+          } else if (isFlip) {
+            return { ok: false, reason: `${signal.symbol} blocked — flip needs score >= 70, got ${signal.onchainScore || 0} (${minsLeft}m until 01:00 UTC)` };
+          } else {
+            return { ok: false, reason: `${signal.symbol} blocked — one trade per coin per day (${minsLeft}m until 01:00 UTC reset)` };
           }
         }
       }
@@ -637,53 +599,29 @@ class TradeExecutor {
       }
     } catch (e) { logger.debug(`Queue DB check failed: ${e.message}`); }
 
-    // Check cooldown before queuing — thesis-based re-entry rules
+    // One coin, one shot per day — blocked until 01:00 UTC after any close
     try {
       const { rows: lastTrades } = await db.query(
-        `SELECT direction, closed_at, close_reason, pnl_usd, entry_price FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        `SELECT direction, closed_at FROM trades WHERE symbol = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
         [signal.symbol]
       );
       if (lastTrades.length) {
         const closedAt = new Date(lastTrades[0].closed_at).getTime();
-        const pnl = parseFloat(lastTrades[0].pnl_usd) || 0;
-        const lossReasons = ['max_loss', 'invalidated', 'thesis_broken'];
-        const wasLoss = lossReasons.includes(lastTrades[0].close_reason)
-          || (lastTrades[0].close_reason === 'sl' && pnl < -0.01)
-          || pnl < -0.01;
         const isFlip = lastTrades[0].direction !== signal.direction;
-
-        if (wasLoss) {
-          const cooldownMs = 4 * 60 * 60 * 1000;
-          if (Date.now() < closedAt + cooldownMs) {
-            const minCooldownMs = 30 * 60 * 1000;
-            const elapsed = Date.now() - closedAt;
-            const freshThesis = (signal.onchainScore || 0) >= 60 && elapsed >= minCooldownMs;
-            if (!freshThesis) {
-              const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
-              const need = elapsed < minCooldownMs ? `need ${Math.ceil((minCooldownMs - elapsed) / 60000)}m more` : `need score >= 60, got ${signal.onchainScore || 0}`;
-              logger.info(`Queue skip ${signal.symbol}: loss cooldown (${minsLeft}m left — ${need})`);
-              return;
-            }
-            logger.info(`Queue ${signal.symbol}: loss cooldown bypassed — fresh thesis (score ${signal.onchainScore}, ${Math.round(elapsed / 60000)}m since loss)`);
-          }
-        } else if (pnl > 0) {
-          const closeDate = new Date(closedAt);
-          const next1am = new Date(closeDate);
-          next1am.setUTCHours(1, 0, 0, 0);
-          if (next1am.getTime() <= closedAt) next1am.setUTCDate(next1am.getUTCDate() + 1);
-          if (Date.now() < next1am.getTime()) {
-            if (!isFlip) {
-              const minsLeft = Math.ceil((next1am.getTime() - Date.now()) / 60000);
-              logger.info(`Queue skip ${signal.symbol}: same-dir re-entry after profit (${minsLeft}m until 01:00 UTC reset)`);
-              return;
-            }
-            const flipScore = signal.onchainScore || 0;
-            if (flipScore < 70) {
-              const minsLeft = Math.ceil((next1am.getTime() - Date.now()) / 60000);
-              logger.info(`Queue skip ${signal.symbol}: flip re-entry needs score >= 70, got ${flipScore} (${minsLeft}m until reset)`);
-              return;
-            }
-            logger.info(`Queue ${signal.symbol}: profit cooldown bypassed — direction flip with strong thesis (score ${flipScore})`);
+        const closeDate = new Date(closedAt);
+        const next1am = new Date(closeDate);
+        next1am.setUTCHours(1, 0, 0, 0);
+        if (next1am.getTime() <= closedAt) next1am.setUTCDate(next1am.getUTCDate() + 1);
+        if (Date.now() < next1am.getTime()) {
+          const minsLeft = Math.ceil((next1am.getTime() - Date.now()) / 60000);
+          if (isFlip && (signal.onchainScore || 0) >= 70) {
+            logger.info(`Queue ${signal.symbol}: daily cooldown bypassed — direction flip (score ${signal.onchainScore})`);
+          } else if (isFlip) {
+            logger.info(`Queue skip ${signal.symbol}: flip needs score >= 70, got ${signal.onchainScore || 0} (${minsLeft}m until 01:00 UTC)`);
+            return;
+          } else {
+            logger.info(`Queue skip ${signal.symbol}: one trade per coin per day (${minsLeft}m until 01:00 UTC reset)`);
+            return;
           }
         }
       }
@@ -1328,8 +1266,8 @@ class TradeExecutor {
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             this.cooldowns.set(trade.symbol.toUpperCase(), pnlUsd > 0
-              ? { until: this._next1amUTC(), entryPrice: trade.entry_price, wasProfit: true, lastDir: trade.direction }
-              : { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+              ? { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction }
+              : { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
             logger.info(`${trade.symbol}: ${this.timeExitMinutes}min+ no TP1 — time exit at $${currentPrice} (${pnlPct.toFixed(2)}%, $${pnlUsd.toFixed(2)})`);
           }
         }
@@ -1358,7 +1296,7 @@ class TradeExecutor {
                       await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'thesis_broken');
                       this.dailyPnL += pnlUsd;
                       if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-                      this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+                      this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
                       logger.info(`${trade.symbol}: SMC structure flipped ${result.structureBias} with ChoCH — thesis broken, closing`);
                     }
                   }
@@ -1381,7 +1319,7 @@ class TradeExecutor {
             await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
           }
         }
 
@@ -1391,7 +1329,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'tp4');
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-          this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, wasProfit: true, lastDir: trade.direction });
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
         }
         // --- TP3 CHECK: close 50% remaining, keep ~25% original as runner, SL to TP2 ---
         else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
@@ -1511,7 +1449,7 @@ class TradeExecutor {
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             if (trade.mode === 'live') await this.closeExchangePosition(trade);
-            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
             logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${effectiveCap.toFixed(2)}, cap $${this.maxLossPerTrade} × ${this.lossBufferPct}%)`);
           }
         }
@@ -1527,7 +1465,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, slExitPrice, slPnlPct, slPnlUsd, 'sl');
           this.dailyPnL += slPnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + slPnlUsd;
-          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
         }
         // --- AUTO-CLOSE AFTER maxTradeAge ---
         else if (!action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
@@ -1536,8 +1474,8 @@ class TradeExecutor {
           this.dailyPnL += pnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), pnlUsd > 0
-            ? { until: this._next1amUTC(), entryPrice: trade.entry_price, wasProfit: true, lastDir: trade.direction }
-            : { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+            ? { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction }
+            : { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
         }
 
         if (action) {
@@ -1817,8 +1755,8 @@ class TradeExecutor {
     this.dailyPnL += pnlUsd;
     await db.closeTrade(trade.id, currentPrice || trade.entry_price, pnlPct, pnlUsd, 'manual_close');
     this.cooldowns.set(trade.symbol.toUpperCase(), pnlUsd > 0
-      ? { until: this._next1amUTC(), entryPrice: trade.entry_price, wasProfit: true, lastDir: trade.direction }
-      : { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
+      ? { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction }
+      : { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
 
     return { trade, currentPrice, pnlPct, pnlUsd };
   }
