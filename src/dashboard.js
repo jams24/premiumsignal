@@ -728,7 +728,7 @@ var PATTERN_RULES = {
   short_negfund_flow: { label: 'SHORT Neg funding + Flow', accuracy: 100, desc: 'Negative funding with flow confirmation = 100% WR' },
   oi_big: { label: 'Big OI', accuracy: 75, desc: 'OI 4h >30% = 75% WR regardless of direction' },
   weak_signal: { label: 'Weak signal', accuracy: 27, desc: 'No OI, no momentum, no flow data = 27% WR', negative: true },
-  short_low_score: { label: 'Low-score short', accuracy: 29, desc: 'Short with score <50 = 29% WR', negative: true },
+  short_low_score: { label: 'Low-score short', accuracy: 29, desc: 'Short with score <70 = low WR', negative: true },
 };
 
 var apiKey = '', signals = [], flowAlerts = [], patterns = {}, trades = {}, currentFilter = 'high', lastUpdate = 0, refreshInterval;
@@ -869,7 +869,7 @@ function getConviction(s) {
   if (isWeak) return 'low';
 
   if (dir === 'short') {
-    if (score < 50) return 'low';
+    if (score < 70) return 'low';
     if (score >= 75) return 'high';
     if (oi > 15 && momentum > 5) return 'high';
     if (funding < -0.03 && hasFlow) return 'high';
@@ -896,7 +896,7 @@ function getMatchedPatterns(s) {
   var hasFlow = !!s.flow_bias;
 
   if (oi < 5 && momentum < 3 && !hasFlow) matched.push('weak_signal');
-  if (dir === 'short' && score < 50) matched.push('short_low_score');
+  if (dir === 'short' && score < 70) matched.push('short_low_score');
   if (dir === 'short' && score >= 75) matched.push('short_high_score');
   if (dir === 'short' && oi > 15 && momentum > 5) matched.push('short_oi_mom');
   if (dir === 'short' && funding < -0.03 && hasFlow) matched.push('short_negfund_flow');

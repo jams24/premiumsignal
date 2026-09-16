@@ -1347,13 +1347,12 @@ class OnchainScanner {
     }
 
     if (dir === 'short') {
-      if (token.score < 50) {
-        logger.debug(`${token.symbol}: Quality gate REJECT — short score ${token.score} < 50`);
+      if (token.score < 70) {
+        logger.debug(`${token.symbol}: Quality gate REJECT — short score ${token.score} < 70`);
         return false;
       }
       if (oi > 15 && momentum > 5) return true;
       if (funding < -0.0003 && hasFlow) return true;
-      if (token.score >= 75) return true;
       if (oi > 10 || momentum > 5) return true;
       logger.debug(`${token.symbol}: Quality gate REJECT — short lacks OI/momentum confirmation`);
       return false;
