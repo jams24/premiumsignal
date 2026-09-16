@@ -409,6 +409,11 @@ async function main() {
     dynamicLeverage: false,
     dcaEnabled: false,
     signalFilter: new Set(['ONCHAIN_SETUP']),
+    profitProtectPct: 1.0,
+    profitProtectLevPnl: 5,
+    tp1ClosePct: 0.50,
+    tp2ClosePct: 1.0,
+    tradingHours: [[0, 4], [5, 16], [19, 24]],
   });
 
   // Init swing trade executor — daily timeframe, wide stops, long hold

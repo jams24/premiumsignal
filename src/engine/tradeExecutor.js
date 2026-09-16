@@ -58,6 +58,8 @@ class TradeExecutor {
     this.trailAtrMultPost = config.trailAtrMultPost || 3;
     this.dcaSpreadMult1 = config.dcaSpreadMult1 || 1.0;
     this.dcaSpreadMult2 = config.dcaSpreadMult2 || 1.5;
+    this.tp1ClosePct = config.tp1ClosePct || 0.33;
+    this.tp2ClosePct = config.tp2ClosePct || 0.50;
 
     // Circuit breaker: pause after consecutive losses
     this.cbEnabled = config.cbEnabled !== false;
@@ -415,6 +417,8 @@ class TradeExecutor {
       trailAtrMultPost: this.trailAtrMultPost,
       dcaSpreadMult1: this.dcaSpreadMult1,
       dcaSpreadMult2: this.dcaSpreadMult2,
+      tp1ClosePct: this.tp1ClosePct,
+      tp2ClosePct: this.tp2ClosePct,
       cbEnabled: this.cbEnabled,
       cbStreak: this.cbStreak,
       cbPauseMinutes: this.cbPauseMinutes,
@@ -453,6 +457,8 @@ class TradeExecutor {
     if (cfg.trailAtrMultPost != null) this.trailAtrMultPost = cfg.trailAtrMultPost;
     if (cfg.dcaSpreadMult1 != null) this.dcaSpreadMult1 = cfg.dcaSpreadMult1;
     if (cfg.dcaSpreadMult2 != null) this.dcaSpreadMult2 = cfg.dcaSpreadMult2;
+    if (cfg.tp1ClosePct != null) this.tp1ClosePct = cfg.tp1ClosePct;
+    if (cfg.tp2ClosePct != null) this.tp2ClosePct = cfg.tp2ClosePct;
     if (cfg.cbEnabled != null) this.cbEnabled = cfg.cbEnabled;
     if (cfg.cbStreak != null) this.cbStreak = cfg.cbStreak;
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
@@ -1318,25 +1324,33 @@ class TradeExecutor {
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP3 hit, closed 50% (+$${partialPnl.toFixed(2)}), runner remains — SL to TP2`);
         }
-        // --- TP2 CHECK: close 33% of original, trail SL to TP1 ---
+        // --- TP2 CHECK: close tp2ClosePct of remaining, trail SL to TP1 ---
         else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
           action = 'tp2';
           await db.updateTradeHit(trade.id, 'hit_tp2');
-          const partialPnl = await this.partialClosePosition(trade, 0.5, exitPrice);
-          const newSL = trade.tp1;
-          await db.updateTradeStopLoss(trade.id, newSL);
-          await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP2 hit, closed 50% (+$${partialPnl.toFixed(2)}), SL to TP1`);
+          if (this.tp2ClosePct >= 1.0) {
+            const partialPnl = await this.partialClosePosition(trade, 1.0, exitPrice);
+            await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'tp2');
+            this.dailyPnL += pnlUsd;
+            if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+            logger.info(`${trade.symbol}: TP2 hit, closed ALL remaining (+$${partialPnl.toFixed(2)}) — trade done`);
+          } else {
+            const partialPnl = await this.partialClosePosition(trade, this.tp2ClosePct, exitPrice);
+            const newSL = trade.tp1;
+            await db.updateTradeStopLoss(trade.id, newSL);
+            await this.updateExchangeSL(trade, newSL);
+            logger.info(`${trade.symbol}: TP2 hit, closed ${(this.tp2ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to TP1`);
+          }
         }
-        // --- TP1 CHECK: close 33% of position, trail SL to breakeven ---
+        // --- TP1 CHECK: close tp1ClosePct of position, trail SL to breakeven ---
         else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
-          const partialPnl = await this.partialClosePosition(trade, 0.33, exitPrice);
+          const partialPnl = await this.partialClosePosition(trade, this.tp1ClosePct, exitPrice);
           const newSL = trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP1 hit, closed 33% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
+          logger.info(`${trade.symbol}: TP1 hit, closed ${(this.tp1ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
         }
         // --- TRAILING STOP: after TP1, trail tightens proportionally to profit ---
         if (!action && trade.hit_tp1 && trade.atr) {
