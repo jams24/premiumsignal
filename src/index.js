@@ -52,16 +52,21 @@ async function main() {
 
 
     if (url.pathname === '/' || url.pathname === '/dashboard') {
+      logger.info(`[DASHBOARD] Page loaded from ${req.headers['user-agent'] ? (req.headers['user-agent'].includes('Mobile') ? 'MOBILE' : 'DESKTOP') : 'unknown'}`);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
       return res.end(dashboardHtml);
     }
 
     if (url.pathname.startsWith('/api/') && !authed) {
+      const dk = process.env.DASHBOARD_KEY;
+      logger.warn(`[AUTH FAIL] path=${url.pathname} keyProvided=${!!key} keyLen=${key.length} envSet=${!!dk} envLen=${dk ? dk.length : 0} match=${key === dk} trimMatch=${(key||'').trim() === (dk||'').trim()}`);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Invalid dashboard key' }));
     }
 
     if (url.pathname === '/api/signals' && authed) {
+      logger.info(`[AUTH OK] /api/signals request authenticated`);
+
       try {
         const hours = parseInt(url.searchParams.get('hours')) || 24;
         const minScore = parseInt(url.searchParams.get('minScore')) || 30;

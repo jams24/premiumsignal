@@ -1203,19 +1203,35 @@ function init() {
 
 function saveConfig() {
   var key = document.getElementById('cfg-key').value.trim();
-  if (!key) return;
   var errEl = document.getElementById('login-error');
   var btn = document.querySelector('.setup-card button');
+  if (!key) {
+    errEl.textContent = 'Please enter a key.';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.textContent = 'Connecting... key length: ' + key.length;
+  errEl.style.display = 'block'; errEl.style.color = 'var(--gold)';
   btn.textContent = 'Connecting...'; btn.disabled = true;
-  errEl.style.display = 'none';
-  fetch('/api/signals?key=' + encodeURIComponent(key) + '&hours=1&minScore=0')
+  var fetchUrl = '/api/signals?key=' + encodeURIComponent(key) + '&hours=1&minScore=0';
+  errEl.textContent = 'Fetching: ' + fetchUrl.substring(0, 30) + '...';
+  fetch(fetchUrl)
     .then(function(r) {
+      errEl.textContent = 'Response: status ' + r.status;
       if (r.status === 401) {
-        errEl.textContent = 'Invalid key. Check your DASHBOARD_KEY and try again.';
-        errEl.style.display = 'block';
+        errEl.textContent = 'AUTH FAILED (401). Key length=' + key.length + '. Server rejected the key.';
+        errEl.style.color = 'var(--danger)';
         btn.textContent = 'Connect'; btn.disabled = false;
         return;
       }
+      if (!r.ok) {
+        errEl.textContent = 'Server error: HTTP ' + r.status;
+        errEl.style.color = 'var(--danger)';
+        btn.textContent = 'Connect'; btn.disabled = false;
+        return;
+      }
+      errEl.textContent = 'Authenticated! Loading dashboard...';
+      errEl.style.color = 'var(--accent)';
       apiKey = key;
       try { localStorage.setItem('sc_key', key); } catch(e) {}
       document.getElementById('setup-overlay').hidden = true;
@@ -1226,8 +1242,8 @@ function saveConfig() {
       setInterval(updateTimer, 10000);
     })
     .catch(function(e) {
-      errEl.textContent = 'Connection failed: ' + e.message;
-      errEl.style.display = 'block';
+      errEl.textContent = 'FETCH FAILED: ' + e.message;
+      errEl.style.color = 'var(--danger)';
       btn.textContent = 'Connect'; btn.disabled = false;
     });
 }
