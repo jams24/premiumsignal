@@ -940,9 +940,24 @@ function getTradeStatus(s, levels) {
   var isStale = ageMin > 360;
   var isAging = ageMin > 120;
 
+  // Check if price reverted past trailing SL after TP hit (trade is done)
+  var reverted = false;
+  if (dir === 'long') {
+    if (hitTP3 && now < levels.tp2) reverted = true;
+    else if (hitTP2 && now < levels.tp1) reverted = true;
+    else if (hitTP1 && now < entry) reverted = true;
+  } else {
+    if (hitTP3 && now > levels.tp2) reverted = true;
+    else if (hitTP2 && now > levels.tp1) reverted = true;
+    else if (hitTP1 && now > entry) reverted = true;
+  }
+
   var status, css, tip;
-  if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Hit TP3 — move is done, profit banked'; }
-  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Past TP2 — most profit taken, late entry risky'; }
+  if (reverted && hitTP3) { status = 'BANKED'; css = 'played'; tip = 'Trade done — all TPs hit, trail closed remaining at TP2'; }
+  else if (reverted && hitTP2) { status = 'BANKED'; css = 'played'; tip = 'Trade done — TP1+TP2 banked, trail closed remaining at TP1'; }
+  else if (reverted && hitTP1) { status = 'BANKED'; css = 'played'; tip = 'Trade done — TP1 banked, remaining closed at breakeven'; }
+  else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Hit TP3 — move is done, profit banked'; }
+  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Past TP2 — most profit taken, SL trailing at TP1'; }
   else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 — 33% profit banked, SL at breakeven'; }
   else if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL — do NOT enter'; }
   else if (breakdowns.length) { status = 'INVALID'; css = 'stopped'; tip = breakdowns[0]; }
