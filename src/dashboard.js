@@ -130,6 +130,26 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .sizing-input-label { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .sizing-notional { font-family: var(--font-mono); font-size: 13px; color: var(--accent); font-weight: 600; margin-left: auto; white-space: nowrap; }
 
+.signal-card.dead-hour { opacity: 0.5; }
+.signal-card.dead-hour:hover { opacity: 0.8; }
+
+/* Trading hours widget */
+.hours-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
+.hours-bar .slab { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-right: 4px; white-space: nowrap; }
+.hours-grid { display: flex; gap: 2px; flex: 1; min-width: 200px; }
+.hour-cell { flex: 1; height: 26px; border-radius: 3px; cursor: pointer; position: relative; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 8px; color: var(--muted); transition: all 0.15s; min-width: 0; border: 1px solid transparent; }
+.hour-cell.active { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); color: var(--accent); }
+.hour-cell.blocked { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.2); color: var(--danger); }
+.hour-cell:hover { transform: scaleY(1.2); z-index: 1; }
+.hour-cell .hour-tip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 10px; white-space: nowrap; z-index: 10; color: var(--text); pointer-events: none; }
+.hour-cell:hover .hour-tip { display: block; }
+.hours-now { position: absolute; top: -2px; width: 2px; height: calc(100% + 4px); background: var(--gold); border-radius: 1px; z-index: 2; }
+.hours-legend { display: flex; gap: 10px; font-family: var(--font-mono); font-size: 10px; color: var(--muted); margin-left: auto; }
+.hours-legend span { display: flex; align-items: center; gap: 4px; }
+.hours-legend .dot { width: 8px; height: 8px; border-radius: 2px; }
+.hours-legend .dot.on { background: rgba(16,185,129,0.4); }
+.hours-legend .dot.off { background: rgba(239,68,68,0.3); }
+
 /* Trade status badges */
 .status-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
 .status-badge.active { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(16,185,129,0.3); }
@@ -278,6 +298,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <input class="sizing-input" id="custom-risk" type="number" min="1" step="5" placeholder="50" style="width:70px" oninput="applyRisk()">
       <span class="sizing-notional" id="notional-display"></span>
     </div>
+    <div class="hours-bar" id="hours-bar">
+      <span class="slab">Hours</span>
+      <div class="hours-grid" id="hours-grid"></div>
+      <div class="hours-legend">
+        <span><span class="dot on"></span>Active</span>
+        <span><span class="dot off"></span>Blocked</span>
+      </div>
+    </div>
     <div class="stats-bar" id="stats-bar"></div>
     <div class="score-filter-bar" id="score-filter-bar">
       <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-right:8px">SCORE</span>
@@ -289,12 +317,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <button class="preset-btn" data-score="75" onclick="setScoreFilter(this)">75+</button>
     </div>
     <div class="rules-banner">
-      <span class="rule-title">Conviction Rules</span>
-      <span class="rule-item"><span class="rule-check">+</span> Score 70+ with funding aligned</span>
-      <span class="rule-item"><span class="rule-check">+</span> Short alerts 12-18 UTC (1-7 PM WAT) = 77% win</span>
-      <span class="rule-item"><span class="rule-check">+</span> OI spike 20%+ with direction</span>
-      <span class="rule-item"><span class="rule-x">-</span> Funding against direction</span>
-      <span class="rule-item"><span class="rule-x">-</span> Hold 45-90 min for best results</span>
+      <span class="rule-title">Quality Gate (data-backed)</span>
+      <span class="rule-item"><span class="rule-check">+</span> LONG: Momentum &gt;5% + neutral funding = 72% WR</span>
+      <span class="rule-item"><span class="rule-check">+</span> LONG: OI &gt;15% + neutral funding = 78% WR</span>
+      <span class="rule-item"><span class="rule-check">+</span> SHORT: OI + Momentum = 100% WR (score 70+)</span>
+      <span class="rule-item"><span class="rule-x">-</span> Weak signals (no OI, no momentum, no flow) = 27% WR</span>
+      <span class="rule-item"><span class="rule-x">-</span> Short score &lt;70 = low WR, filtered out</span>
     </div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px;font-family:var(--font-mono);padding:0 2px;">Signals = onchain alerts detected by scanner. P&L = simulated profit if you entered at alert price. Not live bot trades.</div>
     <div class="refresh-bar">
@@ -731,6 +759,49 @@ var PATTERN_RULES = {
   short_low_score: { label: 'Low-score short', accuracy: 29, desc: 'Short with score <70 = low WR', negative: true },
 };
 
+var HOUR_WR = [60,46,60,50,19,40,50,62,45,29,50,42,33,39,33,35,18,42,17,45,60,53,33,67];
+var DEFAULT_BLOCKED = [4,16,17,18];
+var blockedHours = [];
+
+function loadHours() {
+  try {
+    var s = JSON.parse(localStorage.getItem('sc_hours'));
+    if (Array.isArray(s)) { blockedHours = s; return; }
+  } catch(e) {}
+  blockedHours = DEFAULT_BLOCKED.slice();
+}
+function saveHours() {
+  localStorage.setItem('sc_hours', JSON.stringify(blockedHours));
+}
+function toggleHour(h) {
+  var idx = blockedHours.indexOf(h);
+  if (idx >= 0) blockedHours.splice(idx, 1);
+  else blockedHours.push(h);
+  saveHours();
+  renderHoursGrid();
+}
+function renderHoursGrid() {
+  var grid = document.getElementById('hours-grid');
+  if (!grid) return;
+  var nowH = new Date().getUTCHours();
+  var html = '';
+  for (var h = 0; h < 24; h++) {
+    var wat = (h + 1) % 24;
+    var isBlocked = blockedHours.indexOf(h) >= 0;
+    var cls = isBlocked ? 'blocked' : 'active';
+    var ampm = wat >= 12 ? 'PM' : 'AM';
+    var h12 = wat % 12 || 12;
+    var wr = HOUR_WR[h];
+    var wrColor = wr >= 55 ? 'var(--accent)' : wr < 35 ? 'var(--danger)' : 'var(--text2)';
+    html += '<div class="hour-cell ' + cls + '" onclick="toggleHour(' + h + ')" style="position:relative">';
+    if (h === nowH) html += '<div class="hours-now"></div>';
+    html += '<span style="font-size:7px">' + wat + '</span>';
+    html += '<span class="hour-tip">' + h12 + ampm + ' WAT (' + h + ':00 UTC)<br>WR: <b style="color:' + wrColor + '">' + wr + '%</b>' + (isBlocked ? '<br><b style="color:var(--danger)">BLOCKED</b> — click to enable' : '<br>Active — click to block') + '</span>';
+    html += '</div>';
+  }
+  grid.innerHTML = html;
+}
+
 var apiKey = '', signals = [], flowAlerts = [], patterns = {}, trades = {}, currentFilter = 'high', lastUpdate = 0, refreshInterval;
 
 function switchTab(tab, btn) {
@@ -742,6 +813,8 @@ function switchTab(tab, btn) {
 
 function init() {
   loadSizing();
+  loadHours();
+  renderHoursGrid();
   var saved = localStorage.getItem('sc_key');
   if (saved) {
     apiKey = saved;
@@ -824,6 +897,7 @@ function updateTimer() {
   if (ago < 10) el.textContent = 'Updated just now';
   else if (ago < 60) el.textContent = 'Updated ' + ago + 's ago';
   else el.textContent = 'Updated ' + Math.floor(ago / 60) + 'm ago';
+  renderHoursGrid();
 }
 
 function renderStats() {
@@ -1123,10 +1197,13 @@ function renderSignals() {
     var pnlSign = sim.pnl >= 0 ? '+' : '-';
     var ts = s._status || getTradeStatus(s, levels);
 
-    var html = '<div class="signal-card conviction-' + conv + '" id="' + id + '">';
+    var sigHourUTC = new Date(s.created_at).getUTCHours();
+    var inDeadHour = blockedHours.indexOf(sigHourUTC) >= 0;
+    var html = '<div class="signal-card conviction-' + conv + (inDeadHour ? ' dead-hour' : '') + '" id="' + id + '">';
     html += '<div class="signal-header" onclick="toggleCard(\\'' + id + '\\')">';
     html += '<div class="signal-left">';
     html += '<span class="signal-dir ' + s.direction + '">' + s.direction + '</span>';
+    if (inDeadHour) html += '<span class="status-badge stopped" title="Signal during blocked hour (' + sigHourUTC + ':00 UTC)">DEAD HR</span>';
     html += '<span class="status-badge ' + ts.css + '">' + ts.status + '</span>';
     html += '<span class="signal-symbol">' + s.symbol + '</span>';
     html += '<span class="signal-price">' + fmtPrice(s.price) + ' → ' + fmtPrice(ts.currentPrice) + ' · ' + agoStr + '</span>';
