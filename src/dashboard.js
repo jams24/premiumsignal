@@ -788,7 +788,7 @@ function refreshAll() {
   var dot = document.getElementById('status-dot');
   var label = document.getElementById('status-label');
   Promise.all([
-    apiFetch('/api/signals', { hours: 24, minScore: 30 }),
+    apiFetch('/api/signals', { hours: 48, minScore: 30 }),
     apiFetch('/api/patterns'),
     apiFetch('/api/trades'),
   ]).then(function(results) {
