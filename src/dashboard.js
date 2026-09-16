@@ -600,7 +600,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">Every candle on a chart tells you a mini story: where the price started, where it ended, and how high/low it went in between. A green candle means price went UP during that time, a red candle means it went DOWN.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Anatomy of a Candlestick</div>
-              <canvas id="candle-anatomy" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <canvas id="candle-anatomy" width="600" height="280" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
               <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span> Bullish (price went up)</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#ef4444;display:inline-block"></span> Bearish (price went down)</span>
@@ -621,7 +621,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">Market structure is the backbone of everything. Price moves in waves — up, pull back, up higher (uptrend) or down, bounce, down lower (downtrend). Each wave creates a swing high and a swing low. By connecting these swings you can see the trend.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Uptrend vs Downtrend Structure</div>
-              <canvas id="market-structure" width="600" height="240" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <canvas id="market-structure" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
             </div>
             <div class="how">
               <strong>Uptrend</strong> = Price makes Higher Highs (HH) and Higher Lows (HL). Each push up goes further than the last, each pullback stays above the previous low.<br><br>
@@ -637,7 +637,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">BOS happens when price breaks through a previous swing point IN THE DIRECTION of the current trend. It's the market saying "the trend continues." In an uptrend, BOS = price breaks above a previous high. In a downtrend, BOS = price breaks below a previous low.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Break of Structure (BOS) — Trend Continuation</div>
-              <canvas id="bos-chart" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <canvas id="bos-chart" width="600" height="280" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
               <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#3b82f6;display:inline-block"></span> BOS line (previous high broken)</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span> Swing points (HH / HL)</span>
@@ -658,7 +658,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">CHoCH is the OPPOSITE of BOS — it happens when price breaks structure AGAINST the current trend. It's the first warning sign that the trend is reversing. In an uptrend, CHoCH = price breaks below a previous swing low. This is where smart money starts shifting direction.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Change of Character (CHoCH) — Trend Reversal Signal</div>
-              <canvas id="choch-chart" width="600" height="280" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <canvas id="choch-chart" width="600" height="300" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
               <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#f59e0b;display:inline-block"></span> CHoCH line (trend break)</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#3b82f6;display:inline-block"></span> BOS (trend continuation)</span>
@@ -683,7 +683,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">An Order Block (OB) is the last candle before a strong move. It's where institutional traders placed their big orders. When price comes back to that zone, those same institutions defend it because they have money there. Think of it as a "VIP zone" on the chart.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Order Block — Institutional Entry Zone</div>
-              <canvas id="ob-chart" width="600" height="240" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <canvas id="ob-chart" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
               <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:8px;background:rgba(99,102,241,0.25);border:1px solid #6366f1;display:inline-block"></span> Bullish Order Block zone</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span> Strong impulse move</span>
@@ -706,7 +706,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">A Fair Value Gap is a gap between candle wicks where price moved so fast it left an empty space. Nobody traded in that zone — it's "unfair" pricing. Price tends to come back and fill these gaps before continuing. Think of it like skipping a step on the stairs — you usually go back to step on it.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Fair Value Gap — Price Imbalance Zone</div>
-              <canvas id="fvg-chart" width="600" height="240" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <canvas id="fvg-chart" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
               <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:8px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;display:inline-block"></span> Fair Value Gap (unfilled zone)</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#3b82f6;display:inline-block"></span> Price returns to fill gap</span>
@@ -2348,90 +2348,190 @@ function drawSweepChart() {
   ctx.textAlign = 'left';
 }
 
+// --- Shared helpers for edu charts ---
+function drawPill(ctx, x, y, text, color, bg) {
+  ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
+  var w = ctx.measureText(text).width + 14, h = 18, r = 9;
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.moveTo(x - w/2 + r, y - h/2);
+  ctx.arcTo(x + w/2, y - h/2, x + w/2, y + h/2, r);
+  ctx.arcTo(x + w/2, y + h/2, x - w/2, y + h/2, r);
+  ctx.arcTo(x - w/2, y + h/2, x - w/2, y - h/2, r);
+  ctx.arcTo(x - w/2, y - h/2, x + w/2, y - h/2, r);
+  ctx.fill();
+  ctx.fillStyle = color; ctx.fillText(text, x, y + 4);
+}
+function drawGlowDot(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.shadowColor = color; ctx.shadowBlur = 8;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(x, y, r * 0.35, 0, Math.PI * 2); ctx.fill();
+}
+function drawCandle(ctx, x, cw, o, cl, hi, lo, yFn, color) {
+  var top = Math.max(o, cl), bot = Math.min(o, cl);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x + cw/2, yFn(hi)); ctx.lineTo(x + cw/2, yFn(lo)); ctx.stroke();
+  ctx.fillStyle = color;
+  var bodyH = Math.max(yFn(bot) - yFn(top), 2);
+  ctx.fillRect(x + 2, yFn(top), cw - 4, bodyH);
+}
+function drawSmoothLine(ctx, pts, color, width) {
+  if (pts.length < 2) return;
+  ctx.strokeStyle = color; ctx.lineWidth = width;
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (var i = 1; i < pts.length; i++) {
+    var prev = pts[i - 1], cur = pts[i];
+    var cpx = (prev.x + cur.x) / 2, cpy = (prev.y + cur.y) / 2;
+    ctx.quadraticCurveTo(prev.x, prev.y, cpx, cpy);
+  }
+  ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+  ctx.stroke();
+}
+function drawGradientUnder(ctx, pts, color, H) {
+  if (pts.length < 2) return;
+  ctx.save();
+  var grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, color.replace(')', ',0.15)').replace('rgb', 'rgba'));
+  grad.addColorStop(1, color.replace(')', ',0)').replace('rgb', 'rgba'));
+  ctx.fillStyle = grad; ctx.globalAlpha = 0.5;
+  ctx.beginPath(); ctx.moveTo(pts[0].x, H);
+  pts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
+  ctx.lineTo(pts[pts.length - 1].x, H);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
 // --- Candlestick Anatomy Diagram ---
 function drawCandleAnatomy() {
   var c = document.getElementById('candle-anatomy');
   if (!c) return;
   var dpr = window.devicePixelRatio || 1;
-  c.width = 600 * dpr; c.height = 260 * dpr;
+  c.width = 600 * dpr; c.height = 280 * dpr;
   var ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
-  var W = 600, H = 260;
-  var green = '#22c55e', red = '#ef4444', muted = '#666', text = '#e5e7eb';
+  var W = 600, H = 280;
+  var green = '#22c55e', red = '#ef4444', muted = '#555', text = '#c8cdd5';
 
-  // Bullish candle
-  var bx = 140, bw = 50;
-  var bOpen = 170, bClose = 80, bHigh = 50, bLow = 210;
-  ctx.strokeStyle = green; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(bx + bw / 2, bHigh); ctx.lineTo(bx + bw / 2, bLow); ctx.stroke();
-  ctx.fillStyle = green;
+  // Subtle grid
+  ctx.strokeStyle = '#1a1f2e'; ctx.lineWidth = 1;
+  for (var gy = 40; gy < H - 20; gy += 30) {
+    ctx.beginPath(); ctx.moveTo(20, gy); ctx.lineTo(W - 20, gy); ctx.stroke();
+  }
+
+  // === BULLISH CANDLE ===
+  var bx = 115, bw = 60;
+  var bOpen = 185, bClose = 85, bHigh = 45, bLow = 230;
+
+  // Glow behind candle
+  ctx.save(); ctx.shadowColor = green; ctx.shadowBlur = 20; ctx.globalAlpha = 0.3;
+  ctx.fillStyle = green; ctx.fillRect(bx, bClose, bw, bOpen - bClose);
+  ctx.restore();
+
+  // Wick
+  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(bx + bw/2, bHigh); ctx.lineTo(bx + bw/2, bLow); ctx.stroke();
+  // Body with slight gradient
+  var bGrad = ctx.createLinearGradient(bx, bClose, bx, bOpen);
+  bGrad.addColorStop(0, '#34d399'); bGrad.addColorStop(1, '#059669');
+  ctx.fillStyle = bGrad;
   ctx.fillRect(bx, bClose, bw, bOpen - bClose);
+  // Body border
+  ctx.strokeStyle = '#6ee7b7'; ctx.lineWidth = 1;
+  ctx.strokeRect(bx, bClose, bw, bOpen - bClose);
 
-  // Labels for bullish
-  ctx.font = '600 12px system-ui'; ctx.fillStyle = text; ctx.textAlign = 'left';
-  var lx = bx + bw + 14;
-  ctx.fillStyle = '#22c55e80';
-  drawArrow(ctx, bx + bw + 4, bHigh, lx - 4, bHigh);
-  ctx.fillStyle = text; ctx.fillText('High (wick top)', lx, bHigh + 4);
-  ctx.fillStyle = '#22c55e80';
-  drawArrow(ctx, bx + bw + 4, bClose, lx - 4, bClose);
-  ctx.fillStyle = text; ctx.fillText('Close (body top)', lx, bClose + 4);
-  ctx.fillStyle = '#22c55e80';
-  drawArrow(ctx, bx + bw + 4, bOpen, lx - 4, bOpen);
-  ctx.fillStyle = text; ctx.fillText('Open (body bottom)', lx, bOpen + 4);
-  ctx.fillStyle = '#22c55e80';
-  drawArrow(ctx, bx + bw + 4, bLow, lx - 4, bLow);
-  ctx.fillStyle = text; ctx.fillText('Low (wick bottom)', lx, bLow + 4);
+  // Label lines + text (right side)
+  var labelData = [
+    {py: bHigh, txt: 'High', sub: 'Highest price reached', col: '#4ade80'},
+    {py: bClose, txt: 'Close', sub: 'Where price ended', col: '#34d399'},
+    {py: bOpen, txt: 'Open', sub: 'Where price started', col: '#059669'},
+    {py: bLow, txt: 'Low', sub: 'Lowest price reached', col: '#4ade80'}
+  ];
+  labelData.forEach(function(l) {
+    // Connector line
+    ctx.strokeStyle = l.col; ctx.lineWidth = 1; ctx.globalAlpha = 0.4;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(bx + bw + 4, l.py); ctx.lineTo(bx + bw + 18, l.py); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    // Dot
+    ctx.fillStyle = l.col;
+    ctx.beginPath(); ctx.arc(bx + bw + 18, l.py, 3, 0, Math.PI * 2); ctx.fill();
+    // Text
+    ctx.font = 'bold 12px system-ui'; ctx.fillStyle = '#e5e7eb'; ctx.textAlign = 'left';
+    ctx.fillText(l.txt, bx + bw + 26, l.py + 1);
+    ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+    ctx.fillText(l.sub, bx + bw + 26, l.py + 14);
+  });
 
-  // "BODY" label on the candle
+  // Body & Wick labels on the candle
   ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#000'; ctx.textAlign = 'center';
-  ctx.fillText('BODY', bx + bw / 2, (bOpen + bClose) / 2 + 4);
+  ctx.fillText('BODY', bx + bw/2, (bOpen + bClose) / 2 + 4);
+  // Wick bracket labels
+  ctx.font = '600 9px system-ui'; ctx.fillStyle = '#4ade8088'; ctx.textAlign = 'right';
+  ctx.save(); ctx.translate(bx - 8, (bHigh + bClose) / 2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('UPPER WICK', 0, 0); ctx.restore();
+  ctx.save(); ctx.translate(bx - 8, (bOpen + bLow) / 2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('LOWER WICK', 0, 0); ctx.restore();
 
-  // "WICK" labels
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'right';
-  var wickTopY = (bHigh + bClose) / 2;
-  ctx.fillText('wick', bx - 6, wickTopY + 3);
-  var wickBotY = (bOpen + bLow) / 2;
-  ctx.fillText('wick', bx - 6, wickBotY + 3);
-
-  // Label
-  ctx.font = 'bold 13px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'center';
-  ctx.fillText('BULLISH', bx + bw / 2, H - 12);
+  // Title under
+  ctx.font = 'bold 14px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'center';
+  ctx.fillText('BULLISH', bx + bw/2, H - 18);
   ctx.font = '11px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('(Price went UP)', bx + bw / 2, H - 0);
+  ctx.fillText('Price went UP', bx + bw/2, H - 4);
 
-  // Bearish candle
-  var rx = 400, rw = 50;
-  var rOpen = 80, rClose = 170, rHigh = 50, rLow = 210;
-  ctx.strokeStyle = red; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(rx + rw / 2, rHigh); ctx.lineTo(rx + rw / 2, rLow); ctx.stroke();
-  ctx.fillStyle = red;
+  // === BEARISH CANDLE ===
+  var rx = 410, rw = 60;
+  var rOpen = 85, rClose = 185, rHigh = 45, rLow = 230;
+
+  // Glow
+  ctx.save(); ctx.shadowColor = red; ctx.shadowBlur = 20; ctx.globalAlpha = 0.3;
+  ctx.fillStyle = red; ctx.fillRect(rx, rOpen, rw, rClose - rOpen);
+  ctx.restore();
+
+  // Wick
+  ctx.strokeStyle = red; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(rx + rw/2, rHigh); ctx.lineTo(rx + rw/2, rLow); ctx.stroke();
+  // Body
+  var rGrad = ctx.createLinearGradient(rx, rOpen, rx, rClose);
+  rGrad.addColorStop(0, '#f87171'); rGrad.addColorStop(1, '#dc2626');
+  ctx.fillStyle = rGrad;
   ctx.fillRect(rx, rOpen, rw, rClose - rOpen);
+  ctx.strokeStyle = '#fca5a5'; ctx.lineWidth = 1;
+  ctx.strokeRect(rx, rOpen, rw, rClose - rOpen);
 
-  // Labels for bearish
-  ctx.font = '600 12px system-ui'; ctx.textAlign = 'right';
-  var rlx = rx - 14;
-  ctx.fillStyle = text; ctx.fillText('High', rlx, rHigh + 4);
-  ctx.fillText('Open (body top)', rlx, rOpen + 4);
-  ctx.fillText('Close (body bottom)', rlx, rClose + 4);
-  ctx.fillText('Low', rlx, rLow + 4);
+  // Labels (left side)
+  var rLabelData = [
+    {py: rHigh, txt: 'High'},
+    {py: rOpen, txt: 'Open'},
+    {py: rClose, txt: 'Close'},
+    {py: rLow, txt: 'Low'}
+  ];
+  rLabelData.forEach(function(l) {
+    ctx.strokeStyle = '#f8717166'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(rx - 4, l.py); ctx.lineTo(rx - 18, l.py); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fca5a5';
+    ctx.beginPath(); ctx.arc(rx - 18, l.py, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.font = 'bold 12px system-ui'; ctx.fillStyle = '#e5e7eb'; ctx.textAlign = 'right';
+    ctx.fillText(l.txt, rx - 26, l.py + 4);
+  });
 
   ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-  ctx.fillText('BODY', rx + rw / 2, (rOpen + rClose) / 2 + 4);
+  ctx.fillText('BODY', rx + rw/2, (rOpen + rClose) / 2 + 4);
 
-  ctx.font = 'bold 13px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
-  ctx.fillText('BEARISH', rx + rw / 2, H - 12);
+  ctx.font = 'bold 14px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
+  ctx.fillText('BEARISH', rx + rw/2, H - 18);
   ctx.font = '11px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('(Price went DOWN)', rx + rw / 2, H - 0);
+  ctx.fillText('Price went DOWN', rx + rw/2, H - 4);
 
-  // Divider
-  ctx.setLineDash([4, 4]); ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(W / 2, 20); ctx.lineTo(W / 2, H - 30); ctx.stroke();
+  // Center divider
+  ctx.setLineDash([4, 6]); ctx.strokeStyle = '#252d3d'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(W/2, 25); ctx.lineTo(W/2, H - 30); ctx.stroke();
   ctx.setLineDash([]);
-}
-function drawArrow(ctx, x1, y1, x2, y2) {
-  ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
+  ctx.fillText('VS', W/2, H/2);
 }
 
 // --- Market Structure Diagram ---
@@ -2439,246 +2539,266 @@ function drawMarketStructure() {
   var c = document.getElementById('market-structure');
   if (!c) return;
   var dpr = window.devicePixelRatio || 1;
-  c.width = 600 * dpr; c.height = 240 * dpr;
-  var ctx = c.getContext('2d');
-  ctx.scale(dpr, dpr);
-  var W = 600, H = 240;
-  var green = '#22c55e', red = '#ef4444', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
-
-  // Uptrend points (left half)
-  var upPts = [
-    {x: 30, y: 180}, {x: 70, y: 120}, {x: 110, y: 150}, {x: 160, y: 90},
-    {x: 200, y: 120}, {x: 250, y: 60}
-  ];
-  // Downtrend points (right half)
-  var dnPts = [
-    {x: 320, y: 60}, {x: 360, y: 110}, {x: 400, y: 80}, {x: 440, y: 140},
-    {x: 470, y: 110}, {x: 510, y: 170}, {x: 550, y: 145}, {x: 580, y: 195}
-  ];
-
-  // Draw uptrend line
-  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(upPts[0].x, upPts[0].y);
-  upPts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
-  ctx.stroke();
-
-  // Draw downtrend line
-  ctx.strokeStyle = red;
-  ctx.beginPath(); ctx.moveTo(dnPts[0].x, dnPts[0].y);
-  dnPts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
-  ctx.stroke();
-
-  // Label uptrend swing points
-  ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
-  var upLabels = ['', 'HH', 'HL', 'HH', 'HL', 'HH'];
-  upPts.forEach(function(p, i) {
-    if (!upLabels[i]) return;
-    var isHigh = upLabels[i] === 'HH';
-    ctx.fillStyle = green;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = text;
-    ctx.fillText(upLabels[i], p.x, isHigh ? p.y - 10 : p.y + 16);
-  });
-
-  // Label downtrend swing points
-  var dnLabels = ['', 'LH', 'LH', 'LL', 'LH', 'LL', 'LH', 'LL'];
-  dnPts.forEach(function(p, i) {
-    if (!dnLabels[i]) return;
-    var isHigh = dnLabels[i] === 'LH';
-    ctx.fillStyle = red;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = text;
-    ctx.fillText(dnLabels[i], p.x, isHigh ? p.y - 10 : p.y + 16);
-  });
-
-  // Section labels
-  ctx.font = 'bold 13px system-ui';
-  ctx.fillStyle = green; ctx.textAlign = 'center';
-  ctx.fillText('UPTREND', 150, 22);
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('Higher Highs + Higher Lows', 150, 36);
-
-  ctx.font = 'bold 13px system-ui';
-  ctx.fillStyle = red; ctx.textAlign = 'center';
-  ctx.fillText('DOWNTREND', 450, 22);
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('Lower Highs + Lower Lows', 450, 36);
-
-  // Divider
-  ctx.setLineDash([4, 4]); ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(285, 10); ctx.lineTo(285, H - 10); ctx.stroke();
-  ctx.setLineDash([]);
-}
-
-// --- BOS Diagram ---
-function drawBOSChart() {
-  var c = document.getElementById('bos-chart');
-  if (!c) return;
-  var dpr = window.devicePixelRatio || 1;
   c.width = 600 * dpr; c.height = 260 * dpr;
   var ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
   var W = 600, H = 260;
-  var green = '#22c55e', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+  var green = '#22c55e', red = '#ef4444', muted = '#444', text = '#e5e7eb';
 
-  // Uptrend wave with BOS breaks
-  var pts = [
-    {x: 30, y: 210}, {x: 80, y: 160}, {x: 120, y: 185}, {x: 180, y: 130},
-    {x: 220, y: 160}, {x: 290, y: 100}, {x: 340, y: 135}, {x: 420, y: 70},
-    {x: 460, y: 100}, {x: 540, y: 42}
+  // Grid
+  ctx.strokeStyle = '#1a1f2e'; ctx.lineWidth = 1;
+  for (var gy = 50; gy < H - 10; gy += 25) {
+    ctx.beginPath(); ctx.moveTo(15, gy); ctx.lineTo(W - 15, gy); ctx.stroke();
+  }
+
+  // Uptrend points (left half)
+  var upPts = [
+    {x: 25, y: 200}, {x: 65, y: 130}, {x: 105, y: 165}, {x: 155, y: 95},
+    {x: 195, y: 130}, {x: 250, y: 62}
+  ];
+  // Downtrend points (right half)
+  var dnPts = [
+    {x: 330, y: 62}, {x: 370, y: 115}, {x: 408, y: 82}, {x: 445, y: 148},
+    {x: 478, y: 115}, {x: 515, y: 178}, {x: 548, y: 148}, {x: 580, y: 210}
   ];
 
-  // Draw price line
-  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-  pts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
-  ctx.stroke();
+  // Gradient fill under lines
+  drawGradientUnder(ctx, upPts, 'rgb(34,197,94)', H);
+  drawGradientUnder(ctx, dnPts, 'rgb(239,68,68)', H);
 
-  // BOS levels (horizontal dashed lines from each swing high)
-  var bosLevels = [
-    {fromX: 80, toX: 180, y: 160, label: 'BOS'},
-    {fromX: 180, toX: 290, y: 130, label: 'BOS'},
-    {fromX: 290, toX: 420, y: 100, label: 'BOS'},
-    {fromX: 420, toX: 540, y: 70, label: 'BOS'}
-  ];
-  bosLevels.forEach(function(b) {
-    ctx.setLineDash([5, 4]); ctx.strokeStyle = blue; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.6;
-    ctx.beginPath(); ctx.moveTo(b.fromX, b.y); ctx.lineTo(b.toX, b.y); ctx.stroke();
-    ctx.setLineDash([]); ctx.globalAlpha = 1;
+  // Draw lines (smooth curves)
+  drawSmoothLine(ctx, upPts, green, 3);
+  drawSmoothLine(ctx, dnPts, red, 3);
 
-    // BOS label with circle
-    var midX = (b.fromX + b.toX) / 2;
-    ctx.fillStyle = 'rgba(59,130,246,0.15)';
-    ctx.beginPath(); ctx.arc(midX, b.y, 14, 0, Math.PI * 2); ctx.fill();
-    ctx.font = 'bold 10px system-ui'; ctx.fillStyle = blue; ctx.textAlign = 'center';
-    ctx.fillText(b.label, midX, b.y + 4);
+  // Connecting arrows between highs (show the staircase)
+  ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+  ctx.strokeStyle = '#22c55e44';
+  ctx.beginPath(); ctx.moveTo(65, 130); ctx.lineTo(155, 130); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(155, 95); ctx.lineTo(250, 95); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = '#ef444444';
+  ctx.beginPath(); ctx.moveTo(370, 115); ctx.lineTo(478, 115); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(445, 148); ctx.lineTo(580, 148); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Swing points with glow
+  var upLabels = ['', 'HH', 'HL', 'HH', 'HL', 'HH'];
+  upPts.forEach(function(p, i) {
+    if (!upLabels[i]) return;
+    var isHigh = upLabels[i] === 'HH';
+    drawGlowDot(ctx, p.x, p.y, 5, green);
+    drawPill(ctx, p.x, isHigh ? p.y - 16 : p.y + 18, upLabels[i], green, 'rgba(34,197,94,0.15)');
   });
 
-  // Swing points
-  ctx.font = '10px system-ui'; ctx.textAlign = 'center';
-  var labels = ['', 'HH', 'HL', 'HH', 'HL', 'HH', 'HL', 'HH', 'HL', 'HH'];
-  pts.forEach(function(p, i) {
-    if (!labels[i]) return;
-    var isHigh = labels[i] === 'HH';
-    ctx.fillStyle = green;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = text;
-    ctx.fillText(labels[i], p.x, isHigh ? p.y - 10 : p.y + 16);
+  var dnLabels = ['', 'LH', 'LH', 'LL', 'LH', 'LL', 'LH', 'LL'];
+  dnPts.forEach(function(p, i) {
+    if (!dnLabels[i]) return;
+    var isHigh = dnLabels[i] === 'LH';
+    drawGlowDot(ctx, p.x, p.y, 5, red);
+    drawPill(ctx, p.x, isHigh ? p.y - 16 : p.y + 18, dnLabels[i], red, 'rgba(239,68,68,0.15)');
   });
 
-  // Title area
-  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'left';
-  ctx.fillText('Each BOS confirms: "Trend is still alive"', 30, 20);
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('Price breaks above previous HH → structure intact → look for entries on pullback to HL', 30, 34);
+  // Header pills
+  drawPill(ctx, 145, 22, 'UPTREND', green, 'rgba(34,197,94,0.12)');
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('Higher Highs + Higher Lows', 145, 40);
+
+  drawPill(ctx, 460, 22, 'DOWNTREND', red, 'rgba(239,68,68,0.12)');
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('Lower Highs + Lower Lows', 460, 40);
+
+  // Divider
+  ctx.setLineDash([4, 6]); ctx.strokeStyle = '#252d3d'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(290, 10); ctx.lineTo(290, H - 10); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
+  ctx.fillText('Think of it like climbing stairs vs walking downstairs', W/2, H - 6);
 }
 
-// --- CHoCH Diagram ---
-function drawCHoCHChart() {
-  var c = document.getElementById('choch-chart');
+// --- BOS Diagram (with candlesticks) ---
+function drawBOSChart() {
+  var c = document.getElementById('bos-chart');
   if (!c) return;
   var dpr = window.devicePixelRatio || 1;
   c.width = 600 * dpr; c.height = 280 * dpr;
   var ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
-  var W = 600, H = 280;
-  var green = '#22c55e', red = '#ef4444', gold = '#f59e0b', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+  var W = 600, H = 280, pad = 35;
+  var green = '#22c55e', red = '#ef4444', blue = '#3b82f6', muted = '#444', text = '#e5e7eb';
 
-  // Uptrend → failed HH → CHoCH → downtrend
-  var pts = [
-    {x: 30, y: 220}, {x: 70, y: 165}, {x: 110, y: 190}, {x: 160, y: 130},
-    {x: 200, y: 155}, {x: 260, y: 95},  // uptrend
-    {x: 300, y: 120},                     // HL
-    {x: 350, y: 100},                     // failed HH (doesn't beat 95)
-    {x: 390, y: 135},                     // breaks below HL at 120 → CHoCH
-    {x: 420, y: 160},                     // continues down
-    {x: 450, y: 130},                     // LH
-    {x: 500, y: 185},                     // LL
-    {x: 530, y: 160},                     // LH
-    {x: 570, y: 220}                      // LL
+  function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
+  var cw = 18, gap = 5;
+  function cx(i) { return 25 + i * (cw + gap); }
+
+  // Candles forming an uptrend with BOS
+  var candles = [
+    [20,25,27,18],[25,28,30,23],[28,32,34,26],[32,30,34,28],  // base
+    [30,34,36,28],[34,38,40,32],[38,35,40,33],[35,40,42,33],  // push up, BOS 1
+    [40,37,42,35],[37,42,44,35],[42,45,48,40],[45,43,48,41],  // pullback + push, BOS 2
+    [43,48,50,41],[48,52,55,46],[52,50,55,48],[50,55,58,48],  // push higher, BOS 3
+    [55,53,58,51],[53,58,60,51],[58,62,65,56],[62,65,68,60],  // rally, BOS 4
+    [65,63,68,61],[63,68,72,61],[68,72,75,66],[72,78,80,70]   // strong breakout
   ];
 
-  // Draw uptrend portion (green)
-  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-  for (var i = 1; i <= 7; i++) ctx.lineTo(pts[i].x, pts[i].y);
-  ctx.stroke();
+  // Grid lines
+  ctx.strokeStyle = '#1a1f2e'; ctx.lineWidth = 1;
+  for (var gv = 20; gv <= 80; gv += 10) {
+    ctx.beginPath(); ctx.moveTo(20, y(gv)); ctx.lineTo(W - 10, y(gv)); ctx.stroke();
+  }
 
-  // Draw transition (gold)
-  ctx.strokeStyle = gold; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(pts[7].x, pts[7].y);
-  ctx.lineTo(pts[8].x, pts[8].y);
-  ctx.stroke();
-
-  // Draw downtrend portion (red)
-  ctx.strokeStyle = red; ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.moveTo(pts[8].x, pts[8].y);
-  for (var j = 9; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
-  ctx.stroke();
-
-  // BOS lines in uptrend
-  var bosLines = [
-    {fromX: 70, toX: 160, y: 165},
-    {fromX: 160, toX: 260, y: 130}
+  // BOS level zones (horizontal band at each swing high before break)
+  var bosZones = [
+    {y1: 34, y2: 36, fromI: 2, toI: 7, breakI: 7},
+    {y1: 42, y2: 44, fromI: 7, toI: 11, breakI: 11},
+    {y1: 50, y2: 55, fromI: 11, toI: 15, breakI: 15},
+    {y1: 60, y2: 65, fromI: 16, toI: 21, breakI: 21}
   ];
-  bosLines.forEach(function(b) {
-    ctx.setLineDash([5, 4]); ctx.strokeStyle = blue; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
-    ctx.beginPath(); ctx.moveTo(b.fromX, b.y); ctx.lineTo(b.toX, b.y); ctx.stroke();
+  bosZones.forEach(function(z) {
+    // Zone fill
+    ctx.fillStyle = 'rgba(59,130,246,0.06)';
+    ctx.fillRect(cx(z.fromI), y(z.y2), cx(z.toI) + cw - cx(z.fromI), y(z.y1) - y(z.y2));
+    // Dashed level line
+    ctx.setLineDash([6, 4]); ctx.strokeStyle = blue; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.4;
+    var midY = y((z.y1 + z.y2) / 2);
+    ctx.beginPath(); ctx.moveTo(cx(z.fromI), midY); ctx.lineTo(cx(z.toI) + cw, midY); ctx.stroke();
     ctx.setLineDash([]); ctx.globalAlpha = 1;
-    var midX = (b.fromX + b.toX) / 2;
-    ctx.font = 'bold 9px system-ui'; ctx.fillStyle = blue; ctx.textAlign = 'center';
-    ctx.fillText('BOS', midX, b.y - 6);
+    // BOS pill at break point
+    drawPill(ctx, cx(z.breakI) + cw/2, midY, 'BOS', blue, 'rgba(59,130,246,0.18)');
   });
 
-  // CHoCH line — from HL at 120 across to where it breaks
-  var chochY = 120;
-  ctx.setLineDash([6, 3]); ctx.strokeStyle = gold; ctx.lineWidth = 2; ctx.globalAlpha = 0.8;
-  ctx.beginPath(); ctx.moveTo(300, chochY); ctx.lineTo(420, chochY); ctx.stroke();
+  // Draw candles
+  candles.forEach(function(d, i) {
+    var color = d[1] >= d[0] ? green : red;
+    drawCandle(ctx, cx(i), cw, d[0], d[1], d[2], d[3], y, color);
+  });
+
+  // Price trajectory line (connecting closes)
+  ctx.save();
+  ctx.globalAlpha = 0.25; ctx.strokeStyle = green; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  candles.forEach(function(d, i) { var px = cx(i) + cw/2; i === 0 ? ctx.moveTo(px, y(d[1])) : ctx.lineTo(px, y(d[1])); });
+  ctx.stroke();
+  ctx.restore();
+
+  // Header
+  ctx.font = 'bold 12px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'left';
+  ctx.fillText('Each BOS confirms the trend is alive', 25, 18);
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('Price breaks above the previous swing high → structure intact → look for pullback entries', 25, 32);
+
+  // Bottom note
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
+  ctx.fillText('BOS must be a candle CLOSE above the level — a wick poke is not enough', W/2, H - 6);
+}
+
+// --- CHoCH Diagram (with candlesticks) ---
+function drawCHoCHChart() {
+  var c = document.getElementById('choch-chart');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 300 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 300, pad = 35;
+  var green = '#22c55e', red = '#ef4444', gold = '#f59e0b', blue = '#3b82f6', muted = '#444', text = '#e5e7eb';
+
+  function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
+  var cw = 16, gap = 4;
+  function cx(i) { return 20 + i * (cw + gap); }
+
+  // Candles: uptrend → failed HH → CHoCH → downtrend
+  var candles = [
+    [20,24,26,18],[24,28,30,22],[28,26,30,24],                // base
+    [26,30,32,24],[30,34,36,28],[34,32,36,30],[32,36,38,30],  // push up
+    [36,33,38,31],[33,38,40,31],[38,42,44,36],                // BOS 1, HH at ~44
+    [42,39,44,37],[39,42,44,37],[42,46,48,40],                // pullback, BOS 2, HH at ~48
+    [46,50,52,44],[50,48,52,46],[48,52,55,46],[52,56,58,50],  // strong push, HH at ~58
+    [56,53,58,51],[53,50,55,48],[50,48,52,46],                // pullback to HL ~46
+    [48,52,54,46],[52,54,56,50],[54,52,56,50],                // push up but...
+    [52,50,54,48],[50,48,52,46],[48,44,50,42],                // FAILS to beat 58
+    [44,40,46,38],[40,36,42,34],[36,34,38,32],[34,30,36,28],  // CHoCH breaks below 46
+    [30,33,34,28],[33,28,34,26],[28,24,30,22]                 // downtrend continues
+  ];
+
+  // Grid
+  ctx.strokeStyle = '#1a1f2e'; ctx.lineWidth = 1;
+  for (var gv = 20; gv <= 60; gv += 10) {
+    ctx.beginPath(); ctx.moveTo(15, y(gv)); ctx.lineTo(W - 10, y(gv)); ctx.stroke();
+  }
+
+  // Previous HH level at 58
+  ctx.setLineDash([3, 4]); ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx(14), y(58)); ctx.lineTo(cx(25), y(58)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = '9px system-ui'; ctx.fillStyle = '#666'; ctx.textAlign = 'left';
+  ctx.fillText('Previous HH', cx(14) + 2, y(58) - 5);
+
+  // BOS zones in uptrend
+  [[44, cx(8), cx(12)], [48, cx(11), cx(15)]].forEach(function(b) {
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = blue; ctx.lineWidth = 1; ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.moveTo(b[1], y(b[0])); ctx.lineTo(b[2], y(b[0])); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    drawPill(ctx, (b[1] + b[2]) / 2, y(b[0]) - 1, 'BOS', blue, 'rgba(59,130,246,0.15)');
+  });
+
+  // CHoCH zone — HL was at ~46, break below it
+  var chochY = 46;
+  ctx.fillStyle = 'rgba(245,158,11,0.06)';
+  ctx.fillRect(cx(19), y(chochY + 2), cx(29) - cx(19), y(chochY - 4) - y(chochY + 2));
+  ctx.setLineDash([6, 3]); ctx.strokeStyle = gold; ctx.lineWidth = 2; ctx.globalAlpha = 0.7;
+  ctx.beginPath(); ctx.moveTo(cx(19), y(chochY)); ctx.lineTo(cx(29), y(chochY)); ctx.stroke();
   ctx.setLineDash([]); ctx.globalAlpha = 1;
 
-  // CHoCH label
-  ctx.fillStyle = 'rgba(245,158,11,0.15)';
-  ctx.beginPath(); ctx.arc(360, chochY, 18, 0, Math.PI * 2); ctx.fill();
-  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'center';
-  ctx.fillText('CHoCH', 360, chochY + 4);
+  // CHoCH pill (bigger)
+  var chochPx = cx(25);
+  ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center';
+  var pw = ctx.measureText('CHoCH').width + 20, ph = 22, pr = 11;
+  ctx.fillStyle = 'rgba(245,158,11,0.2)';
+  ctx.beginPath();
+  ctx.moveTo(chochPx - pw/2 + pr, y(chochY) - ph/2);
+  ctx.arcTo(chochPx + pw/2, y(chochY) - ph/2, chochPx + pw/2, y(chochY) + ph/2, pr);
+  ctx.arcTo(chochPx + pw/2, y(chochY) + ph/2, chochPx - pw/2, y(chochY) + ph/2, pr);
+  ctx.arcTo(chochPx - pw/2, y(chochY) + ph/2, chochPx - pw/2, y(chochY) - ph/2, pr);
+  ctx.arcTo(chochPx - pw/2, y(chochY) - ph/2, chochPx + pw/2, y(chochY) - ph/2, pr);
+  ctx.fill();
+  ctx.strokeStyle = gold; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(chochPx - pw/2 + pr, y(chochY) - ph/2);
+  ctx.arcTo(chochPx + pw/2, y(chochY) - ph/2, chochPx + pw/2, y(chochY) + ph/2, pr);
+  ctx.arcTo(chochPx + pw/2, y(chochY) + ph/2, chochPx - pw/2, y(chochY) + ph/2, pr);
+  ctx.arcTo(chochPx - pw/2, y(chochY) + ph/2, chochPx - pw/2, y(chochY) - ph/2, pr);
+  ctx.arcTo(chochPx - pw/2, y(chochY) - ph/2, chochPx + pw/2, y(chochY) - ph/2, pr);
+  ctx.stroke();
+  ctx.fillStyle = gold; ctx.fillText('CHoCH', chochPx, y(chochY) + 4);
 
-  // "Failed to make new HH" label
-  ctx.font = '10px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
-  ctx.fillText('Failed HH', pts[7].x, pts[7].y - 14);
-  ctx.fillStyle = red;
-  ctx.beginPath(); ctx.arc(pts[7].x, pts[7].y, 5, 0, Math.PI * 2); ctx.fill();
-
-  // Previous HH marker
-  ctx.setLineDash([3, 3]); ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(260, 95); ctx.lineTo(370, 95); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.font = '9px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'left';
-  ctx.fillText('Previous HH', 264, 88);
-
-  // Swing point labels
-  ctx.font = '10px system-ui'; ctx.textAlign = 'center';
-  var upLabels = ['', 'HH', 'HL', 'HH', 'HL', 'HH', 'HL', '', '', '', 'LH', 'LL', 'LH', 'LL'];
-  pts.forEach(function(p, i) {
-    if (!upLabels[i]) return;
-    var isHigh = upLabels[i] === 'HH' || upLabels[i] === 'LH';
-    var col = i <= 6 ? green : red;
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = text;
-    ctx.fillText(upLabels[i], p.x, isHigh ? p.y - 8 : p.y + 15);
+  // Draw candles with color transition
+  candles.forEach(function(d, i) {
+    var isGreen = d[1] >= d[0];
+    var color;
+    if (i <= 19) color = isGreen ? green : '#b91c1c';
+    else if (i <= 25) color = isGreen ? '#a3a3a3' : gold;
+    else color = isGreen ? '#7f7f7f' : red;
+    drawCandle(ctx, cx(i), cw, d[0], d[1], d[2], d[3], y, color);
   });
 
-  // Section labels
-  ctx.font = 'bold 12px system-ui';
-  ctx.fillStyle = green; ctx.textAlign = 'left';
-  ctx.fillText('Uptrend', 30, 18);
-  ctx.fillStyle = gold; ctx.textAlign = 'center';
-  ctx.fillText('Reversal', 360, 18);
-  ctx.fillStyle = red; ctx.textAlign = 'right';
-  ctx.fillText('Downtrend', 570, 18);
+  // "Failed HH" label with X marker
+  ctx.save(); ctx.shadowColor = red; ctx.shadowBlur = 6;
+  ctx.fillStyle = red; ctx.font = 'bold 14px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('✕', cx(22) + cw/2, y(56) - 2);
+  ctx.restore();
+  ctx.font = '10px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
+  ctx.fillText('Failed to beat HH', cx(22) + cw/2, y(60));
 
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
-  ctx.fillText('When price breaks below the last HL → CHoCH → trend is shifting', W / 2, H - 6);
+  // Section labels
+  drawPill(ctx, 80, 18, 'UPTREND', green, 'rgba(34,197,94,0.12)');
+  drawPill(ctx, cx(24), 18, 'REVERSAL', gold, 'rgba(245,158,11,0.12)');
+  drawPill(ctx, cx(31), 18, 'DOWNTREND', red, 'rgba(239,68,68,0.12)');
+
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
+  ctx.fillText('Price fails to make new HH → breaks below last HL → CHoCH confirms reversal', W/2, H - 6);
 }
 
 // --- Order Block Diagram ---
@@ -2686,86 +2806,85 @@ function drawOBChart() {
   var c = document.getElementById('ob-chart');
   if (!c) return;
   var dpr = window.devicePixelRatio || 1;
-  c.width = 600 * dpr; c.height = 240 * dpr;
+  c.width = 600 * dpr; c.height = 260 * dpr;
   var ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
-  var W = 600, H = 240, pad = 30;
-  var green = '#22c55e', red = '#ef4444', accent = '#6366f1', muted = '#555', text = '#e5e7eb';
+  var W = 600, H = 260, pad = 30;
+  var green = '#22c55e', red = '#ef4444', accent = '#6366f1', muted = '#444', text = '#e5e7eb';
 
   function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
-  var cw = 22, gap = 6;
-  function cx(i) { return pad + i * (cw + gap); }
+  var cw = 20, gap = 5;
+  function cx(i) { return 22 + i * (cw + gap); }
 
-  // Candle data: [open, close, high, low]
   var candles = [
-    [42, 46, 48, 40],  // small green
-    [46, 44, 48, 42],  // small red
-    [44, 42, 46, 40],  // small red
-    [42, 38, 44, 36],  // RED — this is the Order Block
-    [38, 52, 54, 36],  // big green impulse
-    [52, 60, 62, 50],  // big green impulse
-    [60, 68, 70, 58],  // big green impulse
-    [68, 72, 74, 66],  // continuation
-    [72, 70, 74, 68],  // small red pullback
-    [70, 66, 72, 64],  // pullback
-    [66, 60, 68, 58],  // pullback deeper
-    [60, 56, 62, 54],  // pullback deeper
-    [56, 40, 58, 38],  // retests OB zone!
-    [40, 48, 50, 38],  // bounce from OB
-    [48, 56, 58, 46],  // continuation up
-    [56, 64, 66, 54],  // rally
-    [64, 70, 72, 62],  // higher
+    [42,46,48,40],[46,44,48,42],[44,42,46,40],
+    [42,38,44,36],  // OB candle
+    [38,52,54,36],[52,60,62,50],[60,68,70,58],[68,72,74,66],
+    [72,70,74,68],[70,66,72,64],[66,60,68,58],[60,56,62,54],
+    [56,40,58,38],  // retest
+    [40,48,50,38],[48,56,58,46],[56,64,66,54],[64,70,72,62],
   ];
 
-  // OB zone (candle index 3: open 42, close 38 → zone is 36-44)
+  // Grid
+  ctx.strokeStyle = '#1a1f2e'; ctx.lineWidth = 1;
+  for (var gv = 30; gv <= 80; gv += 10) {
+    ctx.beginPath(); ctx.moveTo(18, y(gv)); ctx.lineTo(W - 10, y(gv)); ctx.stroke();
+  }
+
+  // OB zone with gradient fill
   var obTop = 44, obBot = 36;
-  ctx.fillStyle = 'rgba(99,102,241,0.12)';
+  var obGrad = ctx.createLinearGradient(0, y(obTop), 0, y(obBot));
+  obGrad.addColorStop(0, 'rgba(99,102,241,0.15)');
+  obGrad.addColorStop(1, 'rgba(99,102,241,0.03)');
+  ctx.fillStyle = obGrad;
   ctx.fillRect(cx(3) - 2, y(obTop), cx(16) + cw + 4 - cx(3), y(obBot) - y(obTop));
-  ctx.setLineDash([5, 3]); ctx.strokeStyle = accent; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+  ctx.setLineDash([5, 3]); ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.5;
   ctx.beginPath(); ctx.moveTo(cx(3) - 2, y(obTop)); ctx.lineTo(cx(16) + cw + 4, y(obTop)); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx(3) - 2, y(obBot)); ctx.lineTo(cx(16) + cw + 4, y(obBot)); ctx.stroke();
   ctx.setLineDash([]); ctx.globalAlpha = 1;
 
   // Draw candles
   candles.forEach(function(d, i) {
-    var x = cx(i);
-    var o = d[0], cl = d[1], hi = d[2], lo = d[3];
-    var isGreen = cl >= o;
+    var isGreen = d[1] >= d[0];
     var color = isGreen ? green : red;
-    if (i === 3) color = accent; // highlight OB candle
-    var top = Math.max(o, cl), bot = Math.min(o, cl);
-    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x + cw / 2, y(hi)); ctx.lineTo(x + cw / 2, y(lo)); ctx.stroke();
-    ctx.fillStyle = color;
-    var bodyH = Math.max(y(bot) - y(top), 2);
-    ctx.fillRect(x + 3, y(top), cw - 6, bodyH);
+    if (i === 3) color = accent;
+    if (i >= 4 && i <= 7) { // impulse candles glow
+      ctx.save(); ctx.shadowColor = green; ctx.shadowBlur = 6;
+      drawCandle(ctx, cx(i), cw, d[0], d[1], d[2], d[3], y, color);
+      ctx.restore();
+    } else {
+      drawCandle(ctx, cx(i), cw, d[0], d[1], d[2], d[3], y, color);
+    }
   });
 
-  // OB label
-  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = accent; ctx.textAlign = 'center';
-  var obLabelX = cx(3) + cw / 2;
-  ctx.fillText('Order Block', obLabelX + 30, y(obTop) - 6);
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('(last red candle before impulse)', obLabelX + 30, y(obTop) + 8);
+  // OB candle highlight border
+  ctx.strokeStyle = accent; ctx.lineWidth = 2;
+  var obCx = cx(3);
+  ctx.strokeRect(obCx + 1, y(44) - 1, cw - 2, y(36) - y(44) + 2);
+
+  // Labels
+  drawPill(ctx, cx(3) + cw/2 + 40, y(obTop) - 12, 'ORDER BLOCK', accent, 'rgba(99,102,241,0.18)');
+  ctx.font = '9px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('Last red candle before impulse', cx(3) + cw/2 + 40, y(obTop) + 3);
 
   // Impulse arrow
-  var impX = cx(6) + cw + 8;
-  ctx.strokeStyle = green; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(impX, y(40)); ctx.lineTo(impX, y(68)); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(impX - 4, y(64)); ctx.lineTo(impX, y(68)); ctx.lineTo(impX + 4, y(64)); ctx.stroke();
-  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'left';
-  ctx.fillText('Impulse', impX + 4, y(54));
+  var impX = cx(7) + cw + 10;
+  ctx.save(); ctx.shadowColor = green; ctx.shadowBlur = 4;
+  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(impX, y(40)); ctx.lineTo(impX, y(70)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(impX - 5, y(66)); ctx.lineTo(impX, y(70)); ctx.lineTo(impX + 5, y(66)); ctx.stroke();
+  ctx.restore();
+  drawPill(ctx, impX + 2, y(55), 'IMPULSE', green, 'rgba(34,197,94,0.15)');
 
   // Retest label
-  var retX = cx(12) + cw / 2;
-  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#3b82f6'; ctx.textAlign = 'center';
-  ctx.fillText('Retest!', retX, y(30));
-  ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(retX, y(33)); ctx.lineTo(retX, y(38)); ctx.stroke();
+  drawGlowDot(ctx, cx(12) + cw/2, y(39), 5, '#3b82f6');
+  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#60a5fa'; ctx.textAlign = 'center';
+  ctx.fillText('Retest', cx(12) + cw/2, y(30));
+  ctx.strokeStyle = '#3b82f660'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx(12) + cw/2, y(33)); ctx.lineTo(cx(12) + cw/2, y(37)); ctx.stroke();
 
-  // "Price returns to OB → Buy" label
-  ctx.font = '10px system-ui'; ctx.fillStyle = text; ctx.textAlign = 'center';
-  ctx.fillText('Price returns to OB zone → smart money defends → bounce', W / 2, H - 8);
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
+  ctx.fillText('Price returns to OB zone → smart money defends → bounce continues', W/2, H - 6);
 }
 
 // --- FVG Diagram ---
@@ -2773,89 +2892,93 @@ function drawFVGChart() {
   var c = document.getElementById('fvg-chart');
   if (!c) return;
   var dpr = window.devicePixelRatio || 1;
-  c.width = 600 * dpr; c.height = 240 * dpr;
+  c.width = 600 * dpr; c.height = 260 * dpr;
   var ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
-  var W = 600, H = 240, pad = 30;
-  var green = '#22c55e', red = '#ef4444', gold = '#f59e0b', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+  var W = 600, H = 260, pad = 30;
+  var green = '#22c55e', red = '#ef4444', gold = '#f59e0b', blue = '#3b82f6', muted = '#444', text = '#e5e7eb';
 
   function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
-  var cw = 22, gap = 8;
-  function cx(i) { return pad + 20 + i * (cw + gap); }
+  var cw = 22, gap = 6;
+  function cx(i) { return 30 + i * (cw + gap); }
 
-  // Candles: setup → FVG move → pullback fills gap → continues
   var candles = [
-    [35, 38, 40, 33],  // 0: small green
-    [38, 40, 42, 36],  // 1: green — candle 1 (high = 42)
-    [40, 55, 56, 39],  // 2: BIG green impulse (low = 39)
-    [55, 65, 68, 53],  // 3: big green — candle 3 (low = 53) — GAP between 42 and 53
-    [65, 70, 72, 63],  // 4: continuation
-    [70, 74, 76, 68],  // 5: continuation
-    [74, 72, 76, 70],  // 6: pullback start
-    [72, 68, 74, 66],  // 7: pullback
-    [68, 62, 70, 60],  // 8: pullback
-    [62, 55, 64, 53],  // 9: fills FVG zone
-    [54, 48, 56, 46],  // 10: touches bottom of FVG
-    [48, 56, 58, 46],  // 11: bounce from FVG
-    [56, 62, 64, 54],  // 12: recovery
-    [62, 68, 70, 60],  // 13: rally continues
-    [68, 75, 78, 66],  // 14: higher
+    [35,38,40,33],[38,40,42,36],  // 0-1: setup
+    [40,55,56,39],                 // 2: BIG impulse
+    [55,65,68,53],                 // 3: continuation (C3 low=53, gap between C1 high=42)
+    [65,70,72,63],[70,74,76,68],  // 4-5: higher
+    [74,72,76,70],[72,68,74,66],[68,62,70,60],  // 6-8: pullback
+    [62,55,64,53],[54,48,56,46],  // 9-10: fills gap
+    [48,56,58,46],[56,62,64,54],[62,68,70,60],[68,75,78,66]  // 11-14: rally
   ];
 
-  // FVG zone (candle 1 high = 42, candle 3 low = 53)
+  // Grid
+  ctx.strokeStyle = '#1a1f2e'; ctx.lineWidth = 1;
+  for (var gv = 30; gv <= 80; gv += 10) {
+    ctx.beginPath(); ctx.moveTo(25, y(gv)); ctx.lineTo(W - 15, y(gv)); ctx.stroke();
+  }
+
+  // FVG zone with gradient
   var fvgTop = 53, fvgBot = 42;
-  ctx.fillStyle = 'rgba(245,158,11,0.1)';
+  var fvgGrad = ctx.createLinearGradient(0, y(fvgTop), 0, y(fvgBot));
+  fvgGrad.addColorStop(0, 'rgba(245,158,11,0.12)');
+  fvgGrad.addColorStop(0.5, 'rgba(245,158,11,0.08)');
+  fvgGrad.addColorStop(1, 'rgba(245,158,11,0.03)');
+  ctx.fillStyle = fvgGrad;
   ctx.fillRect(cx(1), y(fvgTop), cx(14) + cw - cx(1), y(fvgBot) - y(fvgTop));
-  ctx.setLineDash([5, 3]); ctx.strokeStyle = gold; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+
+  // Hatching inside FVG zone for "empty" feel
+  ctx.save(); ctx.globalAlpha = 0.08; ctx.strokeStyle = gold; ctx.lineWidth = 1;
+  for (var hx = cx(1); hx < cx(14) + cw; hx += 12) {
+    ctx.beginPath(); ctx.moveTo(hx, y(fvgTop)); ctx.lineTo(hx + 20, y(fvgBot)); ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.setLineDash([5, 3]); ctx.strokeStyle = gold; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.5;
   ctx.beginPath(); ctx.moveTo(cx(1), y(fvgTop)); ctx.lineTo(cx(14) + cw, y(fvgTop)); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx(1), y(fvgBot)); ctx.lineTo(cx(14) + cw, y(fvgBot)); ctx.stroke();
   ctx.setLineDash([]); ctx.globalAlpha = 1;
 
   // Draw candles
   candles.forEach(function(d, i) {
-    var x = cx(i);
-    var o = d[0], cl = d[1], hi = d[2], lo = d[3];
-    var isGreen = cl >= o;
+    var isGreen = d[1] >= d[0];
     var color = isGreen ? green : red;
-    if (i === 2) color = '#22c55e'; // impulse candle highlight
-    var top = Math.max(o, cl), bot = Math.min(o, cl);
-    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x + cw / 2, y(hi)); ctx.lineTo(x + cw / 2, y(lo)); ctx.stroke();
-    ctx.fillStyle = color;
-    var bodyH = Math.max(y(bot) - y(top), 2);
-    ctx.fillRect(x + 3, y(top), cw - 6, bodyH);
+    if (i === 2) {
+      ctx.save(); ctx.shadowColor = green; ctx.shadowBlur = 6;
+      drawCandle(ctx, cx(i), cw, d[0], d[1], d[2], d[3], y, color);
+      ctx.restore();
+    } else {
+      drawCandle(ctx, cx(i), cw, d[0], d[1], d[2], d[3], y, color);
+    }
   });
 
-  // FVG label
-  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'left';
-  ctx.fillText('FVG (Fair Value Gap)', cx(4) + 5, y((fvgTop + fvgBot) / 2) + 4);
-  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
-  ctx.fillText('No trading happened here', cx(4) + 5, y((fvgTop + fvgBot) / 2) + 17);
-
-  // Candle number labels
+  // FVG label inside zone
+  drawPill(ctx, cx(7), y((fvgTop + fvgBot) / 2), 'FVG', gold, 'rgba(245,158,11,0.2)');
   ctx.font = '9px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
-  ctx.fillText('C1', cx(1) + cw / 2, y(36));
-  ctx.fillText('C2', cx(2) + cw / 2, y(36));
-  ctx.fillText('C3', cx(3) + cw / 2, y(36));
+  ctx.fillText('No trades happened here — price skipped this zone', cx(7), y((fvgTop + fvgBot) / 2) + 15);
 
-  // Arrow showing gap
-  var arrowX = cx(1) - 10;
-  ctx.strokeStyle = gold; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(arrowX, y(fvgBot)); ctx.lineTo(arrowX, y(fvgTop)); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(arrowX - 3, y(fvgTop) + 5); ctx.lineTo(arrowX, y(fvgTop)); ctx.lineTo(arrowX + 3, y(fvgTop) + 5); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(arrowX - 3, y(fvgBot) - 5); ctx.lineTo(arrowX, y(fvgBot)); ctx.lineTo(arrowX + 3, y(fvgBot) - 5); ctx.stroke();
-  ctx.font = '9px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'right';
-  ctx.fillText('GAP', arrowX - 3, y((fvgTop + fvgBot) / 2) + 3);
+  // C1 C2 C3 labels with brackets
+  [[1,'C1'],[2,'C2'],[3,'C3']].forEach(function(pair) {
+    var i = pair[0], lbl = pair[1];
+    drawPill(ctx, cx(i) + cw/2, y(32), lbl, '#60a5fa', 'rgba(59,130,246,0.12)');
+  });
 
-  // "Price fills gap" label at retest
-  var retX = cx(10) + cw / 2;
-  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = blue; ctx.textAlign = 'center';
-  ctx.fillText('Fills gap', retX, y(38));
-  ctx.strokeStyle = blue; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(retX, y(40)); ctx.lineTo(retX, y(44)); ctx.stroke();
+  // Gap arrow on left
+  var arrowX = cx(1) - 12;
+  ctx.strokeStyle = gold; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(arrowX, y(fvgBot) - 2); ctx.lineTo(arrowX, y(fvgTop) + 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(arrowX - 4, y(fvgTop) + 7); ctx.lineTo(arrowX, y(fvgTop) + 2); ctx.lineTo(arrowX + 4, y(fvgTop) + 7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(arrowX - 4, y(fvgBot) - 7); ctx.lineTo(arrowX, y(fvgBot) - 2); ctx.lineTo(arrowX + 4, y(fvgBot) - 7); ctx.stroke();
+  ctx.font = 'bold 9px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'right';
+  ctx.fillText('GAP', arrowX - 5, y((fvgTop + fvgBot) / 2) + 3);
 
-  ctx.font = '10px system-ui'; ctx.fillStyle = text; ctx.textAlign = 'center';
-  ctx.fillText('C1 high (42) → C3 low (53) = gap. Price comes back to fill it before continuing.', W / 2, H - 8);
+  // "Fills gap" label at retest
+  drawGlowDot(ctx, cx(10) + cw/2, y(44), 5, blue);
+  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#60a5fa'; ctx.textAlign = 'center';
+  ctx.fillText('Fills gap', cx(10) + cw/2, y(37));
+
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#3d4558'; ctx.textAlign = 'center';
+  ctx.fillText('C1 high doesn\'t overlap C3 low → gap between them → price returns to fill it', W/2, H - 6);
 }
 
 // Draw all educational charts when sections open
