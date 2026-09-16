@@ -1084,10 +1084,6 @@ function renderSignals() {
 
   if (SCORE_FILTER > 0) filtered = filtered.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; });
   filtered.sort(function(a, b) {
-    var statusOrder = { active: 0, tp1: 1, late: 2, tp2: 3, stale: 4, played: 5, stopped: 6 };
-    var aStatus = statusOrder[a._status.css] !== undefined ? statusOrder[a._status.css] : 3;
-    var bStatus = statusOrder[b._status.css] !== undefined ? statusOrder[b._status.css] : 3;
-    if (aStatus !== bStatus) return aStatus - bStatus;
     return new Date(b.created_at) - new Date(a.created_at);
   });
 
