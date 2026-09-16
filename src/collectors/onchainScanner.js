@@ -117,7 +117,7 @@ class OnchainScanner {
 
     // Phase 2: Check exchange flows for top tokens via Etherscan
     if (this.onchainTracker) {
-      const topForFlows = sorted.filter(r => r.score >= 10).slice(0, 10);
+      const topForFlows = sorted.filter(r => r.score >= 5).slice(0, 15);
       for (const token of topForFlows) {
         try {
           const contract = await this.onchainTracker.resolveContractAddress(token.symbol);
@@ -157,13 +157,14 @@ class OnchainScanner {
     }
 
     // Phase 3: Fetch L/S ratios from Binance for top tokens
-    const topForLS = sorted.filter(r => r.score >= 15).slice(0, 10);
+    const topForLS = sorted.filter(r => r.score >= 5).slice(0, 20);
     for (const token of topForLS) {
       try {
         const ls = await this.fetchLongShortRatio(token.pair);
         if (ls && ls.topTraderAcctRatio != null) {
           token.lsData = ls;
           const topLS = ls.topTraderAcctRatio;
+          const topPos = ls.topTraderPosRatio;
           const retailLS = ls.globalRatio;
 
           if (topLS < 0.85 && retailLS > 1.1) {
@@ -172,6 +173,13 @@ class OnchainScanner {
           } else if (topLS > 1.15 && retailLS < 0.9) {
             token.score += 10;
             token.signals.push(`📊 Top traders LONG (${topLS.toFixed(2)}) vs retail SHORT (${retailLS.toFixed(2)}) — smart money accumulating`);
+          }
+          if (topPos != null && topLS < 0.85 && topPos > 1.0) {
+            token.score += 15;
+            token.signals.push(`🐋 Accounts short (${topLS.toFixed(2)}) but positions long (${topPos.toFixed(2)}) — whale accumulation`);
+          } else if (topPos != null && topLS > 1.15 && topPos < 1.0) {
+            token.score += 15;
+            token.signals.push(`🐋 Accounts long (${topLS.toFixed(2)}) but positions short (${topPos.toFixed(2)}) — whale distribution`);
           }
           if (topLS < 0.7) {
             token.signals.push(`⚠️ Top traders extremely short (${topLS.toFixed(2)}) — squeeze setup`);
