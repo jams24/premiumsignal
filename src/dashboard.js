@@ -1210,11 +1210,15 @@ function markDailyBlocked(sigs) {
   sorted.forEach(function(s) {
     s._dailyBlocked = false;
     var dt = new Date(s.created_at);
-    if (blockedHours.indexOf(dt.getUTCHours()) >= 0) return;
     var shifted = new Date(dt.getTime() - 3600000);
     var dayKey = shifted.toISOString().slice(0, 10);
     var sym = (s.symbol || '').toUpperCase();
     var key = dayKey + ':' + sym;
+    var inDeadHour = blockedHours.indexOf(dt.getUTCHours()) >= 0;
+    if (inDeadHour) {
+      if (tradedToday[key]) s._dailyBlocked = true;
+      return;
+    }
     if (tradedToday[key]) {
       var prev = tradedToday[key];
       var isFlip = prev.direction !== s.direction;
