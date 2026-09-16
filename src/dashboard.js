@@ -132,6 +132,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
 .signal-card.dead-hour { opacity: 0.5; }
 .signal-card.dead-hour:hover { opacity: 0.8; }
+.signal-card.daily-limit { opacity: 0.45; }
+.signal-card.daily-limit:hover { opacity: 0.75; }
+.status-badge.daily-limit { background: #6366f1; color: #fff; }
 
 /* Trading hours widget */
 .hours-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
@@ -861,11 +864,13 @@ function toggleHour(h) {
   if (idx >= 0) blockedHours.splice(idx, 1);
   else blockedHours.push(h);
   saveHours();
+  markDailyBlocked(signals);
   renderHoursGrid();
 }
 function resetHoursToDefault() {
   blockedHours = DEFAULT_BLOCKED.slice();
   saveHours();
+  markDailyBlocked(signals);
   renderHoursGrid();
   renderSignals();
 }
@@ -964,6 +969,7 @@ function refreshAll() {
       s.score = s.best_score;
       return s;
     });
+    markDailyBlocked(signals);
     flowAlerts = results[0].flow_alerts || [];
     patterns = results[1].patterns || [];
     trades = results[2];
@@ -999,8 +1005,11 @@ function renderStats() {
   var highConv = signals.filter(function(s) { return getConviction(s) === 'high'; }).length;
 
   var filtered = SCORE_FILTER > 0 ? signals.filter(function(s) { return (parseInt(s.score) || 0) >= SCORE_FILTER; }) : signals;
-  var simTotal = 0, simWins = 0, simLosses = 0, winCount = 0, lossCount = 0;
+  var simTotal = 0, simWins = 0, simLosses = 0, winCount = 0, lossCount = 0, blockedCount = 0;
   filtered.forEach(function(s) {
+    if (s._dailyBlocked) { blockedCount++; return; }
+    var sigHour = new Date(s.created_at).getUTCHours();
+    if (blockedHours.indexOf(sigHour) >= 0) return;
     var sim = simPnl(s);
     simTotal += sim.pnl;
     if (sim.pnl > 0) { simWins += sim.pnl; winCount++; }
@@ -1017,7 +1026,7 @@ function renderStats() {
     '<div class="stat-card"><div class="stat-label">Long Acc (60+)</div><div class="stat-value ' + (parseInt(longAcc) >= 50 ? 'green' : 'red') + '">' + longAcc + '%</div><div class="stat-sub">' + (longPat.correct || 0) + '/' + (longPat.with_data || 0) + '</div></div>' +
     '<div class="stat-card"><div class="stat-label">Sim Wins' + scoreLabel + '</div><div class="stat-value green">+$' + simWins.toFixed(0) + '</div><div class="stat-sub">' + winCount + ' winning</div></div>' +
     '<div class="stat-card"><div class="stat-label">Sim Losses' + scoreLabel + '</div><div class="stat-value red">-$' + Math.abs(simLosses).toFixed(0) + '</div><div class="stat-sub">' + lossCount + ' losing</div></div>' +
-    '<div class="stat-card"><div class="stat-label">Sim Total' + scoreLabel + '</div><div class="stat-value ' + (simTotal >= 0 ? 'green' : 'red') + '">' + (simTotal >= 0 ? '+' : '') + '$' + simTotal.toFixed(0) + '</div><div class="stat-sub">$' + MARGIN + '/' + LEVERAGE + 'x · ' + filtered.length + ' signals</div></div>';
+    '<div class="stat-card"><div class="stat-label">Sim Total' + scoreLabel + '</div><div class="stat-value ' + (simTotal >= 0 ? 'green' : 'red') + '">' + (simTotal >= 0 ? '+' : '') + '$' + simTotal.toFixed(0) + '</div><div class="stat-sub">$' + MARGIN + '/' + LEVERAGE + 'x · ' + (winCount + lossCount) + ' traded' + (blockedCount ? ' · ' + blockedCount + ' blocked' : '') + '</div></div>';
 }
 
 function getConviction(s) {
@@ -1195,6 +1204,31 @@ function simPnl(s) {
   return { pnl: pnl, pct: totalPct };
 }
 
+function markDailyBlocked(sigs) {
+  var sorted = sigs.slice().sort(function(a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+  var tradedToday = {};
+  sorted.forEach(function(s) {
+    s._dailyBlocked = false;
+    var dt = new Date(s.created_at);
+    if (blockedHours.indexOf(dt.getUTCHours()) >= 0) return;
+    var shifted = new Date(dt.getTime() - 3600000);
+    var dayKey = shifted.toISOString().slice(0, 10);
+    var sym = (s.symbol || '').toUpperCase();
+    var key = dayKey + ':' + sym;
+    if (tradedToday[key]) {
+      var prev = tradedToday[key];
+      var isFlip = prev.direction !== s.direction;
+      if (isFlip && (parseInt(s.score) || 0) >= 70) {
+        tradedToday[key] = { direction: s.direction };
+      } else {
+        s._dailyBlocked = true;
+      }
+    } else {
+      tradedToday[key] = { direction: s.direction };
+    }
+  });
+}
+
 function buildReasons(s) {
   var reasons = [];
   var dir = s.direction, score = parseInt(s.score) || 0;
@@ -1315,16 +1349,23 @@ function renderSignals() {
 
     var sigHourUTC = new Date(s.created_at).getUTCHours();
     var inDeadHour = blockedHours.indexOf(sigHourUTC) >= 0;
-    var html = '<div class="signal-card conviction-' + conv + (inDeadHour ? ' dead-hour' : '') + '" id="' + id + '">';
+    var isDailyBlocked = !!s._dailyBlocked;
+    var cardClass = 'signal-card conviction-' + conv + (inDeadHour ? ' dead-hour' : '') + (isDailyBlocked ? ' daily-limit' : '');
+    var html = '<div class="' + cardClass + '" id="' + id + '">';
     html += '<div class="signal-header" onclick="toggleCard(\\'' + id + '\\')">';
     html += '<div class="signal-left">';
     html += '<span class="signal-dir ' + s.direction + '">' + s.direction + '</span>';
     if (inDeadHour) html += '<span class="status-badge stopped" title="Signal during blocked hour (' + sigHourUTC + ':00 UTC)">DEAD HR</span>';
+    if (isDailyBlocked) html += '<span class="status-badge daily-limit" title="One trade per coin per day — already traded this session">1/DAY</span>';
     html += '<span class="status-badge ' + ts.css + '">' + ts.status + '</span>';
     html += '<span class="signal-symbol">' + s.symbol + '</span>';
     html += '<span class="signal-price">' + fmtPrice(s.price) + ' → ' + fmtPrice(ts.currentPrice) + ' · ' + agoStr + '</span>';
     html += '</div><div class="signal-right">';
-    html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
+    if (isDailyBlocked) {
+      html += '<span class="signal-pnl" style="color:var(--muted);text-decoration:line-through">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
+    } else {
+      html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
+    }
     html += '<span class="conviction-badge ' + conv + '">' + (conv === 'high' ? 'HIGH' : conv === 'med' ? 'MED' : 'LOW') + '</span>';
     html += '<span class="signal-score">' + (parseInt(s.score) || 0) + '</span>';
     html += '<span class="signal-expand">▼</span>';
