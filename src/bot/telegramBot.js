@@ -2230,6 +2230,7 @@ class TelegramBot {
         `🚀 Entry: <b>${te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}</b>${te.entryMode === 'market' ? ' (instant at signal)' : ' (waits for zone sweep)'}\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
+        `📏 4H Range: <b>${te.max4hRange || 15}%</b> (rejects pumps above this)\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Min Score: <b>${ocScoreLabel(te)}</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
@@ -2255,8 +2256,9 @@ class TelegramBot {
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol: ON' : '⚡ Vol: OFF'}`, 'oc_cfg_volfilt')],
-        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te)}`, 'oc_cfg_minscore'),
-         Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
+        [Markup.button.callback(`📏 4H: ${te.max4hRange || 15}%`, 'oc_cfg_4hrange'),
+         Markup.button.callback(`🎯 Score: ${ocScoreLabel(te)}`, 'oc_cfg_minscore')],
+        [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours'),
          Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
@@ -2622,6 +2624,40 @@ class TelegramBot {
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_volfilt error: ${e.message}`); }
     });
+
+    // 4H candle range threshold
+    this.bot.action('oc_cfg_4hrange', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.max4hRange || 15;
+        await ctx.editMessageText(
+          `📏 <b>ONCHAIN — 4H CANDLE RANGE LIMIT</b>\n\n` +
+          `Current: <b>${cur}%</b>\n\n` +
+          `Rejects trades when the current or previous 4H candle has a range (high-low) exceeding this threshold.\n\n` +
+          `Lower = stricter (skips more pumps)\n` +
+          `Higher = looser (enters during bigger moves)`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`10%${cur === 10 ? ' ✓' : ''}`, 'oc_4hr_10'),
+             Markup.button.callback(`15%${cur === 15 ? ' ✓' : ''}`, 'oc_4hr_15')],
+            [Markup.button.callback(`20%${cur === 20 ? ' ✓' : ''}`, 'oc_4hr_20'),
+             Markup.button.callback(`25%${cur === 25 ? ' ✓' : ''}`, 'oc_4hr_25')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_4hrange error: ${e.message}`); }
+    });
+    for (const val of [10, 15, 20, 25]) {
+      this.bot.action(`oc_4hr_${val}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.max4hRange = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(`4H range limit set to ${val}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_4hr_${val} error: ${e.message}`); }
+      });
+    }
 
     this.bot.action('oc_cfg_riskfit', async (ctx) => {
       try {

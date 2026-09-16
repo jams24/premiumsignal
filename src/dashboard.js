@@ -19,7 +19,7 @@ module.exports = `<!DOCTYPE html>
 [hidden] { display: none !important; }
 body { background: var(--bg); color: var(--text); font-family: var(--font-body); font-size: 14px; line-height: 1.5; min-height: 100vh; }
 .app { max-width: 1200px; margin: 0 auto; padding: 16px; }
-.setup-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.setup-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
 .setup-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px; max-width: 400px; width: 100%; }
 .setup-card h2 { font-family: var(--font-mono); font-size: 18px; margin-bottom: 4px; }
 .setup-card p { color: var(--text2); font-size: 13px; margin-bottom: 20px; }
@@ -29,6 +29,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .setup-card button { width: 100%; padding: 10px; background: var(--accent); color: #000; border: none; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; }
 .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
 .header-left { display: flex; align-items: center; gap: 12px; }
+.header-right { display: flex; align-items: center; gap: 6px; }
 .logo { font-family: var(--font-mono); font-size: 20px; font-weight: 700; }
 .logo span { color: var(--accent); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -311,6 +312,124 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .daily-bar.neg { background:var(--danger); }
 .daily-bar .daily-tip { display:none; position:absolute; bottom:calc(100% + 4px); left:50%; transform:translateX(-50%); background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:3px 6px; font-size:10px; font-family:var(--font-mono); white-space:nowrap; z-index:10; color:var(--text); }
 .daily-bar:hover .daily-tip { display:block; }
+
+/* ═══════ MOBILE RESPONSIVE ═══════ */
+@media (max-width: 600px) {
+  .app { padding: 10px 8px; }
+
+  /* Header */
+  .header { flex-direction: column; align-items: stretch; gap: 8px; }
+  .header-left { justify-content: space-between; }
+  .header-right .btn-sm { flex: 1; text-align: center; }
+
+  /* Tab nav — scrollable */
+  .tab-nav { overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 0; }
+  .tab-btn { padding: 10px 14px; white-space: nowrap; font-size: 12px; flex-shrink: 0; }
+
+  /* Sizing bar — wrap into rows */
+  .sizing-bar { gap: 6px; padding: 10px 12px; }
+  .sizing-bar .slab { width: 100%; text-align: center; margin-right: 0; }
+  .sizing-bar .preset-btn { font-size: 11px; padding: 6px 8px; flex: 1 1 auto; min-width: 0; }
+  .sizing-sep { display: none; }
+  .sizing-bar .sizing-input-label { font-size: 10px; }
+  .sizing-bar .sizing-input { width: 55px; font-size: 11px; }
+  .sizing-notional { width: 100%; text-align: center; margin-left: 0; }
+
+  /* Hours bar — stack vertically, grid wraps to 2 rows */
+  .hours-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+  .hours-bar .slab { text-align: center; margin-right: 0; }
+  .hours-grid { flex-wrap: wrap; min-width: 0; }
+  .hour-cell { min-width: 22px; flex: 0 0 calc(100% / 12 - 2px); height: 28px; font-size: 9px; }
+  .hours-legend { margin-left: 0; justify-content: center; }
+
+  /* Stats bar — 2 columns */
+  .stats-bar { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .stat-card { padding: 10px; }
+  .stat-value { font-size: 18px; }
+  .stat-label { font-size: 10px; }
+  .stat-sub { font-size: 10px; }
+
+  /* Score filter — scroll */
+  .score-filter-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; padding-bottom: 4px; }
+  .score-filter-bar .preset-btn { flex-shrink: 0; }
+
+  /* Rules banner — vertical stack */
+  .rules-banner { flex-direction: column; gap: 6px; padding: 10px 12px; }
+  .rules-banner .rule-item { font-size: 11px; }
+
+  /* Refresh bar — stack window + filters */
+  .refresh-bar { flex-direction: column; gap: 8px; align-items: stretch; }
+  .refresh-left { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .filter-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .filter-btn { font-size: 10px; padding: 4px 8px; }
+  .roster-btn { font-size: 11px; padding: 4px 10px; }
+
+  /* Signal cards — mobile-friendly header */
+  .signal-header { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+  .signal-left { flex-basis: 100%; }
+  .signal-symbol { font-size: 14px; }
+  .signal-price { font-size: 12px; }
+  .signal-right { width: 100%; justify-content: space-between; }
+  .signal-score { font-size: 18px; }
+  .signal-pnl { font-size: 12px; }
+  .signal-body { padding: 0 12px 12px; }
+
+  /* TP progress pills */
+  .tp-progress { flex-wrap: wrap; gap: 3px; }
+  .tp-step { font-size: 10px; padding: 2px 6px; }
+
+  /* Chart section */
+  .chart-container { height: 280px; }
+  .chart-container.expanded { height: 400px; }
+  .chart-tf-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .chart-legend { font-size: 9px; }
+
+  /* Trades tab */
+  .trades-period-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
+  .period-btn { flex-shrink: 0; padding: 5px 12px; font-size: 11px; }
+  .trades-stats-grid { grid-template-columns: 1fr 1fr; }
+  .ts-value { font-size: 18px; }
+  .trades-subtitle { flex-direction: column; gap: 6px; align-items: flex-start; }
+  .trades-table { font-size: 11px; }
+  .trades-table th { font-size: 9px; padding: 6px 4px; }
+  .trades-table td { padding: 5px 4px; }
+
+  /* Education — canvas containers */
+  .edu-diagram canvas { max-width: 100%; height: auto !important; }
+  .edu-header h3 { font-size: 13px; }
+  .edu-term h4 { font-size: 12px; }
+  .edu-term .what { font-size: 12px; }
+  .edu-term .how { font-size: 11px; padding: 6px 8px; }
+  .edu-term .example { font-size: 11px; }
+
+  /* Jotter */
+  .jotter-add-row { flex-direction: column; }
+  .jotter-add-row .jotter-input { width: 100%; }
+  .jotter-coin-row { gap: 3px; }
+  .jotter-coin-btn { font-size: 10px; padding: 2px 6px; }
+  .jotter-item { font-size: 11px; padding: 6px 8px; }
+
+  /* Roster */
+  .roster-panel { padding: 14px 12px; }
+  .roster-title { font-size: 13px; }
+  .roster-item { font-size: 12px; }
+
+  /* Daily PnL chart */
+  .daily-chart { height: 60px; }
+  .daily-bar { min-width: 4px; }
+}
+
+/* Extra small screens */
+@media (max-width: 380px) {
+  .app { padding: 8px 6px; }
+  .logo { font-size: 17px; }
+  .stats-bar { grid-template-columns: 1fr; }
+  .stat-value { font-size: 16px; }
+  .tab-btn { padding: 8px 10px; font-size: 11px; }
+  .signal-symbol { font-size: 13px; }
+  .signal-score { font-size: 16px; }
+  .hour-cell { flex: 0 0 calc(100% / 8 - 2px); height: 26px; }
+}
 </style>
 </head>
 <body>

@@ -79,6 +79,7 @@ class TradeExecutor {
 
     // Volatility filter: skip entries on high-ATR or mid-pump candles
     this.volatilityFilter = config.volatilityFilter !== false;
+    this.max4hRange = config.max4hRange || 15;
 
     // Risk-fit sizing: shrink position so SL hit = maxLossPerTrade
     this.riskFitSizing = config.riskFitSizing !== false;
@@ -430,6 +431,7 @@ class TradeExecutor {
       cbStreak: this.cbStreak,
       cbPauseMinutes: this.cbPauseMinutes,
       volatilityFilter: this.volatilityFilter,
+      max4hRange: this.max4hRange,
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
@@ -472,6 +474,7 @@ class TradeExecutor {
     if (cfg.cbStreak != null) this.cbStreak = cfg.cbStreak;
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
     if (cfg.volatilityFilter != null) this.volatilityFilter = cfg.volatilityFilter;
+    if (cfg.max4hRange != null) this.max4hRange = cfg.max4hRange;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
