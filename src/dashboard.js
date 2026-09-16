@@ -591,6 +591,155 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
       <div class="edu-card">
         <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
+          <h3>📈 Technical Analysis — SMC Concepts</h3><span class="edu-arrow">▼</span>
+        </div>
+        <div class="edu-body">
+
+          <div class="edu-term">
+            <h4>Candlestick Basics — Reading the Chart</h4>
+            <div class="what">Every candle on a chart tells you a mini story: where the price started, where it ended, and how high/low it went in between. A green candle means price went UP during that time, a red candle means it went DOWN.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Anatomy of a Candlestick</div>
+              <canvas id="candle-anatomy" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span> Bullish (price went up)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#ef4444;display:inline-block"></span> Bearish (price went down)</span>
+              </div>
+            </div>
+            <div class="how"><strong>Reading candles:</strong><br>
+              <strong>Body</strong> = The thick rectangle. Shows open → close range. A tall body = strong move, a tiny body = indecision.<br>
+              <strong>Wick (shadow)</strong> = The thin lines above and below. Shows the highest and lowest price during that period.<br>
+              <strong>Long upper wick</strong> = Price tried to go higher but got rejected (sellers pushed it back down).<br>
+              <strong>Long lower wick</strong> = Price tried to go lower but got rejected (buyers stepped in).<br>
+              <strong>No wick</strong> = Full conviction — price moved in one direction without any pushback.</div>
+            <div class="example">A candle with a tiny body and a long lower wick at support? That's a "hammer" — buyers rejected the move down hard. Bullish signal.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>Market Structure — Higher Highs & Lower Lows</h4>
+            <div class="what">Market structure is the backbone of everything. Price moves in waves — up, pull back, up higher (uptrend) or down, bounce, down lower (downtrend). Each wave creates a swing high and a swing low. By connecting these swings you can see the trend.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Uptrend vs Downtrend Structure</div>
+              <canvas id="market-structure" width="600" height="240" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+            </div>
+            <div class="how">
+              <strong>Uptrend</strong> = Price makes Higher Highs (HH) and Higher Lows (HL). Each push up goes further than the last, each pullback stays above the previous low.<br><br>
+              <strong>Downtrend</strong> = Price makes Lower Highs (LH) and Lower Lows (LL). Each push down goes further, each bounce fails to reach the previous high.<br><br>
+              <strong>Think of it like stairs:</strong> Uptrend = climbing stairs (each step higher). Downtrend = walking downstairs (each step lower). As long as the staircase pattern holds, the trend is intact.
+            </div>
+            <div class="example">Our bot checks for HH/HL on the 4H chart to confirm uptrend before entering longs. No higher highs = no long entry.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>BOS — Break of Structure</h4>
+            <div class="what">BOS happens when price breaks through a previous swing point IN THE DIRECTION of the current trend. It's the market saying "the trend continues." In an uptrend, BOS = price breaks above a previous high. In a downtrend, BOS = price breaks below a previous low.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Break of Structure (BOS) — Trend Continuation</div>
+              <canvas id="bos-chart" width="600" height="260" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#3b82f6;display:inline-block"></span> BOS line (previous high broken)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span> Swing points (HH / HL)</span>
+              </div>
+            </div>
+            <div class="how"><strong>How to use BOS:</strong><br>
+              1. Identify the trend direction using HH/HL or LH/LL<br>
+              2. Mark the most recent swing high (uptrend) or swing low (downtrend)<br>
+              3. When price closes ABOVE that high (uptrend) = BOS confirmed<br>
+              4. After BOS, look for a pullback to enter a trade in the trend direction<br><br>
+              <strong>Key rule:</strong> BOS must be a candle CLOSE beyond the level, not just a wick. A wick that pokes above then comes back = fake breakout, not BOS.</div>
+            <div class="example">In the video screenshot: each green circle marks a BOS where price broke above the previous swing high, confirming the uptrend continues.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>CHoCH — Change of Character</h4>
+            <div class="what">CHoCH is the OPPOSITE of BOS — it happens when price breaks structure AGAINST the current trend. It's the first warning sign that the trend is reversing. In an uptrend, CHoCH = price breaks below a previous swing low. This is where smart money starts shifting direction.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Change of Character (CHoCH) — Trend Reversal Signal</div>
+              <canvas id="choch-chart" width="600" height="280" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#f59e0b;display:inline-block"></span> CHoCH line (trend break)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#3b82f6;display:inline-block"></span> BOS (trend continuation)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span> Failed high = reversal signal</span>
+              </div>
+            </div>
+            <div class="how"><strong>BOS vs CHoCH — the simple rule:</strong><br>
+              <strong>BOS</strong> = Break WITH the trend → "Trend continues, look for entries"<br>
+              <strong>CHoCH</strong> = Break AGAINST the trend → "Trend might be reversing, be careful"<br><br>
+              <strong>How to trade CHoCH:</strong><br>
+              1. Uptrend is making HH/HL → price fails to make a new HH<br>
+              2. Price then breaks below the last HL → that's the CHoCH<br>
+              3. Wait for a retest of the broken level (now resistance)<br>
+              4. Enter SHORT after the retest confirms → new downtrend begins<br><br>
+              <strong>Warning:</strong> Not every CHoCH leads to a full reversal. Sometimes it's just a deeper pullback. Confirm with volume, OI, and funding data.</div>
+            <div class="example">In the screenshot: "failed to make a new high" at $105 → price breaks below the CHoCH level → downtrend begins. The orange dashed lines mark the CHoCH points.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>Order Blocks — Where Smart Money Enters</h4>
+            <div class="what">An Order Block (OB) is the last candle before a strong move. It's where institutional traders placed their big orders. When price comes back to that zone, those same institutions defend it because they have money there. Think of it as a "VIP zone" on the chart.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Order Block — Institutional Entry Zone</div>
+              <canvas id="ob-chart" width="600" height="240" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:8px;background:rgba(99,102,241,0.25);border:1px solid #6366f1;display:inline-block"></span> Bullish Order Block zone</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span> Strong impulse move</span>
+              </div>
+            </div>
+            <div class="how"><strong>Bullish OB:</strong> The last RED candle before a strong green move UP. When price returns to this zone → buy.<br>
+              <strong>Bearish OB:</strong> The last GREEN candle before a strong red move DOWN. When price returns → sell.<br><br>
+              <strong>Why it works:</strong> Big institutions can't fill all their orders at once (too large). They buy some, push price up, then wait for price to come back to buy more at the same level. The order block IS their unfilled orders waiting.<br><br>
+              <strong>How to find them:</strong><br>
+              1. Find a strong impulsive move (3+ candles same direction)<br>
+              2. Look at the last opposite-color candle BEFORE that move<br>
+              3. Mark the body of that candle — that's your Order Block zone<br>
+              4. When price pulls back to that zone → enter in the impulse direction</div>
+            <div class="example">Our bot's demand zones are essentially order blocks — price zones where accumulation happened before a breakout.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>FVG — Fair Value Gap (Imbalance)</h4>
+            <div class="what">A Fair Value Gap is a gap between candle wicks where price moved so fast it left an empty space. Nobody traded in that zone — it's "unfair" pricing. Price tends to come back and fill these gaps before continuing. Think of it like skipping a step on the stairs — you usually go back to step on it.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Fair Value Gap — Price Imbalance Zone</div>
+              <canvas id="fvg-chart" width="600" height="240" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:8px;background:rgba(245,158,11,0.2);border:1px solid #f59e0b;display:inline-block"></span> Fair Value Gap (unfilled zone)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#3b82f6;display:inline-block"></span> Price returns to fill gap</span>
+              </div>
+            </div>
+            <div class="how"><strong>How FVG forms:</strong><br>
+              Three candles: Candle 1's HIGH doesn't overlap Candle 3's LOW. The space between them = FVG.<br><br>
+              <strong>Bullish FVG:</strong> Gap created during a strong move UP. Price may pull back into this gap before continuing higher. Enter long when price touches the gap zone.<br>
+              <strong>Bearish FVG:</strong> Gap created during a strong move DOWN. Price may bounce into this gap before dropping further. Enter short when price touches the gap zone.<br><br>
+              <strong>Pro tip:</strong> FVGs in the direction of the higher timeframe trend are more likely to act as support/resistance. FVGs against the trend often get fully filled and broken.</div>
+            <div class="example">When our bot sees a big green candle with a gap between wick 1 high and wick 3 low — that FVG zone becomes a potential re-entry point on the pullback.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>Putting It All Together — The SMC Trade Setup</h4>
+            <div class="what">Smart Money Concepts (SMC) combine all these tools into one framework. Here's the step-by-step checklist our bot uses to find high-probability entries.</div>
+            <div class="how">
+              <strong>Step 1: Identify the trend</strong> — Is the 4H chart making HH/HL (uptrend) or LH/LL (downtrend)?<br><br>
+              <strong>Step 2: Wait for BOS</strong> — Has price broken the previous swing high/low? This confirms the trend is still active.<br><br>
+              <strong>Step 3: Look for Order Block</strong> — After BOS, mark the last opposite candle. Price should pull back to this zone.<br><br>
+              <strong>Step 4: Check for CHoCH</strong> — If price fails to make a new HH and breaks below the last HL → CHoCH. DON'T enter longs. Wait for short setup.<br><br>
+              <strong>Step 5: Confirm with data</strong> — Check OI, funding, L/S ratio, exchange flow. Does the data agree with the chart structure?<br><br>
+              <strong>Step 6: Enter at discount</strong> — Enter at the Order Block or FVG zone with a tight stop below the structure. Don't chase — let price come to you.
+            </div>
+            <div class="example">Perfect setup: 4H uptrend (HH/HL) → BOS confirmed → pullback to order block → OI rising + funding neutral + whale outflows = HIGH confidence long entry.</div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="edu-card">
+        <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
           <h3>🔗 Exchange Flow (Whale Tracking)</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
@@ -2199,12 +2348,528 @@ function drawSweepChart() {
   ctx.textAlign = 'left';
 }
 
-// Draw chart when edu section opens
+// --- Candlestick Anatomy Diagram ---
+function drawCandleAnatomy() {
+  var c = document.getElementById('candle-anatomy');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 260 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 260;
+  var green = '#22c55e', red = '#ef4444', muted = '#666', text = '#e5e7eb';
+
+  // Bullish candle
+  var bx = 140, bw = 50;
+  var bOpen = 170, bClose = 80, bHigh = 50, bLow = 210;
+  ctx.strokeStyle = green; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(bx + bw / 2, bHigh); ctx.lineTo(bx + bw / 2, bLow); ctx.stroke();
+  ctx.fillStyle = green;
+  ctx.fillRect(bx, bClose, bw, bOpen - bClose);
+
+  // Labels for bullish
+  ctx.font = '600 12px system-ui'; ctx.fillStyle = text; ctx.textAlign = 'left';
+  var lx = bx + bw + 14;
+  ctx.fillStyle = '#22c55e80';
+  drawArrow(ctx, bx + bw + 4, bHigh, lx - 4, bHigh);
+  ctx.fillStyle = text; ctx.fillText('High (wick top)', lx, bHigh + 4);
+  ctx.fillStyle = '#22c55e80';
+  drawArrow(ctx, bx + bw + 4, bClose, lx - 4, bClose);
+  ctx.fillStyle = text; ctx.fillText('Close (body top)', lx, bClose + 4);
+  ctx.fillStyle = '#22c55e80';
+  drawArrow(ctx, bx + bw + 4, bOpen, lx - 4, bOpen);
+  ctx.fillStyle = text; ctx.fillText('Open (body bottom)', lx, bOpen + 4);
+  ctx.fillStyle = '#22c55e80';
+  drawArrow(ctx, bx + bw + 4, bLow, lx - 4, bLow);
+  ctx.fillStyle = text; ctx.fillText('Low (wick bottom)', lx, bLow + 4);
+
+  // "BODY" label on the candle
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#000'; ctx.textAlign = 'center';
+  ctx.fillText('BODY', bx + bw / 2, (bOpen + bClose) / 2 + 4);
+
+  // "WICK" labels
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'right';
+  var wickTopY = (bHigh + bClose) / 2;
+  ctx.fillText('wick', bx - 6, wickTopY + 3);
+  var wickBotY = (bOpen + bLow) / 2;
+  ctx.fillText('wick', bx - 6, wickBotY + 3);
+
+  // Label
+  ctx.font = 'bold 13px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'center';
+  ctx.fillText('BULLISH', bx + bw / 2, H - 12);
+  ctx.font = '11px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('(Price went UP)', bx + bw / 2, H - 0);
+
+  // Bearish candle
+  var rx = 400, rw = 50;
+  var rOpen = 80, rClose = 170, rHigh = 50, rLow = 210;
+  ctx.strokeStyle = red; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(rx + rw / 2, rHigh); ctx.lineTo(rx + rw / 2, rLow); ctx.stroke();
+  ctx.fillStyle = red;
+  ctx.fillRect(rx, rOpen, rw, rClose - rOpen);
+
+  // Labels for bearish
+  ctx.font = '600 12px system-ui'; ctx.textAlign = 'right';
+  var rlx = rx - 14;
+  ctx.fillStyle = text; ctx.fillText('High', rlx, rHigh + 4);
+  ctx.fillText('Open (body top)', rlx, rOpen + 4);
+  ctx.fillText('Close (body bottom)', rlx, rClose + 4);
+  ctx.fillText('Low', rlx, rLow + 4);
+
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.fillText('BODY', rx + rw / 2, (rOpen + rClose) / 2 + 4);
+
+  ctx.font = 'bold 13px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
+  ctx.fillText('BEARISH', rx + rw / 2, H - 12);
+  ctx.font = '11px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('(Price went DOWN)', rx + rw / 2, H - 0);
+
+  // Divider
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(W / 2, 20); ctx.lineTo(W / 2, H - 30); ctx.stroke();
+  ctx.setLineDash([]);
+}
+function drawArrow(ctx, x1, y1, x2, y2) {
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+// --- Market Structure Diagram ---
+function drawMarketStructure() {
+  var c = document.getElementById('market-structure');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 240 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 240;
+  var green = '#22c55e', red = '#ef4444', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+
+  // Uptrend points (left half)
+  var upPts = [
+    {x: 30, y: 180}, {x: 70, y: 120}, {x: 110, y: 150}, {x: 160, y: 90},
+    {x: 200, y: 120}, {x: 250, y: 60}
+  ];
+  // Downtrend points (right half)
+  var dnPts = [
+    {x: 320, y: 60}, {x: 360, y: 110}, {x: 400, y: 80}, {x: 440, y: 140},
+    {x: 470, y: 110}, {x: 510, y: 170}, {x: 550, y: 145}, {x: 580, y: 195}
+  ];
+
+  // Draw uptrend line
+  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(upPts[0].x, upPts[0].y);
+  upPts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
+  ctx.stroke();
+
+  // Draw downtrend line
+  ctx.strokeStyle = red;
+  ctx.beginPath(); ctx.moveTo(dnPts[0].x, dnPts[0].y);
+  dnPts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
+  ctx.stroke();
+
+  // Label uptrend swing points
+  ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
+  var upLabels = ['', 'HH', 'HL', 'HH', 'HL', 'HH'];
+  upPts.forEach(function(p, i) {
+    if (!upLabels[i]) return;
+    var isHigh = upLabels[i] === 'HH';
+    ctx.fillStyle = green;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = text;
+    ctx.fillText(upLabels[i], p.x, isHigh ? p.y - 10 : p.y + 16);
+  });
+
+  // Label downtrend swing points
+  var dnLabels = ['', 'LH', 'LH', 'LL', 'LH', 'LL', 'LH', 'LL'];
+  dnPts.forEach(function(p, i) {
+    if (!dnLabels[i]) return;
+    var isHigh = dnLabels[i] === 'LH';
+    ctx.fillStyle = red;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = text;
+    ctx.fillText(dnLabels[i], p.x, isHigh ? p.y - 10 : p.y + 16);
+  });
+
+  // Section labels
+  ctx.font = 'bold 13px system-ui';
+  ctx.fillStyle = green; ctx.textAlign = 'center';
+  ctx.fillText('UPTREND', 150, 22);
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('Higher Highs + Higher Lows', 150, 36);
+
+  ctx.font = 'bold 13px system-ui';
+  ctx.fillStyle = red; ctx.textAlign = 'center';
+  ctx.fillText('DOWNTREND', 450, 22);
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('Lower Highs + Lower Lows', 450, 36);
+
+  // Divider
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(285, 10); ctx.lineTo(285, H - 10); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+// --- BOS Diagram ---
+function drawBOSChart() {
+  var c = document.getElementById('bos-chart');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 260 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 260;
+  var green = '#22c55e', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+
+  // Uptrend wave with BOS breaks
+  var pts = [
+    {x: 30, y: 210}, {x: 80, y: 160}, {x: 120, y: 185}, {x: 180, y: 130},
+    {x: 220, y: 160}, {x: 290, y: 100}, {x: 340, y: 135}, {x: 420, y: 70},
+    {x: 460, y: 100}, {x: 540, y: 42}
+  ];
+
+  // Draw price line
+  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  pts.forEach(function(p) { ctx.lineTo(p.x, p.y); });
+  ctx.stroke();
+
+  // BOS levels (horizontal dashed lines from each swing high)
+  var bosLevels = [
+    {fromX: 80, toX: 180, y: 160, label: 'BOS'},
+    {fromX: 180, toX: 290, y: 130, label: 'BOS'},
+    {fromX: 290, toX: 420, y: 100, label: 'BOS'},
+    {fromX: 420, toX: 540, y: 70, label: 'BOS'}
+  ];
+  bosLevels.forEach(function(b) {
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = blue; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(b.fromX, b.y); ctx.lineTo(b.toX, b.y); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    // BOS label with circle
+    var midX = (b.fromX + b.toX) / 2;
+    ctx.fillStyle = 'rgba(59,130,246,0.15)';
+    ctx.beginPath(); ctx.arc(midX, b.y, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.font = 'bold 10px system-ui'; ctx.fillStyle = blue; ctx.textAlign = 'center';
+    ctx.fillText(b.label, midX, b.y + 4);
+  });
+
+  // Swing points
+  ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+  var labels = ['', 'HH', 'HL', 'HH', 'HL', 'HH', 'HL', 'HH', 'HL', 'HH'];
+  pts.forEach(function(p, i) {
+    if (!labels[i]) return;
+    var isHigh = labels[i] === 'HH';
+    ctx.fillStyle = green;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = text;
+    ctx.fillText(labels[i], p.x, isHigh ? p.y - 10 : p.y + 16);
+  });
+
+  // Title area
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'left';
+  ctx.fillText('Each BOS confirms: "Trend is still alive"', 30, 20);
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('Price breaks above previous HH → structure intact → look for entries on pullback to HL', 30, 34);
+}
+
+// --- CHoCH Diagram ---
+function drawCHoCHChart() {
+  var c = document.getElementById('choch-chart');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 280 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 280;
+  var green = '#22c55e', red = '#ef4444', gold = '#f59e0b', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+
+  // Uptrend → failed HH → CHoCH → downtrend
+  var pts = [
+    {x: 30, y: 220}, {x: 70, y: 165}, {x: 110, y: 190}, {x: 160, y: 130},
+    {x: 200, y: 155}, {x: 260, y: 95},  // uptrend
+    {x: 300, y: 120},                     // HL
+    {x: 350, y: 100},                     // failed HH (doesn't beat 95)
+    {x: 390, y: 135},                     // breaks below HL at 120 → CHoCH
+    {x: 420, y: 160},                     // continues down
+    {x: 450, y: 130},                     // LH
+    {x: 500, y: 185},                     // LL
+    {x: 530, y: 160},                     // LH
+    {x: 570, y: 220}                      // LL
+  ];
+
+  // Draw uptrend portion (green)
+  ctx.strokeStyle = green; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (var i = 1; i <= 7; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+
+  // Draw transition (gold)
+  ctx.strokeStyle = gold; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(pts[7].x, pts[7].y);
+  ctx.lineTo(pts[8].x, pts[8].y);
+  ctx.stroke();
+
+  // Draw downtrend portion (red)
+  ctx.strokeStyle = red; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(pts[8].x, pts[8].y);
+  for (var j = 9; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+  ctx.stroke();
+
+  // BOS lines in uptrend
+  var bosLines = [
+    {fromX: 70, toX: 160, y: 165},
+    {fromX: 160, toX: 260, y: 130}
+  ];
+  bosLines.forEach(function(b) {
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = blue; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.moveTo(b.fromX, b.y); ctx.lineTo(b.toX, b.y); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    var midX = (b.fromX + b.toX) / 2;
+    ctx.font = 'bold 9px system-ui'; ctx.fillStyle = blue; ctx.textAlign = 'center';
+    ctx.fillText('BOS', midX, b.y - 6);
+  });
+
+  // CHoCH line — from HL at 120 across to where it breaks
+  var chochY = 120;
+  ctx.setLineDash([6, 3]); ctx.strokeStyle = gold; ctx.lineWidth = 2; ctx.globalAlpha = 0.8;
+  ctx.beginPath(); ctx.moveTo(300, chochY); ctx.lineTo(420, chochY); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+  // CHoCH label
+  ctx.fillStyle = 'rgba(245,158,11,0.15)';
+  ctx.beginPath(); ctx.arc(360, chochY, 18, 0, Math.PI * 2); ctx.fill();
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'center';
+  ctx.fillText('CHoCH', 360, chochY + 4);
+
+  // "Failed to make new HH" label
+  ctx.font = '10px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
+  ctx.fillText('Failed HH', pts[7].x, pts[7].y - 14);
+  ctx.fillStyle = red;
+  ctx.beginPath(); ctx.arc(pts[7].x, pts[7].y, 5, 0, Math.PI * 2); ctx.fill();
+
+  // Previous HH marker
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = '#555'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(260, 95); ctx.lineTo(370, 95); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = '9px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'left';
+  ctx.fillText('Previous HH', 264, 88);
+
+  // Swing point labels
+  ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+  var upLabels = ['', 'HH', 'HL', 'HH', 'HL', 'HH', 'HL', '', '', '', 'LH', 'LL', 'LH', 'LL'];
+  pts.forEach(function(p, i) {
+    if (!upLabels[i]) return;
+    var isHigh = upLabels[i] === 'HH' || upLabels[i] === 'LH';
+    var col = i <= 6 ? green : red;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = text;
+    ctx.fillText(upLabels[i], p.x, isHigh ? p.y - 8 : p.y + 15);
+  });
+
+  // Section labels
+  ctx.font = 'bold 12px system-ui';
+  ctx.fillStyle = green; ctx.textAlign = 'left';
+  ctx.fillText('Uptrend', 30, 18);
+  ctx.fillStyle = gold; ctx.textAlign = 'center';
+  ctx.fillText('Reversal', 360, 18);
+  ctx.fillStyle = red; ctx.textAlign = 'right';
+  ctx.fillText('Downtrend', 570, 18);
+
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('When price breaks below the last HL → CHoCH → trend is shifting', W / 2, H - 6);
+}
+
+// --- Order Block Diagram ---
+function drawOBChart() {
+  var c = document.getElementById('ob-chart');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 240 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 240, pad = 30;
+  var green = '#22c55e', red = '#ef4444', accent = '#6366f1', muted = '#555', text = '#e5e7eb';
+
+  function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
+  var cw = 22, gap = 6;
+  function cx(i) { return pad + i * (cw + gap); }
+
+  // Candle data: [open, close, high, low]
+  var candles = [
+    [42, 46, 48, 40],  // small green
+    [46, 44, 48, 42],  // small red
+    [44, 42, 46, 40],  // small red
+    [42, 38, 44, 36],  // RED — this is the Order Block
+    [38, 52, 54, 36],  // big green impulse
+    [52, 60, 62, 50],  // big green impulse
+    [60, 68, 70, 58],  // big green impulse
+    [68, 72, 74, 66],  // continuation
+    [72, 70, 74, 68],  // small red pullback
+    [70, 66, 72, 64],  // pullback
+    [66, 60, 68, 58],  // pullback deeper
+    [60, 56, 62, 54],  // pullback deeper
+    [56, 40, 58, 38],  // retests OB zone!
+    [40, 48, 50, 38],  // bounce from OB
+    [48, 56, 58, 46],  // continuation up
+    [56, 64, 66, 54],  // rally
+    [64, 70, 72, 62],  // higher
+  ];
+
+  // OB zone (candle index 3: open 42, close 38 → zone is 36-44)
+  var obTop = 44, obBot = 36;
+  ctx.fillStyle = 'rgba(99,102,241,0.12)';
+  ctx.fillRect(cx(3) - 2, y(obTop), cx(16) + cw + 4 - cx(3), y(obBot) - y(obTop));
+  ctx.setLineDash([5, 3]); ctx.strokeStyle = accent; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+  ctx.beginPath(); ctx.moveTo(cx(3) - 2, y(obTop)); ctx.lineTo(cx(16) + cw + 4, y(obTop)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx(3) - 2, y(obBot)); ctx.lineTo(cx(16) + cw + 4, y(obBot)); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+  // Draw candles
+  candles.forEach(function(d, i) {
+    var x = cx(i);
+    var o = d[0], cl = d[1], hi = d[2], lo = d[3];
+    var isGreen = cl >= o;
+    var color = isGreen ? green : red;
+    if (i === 3) color = accent; // highlight OB candle
+    var top = Math.max(o, cl), bot = Math.min(o, cl);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x + cw / 2, y(hi)); ctx.lineTo(x + cw / 2, y(lo)); ctx.stroke();
+    ctx.fillStyle = color;
+    var bodyH = Math.max(y(bot) - y(top), 2);
+    ctx.fillRect(x + 3, y(top), cw - 6, bodyH);
+  });
+
+  // OB label
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = accent; ctx.textAlign = 'center';
+  var obLabelX = cx(3) + cw / 2;
+  ctx.fillText('Order Block', obLabelX + 30, y(obTop) - 6);
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('(last red candle before impulse)', obLabelX + 30, y(obTop) + 8);
+
+  // Impulse arrow
+  var impX = cx(6) + cw + 8;
+  ctx.strokeStyle = green; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(impX, y(40)); ctx.lineTo(impX, y(68)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(impX - 4, y(64)); ctx.lineTo(impX, y(68)); ctx.lineTo(impX + 4, y(64)); ctx.stroke();
+  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'left';
+  ctx.fillText('Impulse', impX + 4, y(54));
+
+  // Retest label
+  var retX = cx(12) + cw / 2;
+  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#3b82f6'; ctx.textAlign = 'center';
+  ctx.fillText('Retest!', retX, y(30));
+  ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(retX, y(33)); ctx.lineTo(retX, y(38)); ctx.stroke();
+
+  // "Price returns to OB → Buy" label
+  ctx.font = '10px system-ui'; ctx.fillStyle = text; ctx.textAlign = 'center';
+  ctx.fillText('Price returns to OB zone → smart money defends → bounce', W / 2, H - 8);
+}
+
+// --- FVG Diagram ---
+function drawFVGChart() {
+  var c = document.getElementById('fvg-chart');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 240 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 240, pad = 30;
+  var green = '#22c55e', red = '#ef4444', gold = '#f59e0b', blue = '#3b82f6', muted = '#555', text = '#e5e7eb';
+
+  function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
+  var cw = 22, gap = 8;
+  function cx(i) { return pad + 20 + i * (cw + gap); }
+
+  // Candles: setup → FVG move → pullback fills gap → continues
+  var candles = [
+    [35, 38, 40, 33],  // 0: small green
+    [38, 40, 42, 36],  // 1: green — candle 1 (high = 42)
+    [40, 55, 56, 39],  // 2: BIG green impulse (low = 39)
+    [55, 65, 68, 53],  // 3: big green — candle 3 (low = 53) — GAP between 42 and 53
+    [65, 70, 72, 63],  // 4: continuation
+    [70, 74, 76, 68],  // 5: continuation
+    [74, 72, 76, 70],  // 6: pullback start
+    [72, 68, 74, 66],  // 7: pullback
+    [68, 62, 70, 60],  // 8: pullback
+    [62, 55, 64, 53],  // 9: fills FVG zone
+    [54, 48, 56, 46],  // 10: touches bottom of FVG
+    [48, 56, 58, 46],  // 11: bounce from FVG
+    [56, 62, 64, 54],  // 12: recovery
+    [62, 68, 70, 60],  // 13: rally continues
+    [68, 75, 78, 66],  // 14: higher
+  ];
+
+  // FVG zone (candle 1 high = 42, candle 3 low = 53)
+  var fvgTop = 53, fvgBot = 42;
+  ctx.fillStyle = 'rgba(245,158,11,0.1)';
+  ctx.fillRect(cx(1), y(fvgTop), cx(14) + cw - cx(1), y(fvgBot) - y(fvgTop));
+  ctx.setLineDash([5, 3]); ctx.strokeStyle = gold; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+  ctx.beginPath(); ctx.moveTo(cx(1), y(fvgTop)); ctx.lineTo(cx(14) + cw, y(fvgTop)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx(1), y(fvgBot)); ctx.lineTo(cx(14) + cw, y(fvgBot)); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+  // Draw candles
+  candles.forEach(function(d, i) {
+    var x = cx(i);
+    var o = d[0], cl = d[1], hi = d[2], lo = d[3];
+    var isGreen = cl >= o;
+    var color = isGreen ? green : red;
+    if (i === 2) color = '#22c55e'; // impulse candle highlight
+    var top = Math.max(o, cl), bot = Math.min(o, cl);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x + cw / 2, y(hi)); ctx.lineTo(x + cw / 2, y(lo)); ctx.stroke();
+    ctx.fillStyle = color;
+    var bodyH = Math.max(y(bot) - y(top), 2);
+    ctx.fillRect(x + 3, y(top), cw - 6, bodyH);
+  });
+
+  // FVG label
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'left';
+  ctx.fillText('FVG (Fair Value Gap)', cx(4) + 5, y((fvgTop + fvgBot) / 2) + 4);
+  ctx.font = '10px system-ui'; ctx.fillStyle = muted;
+  ctx.fillText('No trading happened here', cx(4) + 5, y((fvgTop + fvgBot) / 2) + 17);
+
+  // Candle number labels
+  ctx.font = '9px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('C1', cx(1) + cw / 2, y(36));
+  ctx.fillText('C2', cx(2) + cw / 2, y(36));
+  ctx.fillText('C3', cx(3) + cw / 2, y(36));
+
+  // Arrow showing gap
+  var arrowX = cx(1) - 10;
+  ctx.strokeStyle = gold; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(arrowX, y(fvgBot)); ctx.lineTo(arrowX, y(fvgTop)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(arrowX - 3, y(fvgTop) + 5); ctx.lineTo(arrowX, y(fvgTop)); ctx.lineTo(arrowX + 3, y(fvgTop) + 5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(arrowX - 3, y(fvgBot) - 5); ctx.lineTo(arrowX, y(fvgBot)); ctx.lineTo(arrowX + 3, y(fvgBot) - 5); ctx.stroke();
+  ctx.font = '9px system-ui'; ctx.fillStyle = gold; ctx.textAlign = 'right';
+  ctx.fillText('GAP', arrowX - 3, y((fvgTop + fvgBot) / 2) + 3);
+
+  // "Price fills gap" label at retest
+  var retX = cx(10) + cw / 2;
+  ctx.font = 'bold 10px system-ui'; ctx.fillStyle = blue; ctx.textAlign = 'center';
+  ctx.fillText('Fills gap', retX, y(38));
+  ctx.strokeStyle = blue; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(retX, y(40)); ctx.lineTo(retX, y(44)); ctx.stroke();
+
+  ctx.font = '10px system-ui'; ctx.fillStyle = text; ctx.textAlign = 'center';
+  ctx.fillText('C1 high (42) → C3 low (53) = gap. Price comes back to fill it before continuing.', W / 2, H - 8);
+}
+
+// Draw all educational charts when sections open
 document.addEventListener('click', function(e) {
   var hdr = e.target.closest('.edu-header');
-  if (hdr && hdr.parentElement.querySelector('#sweep-chart')) {
-    setTimeout(drawSweepChart, 50);
-  }
+  if (!hdr) return;
+  var card = hdr.parentElement;
+  if (card.querySelector('#sweep-chart')) setTimeout(drawSweepChart, 50);
+  if (card.querySelector('#candle-anatomy')) setTimeout(drawCandleAnatomy, 50);
+  if (card.querySelector('#market-structure')) setTimeout(drawMarketStructure, 50);
+  if (card.querySelector('#bos-chart')) setTimeout(drawBOSChart, 50);
+  if (card.querySelector('#choch-chart')) setTimeout(drawCHoCHChart, 50);
+  if (card.querySelector('#ob-chart')) setTimeout(drawOBChart, 50);
+  if (card.querySelector('#fvg-chart')) setTimeout(drawFVGChart, 50);
 });
 // Also draw on load if already open
 setTimeout(drawSweepChart, 500);
