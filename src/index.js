@@ -167,6 +167,32 @@ async function main() {
               }
             } catch (_) {}
           }
+          // Fetch 4H OHLCV candles for peak/trough watermark (TP hit detection)
+          const candleCache = {};
+          const since48h = Date.now() - 48 * 60 * 60 * 1000;
+          for (const [exName, items] of Object.entries(byExchange)) {
+            const ex = listingMonitor.exchanges[exName];
+            if (!ex) continue;
+            const uniquePairs = [...new Set(items.map(i => i.pair))];
+            try {
+              await Promise.all(uniquePairs.map(pair =>
+                ex.fetchOHLCV(pair, '4h', since48h, 24)
+                  .then(c => { if (c?.length) candleCache[pair] = c; })
+                  .catch(() => {})
+              ));
+            } catch (_) {}
+          }
+          for (const s of allSignals) {
+            const pair = s.pair || s.symbol + '/USDT:USDT';
+            const candles = candleCache[pair];
+            if (!candles) continue;
+            const sigTime = new Date(s.created_at).getTime();
+            const relevant = candles.filter(c => c[0] >= sigTime);
+            if (relevant.length) {
+              s.peak_price = Math.max(...relevant.map(c => c[2]));
+              s.trough_price = Math.min(...relevant.map(c => c[3]));
+            }
+          }
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ signals: allSignals, flow_alerts: flowResult.rows, ts: Date.now() }));

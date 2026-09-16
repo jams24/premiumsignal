@@ -916,12 +916,14 @@ function calcLevels(s) {
 function getTradeStatus(s, levels) {
   var entry = parseFloat(s.price), dir = s.direction;
   var now = validateCurrentPrice(entry, parseFloat(s.current_price));
+  var peak = parseFloat(s.peak_price) || now;
+  var trough = parseFloat(s.trough_price) || now;
   var hitTP1 = false, hitTP2 = false, hitTP3 = false, hitSL = false;
   if (dir === 'long') {
-    hitTP1 = now >= levels.tp1; hitTP2 = now >= levels.tp2; hitTP3 = now >= levels.tp3;
+    hitTP1 = peak >= levels.tp1; hitTP2 = peak >= levels.tp2; hitTP3 = peak >= levels.tp3;
     hitSL = now <= levels.sl;
   } else {
-    hitTP1 = now <= levels.tp1; hitTP2 = now <= levels.tp2; hitTP3 = now <= levels.tp3;
+    hitTP1 = trough <= levels.tp1; hitTP2 = trough <= levels.tp2; hitTP3 = trough <= levels.tp3;
     hitSL = now >= levels.sl;
   }
   var rawPct = ((now - entry) / entry) * 100;
@@ -939,10 +941,10 @@ function getTradeStatus(s, levels) {
   var isAging = ageMin > 120;
 
   var status, css, tip;
-  if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL — do NOT enter'; }
-  else if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Already hit TP3 — move is done'; }
-  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Already past TP2 — most profit taken, late entry risky'; }
-  else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 — can still run but tighten SL to entry'; }
+  if (hitTP3) { status = 'PLAYED OUT'; css = 'played'; tip = 'Hit TP3 — move is done, profit banked'; }
+  else if (hitTP2) { status = 'TP2 HIT'; css = 'tp2'; tip = 'Past TP2 — most profit taken, late entry risky'; }
+  else if (hitTP1) { status = 'TP1 HIT'; css = 'tp1'; tip = 'Past TP1 — 33% profit banked, SL at breakeven'; }
+  else if (hitSL) { status = 'STOPPED OUT'; css = 'stopped'; tip = 'Price reversed past SL — do NOT enter'; }
   else if (breakdowns.length) { status = 'INVALID'; css = 'stopped'; tip = breakdowns[0]; }
   else if (isStale) { status = 'STALE'; css = 'stale'; tip = 'Signal is ' + Math.floor(ageMin / 60) + 'h old — conditions likely changed. Wait for fresh alert'; }
   else if (isAging) { status = 'CAUTION'; css = 'late'; tip = 'Signal is ' + Math.floor(ageMin / 60) + 'h old — re-check conditions before entering'; }
@@ -961,10 +963,35 @@ function validateCurrentPrice(entry, current) {
 function simPnl(s) {
   var entry = parseFloat(s.price);
   var now = validateCurrentPrice(entry, parseFloat(s.current_price));
-  var rawPct = ((now - entry) / entry) * 100;
-  var movePct = s.direction === 'short' ? -rawPct : rawPct;
-  var pnl = (movePct / 100) * NOTIONAL;
-  return { pnl: pnl, pct: movePct };
+  var dir = s.direction;
+  var levels = s._levels || calcLevels(s);
+  var peak = parseFloat(s.peak_price) || now;
+  var trough = parseFloat(s.trough_price) || now;
+
+  function pctAt(price) {
+    var raw = ((price - entry) / entry) * 100;
+    return dir === 'short' ? -raw : raw;
+  }
+
+  var hitTP1, hitTP2, hitTP3;
+  if (dir === 'long') {
+    hitTP1 = peak >= levels.tp1; hitTP2 = peak >= levels.tp2; hitTP3 = peak >= levels.tp3;
+  } else {
+    hitTP1 = trough <= levels.tp1; hitTP2 = trough <= levels.tp2; hitTP3 = trough <= levels.tp3;
+  }
+
+  var remaining = 1.0, totalPct = 0;
+  if (hitTP1) { totalPct += 0.33 * pctAt(levels.tp1); remaining = 0.67; }
+  if (hitTP2) { var tp2x = 0.50 * remaining; totalPct += tp2x * pctAt(levels.tp2); remaining -= tp2x; }
+  if (hitTP3) { var tp3x = 0.50 * remaining; totalPct += tp3x * pctAt(levels.tp3); remaining -= tp3x; }
+
+  var remainPct = pctAt(now);
+  if (hitTP1 && remainPct < 0) remainPct = 0;
+  if (hitTP2 && remainPct < pctAt(levels.tp1)) remainPct = pctAt(levels.tp1);
+  totalPct += remaining * remainPct;
+
+  var pnl = (totalPct / 100) * NOTIONAL;
+  return { pnl: pnl, pct: totalPct };
 }
 
 function buildReasons(s) {
