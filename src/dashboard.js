@@ -721,12 +721,14 @@ function setScoreFilter(btn) {
 }
 
 var PATTERN_RULES = {
-  short_high_score: { label: 'High-score shorts', accuracy: 87.5, desc: 'Score 80+ shorts hit 87.5% of the time' },
-  short_12_18: { label: 'EU/US session short', accuracy: 76.9, desc: 'Shorts 12-18 UTC (1-7 PM WAT) have 77% accuracy' },
-  long_18_24: { label: 'Late session long', accuracy: 81.8, desc: 'Longs 18-24 UTC (7 PM-1 AM WAT) have 82% accuracy' },
-  funding_aligned: { label: 'Funding aligned', accuracy: 65, desc: 'Funding matching direction improves win rate' },
-  oi_spike: { label: 'OI spike', accuracy: 72.2, desc: 'Short + OI 4h >20% = 72% accuracy' },
-  funding_against: { label: 'Funding against', accuracy: 30, desc: 'Funding opposing direction = ~30% accuracy', negative: true },
+  long_mom_neutfund: { label: 'Momentum + Neutral funding', accuracy: 71.8, desc: 'Price moving >5% with neutral funding = 72% WR (213 trades)' },
+  long_oi_neutfund: { label: 'OI + Neutral funding', accuracy: 77.8, desc: 'OI 4h >15% with neutral funding = 78% WR' },
+  short_oi_mom: { label: 'SHORT OI + Momentum', accuracy: 100, desc: 'OI >15% + price dropping >5% = 100% WR (13 trades)' },
+  short_high_score: { label: 'High-score short', accuracy: 100, desc: 'Score 75+ shorts = 100% WR (16 trades)' },
+  short_negfund_flow: { label: 'SHORT Neg funding + Flow', accuracy: 100, desc: 'Negative funding with flow confirmation = 100% WR' },
+  oi_big: { label: 'Big OI', accuracy: 75, desc: 'OI 4h >30% = 75% WR regardless of direction' },
+  weak_signal: { label: 'Weak signal', accuracy: 27, desc: 'No OI, no momentum, no flow data = 27% WR', negative: true },
+  short_low_score: { label: 'Low-score short', accuracy: 29, desc: 'Short with score <50 = 29% WR', negative: true },
 };
 
 var apiKey = '', signals = [], flowAlerts = [], patterns = {}, trades = {}, currentFilter = 'high', lastUpdate = 0, refreshInterval;
@@ -788,7 +790,7 @@ function refreshAll() {
   var dot = document.getElementById('status-dot');
   var label = document.getElementById('status-label');
   Promise.all([
-    apiFetch('/api/signals', { hours: 48, minScore: 30 }),
+    apiFetch('/api/signals', { hours: 48, minScore: 40 }),
     apiFetch('/api/patterns'),
     apiFetch('/api/trades'),
   ]).then(function(results) {
@@ -857,33 +859,50 @@ function renderStats() {
 function getConviction(s) {
   var score = parseInt(s.score) || 0;
   var dir = s.direction;
-  var fundAligned = s.funding_bias === dir;
-  var fundAgainst = s.funding_bias && s.funding_bias !== dir;
-  var hour = new Date(s.created_at).getUTCHours();
-  var oiSpike = Math.abs(parseFloat(s.oi_4h) || 0) > 20;
-  if (fundAgainst && dir === 'long' && s.funding_bias === 'short' && score < 75) return 'low';
-  if (score >= 80 && fundAligned) return 'high';
-  if (score >= 70 && fundAligned && oiSpike) return 'high';
-  if (dir === 'short' && score >= 75 && hour >= 12 && hour < 18) return 'high';
-  if (dir === 'long' && score >= 70 && fundAligned && hour >= 18) return 'high';
-  if (score >= 60 && fundAligned) return 'med';
-  if (score >= 70) return 'med';
+  var oi = Math.abs(parseFloat(s.oi_4h) || 0);
+  var momentum = Math.abs(parseFloat(s.price_change) || 0);
+  var funding = parseFloat(s.funding_rate) || 0;
+  var fundNeutral = Math.abs(funding) <= 0.03;
+  var hasFlow = !!s.flow_bias;
+  var isWeak = oi < 5 && momentum < 3 && !hasFlow;
+
+  if (isWeak) return 'low';
+
+  if (dir === 'short') {
+    if (score < 50) return 'low';
+    if (score >= 75) return 'high';
+    if (oi > 15 && momentum > 5) return 'high';
+    if (funding < -0.03 && hasFlow) return 'high';
+    if (score >= 60 && (oi > 10 || momentum > 5)) return 'med';
+    return 'med';
+  }
+
+  if (oi > 15 && fundNeutral) return 'high';
+  if (momentum > 5 && fundNeutral && score >= 60) return 'high';
+  if (oi > 30) return 'high';
+  if (hasFlow && score >= 60) return 'high';
+  if (score >= 60 && (oi > 10 || momentum > 5)) return 'med';
+  if (score >= 50) return 'med';
   return 'low';
 }
 
 function getMatchedPatterns(s) {
   var matched = [];
   var dir = s.direction, score = parseInt(s.score) || 0;
-  var hour = new Date(s.created_at).getUTCHours();
-  var fundAligned = s.funding_bias === dir;
-  var fundAgainst = s.funding_bias && s.funding_bias !== dir;
-  var oiSpike = Math.abs(parseFloat(s.oi_4h) || 0) > 20;
-  if (dir === 'short' && score >= 80) matched.push('short_high_score');
-  if (dir === 'short' && hour >= 12 && hour < 18) matched.push('short_12_18');
-  if (dir === 'long' && hour >= 18) matched.push('long_18_24');
-  if (fundAligned) matched.push('funding_aligned');
-  if (oiSpike && dir === 'short') matched.push('oi_spike');
-  if (fundAgainst) matched.push('funding_against');
+  var oi = Math.abs(parseFloat(s.oi_4h) || 0);
+  var momentum = Math.abs(parseFloat(s.price_change) || 0);
+  var funding = parseFloat(s.funding_rate) || 0;
+  var fundNeutral = Math.abs(funding) <= 0.03;
+  var hasFlow = !!s.flow_bias;
+
+  if (oi < 5 && momentum < 3 && !hasFlow) matched.push('weak_signal');
+  if (dir === 'short' && score < 50) matched.push('short_low_score');
+  if (dir === 'short' && score >= 75) matched.push('short_high_score');
+  if (dir === 'short' && oi > 15 && momentum > 5) matched.push('short_oi_mom');
+  if (dir === 'short' && funding < -0.03 && hasFlow) matched.push('short_negfund_flow');
+  if (dir === 'long' && momentum > 5 && fundNeutral) matched.push('long_mom_neutfund');
+  if (dir === 'long' && oi > 15 && fundNeutral) matched.push('long_oi_neutfund');
+  if (oi > 30) matched.push('oi_big');
   return matched;
 }
 

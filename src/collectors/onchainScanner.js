@@ -1331,6 +1331,45 @@ class OnchainScanner {
     return map[cgChain] || null;
   }
 
+  passesQualityGate(token) {
+    const dir = token._tradeSetup?.direction || token.direction ||
+      (token.priceChange > 0 ? 'long' : 'short');
+    const oi = Math.abs(token.oiChange4h || 0);
+    const momentum = Math.abs(token.priceChange || 0);
+    const hasFlow = !!(token.exchangeFlow &&
+      (token.exchangeFlow.outflowCount >= 2 || token.exchangeFlow.inflowCount >= 2));
+    const funding = token.fundingRate || 0;
+    const fundingNeutral = Math.abs(funding) <= 0.0003;
+
+    if (oi < 5 && momentum < 3 && !hasFlow) {
+      logger.debug(`${token.symbol}: Quality gate REJECT — weak signal (no OI, no momentum, no flow)`);
+      return false;
+    }
+
+    if (dir === 'short') {
+      if (token.score < 50) {
+        logger.debug(`${token.symbol}: Quality gate REJECT — short score ${token.score} < 50`);
+        return false;
+      }
+      if (oi > 15 && momentum > 5) return true;
+      if (funding < -0.0003 && hasFlow) return true;
+      if (token.score >= 75) return true;
+      if (oi > 10 || momentum > 5) return true;
+      logger.debug(`${token.symbol}: Quality gate REJECT — short lacks OI/momentum confirmation`);
+      return false;
+    }
+
+    if (momentum > 5 && fundingNeutral) return true;
+    if (oi > 15 && fundingNeutral) return true;
+    if (oi > 30) return true;
+    if (hasFlow && token.exchangeFlow.outflowCount >= 3) return true;
+    if (token.score >= 60 && (oi > 10 || momentum > 5)) return true;
+    if (oi > 10 || momentum > 5) return true;
+
+    logger.debug(`${token.symbol}: Quality gate REJECT — long lacks confirmation`);
+    return false;
+  }
+
   getLastScan() {
     return this.lastScan;
   }

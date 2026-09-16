@@ -669,7 +669,7 @@ async function main() {
   cron.schedule('*/5 * * * *', async () => {
     try {
       const results = await onchainScanner.scan();
-      const hotTokens = results.filter(r => r.score >= 30);
+      const hotTokens = results.filter(r => r.score >= 40);
       if (hotTokens.length > 0) {
         for (const token of hotTokens) {
           try {
@@ -730,13 +730,14 @@ async function main() {
           }
         } catch (e) { logger.debug(`Alert tracking lookup failed: ${e.message}`); }
 
-        const msg = onchainScanner.formatAlerts(hotTokens, 5);
+        const qualityTokens = hotTokens.filter(t => onchainScanner.passesQualityGate(t));
+        const msg = onchainScanner.formatAlerts(qualityTokens, 5);
         if (msg) {
           await bot.sendRaw(msg);
           await bot.broadcastToUsers(msg);
         }
 
-        for (const token of hotTokens) {
+        for (const token of qualityTokens) {
           const dir = (token.fundingBias === 'bullish' || token.priceChange > 0) ? 'long' : 'short';
           if (!shouldLogAlert('ONCHAIN', token.symbol, dir)) continue;
           const setup = token._tradeSetup;
@@ -766,7 +767,7 @@ async function main() {
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
         // (calling buildTradeSetup again can flip direction between neutral/long)
         const ocMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
-        for (const token of hotTokens) {
+        for (const token of qualityTokens) {
           if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
           try {
             const setup = token._tradeSetup;
