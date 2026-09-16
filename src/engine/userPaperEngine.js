@@ -169,25 +169,26 @@ class UserPaperEngine {
     const key = `${telegramId}_${setup.symbol}`;
     if (this.pendingEntries.has(key)) return;
 
-    // Check cooldown from recent closed user trades
+    // One coin, one shot per day — blocked until 01:00 UTC after any close
+    // Only exception: direction flip with score >= 70
     try {
       const { rows: lastTrades } = await db.query(
-        `SELECT direction, closed_at, close_reason, pnl_usd FROM user_paper_trades WHERE telegram_id = $1 AND symbol = $2 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
+        `SELECT direction, closed_at FROM user_paper_trades WHERE telegram_id = $1 AND symbol = $2 AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`,
         [telegramId, setup.symbol]
       );
       if (lastTrades.length) {
         const closedAt = new Date(lastTrades[0].closed_at).getTime();
-        const pnl = parseFloat(lastTrades[0].pnl_usd) || 0;
-        const lossReasons = ['max_loss', 'invalidated', 'thesis_broken', 'time_exit'];
-        const wasLoss = lossReasons.includes(lastTrades[0].close_reason)
-          || (lastTrades[0].close_reason === 'sl' && pnl < -0.01)
-          || pnl < -0.01;
         const isFlip = lastTrades[0].direction !== setup.direction;
-        let cooldownMs;
-        if (wasLoss) cooldownMs = 4 * 60 * 60 * 1000;
-        else if (isFlip) cooldownMs = 2 * 60 * 60 * 1000;
-        else cooldownMs = 1 * 60 * 60 * 1000;
-        if (Date.now() < closedAt + cooldownMs) return;
+        const next1am = new Date(closedAt);
+        next1am.setUTCHours(1, 0, 0, 0);
+        if (next1am.getTime() <= closedAt) next1am.setUTCDate(next1am.getUTCDate() + 1);
+        if (Date.now() < next1am.getTime()) {
+          if (isFlip && (setup.onchainScore || 0) >= 70) {
+            logger.debug(`User ${telegramId} ${setup.symbol}: daily cooldown bypassed — flip (score ${setup.onchainScore})`);
+          } else {
+            return;
+          }
+        }
       }
     } catch (e) { /* proceed */ }
 
