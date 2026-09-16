@@ -42,15 +42,15 @@ async function main() {
   const dashboardHtml = require('./dashboard');
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const key = url.searchParams.get('key');
-    const authed = key === process.env.DASHBOARD_KEY;
+    const key = (url.searchParams.get('key') || '').trim();
+    const authed = key && key === (process.env.DASHBOARD_KEY || '').trim();
 
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ status: 'ok', dbReady, uptime: process.uptime() }));
     }
 
-    if (url.pathname === '/dashboard') {
+    if (url.pathname === '/' || url.pathname === '/dashboard') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
       return res.end(dashboardHtml);
     }
