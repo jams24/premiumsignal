@@ -12,6 +12,7 @@ class TradeExecutor {
     this.maxLossPerTrade = config.maxLossPerTrade || 0;
     this.maxConcurrentPositions = config.maxConcurrentPositions || 5;
     this.minConfidence = config.minConfidence || 4;
+    this.minOcScore = config.minOcScore || 0;
     this.defaultLeverage = config.defaultLeverage || 5;
     this.enabled = config.enabled !== false;
     this.dailyPnL = 0;
@@ -406,6 +407,7 @@ class TradeExecutor {
       maxLossPerTrade: this.maxLossPerTrade,
       maxConcurrentPositions: this.maxConcurrentPositions,
       minConfidence: this.minConfidence,
+      minOcScore: this.minOcScore,
       defaultLeverage: this.defaultLeverage,
       dynamicLeverage: this.dynamicLeverage,
       dcaEnabled: this.dcaEnabled,
@@ -448,6 +450,7 @@ class TradeExecutor {
     if (cfg.maxLossPerTrade != null) this.maxLossPerTrade = cfg.maxLossPerTrade;
     if (cfg.maxConcurrentPositions != null) this.maxConcurrentPositions = cfg.maxConcurrentPositions;
     if (cfg.minConfidence != null) this.minConfidence = cfg.minConfidence;
+    if (cfg.minOcScore != null) this.minOcScore = cfg.minOcScore;
     if (cfg.defaultLeverage != null) this.defaultLeverage = cfg.defaultLeverage;
     if (cfg.dynamicLeverage != null) this.dynamicLeverage = cfg.dynamicLeverage;
     if (cfg.dcaEnabled != null) this.dcaEnabled = cfg.dcaEnabled;

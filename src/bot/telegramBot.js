@@ -1967,8 +1967,6 @@ class TelegramBot {
         const te = this.onchainTradeExecutor;
         await te.recalcDailyPnL?.();
         const openTrades = await db.getOpenTrades('onchain').catch(() => []);
-        const scoreLabel = te.minConfidence === 5 ? '60+' : te.minConfidence === 4 ? '45+' : '30+';
-
         const text =
           `🔗 <b>ONCHAIN SETTINGS</b>\n\n` +
           `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
@@ -1976,7 +1974,7 @@ class TelegramBot {
           `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
           `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
           `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
-          `🎯 Min Score: <b>${scoreLabel}</b> (confidence ${te.minConfidence}/5)\n` +
+          `🎯 Min Score: <b>${ocScoreLabel(te)}</b>\n` +
           `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
           `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n\n` +
           `Tap any button to configure:`;
@@ -1989,7 +1987,7 @@ class TelegramBot {
           [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
            Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
           [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
-           Markup.button.callback(`🎯 Score: ${scoreLabel}`, 'oc_cfg_minscore')],
+           Markup.button.callback(`🎯 Score: ${ocScoreLabel(te)}`, 'oc_cfg_minscore')],
           [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
            Markup.button.callback('🔄 Refresh', 'oc_settings')],
           [Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
@@ -2201,7 +2199,11 @@ class TelegramBot {
     // ── ONCHAIN SETTINGS PANEL (full inline buttons) ──
     const octe = () => this.onchainTradeExecutor;
     const ocCheck = (val, cur) => val === cur ? ' ✓' : '';
-    const ocScoreLabel = (conf) => conf === 5 ? '60+' : conf === 4 ? '45+' : '30+';
+    const ocScoreLabel = (te) => {
+      if (te && te.minOcScore) return te.minOcScore + '+';
+      if (!te) return '45+';
+      return te.minConfidence >= 5 ? '60+' : te.minConfidence >= 4 ? '45+' : '30+';
+    };
 
     const showOcSettings = async (ctx, isNew = false) => {
       const te = octe();
@@ -2229,7 +2231,7 @@ class TelegramBot {
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
-        `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
+        `🎯 Min Score: <b>${ocScoreLabel(te)}</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
@@ -2253,7 +2255,7 @@ class TelegramBot {
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol: ON' : '⚡ Vol: OFF'}`, 'oc_cfg_volfilt')],
-        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te.minConfidence)}`, 'oc_cfg_minscore'),
+        [Markup.button.callback(`🎯 Score: ${ocScoreLabel(te)}`, 'oc_cfg_minscore'),
          Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours'),
          Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
@@ -2499,32 +2501,38 @@ class TelegramBot {
       });
     }
 
-    // ── MIN SCORE (maps to confidence) ──
+    // ── MIN SCORE ──
     this.bot.action('oc_cfg_minscore', async (ctx) => {
       try {
         await ctx.answerCbQuery();
         const te = octe();
+        const cur = te.minOcScore || (te.minConfidence >= 5 ? 60 : te.minConfidence >= 4 ? 45 : 30);
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — MIN SCORE TO AUTO-TRADE</b>\n\n` +
-          `Current: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n\n` +
-          `🎯 <b>30+</b> — All signals (early + notable + high)\n` +
-          `⚡ <b>45+</b> — Notable + high conviction only\n` +
-          `🔥 <b>60+</b> — High conviction only (safest)\n\n` +
+          `Current: <b>${cur}+</b>\n\n` +
           `Lower = more trades, higher = fewer but stronger signals.`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`🎯 30+ (all)${ocCheck(3, te.minConfidence)}`, 'oc_score_3')],
-            [Markup.button.callback(`⚡ 45+ (notable)${ocCheck(4, te.minConfidence)}`, 'oc_score_4')],
-            [Markup.button.callback(`🔥 60+ (high only)${ocCheck(5, te.minConfidence)}`, 'oc_score_5')],
+            [Markup.button.callback(`30+ (all)${ocCheck(30, cur)}`, 'oc_minscore_30'),
+             Markup.button.callback(`35+${ocCheck(35, cur)}`, 'oc_minscore_35'),
+             Markup.button.callback(`40+${ocCheck(40, cur)}`, 'oc_minscore_40')],
+            [Markup.button.callback(`45+${ocCheck(45, cur)}`, 'oc_minscore_45'),
+             Markup.button.callback(`50+${ocCheck(50, cur)}`, 'oc_minscore_50'),
+             Markup.button.callback(`55+${ocCheck(55, cur)}`, 'oc_minscore_55')],
+            [Markup.button.callback(`60+ (high)${ocCheck(60, cur)}`, 'oc_minscore_60'),
+             Markup.button.callback(`70+${ocCheck(70, cur)}`, 'oc_minscore_70')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`oc_cfg_minscore error: ${e.message}`); }
     });
-    for (const conf of [3, 4, 5]) {
-      this.bot.action(`oc_score_${conf}`, async (ctx) => {
+    for (const score of [30, 35, 40, 45, 50, 55, 60, 70]) {
+      this.bot.action(`oc_minscore_${score}`, async (ctx) => {
         try {
-          octe().minConfidence = conf; octe().saveConfig();
-          await ctx.answerCbQuery(`Min score: ${ocScoreLabel(conf)}`);
+          const te = octe();
+          te.minOcScore = score;
+          te.minConfidence = score >= 60 ? 5 : score >= 45 ? 4 : 3;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Min score: ${score}+`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_score error: ${e.message}`); }
       });

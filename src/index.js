@@ -873,7 +873,7 @@ async function main() {
 
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
         // (calling buildTradeSetup again can flip direction between neutral/long)
-        const ocMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
+        const ocMinScore = onchainTradeExecutor.minOcScore || (onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35);
         for (const token of qualityTokens) {
           if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
           try {
@@ -1069,7 +1069,7 @@ async function main() {
       }
 
       // Auto-trade demand zone signals — ONLY with bounce confirmation
-      const dzMinScore = onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35;
+      const dzMinScore = onchainTradeExecutor.minOcScore || (onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35);
       for (const token of qualified) {
         if (token.score < dzMinScore || !onchainTradeExecutor.enabled) continue;
         const setup = token._liveSetup;
