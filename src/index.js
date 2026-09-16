@@ -50,6 +50,7 @@ async function main() {
       return res.end(JSON.stringify({ status: 'ok', dbReady, uptime: process.uptime() }));
     }
 
+
     if (url.pathname === '/' || url.pathname === '/dashboard') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
       return res.end(dashboardHtml);

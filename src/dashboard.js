@@ -318,10 +318,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
   <div class="setup-card">
     <h2>Signal Command</h2>
     <p>Enter your dashboard API key to access live signals.</p>
-    <label>Dashboard Key</label>
-    <input type="password" id="cfg-key" placeholder="Your DASHBOARD_KEY from .env" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <div id="login-error" style="color:var(--danger);font-size:12px;margin-bottom:8px;display:none"></div>
-    <button onclick="saveConfig()">Connect</button>
+    <form onsubmit="event.preventDefault(); saveConfig(); return false;">
+      <label>Dashboard Key</label>
+      <input type="text" id="cfg-key" placeholder="Your DASHBOARD_KEY from .env" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="-webkit-text-security:disc">
+      <div id="login-error" style="color:var(--danger);font-size:12px;margin-bottom:8px;display:none"></div>
+      <button type="submit">Connect</button>
+    </form>
   </div>
 </div>
 
