@@ -2224,12 +2224,13 @@ class TelegramBot {
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
         `🔰 Loss Buffer: <b>${te.lossBufferPct}%</b> (closes at $${te.maxLossPerTrade > 0 ? (te.maxLossPerTrade * te.lossBufferPct / 100).toFixed(1) : '—'})\n` +
         `🔄 Breakeven: <b>${te.profitProtectLevPnl}% ROI</b> (${(te.profitProtectLevPnl / te.defaultLeverage).toFixed(2)}% price @ ${te.defaultLeverage}x)\n` +
+        `🎯 TP Exit: <b>TP1 ${(te.tp1ClosePct * 100).toFixed(0)}%</b> close, <b>TP2 ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}</b> close\n` +
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Min Score: <b>${ocScoreLabel(te.minConfidence)}</b> (confidence ${te.minConfidence}/5)\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
-        `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')}`).join(', ') : '24/7'}</b> UTC\n` +
+        `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
@@ -2244,6 +2245,8 @@ class TelegramBot {
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'oc_cfg_lossbuf'),
          Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'oc_cfg_be')],
+        [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'oc_cfg_tp1'),
+         Markup.button.callback(`🎯 TP2: ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}`, 'oc_cfg_tp2')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
@@ -2731,6 +2734,125 @@ class TelegramBot {
         } catch (e) { logger.error(`oc_be error: ${e.message}`); }
       });
     }
+
+    // ── TP1 EXIT % ──
+    this.bot.action('oc_cfg_tp1', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        await ctx.editMessageText(
+          `🔗 <b>ONCHAIN — TP1 CLOSE %</b>\n\n` +
+          `Current: <b>${(te.tp1ClosePct * 100).toFixed(0)}%</b> of position closed at TP1\n\n` +
+          `<i>Higher = bank more profit early (safer).\nLower = keep more for TP2/TP3 (bigger upside).</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`25%${ocCheck(0.25, te.tp1ClosePct)}`, 'oc_tp1_25'),
+             Markup.button.callback(`33%${ocCheck(0.33, te.tp1ClosePct)}`, 'oc_tp1_33'),
+             Markup.button.callback(`50%${ocCheck(0.50, te.tp1ClosePct)}`, 'oc_tp1_50')],
+            [Markup.button.callback(`67%${ocCheck(0.67, te.tp1ClosePct)}`, 'oc_tp1_67'),
+             Markup.button.callback(`75%${ocCheck(0.75, te.tp1ClosePct)}`, 'oc_tp1_75'),
+             Markup.button.callback(`100%${ocCheck(1.0, te.tp1ClosePct)}`, 'oc_tp1_100')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_tp1 error: ${e.message}`); }
+    });
+    for (const pct of [25, 33, 50, 67, 75, 100]) {
+      this.bot.action(`oc_tp1_${pct}`, async (ctx) => {
+        try {
+          octe().tp1ClosePct = pct / 100; octe().saveConfig();
+          await ctx.answerCbQuery(`TP1 closes ${pct}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_tp1 error: ${e.message}`); }
+      });
+    }
+
+    // ── TP2 EXIT % ──
+    this.bot.action('oc_cfg_tp2', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        await ctx.editMessageText(
+          `🔗 <b>ONCHAIN — TP2 CLOSE %</b>\n\n` +
+          `Current: <b>${te.tp2ClosePct >= 1 ? 'ALL (100%)' : (te.tp2ClosePct * 100).toFixed(0) + '%'}</b> of remaining closed at TP2\n\n` +
+          `<i>100% = close everything at TP2, trade done (recommended for onchain).\nLower % keeps a runner for TP3/TP4.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`33%${ocCheck(0.33, te.tp2ClosePct)}`, 'oc_tp2_33'),
+             Markup.button.callback(`50%${ocCheck(0.50, te.tp2ClosePct)}`, 'oc_tp2_50'),
+             Markup.button.callback(`75%${ocCheck(0.75, te.tp2ClosePct)}`, 'oc_tp2_75')],
+            [Markup.button.callback(`ALL (100%)${ocCheck(1.0, te.tp2ClosePct)}`, 'oc_tp2_100')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_tp2 error: ${e.message}`); }
+    });
+    for (const pct of [33, 50, 75, 100]) {
+      this.bot.action(`oc_tp2_${pct}`, async (ctx) => {
+        try {
+          octe().tp2ClosePct = pct / 100; octe().saveConfig();
+          await ctx.answerCbQuery(`TP2 closes ${pct}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_tp2 error: ${e.message}`); }
+      });
+    }
+
+    // ── TRADING HOURS ──
+    this.bot.action('oc_cfg_hours', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const hasHours = te.tradingHours?.length > 0;
+        const hoursDesc = hasHours
+          ? te.tradingHours.map(([s, e]) => {
+              const ws = (s + 1) % 24, we = (e + 1) % 24;
+              const fmt = h => { const h12 = h % 12 || 12; return h12 + (h >= 12 ? 'PM' : 'AM'); };
+              return `${fmt(ws)}-${fmt(we)} WAT (${s}-${e} UTC)`;
+            }).join('\n')
+          : '24/7 (no restrictions)';
+        await ctx.editMessageText(
+          `🔗 <b>ONCHAIN — TRADING HOURS</b>\n\n` +
+          `Current:\n<b>${hoursDesc}</b>\n\n` +
+          `<b>Best hours (data):</b>\n` +
+          `✅ 8PM-1AM WAT (19-0 UTC) — 60-67% WR\n` +
+          `✅ 7-8AM WAT (6-7 UTC) — 50-62% WR\n` +
+          `✅ 3-4AM WAT (2-3 UTC) — 60% WR\n\n` +
+          `<b>Worst hours:</b>\n` +
+          `❌ 5AM WAT (4 UTC) — 19% WR\n` +
+          `❌ 5-8PM WAT (16-18 UTC) — 17-18% WR, -$92 PnL\n\n` +
+          `<i>Pick a preset or 24/7 to trade all hours:</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🌙 Safe: Skip 5AM + 5-8PM WAT', 'oc_hrs_safe')],
+            [Markup.button.callback('🎯 Best only: 6AM-5PM + 8PM-5AM WAT', 'oc_hrs_best')],
+            [Markup.button.callback('🔓 24/7 (no restrictions)', 'oc_hrs_247')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_hours error: ${e.message}`); }
+    });
+
+    this.bot.action('oc_hrs_safe', async (ctx) => {
+      try {
+        octe().tradingHours = [[0, 4], [5, 16], [19, 24]];
+        octe().saveConfig();
+        await ctx.answerCbQuery('Hours: skip 5AM + 5-8PM WAT');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+    });
+    this.bot.action('oc_hrs_best', async (ctx) => {
+      try {
+        octe().tradingHours = [[0, 4], [5, 9], [11, 16], [19, 24]];
+        octe().saveConfig();
+        await ctx.answerCbQuery('Hours: best windows only');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+    });
+    this.bot.action('oc_hrs_247', async (ctx) => {
+      try {
+        octe().tradingHours = [];
+        octe().saveConfig();
+        await ctx.answerCbQuery('Hours: 24/7');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); }
+    });
 
     // Also wire /onchainsettings command to show the inline panel
     this.bot.command('onchainsettings', async (ctx) => {
