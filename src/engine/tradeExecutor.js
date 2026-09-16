@@ -180,16 +180,25 @@ class TradeExecutor {
     const cooldownData = this.cooldowns.get(signal.symbol?.toUpperCase());
     if (cooldownData && Date.now() < cooldownData.until) {
       if (cooldownData.wasLoss) {
-        const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
-        return { ok: false, reason: `${signal.symbol} on loss cooldown (${minsLeft}m remaining — no bypass after loss)` };
+        const minCooldownMs = 30 * 60 * 1000;
+        const elapsed = Date.now() - (cooldownData.until - 4 * 60 * 60 * 1000);
+        const freshThesis = (signal.onchainScore || 0) >= 60 && elapsed >= minCooldownMs;
+        if (freshThesis) {
+          logger.info(`${signal.symbol}: loss cooldown bypassed — fresh thesis (score ${signal.onchainScore}, ${Math.round(elapsed / 60000)}m elapsed)`);
+        } else {
+          const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
+          const need = elapsed < minCooldownMs ? `need ${Math.ceil((minCooldownMs - elapsed) / 60000)}m more` : `need score >= 60, got ${signal.onchainScore || 0}`;
+          return { ok: false, reason: `${signal.symbol} on loss cooldown (${minsLeft}m left — re-entry requires fresh thesis: ${need})` };
+        }
+      } else {
+        const priceDrift = cooldownData.entryPrice && signal.currentPrice
+          ? Math.abs(signal.currentPrice - cooldownData.entryPrice) / cooldownData.entryPrice * 100 : 0;
+        if (priceDrift < 3) {
+          const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
+          return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
+        }
+        logger.info(`${signal.symbol}: cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry (${cooldownData.entryPrice} → ${signal.currentPrice})`);
       }
-      const priceDrift = cooldownData.entryPrice && signal.currentPrice
-        ? Math.abs(signal.currentPrice - cooldownData.entryPrice) / cooldownData.entryPrice * 100 : 0;
-      if (priceDrift < 3) {
-        const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
-        return { ok: false, reason: `${signal.symbol} on cooldown (${minsLeft}m remaining)` };
-      }
-      logger.info(`${signal.symbol}: cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry (${cooldownData.entryPrice} → ${signal.currentPrice})`);
     }
 
     // Re-entry guard (DB-based, survives restarts):
@@ -215,18 +224,27 @@ class TradeExecutor {
         const reentryUntil = closedAt + cooldownMs;
         if (Date.now() < reentryUntil) {
           if (wasLoss) {
-            const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
-            return { ok: false, reason: `${signal.symbol} blocked — loss cooldown (${minsLeft}m remaining — no bypass after loss)` };
-          }
-          const lastEntry = parseFloat(lastTrades[0].entry_price);
-          const priceDrift = lastEntry && signal.currentPrice
-            ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
-          if (priceDrift >= 3) {
-            logger.info(`${signal.symbol}: DB cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry ($${lastEntry} → $${signal.currentPrice})`);
+            const minCooldownMs = 30 * 60 * 1000;
+            const elapsed = Date.now() - closedAt;
+            const freshThesis = (signal.onchainScore || 0) >= 60 && elapsed >= minCooldownMs;
+            if (freshThesis) {
+              logger.info(`${signal.symbol}: DB loss cooldown bypassed — fresh thesis (score ${signal.onchainScore}, ${Math.round(elapsed / 60000)}m since loss)`);
+            } else {
+              const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
+              const need = elapsed < minCooldownMs ? `need ${Math.ceil((minCooldownMs - elapsed) / 60000)}m more` : `need score >= 60, got ${signal.onchainScore || 0}`;
+              return { ok: false, reason: `${signal.symbol} blocked — loss cooldown (${minsLeft}m left — re-entry requires fresh thesis: ${need})` };
+            }
           } else {
-            const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
-            const label = isFlip ? 'direction flip cooldown' : 're-entry cooldown';
-            return { ok: false, reason: `${signal.symbol} blocked — ${label} (${minsLeft}m remaining)` };
+            const lastEntry = parseFloat(lastTrades[0].entry_price);
+            const priceDrift = lastEntry && signal.currentPrice
+              ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
+            if (priceDrift >= 3) {
+              logger.info(`${signal.symbol}: DB cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry ($${lastEntry} → $${signal.currentPrice})`);
+            } else {
+              const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
+              const label = isFlip ? 'direction flip cooldown' : 're-entry cooldown';
+              return { ok: false, reason: `${signal.symbol} blocked — ${label} (${minsLeft}m remaining)` };
+            }
           }
         }
       }
@@ -626,19 +644,27 @@ class TradeExecutor {
         else cooldownMs = 1 * 60 * 60 * 1000;
         if (Date.now() < closedAt + cooldownMs) {
           if (wasLoss) {
-            const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
-            logger.info(`Queue skip ${signal.symbol}: loss cooldown (${minsLeft}m remaining — no bypass after loss)`);
-            return;
+            const minCooldownMs = 30 * 60 * 1000;
+            const elapsed = Date.now() - closedAt;
+            const freshThesis = (signal.onchainScore || 0) >= 60 && elapsed >= minCooldownMs;
+            if (!freshThesis) {
+              const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
+              const need = elapsed < minCooldownMs ? `need ${Math.ceil((minCooldownMs - elapsed) / 60000)}m more` : `need score >= 60, got ${signal.onchainScore || 0}`;
+              logger.info(`Queue skip ${signal.symbol}: loss cooldown (${minsLeft}m left — ${need})`);
+              return;
+            }
+            logger.info(`Queue ${signal.symbol}: loss cooldown bypassed — fresh thesis (score ${signal.onchainScore}, ${Math.round(elapsed / 60000)}m since loss)`);
+          } else {
+            const lastEntry = parseFloat(lastTrades[0].entry_price);
+            const priceDrift = lastEntry && signal.currentPrice
+              ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
+            if (priceDrift < 3) {
+              const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
+              logger.info(`Queue skip ${signal.symbol}: cooldown (${minsLeft}m remaining)`);
+              return;
+            }
+            logger.info(`Queue ${signal.symbol}: cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry`);
           }
-          const lastEntry = parseFloat(lastTrades[0].entry_price);
-          const priceDrift = lastEntry && signal.currentPrice
-            ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
-          if (priceDrift < 3) {
-            const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
-            logger.info(`Queue skip ${signal.symbol}: cooldown (${minsLeft}m remaining)`);
-            return;
-          }
-          logger.info(`Queue ${signal.symbol}: cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry`);
         }
       }
     } catch (e) { /* proceed */ }
