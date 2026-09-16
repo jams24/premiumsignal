@@ -179,6 +179,10 @@ class TradeExecutor {
 
     const cooldownData = this.cooldowns.get(signal.symbol?.toUpperCase());
     if (cooldownData && Date.now() < cooldownData.until) {
+      if (cooldownData.wasLoss) {
+        const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
+        return { ok: false, reason: `${signal.symbol} on loss cooldown (${minsLeft}m remaining — no bypass after loss)` };
+      }
       const priceDrift = cooldownData.entryPrice && signal.currentPrice
         ? Math.abs(signal.currentPrice - cooldownData.entryPrice) / cooldownData.entryPrice * 100 : 0;
       if (priceDrift < 3) {
@@ -210,6 +214,10 @@ class TradeExecutor {
         else cooldownMs = 1 * 60 * 60 * 1000;
         const reentryUntil = closedAt + cooldownMs;
         if (Date.now() < reentryUntil) {
+          if (wasLoss) {
+            const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
+            return { ok: false, reason: `${signal.symbol} blocked — loss cooldown (${minsLeft}m remaining — no bypass after loss)` };
+          }
           const lastEntry = parseFloat(lastTrades[0].entry_price);
           const priceDrift = lastEntry && signal.currentPrice
             ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
@@ -217,7 +225,7 @@ class TradeExecutor {
             logger.info(`${signal.symbol}: DB cooldown bypassed — price moved ${priceDrift.toFixed(1)}% from last entry ($${lastEntry} → $${signal.currentPrice})`);
           } else {
             const minsLeft = Math.ceil((reentryUntil - Date.now()) / 60000);
-            const label = wasLoss ? 'loss cooldown' : isFlip ? 'direction flip cooldown' : 're-entry cooldown';
+            const label = isFlip ? 'direction flip cooldown' : 're-entry cooldown';
             return { ok: false, reason: `${signal.symbol} blocked — ${label} (${minsLeft}m remaining)` };
           }
         }
@@ -617,6 +625,11 @@ class TradeExecutor {
         else if (isFlip) cooldownMs = 2 * 60 * 60 * 1000;
         else cooldownMs = 1 * 60 * 60 * 1000;
         if (Date.now() < closedAt + cooldownMs) {
+          if (wasLoss) {
+            const minsLeft = Math.ceil((closedAt + cooldownMs - Date.now()) / 60000);
+            logger.info(`Queue skip ${signal.symbol}: loss cooldown (${minsLeft}m remaining — no bypass after loss)`);
+            return;
+          }
           const lastEntry = parseFloat(lastTrades[0].entry_price);
           const priceDrift = lastEntry && signal.currentPrice
             ? Math.abs(signal.currentPrice - lastEntry) / lastEntry * 100 : 0;
@@ -1297,7 +1310,7 @@ class TradeExecutor {
                       await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'thesis_broken');
                       this.dailyPnL += pnlUsd;
                       if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-                      this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
+                      this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
                       logger.info(`${trade.symbol}: SMC structure flipped ${result.structureBias} with ChoCH — thesis broken, closing`);
                     }
                   }
@@ -1320,7 +1333,7 @@ class TradeExecutor {
             await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'invalidated');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
           }
         }
 
@@ -1450,7 +1463,7 @@ class TradeExecutor {
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
             if (trade.mode === 'live') await this.closeExchangePosition(trade);
-            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
+            this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
             logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${effectiveCap.toFixed(2)}, cap $${this.maxLossPerTrade} × ${this.lossBufferPct}%)`);
           }
         }
@@ -1466,7 +1479,7 @@ class TradeExecutor {
           await db.closeTrade(trade.id, slExitPrice, slPnlPct, slPnlUsd, 'sl');
           this.dailyPnL += slPnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + slPnlUsd;
-          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price });
+          this.cooldowns.set(trade.symbol.toUpperCase(), { until: Date.now() + 4 * 60 * 60 * 1000, entryPrice: trade.entry_price, wasLoss: true });
         }
         // --- AUTO-CLOSE AFTER maxTradeAge ---
         else if (!action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
