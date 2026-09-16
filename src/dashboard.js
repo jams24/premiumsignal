@@ -1171,7 +1171,7 @@ function renderSignals() {
 
     html += '<div class="chart-section">';
     html += '<div class="chart-tf-tabs" id="tf-tabs-' + i + '">';
-    var chartAttrs = 'data-idx="' + i + '" data-symbol="' + s.symbol + '" data-dir="' + s.direction + '"';
+    var chartAttrs = 'data-idx="' + i + '" data-symbol="' + s.symbol + '" data-dir="' + s.direction + '" data-created="' + s.created_at + '"';
     html += '<button class="chart-tf-btn" data-tf="5m" ' + chartAttrs + ' onclick="loadChart(this)">5m</button>';
     html += '<button class="chart-tf-btn active" data-tf="15m" ' + chartAttrs + ' onclick="loadChart(this)">15m</button>';
     html += '<button class="chart-tf-btn" data-tf="1h" ' + chartAttrs + ' onclick="loadChart(this)">1h</button>';
@@ -1334,9 +1334,10 @@ function loadChart(btn) {
   tabs.querySelectorAll('.chart-tf-btn').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
 
+  var created = btn.dataset.created;
   var s = null;
   for (var si = 0; si < signals.length; si++) {
-    if (signals[si].symbol === sym && signals[si].direction === dir) { s = signals[si]; break; }
+    if (signals[si].symbol === sym && signals[si].created_at === created) { s = signals[si]; break; }
   }
   if (!s) return;
   s = Object.assign({}, s, { conviction: getConviction(s) });
