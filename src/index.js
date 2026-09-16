@@ -88,7 +88,7 @@ async function main() {
               created_at,
               ROW_NUMBER() OVER (PARTITION BY symbol, data->>'direction' ORDER BY created_at ASC) as rn
             FROM alert_log
-            WHERE alert_type = 'ONCHAIN'
+            WHERE alert_type IN ('ONCHAIN','DEMAND_ZONE','SWING','OI_SPIKE')
               AND (data->>'score')::int >= $1
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
           ),
@@ -99,7 +99,7 @@ async function main() {
               (data->>'price')::numeric as best_price,
               created_at as best_at
             FROM alert_log
-            WHERE alert_type = 'ONCHAIN'
+            WHERE alert_type IN ('ONCHAIN','DEMAND_ZONE','SWING','OI_SPIKE')
               AND (data->>'score')::int >= $1
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
             ORDER BY symbol, data->>'direction', (data->>'score')::int DESC, created_at ASC
@@ -109,7 +109,7 @@ async function main() {
               symbol, data->>'direction' as direction,
               (data->>'score')::int as latest_score
             FROM alert_log
-            WHERE alert_type = 'ONCHAIN'
+            WHERE alert_type IN ('ONCHAIN','DEMAND_ZONE','SWING','OI_SPIKE')
               AND created_at >= NOW() - INTERVAL '1 hour' * $2
             ORDER BY symbol, data->>'direction', created_at DESC
           )
