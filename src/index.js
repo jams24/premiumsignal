@@ -896,9 +896,10 @@ async function main() {
               if (recentAlerts.length) {
                 const firstAlertPrice = parseFloat(recentAlerts[0].price);
                 const driftPct = ((token.price - firstAlertPrice) / firstAlertPrice) * 100;
-                const badDrift = setup.direction === 'long' ? driftPct < -5 : driftPct > 5;
+                const badDrift = setup.direction === 'long' ? (driftPct < -5 || driftPct > 10) : (driftPct > 5 || driftPct < -10);
                 if (badDrift) {
-                  logger.info(`Onchain skip ${token.symbol}: entry drifted ${driftPct.toFixed(1)}% from first alert $${firstAlertPrice.toPrecision(4)} — falling knife`);
+                  const reason = (setup.direction === 'long' ? driftPct > 0 : driftPct < 0) ? 'chasing pump' : 'falling knife';
+                  logger.info(`Onchain skip ${token.symbol}: entry drifted ${driftPct.toFixed(1)}% from first alert $${firstAlertPrice.toPrecision(4)} — ${reason}`);
                   continue;
                 }
               }
