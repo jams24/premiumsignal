@@ -553,8 +553,15 @@ class UserPaperEngine {
         if (exchange.markets?.[pair]) {
           try {
             const ticker = await exchange.fetchTicker(pair);
-            const data = { price: ticker.last, ohlcv: null };
+            const data = { price: ticker.last, ohlcv: null, recentHigh: null, recentLow: null };
             try { data.ohlcv = await exchange.fetchOHLCV(pair, '4h', undefined, 2); } catch (e) { /* ok */ }
+            try {
+              const ohlcv1m = await exchange.fetchOHLCV(pair, '1m', undefined, 3);
+              if (ohlcv1m && ohlcv1m.length > 0) {
+                data.recentHigh = Math.max(...ohlcv1m.map(c => c[2]));
+                data.recentLow = Math.min(...ohlcv1m.map(c => c[3]));
+              }
+            } catch (e) { /* ok */ }
             priceData.set(key, data);
           } catch (e) {
             logger.debug(`user paper ticker ${key}: ${e.message}`);
@@ -581,14 +588,14 @@ class UserPaperEngine {
       const u = userSettings.get(t.telegram_id);
       if (u?.per_trade_loss) t._perTradeLoss = parseFloat(u.per_trade_loss);
       try {
-        await this.evaluateTrade(t, data.price, data.ohlcv);
+        await this.evaluateTrade(t, data.price, data.ohlcv, data.recentHigh, data.recentLow);
       } catch (e) {
         logger.warn(`user paper evaluate #${t.id}: ${e.message}`);
       }
     }
   }
 
-  async evaluateTrade(t, price, ohlcv) {
+  async evaluateTrade(t, price, ohlcv, recentHigh, recentLow) {
     const isLong = t.direction === 'long';
     const entry = parseFloat(t.entry_price);
     const posSize = parseFloat(t.position_size);
@@ -601,9 +608,16 @@ class UserPaperEngine {
       : ((entry - price) / entry) * 100;
     const pnlUsd = (pnlPct / 100) * posSize;
 
+    // Use candle high/low to catch intra-minute spikes for TP/SL
+    const bestPrice = isLong
+      ? Math.max(price, recentHigh || price)
+      : Math.min(price, recentLow || price);
+    const tpCheckPrice = isLong ? (recentHigh || price) : (recentLow || price);
+    const slCheckPrice = isLong ? (recentLow || price) : (recentHigh || price);
+
     // Always track peak price
     const prevPeak = parseFloat(t.peak_price) || entry;
-    const curPeak = isLong ? Math.max(prevPeak, price) : Math.min(prevPeak, price);
+    const curPeak = isLong ? Math.max(prevPeak, bestPrice) : Math.min(prevPeak, bestPrice);
     if (curPeak !== prevPeak) {
       await db.updateUserPaperTrade(t.id, { peak_price: curPeak });
       t.peak_price = curPeak;
@@ -681,16 +695,19 @@ class UserPaperEngine {
     }
 
     // --- TP4: close full remaining ---
-    if (!action && t.tp4 && (isLong ? price >= t.tp4 : price <= t.tp4)) {
+    if (!action && t.tp4 && (isLong ? tpCheckPrice >= t.tp4 : tpCheckPrice <= t.tp4)) {
       action = 'tp4';
-      const totalPnl = (pnlPct / 100) * posSize + parseFloat(t.realized_pnl_usd || 0);
-      await db.closeUserPaperTrade(t.id, price, pnlPct, totalPnl, 'tp4');
+      const tpExit = isLong ? Math.max(price, t.tp4) : Math.min(price, t.tp4);
+      const tpPnlPct = isLong ? ((tpExit - entry) / entry) * 100 : ((entry - tpExit) / entry) * 100;
+      const totalPnl = (tpPnlPct / 100) * posSize + parseFloat(t.realized_pnl_usd || 0);
+      await db.closeUserPaperTrade(t.id, tpExit, tpPnlPct, totalPnl, 'tp4');
     }
 
     // --- TP3: close 50% remaining, keep runner, SL to TP2 ---
-    if (!action && !t.hit_tp3 && t.tp3 && (isLong ? price >= t.tp3 : price <= t.tp3)) {
+    if (!action && !t.hit_tp3 && t.tp3 && (isLong ? tpCheckPrice >= t.tp3 : tpCheckPrice <= t.tp3)) {
       action = 'tp3';
-      const partialPnl = await this.partialClose(t, 0.5, price);
+      const tpExit = isLong ? Math.max(price, t.tp3) : Math.min(price, t.tp3);
+      const partialPnl = await this.partialClose(t, 0.5, tpExit);
       await db.updateUserPaperTrade(t.id, { hit_tp3: true, stop_loss: t.tp2 });
       await this.notify(t.telegram_id,
         `🎯 <b>TP3 HIT</b> — $${escapeHtml(t.symbol)}\n` +
@@ -699,9 +716,10 @@ class UserPaperEngine {
     }
 
     // --- TP2: close 50% remaining, SL to TP1 ---
-    if (!action && !t.hit_tp2 && t.tp2 && (isLong ? price >= t.tp2 : price <= t.tp2)) {
+    if (!action && !t.hit_tp2 && t.tp2 && (isLong ? tpCheckPrice >= t.tp2 : tpCheckPrice <= t.tp2)) {
       action = 'tp2';
-      const partialPnl = await this.partialClose(t, 0.5, price);
+      const tpExit = isLong ? Math.max(price, t.tp2) : Math.min(price, t.tp2);
+      const partialPnl = await this.partialClose(t, 0.5, tpExit);
       await db.updateUserPaperTrade(t.id, { hit_tp2: true, stop_loss: t.tp1 });
       await this.notify(t.telegram_id,
         `🎯 <b>TP2 HIT</b> — $${escapeHtml(t.symbol)}\n` +
@@ -709,9 +727,10 @@ class UserPaperEngine {
     }
 
     // --- TP1: close 33%, SL to breakeven ---
-    if (!action && !t.hit_tp1 && t.tp1 && (isLong ? price >= t.tp1 : price <= t.tp1)) {
+    if (!action && !t.hit_tp1 && t.tp1 && (isLong ? tpCheckPrice >= t.tp1 : tpCheckPrice <= t.tp1)) {
       action = 'tp1';
-      const partialPnl = await this.partialClose(t, 0.33, price);
+      const tpExit = isLong ? Math.max(price, t.tp1) : Math.min(price, t.tp1);
+      const partialPnl = await this.partialClose(t, 0.33, tpExit);
       await db.updateUserPaperTrade(t.id, { hit_tp1: true, stop_loss: entry });
       await this.notify(t.telegram_id,
         `🎯 <b>TP1 HIT</b> — $${escapeHtml(t.symbol)}\n` +
@@ -721,7 +740,7 @@ class UserPaperEngine {
     // --- TRAILING SL (after TP1) — tightens proportionally to profit ---
     if (!action && t.hit_tp1 && atr) {
       const peak = parseFloat(t.peak_price) || entry;
-      const newPeak = isLong ? Math.max(peak, price) : Math.min(peak, price);
+      const newPeak = isLong ? Math.max(peak, bestPrice) : Math.min(peak, bestPrice);
 
       if (newPeak !== peak) {
         await db.updateUserPaperTrade(t.id, { peak_price: newPeak });
@@ -759,7 +778,7 @@ class UserPaperEngine {
         action = 'profit_protect';
       } else if (atr) {
         const peak = parseFloat(t.peak_price) || entry;
-        const newPeak = isLong ? Math.max(peak, price) : Math.min(peak, price);
+        const newPeak = isLong ? Math.max(peak, bestPrice) : Math.min(peak, bestPrice);
         if (newPeak !== peak) {
           await db.updateUserPaperTrade(t.id, { peak_price: newPeak });
           t.peak_price = newPeak;
@@ -789,8 +808,8 @@ class UserPaperEngine {
         `Closed at $${price.toPrecision(6)}\nP&L: $${pnlUsd.toFixed(2)}${this.balanceTag(bal)}`);
     }
 
-    // --- SL CHECK ---
-    if (!action && t.stop_loss && (isLong ? price <= parseFloat(t.stop_loss) : price >= parseFloat(t.stop_loss))) {
+    // --- SL CHECK: use candle low/high to catch intra-minute wicks ---
+    if (!action && t.stop_loss && (isLong ? slCheckPrice <= parseFloat(t.stop_loss) : slCheckPrice >= parseFloat(t.stop_loss))) {
       action = 'sl';
       const slPrice = parseFloat(t.stop_loss);
       const slPnlPct = isLong

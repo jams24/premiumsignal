@@ -1186,6 +1186,14 @@ class TradeExecutor {
             try {
               ohlcv = await exchange.fetchOHLCV(pair, '4h', undefined, 2);
             } catch (e) { /* ok — invalidation check will be skipped */ }
+            // Fetch recent 1m candles to catch intra-minute spikes/dips for TP/SL
+            try {
+              const ohlcv1m = await exchange.fetchOHLCV(pair, '1m', undefined, 3);
+              if (ohlcv1m && ohlcv1m.length > 0) {
+                trade._recentHigh = Math.max(...ohlcv1m.map(c => c[2]));
+                trade._recentLow = Math.min(...ohlcv1m.map(c => c[3]));
+              }
+            } catch (e) { /* ok — falls back to currentPrice only */ }
             break;
           }
         }
@@ -1236,11 +1244,17 @@ class TradeExecutor {
           : ((trade.entry_price - exitPrice) / trade.entry_price) * 100;
         const pnlUsd = (pnlPct / 100) * trade.position_size;
 
-        // Always track peak price — regardless of TP/protection state
+        // Always track peak price — use candle high/low to catch intra-minute spikes
         const prevPeak = trade.peak_price || trade.entry_price;
+        const bestPrice = isLong
+          ? Math.max(currentPrice, trade._recentHigh || currentPrice)
+          : Math.min(currentPrice, trade._recentLow || currentPrice);
         const curPeak = isLong
-          ? Math.max(prevPeak, currentPrice)
-          : Math.min(prevPeak, currentPrice);
+          ? Math.max(prevPeak, bestPrice)
+          : Math.min(prevPeak, bestPrice);
+        // Use candle extremes for TP/SL checks to never miss a spike
+        const tpCheckPrice = isLong ? (trade._recentHigh || currentPrice) : (trade._recentLow || currentPrice);
+        const slCheckPrice = isLong ? (trade._recentLow || currentPrice) : (trade._recentHigh || currentPrice);
         if (curPeak !== prevPeak) {
           await db.updateTradePeakPrice(trade.id, curPeak);
           trade.peak_price = curPeak;
@@ -1330,35 +1344,42 @@ class TradeExecutor {
         }
 
         // --- TP4 CHECK: close remaining runner ---
-        if (!action && trade.tp4 && (isLong ? currentPrice >= trade.tp4 : currentPrice <= trade.tp4)) {
+        if (!action && trade.tp4 && (isLong ? tpCheckPrice >= trade.tp4 : tpCheckPrice <= trade.tp4)) {
           action = 'tp4';
-          await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'tp4');
-          this.dailyPnL += pnlUsd;
-          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+          const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp4) : Math.min(exitPrice, trade.tp4)) : exitPrice;
+          const tpPnlPct = isLong ? ((tpExit - trade.entry_price) / trade.entry_price) * 100 : ((trade.entry_price - tpExit) / trade.entry_price) * 100;
+          const tpPnlUsd = (tpPnlPct / 100) * trade.position_size;
+          await db.closeTrade(trade.id, tpExit, tpPnlPct, tpPnlUsd, 'tp4');
+          this.dailyPnL += tpPnlUsd;
+          if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + tpPnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction });
         }
         // --- TP3 CHECK: close 50% remaining, keep ~25% original as runner, SL to TP2 ---
-        else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? currentPrice >= trade.tp3 : currentPrice <= trade.tp3)) {
+        else if (!action && !trade.hit_tp3 && trade.tp3 && (isLong ? tpCheckPrice >= trade.tp3 : tpCheckPrice <= trade.tp3)) {
           action = 'tp3';
           await db.updateTradeHit(trade.id, 'hit_tp3');
-          const partialPnl = await this.partialClosePosition(trade, 0.5, exitPrice);
+          const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp3) : Math.min(exitPrice, trade.tp3)) : exitPrice;
+          const partialPnl = await this.partialClosePosition(trade, 0.5, tpExit);
           const newSL = trade.tp2;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
           logger.info(`${trade.symbol}: TP3 hit, closed 50% (+$${partialPnl.toFixed(2)}), runner remains — SL to TP2`);
         }
         // --- TP2 CHECK: close tp2ClosePct of remaining, trail SL to TP1 ---
-        else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? currentPrice >= trade.tp2 : currentPrice <= trade.tp2)) {
+        else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? tpCheckPrice >= trade.tp2 : tpCheckPrice <= trade.tp2)) {
           action = 'tp2';
           await db.updateTradeHit(trade.id, 'hit_tp2');
+          const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp2) : Math.min(exitPrice, trade.tp2)) : exitPrice;
           if (this.tp2ClosePct >= 1.0) {
-            const partialPnl = await this.partialClosePosition(trade, 1.0, exitPrice);
-            await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'tp2');
-            this.dailyPnL += pnlUsd;
-            if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
+            const partialPnl = await this.partialClosePosition(trade, 1.0, tpExit);
+            const tpPnlPct = isLong ? ((tpExit - trade.entry_price) / trade.entry_price) * 100 : ((trade.entry_price - tpExit) / trade.entry_price) * 100;
+            const tpPnlUsd = (tpPnlPct / 100) * trade.position_size;
+            await db.closeTrade(trade.id, tpExit, tpPnlPct, tpPnlUsd, 'tp2');
+            this.dailyPnL += tpPnlUsd;
+            if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + tpPnlUsd;
             logger.info(`${trade.symbol}: TP2 hit, closed ALL remaining (+$${partialPnl.toFixed(2)}) — trade done`);
           } else {
-            const partialPnl = await this.partialClosePosition(trade, this.tp2ClosePct, exitPrice);
+            const partialPnl = await this.partialClosePosition(trade, this.tp2ClosePct, tpExit);
             const newSL = trade.tp1;
             await db.updateTradeStopLoss(trade.id, newSL);
             await this.updateExchangeSL(trade, newSL);
@@ -1366,10 +1387,11 @@ class TradeExecutor {
           }
         }
         // --- TP1 CHECK: close tp1ClosePct of position, trail SL to breakeven ---
-        else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? currentPrice >= trade.tp1 : currentPrice <= trade.tp1)) {
+        else if (!action && !trade.hit_tp1 && trade.tp1 && (isLong ? tpCheckPrice >= trade.tp1 : tpCheckPrice <= trade.tp1)) {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
-          const partialPnl = await this.partialClosePosition(trade, this.tp1ClosePct, exitPrice);
+          const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp1) : Math.min(exitPrice, trade.tp1)) : exitPrice;
+          const partialPnl = await this.partialClosePosition(trade, this.tp1ClosePct, tpExit);
           const newSL = trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
@@ -1379,8 +1401,8 @@ class TradeExecutor {
         if (!action && trade.hit_tp1 && trade.atr) {
           const peak = trade.peak_price || trade.entry_price;
           const newPeak = isLong
-            ? Math.max(peak, currentPrice)
-            : Math.min(peak, currentPrice);
+            ? Math.max(peak, bestPrice)
+            : Math.min(peak, bestPrice);
 
           if (newPeak !== peak) {
             await db.updateTradePeakPrice(trade.id, newPeak);
@@ -1428,7 +1450,7 @@ class TradeExecutor {
             const profitDist = Math.abs((trade.peak_price || currentPrice) - trade.entry_price);
             const trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.33 || trade.atr * this.trailAtrMultPre);
             const peak = trade.peak_price || trade.entry_price;
-            const newPeak = isLong ? Math.max(peak, currentPrice) : Math.min(peak, currentPrice);
+            const newPeak = isLong ? Math.max(peak, bestPrice) : Math.min(peak, bestPrice);
             if (newPeak !== peak) {
               await db.updateTradePeakPrice(trade.id, newPeak);
               trade.peak_price = newPeak;
@@ -1459,8 +1481,8 @@ class TradeExecutor {
             logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${effectiveCap.toFixed(2)}, cap $${this.maxLossPerTrade} × ${this.lossBufferPct}%)`);
           }
         }
-        // --- SL CHECK ---
-        else if (!action && trade.stop_loss && (isLong ? currentPrice <= trade.stop_loss : currentPrice >= trade.stop_loss)) {
+        // --- SL CHECK: use candle low/high to catch intra-minute wicks ---
+        else if (!action && trade.stop_loss && (isLong ? slCheckPrice <= trade.stop_loss : slCheckPrice >= trade.stop_loss)) {
           action = 'sl';
           // Paper: SL price as exit; Live: bid/ask for realistic fill
           const slExitPrice = trade.mode === 'paper' ? trade.stop_loss : exitPrice;
