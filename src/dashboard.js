@@ -319,7 +319,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <h2>Signal Command</h2>
     <p>Enter your dashboard API key to access live signals.</p>
     <label>Dashboard Key</label>
-    <input type="password" id="cfg-key" placeholder="Your DASHBOARD_KEY from .env">
+    <input type="password" id="cfg-key" placeholder="Your DASHBOARD_KEY from .env" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div id="login-error" style="color:var(--danger);font-size:12px;margin-bottom:8px;display:none"></div>
     <button onclick="saveConfig()">Connect</button>
   </div>
 </div>
@@ -1185,7 +1186,8 @@ function init() {
   loadSizing();
   loadHours();
   renderHoursGrid();
-  var saved = localStorage.getItem('sc_key');
+  var saved = null;
+  try { saved = localStorage.getItem('sc_key'); } catch(e) {}
   if (saved) {
     apiKey = saved;
     document.getElementById('setup-overlay').hidden = true;
@@ -1200,14 +1202,32 @@ function init() {
 function saveConfig() {
   var key = document.getElementById('cfg-key').value.trim();
   if (!key) return;
-  apiKey = key;
-  localStorage.setItem('sc_key', key);
-  document.getElementById('setup-overlay').hidden = true;
-  document.getElementById('main-app').hidden = false;
-  updateSizingUI();
-  refreshAll();
-  refreshInterval = setInterval(refreshAll, 300000);
-  setInterval(updateTimer, 10000);
+  var errEl = document.getElementById('login-error');
+  var btn = document.querySelector('.setup-card button');
+  btn.textContent = 'Connecting...'; btn.disabled = true;
+  errEl.style.display = 'none';
+  fetch('/api/signals?key=' + encodeURIComponent(key) + '&hours=1&minScore=0')
+    .then(function(r) {
+      if (r.status === 401) {
+        errEl.textContent = 'Invalid key. Check your DASHBOARD_KEY and try again.';
+        errEl.style.display = 'block';
+        btn.textContent = 'Connect'; btn.disabled = false;
+        return;
+      }
+      apiKey = key;
+      try { localStorage.setItem('sc_key', key); } catch(e) {}
+      document.getElementById('setup-overlay').hidden = true;
+      document.getElementById('main-app').hidden = false;
+      updateSizingUI();
+      refreshAll();
+      refreshInterval = setInterval(refreshAll, 300000);
+      setInterval(updateTimer, 10000);
+    })
+    .catch(function(e) {
+      errEl.textContent = 'Connection failed: ' + e.message;
+      errEl.style.display = 'block';
+      btn.textContent = 'Connect'; btn.disabled = false;
+    });
 }
 
 function resetConfig() {
