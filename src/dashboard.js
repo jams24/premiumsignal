@@ -197,6 +197,30 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .edu-term .how { font-size: 12px; color: var(--text2); line-height: 1.6; padding: 8px 10px; background: var(--bg); border-radius: 6px; margin-top: 4px; }
 .edu-term .example { font-size: 12px; color: var(--gold); font-family: var(--font-mono); margin-top: 6px; padding: 6px 10px; background: var(--gold-dim); border-radius: 6px; border-left: 3px solid var(--gold); }
 .edu-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.edu-diagram { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); overflow-x: auto; }
+.edu-diagram-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.edu-candle-chart { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 0 8px; position: relative; }
+.edu-candle { display: flex; flex-direction: column; align-items: center; width: 14px; position: relative; }
+.edu-candle-body { width: 10px; border-radius: 1px; min-height: 4px; }
+.edu-candle-wick { width: 2px; }
+.edu-candle.green .edu-candle-body { background: var(--green); }
+.edu-candle.green .edu-candle-wick { background: var(--green); }
+.edu-candle.red .edu-candle-body { background: var(--danger); }
+.edu-candle.red .edu-candle-wick { background: var(--danger); }
+.edu-level { position: absolute; left: 0; right: 0; border-top: 1.5px dashed; font-size: 9px; padding-left: 4px; }
+.edu-label { position: absolute; font-size: 9px; white-space: nowrap; font-weight: 600; }
+.edu-metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.edu-metric-card { padding: 8px 10px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); }
+.edu-metric-card h5 { font-size: 11px; color: var(--accent); margin: 0 0 4px; font-family: var(--font-mono); }
+.edu-metric-card p { font-size: 11px; color: var(--text2); margin: 0; line-height: 1.5; }
+.edu-scale { display: flex; align-items: stretch; height: 24px; border-radius: 4px; overflow: hidden; margin: 6px 0; font-size: 10px; font-weight: 600; }
+.edu-scale > span { display: flex; align-items: center; justify-content: center; flex: 1; }
+.edu-vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: start; margin: 8px 0; }
+.edu-vs-col { padding: 8px 10px; border-radius: 6px; font-size: 11px; line-height: 1.6; }
+.edu-vs-col.bull { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); }
+.edu-vs-col.bear { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
+.edu-vs-divider { color: var(--muted); font-size: 13px; align-self: center; }
+@media (max-width: 600px) { .edu-metric-grid { grid-template-columns: 1fr; } .edu-vs { grid-template-columns: 1fr; } .edu-vs-divider { text-align: center; } }
 
 /* Morning Roster */
 .roster-panel { display:none; margin-bottom:16px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px 16px; }
@@ -635,6 +659,31 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>The Liquidity Sweep & Reclaim</h4>
             <div class="what">Before a real move, market makers often push price down quickly to trigger stop losses of early longs and grab liquidity below support. If price immediately bounces back (V-shape) and forms a higher low, weak hands are cleared out.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Liquidity Sweep Pattern — What to Look For</div>
+              <div style="position:relative;height:140px;margin:8px 0">
+                <div class="edu-level" style="top:30%;border-color:var(--accent);opacity:0.5"><span style="position:absolute;right:0;top:-14px;color:var(--accent);font-weight:600">— Support Level</span></div>
+                <div class="edu-candle-chart" style="height:130px;padding-top:10px">
+                  <div class="edu-candle green"><div class="edu-candle-wick" style="height:8px"></div><div class="edu-candle-body" style="height:20px"></div><div class="edu-candle-wick" style="height:4px"></div></div>
+                  <div class="edu-candle green"><div class="edu-candle-wick" style="height:6px"></div><div class="edu-candle-body" style="height:16px"></div><div class="edu-candle-wick" style="height:6px"></div></div>
+                  <div class="edu-candle red"><div class="edu-candle-wick" style="height:4px"></div><div class="edu-candle-body" style="height:14px"></div><div class="edu-candle-wick" style="height:8px"></div></div>
+                  <div class="edu-candle red"><div class="edu-candle-wick" style="height:3px"></div><div class="edu-candle-body" style="height:22px"></div><div class="edu-candle-wick" style="height:6px"></div></div>
+                  <div class="edu-candle red" style="margin-bottom:-30px"><div class="edu-candle-wick" style="height:2px"></div><div class="edu-candle-body" style="height:18px"></div><div class="edu-candle-wick" style="height:45px;position:relative"><span class="edu-label" style="bottom:-14px;left:50%;transform:translateX(-50%);color:var(--danger)">SWEEP</span></div></div>
+                  <div class="edu-candle green" style="margin-bottom:-10px"><div class="edu-candle-wick" style="height:4px"></div><div class="edu-candle-body" style="height:35px"></div><div class="edu-candle-wick" style="height:20px"></div></div>
+                  <div class="edu-candle green" style="margin-bottom:5px"><div class="edu-candle-wick" style="height:6px"></div><div class="edu-candle-body" style="height:12px;position:relative"><span class="edu-label" style="top:-14px;left:14px;color:var(--green)">ENTRY →</span></div><div class="edu-candle-wick" style="height:4px"></div></div>
+                  <div class="edu-candle green" style="margin-bottom:5px"><div class="edu-candle-wick" style="height:4px"></div><div class="edu-candle-body" style="height:10px"></div><div class="edu-candle-wick" style="height:6px"></div></div>
+                  <div class="edu-candle green" style="margin-bottom:10px"><div class="edu-candle-wick" style="height:8px"></div><div class="edu-candle-body" style="height:18px"></div><div class="edu-candle-wick" style="height:3px"></div></div>
+                  <div class="edu-candle green" style="margin-bottom:20px"><div class="edu-candle-wick" style="height:12px"></div><div class="edu-candle-body" style="height:22px"></div><div class="edu-candle-wick" style="height:2px"></div></div>
+                  <div class="edu-candle green" style="margin-bottom:30px"><div class="edu-candle-wick" style="height:8px"></div><div class="edu-candle-body" style="height:20px"></div><div class="edu-candle-wick" style="height:2px"></div></div>
+                </div>
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:4px">
+                <span>1. Price consolidates near support</span>
+                <span style="color:var(--danger)">2. Sudden wick sweeps below (stops triggered)</span>
+                <span style="color:var(--green)">3. V-shape bounce reclaims support</span>
+                <span style="color:var(--accent)">4. Enter on consolidation above support</span>
+              </div>
+            </div>
             <div class="how"><strong>How to trade it:</strong><br>1. Wait for the sweep (quick wick below support)<br>2. Watch for immediate recovery above the sweep level<br>3. Enter on the consolidation base that forms after the bounce<br>4. Place stop below the sweep low — tight and structural<br>5. Never chase the initial vertical green candle</div>
           </div>
           <hr class="edu-divider">
@@ -642,6 +691,41 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>L/S Ratio Divergence (Retail Trap)</h4>
             <div class="what">The Long/Short ratio shows how many traders are long vs short. The key is comparing RETAIL positions vs TOP TRADER positions.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">How to Read L/S Ratios on CoinGlass</div>
+              <div class="edu-scale" style="margin:8px 0 4px">
+                <span style="background:rgba(239,68,68,0.3);color:var(--danger)">0.5</span>
+                <span style="background:rgba(239,68,68,0.15);color:var(--danger)">0.7</span>
+                <span style="background:rgba(239,68,68,0.08);color:var(--text2)">0.85</span>
+                <span style="background:rgba(100,100,100,0.1);color:var(--text)">1.0</span>
+                <span style="background:rgba(34,197,94,0.08);color:var(--text2)">1.15</span>
+                <span style="background:rgba(34,197,94,0.15);color:var(--green)">1.5</span>
+                <span style="background:rgba(34,197,94,0.3);color:var(--green)">2.0+</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:10px"><span>← Extremely Bearish</span><span>Neutral</span><span>Extremely Bullish →</span></div>
+              <div class="edu-metric-grid">
+                <div class="edu-metric-card">
+                  <h5>Retail L/S (Accounts)</h5>
+                  <p>How many retail ACCOUNTS are long vs short. Below 1.0 = more shorts than longs. <strong>This is the "crowd" — you usually want to be on the opposite side.</strong></p>
+                  <div class="example">SYN example: Retail 0.74 = retail heavily short → potential squeeze UP</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Top Trader L/S (Accounts)</h5>
+                  <p>How many TOP TRADER (whale) accounts are long vs short. These are the big players with higher win rates. <strong>Follow their direction.</strong></p>
+                  <div class="example">SYN example: Whale 0.79 = whales also cautious but LESS bearish than retail</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Top Trader L/S (Positions)</h5>
+                  <p>The DOLLAR VALUE of whale positions long vs short. A whale with $1M long vs 10 small shorts matters more. <strong>This is the money-weighted signal.</strong></p>
+                  <div class="example">SYN example: Position 0.965 = whale money nearly neutral → watching, not committed</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Smart Money Sentiment</h5>
+                  <p>CoinGlass combines all whale signals into one label. When retail is bearish but Smart Money says <strong style="color:var(--green)">Bullish</strong> — that's the divergence signal.</p>
+                  <div class="example">SYN: Retail "Extremely Bearish" + Smart Money "Bullish" = classic squeeze setup</div>
+                </div>
+              </div>
+            </div>
             <div class="how"><strong>The classic squeeze setup:</strong><br>• Overall retail L/S ratio drops below 0.85 (retail is crowded short)<br>• Top Trader L/S ratio sits above 1.50 (smart money is stacked long)<br>• Retail keeps trying to short the top while big accounts absorb every sell<br>• Result: A violent squeeze upward as retail shorts get liquidated<br><br><strong>The reverse works too:</strong><br>• Retail L/S above 2.0 (everyone is long) + Top traders below 0.7 = dump incoming</div>
           </div>
           <hr class="edu-divider">
@@ -649,7 +733,74 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="edu-term">
             <h4>OI vs Spot Volume (Real vs Fake Moves)</h4>
             <div class="what">A sustainable breakout needs real spot buying behind it. If Open Interest surges but spot volume is dead, the move is pure leverage and will collapse violently.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Real Breakout vs Leverage Trap — How to Tell</div>
+              <div class="edu-vs">
+                <div class="edu-vs-col bull">
+                  <strong style="color:var(--green)">✅ Real Breakout</strong><br><br>
+                  <strong>Volume:</strong> Futures +500% AND Spot high<br>
+                  <strong>OI:</strong> Rising (+50-300%)<br>
+                  <strong>Spot Vol:</strong> Expanding, above average<br>
+                  <strong>Funding:</strong> Mild positive (<0.05%)<br>
+                  <strong>Liquidations:</strong> Both sides active<br><br>
+                  <em style="color:var(--green)">Money is flowing in from BOTH futures and spot. Real buying supports the move.</em>
+                </div>
+                <div class="edu-vs-divider">vs</div>
+                <div class="edu-vs-col bear">
+                  <strong style="color:var(--danger)">❌ Leverage Trap</strong><br><br>
+                  <strong>Volume:</strong> Futures +3000% but Spot flat<br>
+                  <strong>OI:</strong> Exploding (+300%+)<br>
+                  <strong>Spot Vol:</strong> Dead, way below futures<br>
+                  <strong>Funding:</strong> Extreme (>0.1%)<br>
+                  <strong>Liquidations:</strong> One-sided (shorts only)<br><br>
+                  <em style="color:var(--danger)">Pure leverage. One candle the other way wipes everyone out.</em>
+                </div>
+              </div>
+              <div class="example">SYN right now: Futures Vol $640M vs Spot Vol $62M (10:1 ratio!) + OI +330% — heavy leverage, check spot carefully before entry</div>
+            </div>
             <div class="how"><strong>Real breakout:</strong> Spot volume expanding + OI rising = Both leverage AND real buying. The move has legs.<br><br><strong>Fake breakout (leverage trap):</strong> OI surging + flat/low spot volume = Only leveraged positions driving the move. One big candle in the other direction wipes everyone out.<br><br><strong>Rule:</strong> Never chase a pump that only shows in futures. Check spot volume first.</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>CoinGlass Quick Reference — Reading the Numbers</h4>
+            <div class="what">CoinGlass shows derivatives data for every coin. Here's what each metric means and how our bot uses them.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">Key Metrics on the CoinGlass Overview Page</div>
+              <div class="edu-metric-grid">
+                <div class="edu-metric-card">
+                  <h5>Futures Vol (24h)</h5>
+                  <p>Total futures trading volume across all exchanges. Huge spikes (+1000%+) mean the coin is in play. Compare to Spot Vol — if futures dwarfs spot, the move is leveraged.</p>
+                  <div class="example">SYN: $640M futures vs $62M spot = 10:1 leverage ratio — caution</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Open Interest</h5>
+                  <p>Total value of all open futures positions. Rising OI = new money entering. Falling OI = positions closing. <strong>OI rising + price rising = strong trend.</strong> OI rising + price flat = building pressure.</p>
+                  <div class="example">SYN: $25.7M OI (+330%) — massive new positions opened during pump</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Funding Rate</h5>
+                  <p>Fee paid between longs and shorts every 8h. <strong>Positive = longs pay shorts</strong> (crowded long). <strong>Negative = shorts pay longs</strong> (crowded short). Extreme funding means the crowd will get squeezed.</p>
+                  <div class="example">Normal: -0.01% to +0.01%. Extreme: >0.05% or <-0.05%</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Liquidations (1h/4h/24h)</h5>
+                  <p>Dollar value of positions forcibly closed. Shows which side is getting wrecked. <strong>Heavy short liquidations = price pumping. Heavy long liquidations = price dumping.</strong></p>
+                  <div class="example">SYN 4h: $70K long rekt vs $162K short rekt — shorts getting squeezed harder</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Taker Buy/Sell Volume</h5>
+                  <p>Aggressive market orders — buys vs sells. 52%/48% split means slight buy pressure. <strong>>55% one side = strong directional pressure.</strong> Near 50/50 = no clear edge.</p>
+                  <div class="example">SYN 4h: 52% buy ($65.8M) vs 48% sell ($60.6M) — mild buy pressure, not decisive</div>
+                </div>
+                <div class="edu-metric-card">
+                  <h5>Volume vs OI Ratio</h5>
+                  <p>High volume / low OI = traders quickly opening and closing (scalping). <strong>Low volume / high OI = positions being held</strong> — conviction trade. Compare both to daily averages.</p>
+                  <div class="example">SYN: $640M vol / $25.7M OI = 25:1 ratio — very active trading, lots of scalps</div>
+                </div>
+              </div>
+            </div>
+            <div class="how"><strong>Our bot checks these automatically:</strong><br>• OI change 1h/4h → detects unusual position buildup<br>• Funding rate + bias → identifies crowded trades<br>• L/S ratio (accounts + positions) → spots retail vs whale divergence<br>• Exchange flow data → tracks whale wallet movements<br><br><strong>What to check manually on CoinGlass:</strong><br>• Liquidation heatmap (where are the stop clusters?)<br>• Futures vs Spot volume ratio (is the move real or leveraged?)<br>• Taker buy/sell balance (who's aggressively executing?)</div>
           </div>
 
         </div>
