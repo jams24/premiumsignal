@@ -199,16 +199,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .edu-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .edu-diagram { margin: 10px 0; padding: 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); overflow-x: auto; }
 .edu-diagram-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-.edu-candle-chart { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 0 8px; position: relative; }
-.edu-candle { display: flex; flex-direction: column; align-items: center; width: 14px; position: relative; }
-.edu-candle-body { width: 10px; border-radius: 1px; min-height: 4px; }
-.edu-candle-wick { width: 2px; }
-.edu-candle.green .edu-candle-body { background: var(--green); }
-.edu-candle.green .edu-candle-wick { background: var(--green); }
-.edu-candle.red .edu-candle-body { background: var(--danger); }
-.edu-candle.red .edu-candle-wick { background: var(--danger); }
-.edu-level { position: absolute; left: 0; right: 0; border-top: 1.5px dashed; font-size: 9px; padding-left: 4px; }
-.edu-label { position: absolute; font-size: 9px; white-space: nowrap; font-weight: 600; }
 .edu-metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
 .edu-metric-card { padding: 8px 10px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); }
 .edu-metric-card h5 { font-size: 11px; color: var(--accent); margin: 0 0 4px; font-family: var(--font-mono); }
@@ -661,27 +651,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="what">Before a real move, market makers often push price down quickly to trigger stop losses of early longs and grab liquidity below support. If price immediately bounces back (V-shape) and forms a higher low, weak hands are cleared out.</div>
             <div class="edu-diagram">
               <div class="edu-diagram-title">Liquidity Sweep Pattern — What to Look For</div>
-              <div style="position:relative;height:140px;margin:8px 0">
-                <div class="edu-level" style="top:30%;border-color:var(--accent);opacity:0.5"><span style="position:absolute;right:0;top:-14px;color:var(--accent);font-weight:600">— Support Level</span></div>
-                <div class="edu-candle-chart" style="height:130px;padding-top:10px">
-                  <div class="edu-candle green"><div class="edu-candle-wick" style="height:8px"></div><div class="edu-candle-body" style="height:20px"></div><div class="edu-candle-wick" style="height:4px"></div></div>
-                  <div class="edu-candle green"><div class="edu-candle-wick" style="height:6px"></div><div class="edu-candle-body" style="height:16px"></div><div class="edu-candle-wick" style="height:6px"></div></div>
-                  <div class="edu-candle red"><div class="edu-candle-wick" style="height:4px"></div><div class="edu-candle-body" style="height:14px"></div><div class="edu-candle-wick" style="height:8px"></div></div>
-                  <div class="edu-candle red"><div class="edu-candle-wick" style="height:3px"></div><div class="edu-candle-body" style="height:22px"></div><div class="edu-candle-wick" style="height:6px"></div></div>
-                  <div class="edu-candle red" style="margin-bottom:-30px"><div class="edu-candle-wick" style="height:2px"></div><div class="edu-candle-body" style="height:18px"></div><div class="edu-candle-wick" style="height:45px;position:relative"><span class="edu-label" style="bottom:-14px;left:50%;transform:translateX(-50%);color:var(--danger)">SWEEP</span></div></div>
-                  <div class="edu-candle green" style="margin-bottom:-10px"><div class="edu-candle-wick" style="height:4px"></div><div class="edu-candle-body" style="height:35px"></div><div class="edu-candle-wick" style="height:20px"></div></div>
-                  <div class="edu-candle green" style="margin-bottom:5px"><div class="edu-candle-wick" style="height:6px"></div><div class="edu-candle-body" style="height:12px;position:relative"><span class="edu-label" style="top:-14px;left:14px;color:var(--green)">ENTRY →</span></div><div class="edu-candle-wick" style="height:4px"></div></div>
-                  <div class="edu-candle green" style="margin-bottom:5px"><div class="edu-candle-wick" style="height:4px"></div><div class="edu-candle-body" style="height:10px"></div><div class="edu-candle-wick" style="height:6px"></div></div>
-                  <div class="edu-candle green" style="margin-bottom:10px"><div class="edu-candle-wick" style="height:8px"></div><div class="edu-candle-body" style="height:18px"></div><div class="edu-candle-wick" style="height:3px"></div></div>
-                  <div class="edu-candle green" style="margin-bottom:20px"><div class="edu-candle-wick" style="height:12px"></div><div class="edu-candle-body" style="height:22px"></div><div class="edu-candle-wick" style="height:2px"></div></div>
-                  <div class="edu-candle green" style="margin-bottom:30px"><div class="edu-candle-wick" style="height:8px"></div><div class="edu-candle-body" style="height:20px"></div><div class="edu-candle-wick" style="height:2px"></div></div>
-                </div>
-              </div>
-              <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:4px">
-                <span>1. Price consolidates near support</span>
-                <span style="color:var(--danger)">2. Sudden wick sweeps below (stops triggered)</span>
-                <span style="color:var(--green)">3. V-shape bounce reclaims support</span>
-                <span style="color:var(--accent)">4. Enter on consolidation above support</span>
+              <canvas id="sweep-chart" width="600" height="220" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span> 1. Consolidation near support</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#ef4444;display:inline-block"></span> 2. Sweep wick below (stops triggered)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span> 3. V-shape bounce reclaims</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#6366f1;display:inline-block"></span> 4. Enter on consolidation</span>
               </div>
             </div>
             <div class="how"><strong>How to trade it:</strong><br>1. Wait for the sweep (quick wick below support)<br>2. Watch for immediate recovery above the sweep level<br>3. Enter on the consolidation base that forms after the bounce<br>4. Place stop below the sweep low — tight and structural<br>5. Never chase the initial vertical green candle</div>
@@ -2144,6 +2119,95 @@ switchTab = function(tab, btn) {
   _origSwitchTab(tab, btn);
   if (tab === 'trades') loadTrades();
 };
+
+function drawSweepChart() {
+  var c = document.getElementById('sweep-chart');
+  if (!c) return;
+  var dpr = window.devicePixelRatio || 1;
+  c.width = 600 * dpr; c.height = 220 * dpr;
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = 600, H = 220, pad = 40;
+  var green = '#22c55e', red = '#ef4444', accent = '#6366f1', muted = '#666';
+
+  // Candle data: [open, close, high, low] — normalized 0-100 scale
+  var candles = [
+    [52,58,62,48], [55,60,64,52], [58,62,66,54], [60,57,63,53],  // consolidation
+    [57,54,59,50], [54,48,56,46], [48,38,50,18],                  // sweep down
+    [36,56,58,20],                                                  // recovery candle
+    [56,60,62,54], [60,62,63,58],                                  // entry zone
+    [62,66,68,60], [66,72,74,64], [72,78,82,70], [78,85,88,76]    // rally up
+  ];
+  var cw = 16, gap = (W - pad * 2 - candles.length * cw) / (candles.length - 1);
+  function y(v) { return pad + (H - pad * 2) * (1 - v / 100); }
+
+  // Support line at 50
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.5;
+  ctx.beginPath(); ctx.moveTo(pad - 10, y(50)); ctx.lineTo(W - 10, y(50)); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  ctx.font = '600 11px system-ui'; ctx.fillStyle = accent;
+  ctx.fillText('Support', W - 55, y(50) - 5);
+
+  // Stop loss zone
+  ctx.fillStyle = 'rgba(239,68,68,0.06)';
+  ctx.fillRect(pad - 10, y(50), W - pad - 20, y(15) - y(50));
+  ctx.font = '10px system-ui'; ctx.fillStyle = '#ef444480';
+  ctx.fillText('Stop losses below here', W - 155, y(35));
+
+  // Draw candles
+  candles.forEach(function(d, i) {
+    var x = pad + i * (cw + gap);
+    var o = d[0], cl = d[1], hi = d[2], lo = d[3];
+    var isGreen = cl >= o;
+    var color = isGreen ? green : red;
+    var top = Math.max(o, cl), bot = Math.min(o, cl);
+    // Wick
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x + cw / 2, y(hi)); ctx.lineTo(x + cw / 2, y(lo)); ctx.stroke();
+    // Body
+    ctx.fillStyle = color;
+    var bodyH = Math.max(y(bot) - y(top), 2);
+    ctx.fillRect(x + 2, y(top), cw - 4, bodyH);
+  });
+
+  // Label: SWEEP arrow
+  var sweepX = pad + 6 * (cw + gap) + cw / 2;
+  ctx.strokeStyle = red; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(sweepX, y(10)); ctx.lineTo(sweepX, y(2)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sweepX - 4, y(6)); ctx.lineTo(sweepX, y(2)); ctx.lineTo(sweepX + 4, y(6)); ctx.stroke();
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = red; ctx.textAlign = 'center';
+  ctx.fillText('SWEEP', sweepX, H - 5);
+
+  // Label: ENTRY
+  var entryX = pad + 9 * (cw + gap) + cw / 2;
+  ctx.fillStyle = accent; ctx.textAlign = 'center';
+  ctx.fillText('ENTRY', entryX, y(66));
+  ctx.strokeStyle = accent; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(entryX - 16, y(62)); ctx.lineTo(entryX + 16, y(62)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(entryX + 12, y(63)); ctx.lineTo(entryX + 16, y(62)); ctx.lineTo(entryX + 12, y(61)); ctx.stroke();
+
+  // Label: Higher Low
+  var hlX = pad + 8 * (cw + gap) + cw / 2;
+  ctx.font = '10px system-ui'; ctx.fillStyle = green; ctx.textAlign = 'center';
+  ctx.fillText('Higher Low', hlX, y(48));
+
+  // Price labels
+  ctx.font = '9px system-ui'; ctx.fillStyle = muted; ctx.textAlign = 'right';
+  ctx.fillText('High', pad - 14, y(85)); ctx.fillText('Support', pad - 14, y(50)); ctx.fillText('Low', pad - 14, y(18));
+
+  ctx.textAlign = 'left';
+}
+
+// Draw chart when edu section opens
+document.addEventListener('click', function(e) {
+  var hdr = e.target.closest('.edu-header');
+  if (hdr && hdr.parentElement.querySelector('#sweep-chart')) {
+    setTimeout(drawSweepChart, 50);
+  }
+});
+// Also draw on load if already open
+setTimeout(drawSweepChart, 500);
 
 init();
 </script>
