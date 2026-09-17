@@ -713,7 +713,21 @@ class TradeExecutor {
     const priceChg = Math.abs(signal.priceChange || signal.onchainContext?.priceChange || 0);
     if (this.entryMode === 'hybrid') {
       effectiveEntry = priceChg >= this.hybridThreshold ? 'pullback' : 'market';
-      logger.info(`Hybrid entry ${signal.symbol}: priceChange ${priceChg.toFixed(1)}% ${effectiveEntry === 'pullback' ? `>= ${this.hybridThreshold}% → PULLBACK` : `< ${this.hybridThreshold}% → MARKET`}`);
+      // Falling edge detection: if price retraced >5% from 24h high, force pullback
+      // Prevents market entry on falling knives (coin pumped then dumping)
+      const high24h = signal.onchainContext?.high24h;
+      if (effectiveEntry === 'market' && high24h && high24h > 0) {
+        const retraceFromHigh = ((high24h - signal.currentPrice) / high24h) * 100;
+        if (retraceFromHigh >= 5) {
+          effectiveEntry = 'pullback';
+          logger.info(`Hybrid entry ${signal.symbol}: FALLING EDGE — price ${retraceFromHigh.toFixed(1)}% below 24h high $${high24h.toPrecision(5)} → forced PULLBACK`);
+        }
+      }
+      if (effectiveEntry === 'pullback') {
+        logger.info(`Hybrid entry ${signal.symbol}: priceChange ${priceChg.toFixed(1)}% → PULLBACK`);
+      } else {
+        logger.info(`Hybrid entry ${signal.symbol}: priceChange ${priceChg.toFixed(1)}% < ${this.hybridThreshold}%, near 24h high → MARKET`);
+      }
     }
 
     // Market mode: enter immediately at signal price — no pullback queue
