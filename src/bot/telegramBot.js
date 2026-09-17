@@ -2533,10 +2533,10 @@ class TelegramBot {
              Markup.button.callback(`79${ocCheck(79, maxCur)}`, 'oc_maxscore_79'),
              Markup.button.callback(`No cap${ocCheck(99, maxCur)}`, 'oc_maxscore_99')],
             [Markup.button.callback(`--- SHORT MIN ---`, 'noop')],
-            [Markup.button.callback(`60+${ocCheck(60, shortMin)}`, 'oc_shortmin_60'),
-             Markup.button.callback(`65+${ocCheck(65, shortMin)}`, 'oc_shortmin_65'),
-             Markup.button.callback(`70+${ocCheck(70, shortMin)}`, 'oc_shortmin_70'),
-             Markup.button.callback(`80+${ocCheck(80, shortMin)}`, 'oc_shortmin_80')],
+            [Markup.button.callback(`35+${ocCheck(35, shortMin)}`, 'oc_shortmin_35'),
+             Markup.button.callback(`45+${ocCheck(45, shortMin)}`, 'oc_shortmin_45'),
+             Markup.button.callback(`50+${ocCheck(50, shortMin)}`, 'oc_shortmin_50'),
+             Markup.button.callback(`60+${ocCheck(60, shortMin)}`, 'oc_shortmin_60')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
@@ -2550,9 +2550,9 @@ class TelegramBot {
         te.minOcScore = 45;
         te.minConfidence = 4;
         te.maxOcScore = 69;
-        te.minShortScore = 70;
+        te.minShortScore = 45;
         te.saveConfig();
-        await ctx.answerCbQuery('Best preset applied: L 45-69, S 70+');
+        await ctx.answerCbQuery('Best preset applied: L 45-69, S 45+');
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_score_best error: ${e.message}`); }
     });
@@ -2579,7 +2579,7 @@ class TelegramBot {
         } catch (e) { logger.error(`oc_maxscore error: ${e.message}`); }
       });
     }
-    for (const score of [60, 65, 70, 80]) {
+    for (const score of [35, 45, 50, 60]) {
       this.bot.action(`oc_shortmin_${score}`, async (ctx) => {
         try {
           const te = octe();
