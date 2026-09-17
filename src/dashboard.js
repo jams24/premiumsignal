@@ -1140,7 +1140,7 @@ function applyRisk() {
   var r = parseInt(document.getElementById('custom-risk').value) || 0;
   if (r < 0) r = 0;
   RISK_AMOUNT = r;
-  saveSizing(); renderSignals();
+  saveSizing(); renderStats(); renderSignals();
 }
 function toggleRoster() {
   var panel = document.getElementById('roster-panel');
@@ -1263,12 +1263,15 @@ function toggleHour(h) {
   saveHours();
   markDailyBlocked(signals);
   renderHoursGrid();
+  renderStats();
+  renderSignals();
 }
 function resetHoursToDefault() {
   blockedHours = DEFAULT_BLOCKED.slice();
   saveHours();
   markDailyBlocked(signals);
   renderHoursGrid();
+  renderStats();
   renderSignals();
 }
 function renderHoursGrid() {
@@ -1378,8 +1381,9 @@ function resetConfig() {
 function apiFetch(path, params) {
   params = params || {};
   params.key = apiKey;
+  params._t = Date.now();
   var qs = Object.keys(params).map(function(k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
-  return fetch(path + '?' + qs).then(function(r) {
+  return fetch(path + '?' + qs, { cache: 'no-store' }).then(function(r) {
     if (r.status === 401) { resetConfig(); throw new Error('Invalid key — please re-enter'); }
     if (!r.ok) throw new Error('API ' + r.status);
     return r.json();
@@ -1392,7 +1396,7 @@ function refreshAll() {
   Promise.all([
     apiFetch('/api/signals', { hours: signalHours, minScore: 40 }),
     apiFetch('/api/patterns'),
-    apiFetch('/api/trades', { period: 'today', limit: 100 }),
+    apiFetch('/api/trades', { period: signalHours <= 48 ? 'today' : signalHours <= 168 ? 'week' : 'month', limit: 100 }),
   ]).then(function(results) {
     signals = (results[0].signals || []).map(function(s) {
       s.first_score = parseInt(s.score) || 0;
@@ -1741,6 +1745,7 @@ function setFilter(btn) {
   document.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
   currentFilter = btn.dataset.filter;
+  renderStats();
   renderSignals();
 }
 
@@ -2270,6 +2275,8 @@ function setSignalHours(btn) {
   btn.classList.add('active');
   signalHours = parseInt(btn.dataset.hours) || 48;
   signalPage = 1;
+  var label = document.getElementById('status-label');
+  if (label) label.textContent = 'Loading...';
   refreshAll();
 }
 
