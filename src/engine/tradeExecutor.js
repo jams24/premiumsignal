@@ -149,6 +149,20 @@ class TradeExecutor {
       return { ok: false, reason: `Confidence ${signal.confidence} < minimum ${this.minConfidence}` };
     }
 
+    const ocScore = signal.onchainScore || 0;
+    if (this.minOcScore > 0 && ocScore > 0 && ocScore < this.minOcScore) {
+      return { ok: false, reason: `Score ${ocScore} < minimum ${this.minOcScore}` };
+    }
+    if (this.maxOcScore && this.maxOcScore < 99 && ocScore > this.maxOcScore) {
+      const isShort = signal.direction === 'short';
+      if (!isShort) {
+        return { ok: false, reason: `Long score ${ocScore} > max ${this.maxOcScore} (use short for high scores)` };
+      }
+    }
+    if (signal.direction === 'short' && this.minShortScore > 0 && ocScore < this.minShortScore) {
+      return { ok: false, reason: `Short score ${ocScore} < minimum ${this.minShortScore}` };
+    }
+
     if (this.signalFilter.size > 0 && !this.signalFilter.has(signal.type)) {
       return { ok: false, reason: `Signal type ${signal.type} not in filter [${[...this.signalFilter].join(', ')}]` };
     }
