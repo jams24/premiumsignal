@@ -843,9 +843,9 @@ class TechnicalScanner {
       const isLong = direction === 'long';
       const slBuffer = currentATR * 0.5;
       const stopLoss = isLong ? zonePrice - slBuffer : zonePrice + slBuffer;
-      const tp1 = isLong ? currentPrice + currentATR * 3 : currentPrice - currentATR * 3;
-      const tp2 = isLong ? currentPrice + currentATR * 6 : currentPrice - currentATR * 6;
-      const tp3 = isLong ? currentPrice + currentATR * 10 : currentPrice - currentATR * 10;
+      const tp1 = isLong ? currentPrice + currentATR * 0.3 : currentPrice - currentATR * 0.3;
+      const tp2 = isLong ? currentPrice + currentATR * 0.6 : currentPrice - currentATR * 0.6;
+      const tp3 = isLong ? currentPrice + currentATR * 1.0 : currentPrice - currentATR * 1.0;
       const entryLow = isLong ? currentPrice * 0.998 : currentPrice * 1.002;
       const entryHigh = isLong ? currentPrice * 1.002 : currentPrice * 0.998;
 
