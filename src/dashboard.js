@@ -1545,10 +1545,10 @@ function getTradeStatus(s, levels) {
   var hitTP1 = false, hitTP2 = false, hitTP3 = false, hitSL = false;
   if (dir === 'long') {
     hitTP1 = peak >= levels.tp1; hitTP2 = peak >= levels.tp2; hitTP3 = peak >= levels.tp3;
-    hitSL = now <= levels.sl;
+    hitSL = trough <= levels.sl;
   } else {
     hitTP1 = trough <= levels.tp1; hitTP2 = trough <= levels.tp2; hitTP3 = trough <= levels.tp3;
-    hitSL = now >= levels.sl;
+    hitSL = peak >= levels.sl;
   }
   var rawPct = ((now - entry) / entry) * 100;
   var movePct = dir === 'short' ? -rawPct : rawPct;
@@ -1622,12 +1622,15 @@ function simPnl(s) {
     hitTP1 = trough <= levels.tp1; hitTP2 = trough <= levels.tp2; hitTP3 = trough <= levels.tp3;
   }
 
+  var hitSL = dir === 'long' ? (trough <= levels.sl) : (peak >= levels.sl);
+
   var remaining = 1.0, totalPct = 0;
   if (hitTP1) { totalPct += 0.33 * pctAt(levels.tp1); remaining = 0.67; }
   if (hitTP2) { var tp2x = 0.50 * remaining; totalPct += tp2x * pctAt(levels.tp2); remaining -= tp2x; }
   if (hitTP3) { var tp3x = 0.50 * remaining; totalPct += tp3x * pctAt(levels.tp3); remaining -= tp3x; }
 
   var remainPct = pctAt(now);
+  if (hitSL && !hitTP1 && !beProtected) remainPct = pctAt(levels.sl);
   if ((hitTP1 || beProtected) && remainPct < 0) remainPct = 0;
   if (hitTP2 && remainPct < pctAt(levels.tp1)) remainPct = pctAt(levels.tp1);
   totalPct += remaining * remainPct;
