@@ -882,6 +882,12 @@ async function main() {
         const ocMinScore = onchainTradeExecutor.minOcScore || (onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35);
         for (const token of qualityTokens) {
           if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
+          // Score 70+ = exhausted pump (0% live win rate historically) — alert only, no auto-trade
+          const ocMaxScore = onchainTradeExecutor.maxOcScore || 69;
+          if (token.score > ocMaxScore) {
+            logger.info(`Onchain skip ${token.symbol}: score ${token.score} > ${ocMaxScore} — likely exhausted pump, alert only`);
+            continue;
+          }
           try {
             const setup = token._tradeSetup;
             if (!setup) continue;
