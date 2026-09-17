@@ -885,10 +885,16 @@ async function main() {
           try {
             const setup = token._tradeSetup;
             if (!setup) continue;
-            // Score cap only applies to longs — shorts require 70+ by quality gate and have 100% WR there
+            // Long: score must be within min-max range (high score = exhausted pump)
+            // Short: separate min threshold (shorts need higher conviction)
             const ocMaxScore = onchainTradeExecutor.maxOcScore || 69;
+            const minShortScore = onchainTradeExecutor.minShortScore || 70;
             if (setup.direction === 'long' && token.score > ocMaxScore) {
               logger.info(`Onchain skip ${token.symbol}: LONG score ${token.score} > ${ocMaxScore} — likely exhausted pump, alert only`);
+              continue;
+            }
+            if (setup.direction === 'short' && token.score < minShortScore) {
+              logger.info(`Onchain skip ${token.symbol}: SHORT score ${token.score} < ${minShortScore} — not enough conviction`);
               continue;
             }
             const pumpLimit = token.score >= 60 ? 200 : token.score >= 45 ? 150 : 80;
