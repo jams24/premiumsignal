@@ -4029,6 +4029,7 @@ class TelegramBot {
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `💧 Min Live Vol: <b>$${(te.minLiveVolume / 1e6).toFixed(0)}M</b>${te.minLiveVolume > 0 ? '' : ' (OFF)'}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')}`).join(', ') : '24/7'}</b> UTC\n` +
+        `📊 Min Score: <b>${te.minOcScore || 30}+</b>\n` +
         `📋 Total Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
         `${cbLine}\n\n` +
         `Tap any button to configure:`;
@@ -4049,6 +4050,9 @@ class TelegramBot {
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'dz_cfg_exchanges'),
          Markup.button.callback(`💧 Vol: $${(te.minLiveVolume / 1e6).toFixed(0)}M`, 'dz_cfg_minvol')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'dz_cfg_hours')],
+        [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'dz_cfg_tp1'),
+         Markup.button.callback(`🎯 TP2: ${(te.tp2ClosePct * 100).toFixed(0)}%`, 'dz_cfg_tp2')],
+        [Markup.button.callback(`📊 Min Score: ${te.minOcScore || 30}+`, 'dz_cfg_minscore')],
         [Markup.button.callback('📊 Perf Stats', 'dz_perf_btn')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'dz_trades'),
          Markup.button.callback('🔄 Refresh', 'dz_settings')],
@@ -4657,6 +4661,98 @@ class TelegramBot {
           await ctx.answerCbQuery(`Max positions: ${pos}`);
           await showDzSettings(ctx);
         } catch (e) { logger.error(`dz_pos error: ${e.message}`); }
+      });
+    }
+
+    // dz_ MIN SCORE
+    this.bot.action('dz_cfg_minscore', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        const cur = te.minOcScore || 30;
+        await ctx.editMessageText(
+          `🎯 <b>DZ — MIN SCORE</b>\n\n` +
+          `Current: <b>${cur}+</b>\n\n` +
+          `<i>Lower = more trades (incl. weaker setups).\nHigher = fewer trades, only strongest zones.\n\nToday's SAGA scored 34 — would need ≤34 to catch it.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`25+${ocCheck(25, cur)}`, 'dz_minscore_25'),
+             Markup.button.callback(`30+${ocCheck(30, cur)}`, 'dz_minscore_30'),
+             Markup.button.callback(`35+${ocCheck(35, cur)}`, 'dz_minscore_35')],
+            [Markup.button.callback(`40+${ocCheck(40, cur)}`, 'dz_minscore_40'),
+             Markup.button.callback(`45+${ocCheck(45, cur)}`, 'dz_minscore_45'),
+             Markup.button.callback(`50+${ocCheck(50, cur)}`, 'dz_minscore_50')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_minscore error: ${e.message}`); }
+    });
+    for (const score of [25, 30, 35, 40, 45, 50]) {
+      this.bot.action(`dz_minscore_${score}`, async (ctx) => {
+        try {
+          dzte().minOcScore = score; dzte().saveConfig();
+          await ctx.answerCbQuery(`Min DZ score: ${score}+`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_minscore error: ${e.message}`); }
+      });
+    }
+
+    // dz_ TP1 EXIT %
+    this.bot.action('dz_cfg_tp1', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — TP1 CLOSE %</b>\n\n` +
+          `Current: <b>${(te.tp1ClosePct * 100).toFixed(0)}%</b> of position closed at TP1\n\n` +
+          `<i>Higher = bank more profit early (safer).\nLower = keep more for TP2/TP3 (bigger upside).</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`25%${ocCheck(0.25, te.tp1ClosePct)}`, 'dz_tp1_25'),
+             Markup.button.callback(`33%${ocCheck(0.33, te.tp1ClosePct)}`, 'dz_tp1_33'),
+             Markup.button.callback(`50%${ocCheck(0.50, te.tp1ClosePct)}`, 'dz_tp1_50')],
+            [Markup.button.callback(`67%${ocCheck(0.67, te.tp1ClosePct)}`, 'dz_tp1_67'),
+             Markup.button.callback(`75%${ocCheck(0.75, te.tp1ClosePct)}`, 'dz_tp1_75'),
+             Markup.button.callback(`100%${ocCheck(1.0, te.tp1ClosePct)}`, 'dz_tp1_100')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_tp1 error: ${e.message}`); }
+    });
+    for (const pct of [25, 33, 50, 67, 75, 100]) {
+      this.bot.action(`dz_tp1_${pct}`, async (ctx) => {
+        try {
+          dzte().tp1ClosePct = pct / 100; dzte().saveConfig();
+          await ctx.answerCbQuery(`TP1 closes ${pct}%`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_tp1 error: ${e.message}`); }
+      });
+    }
+
+    // dz_ TP2 EXIT %
+    this.bot.action('dz_cfg_tp2', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = dzte();
+        await ctx.editMessageText(
+          `🎯 <b>DZ — TP2 CLOSE %</b>\n\n` +
+          `Current: <b>${te.tp2ClosePct >= 1 ? 'ALL (100%)' : (te.tp2ClosePct * 100).toFixed(0) + '%'}</b> of remaining closed at TP2\n\n` +
+          `<i>100% = close everything at TP2, trade done.\nLower % keeps a runner for TP3.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`33%${ocCheck(0.33, te.tp2ClosePct)}`, 'dz_tp2_33'),
+             Markup.button.callback(`50%${ocCheck(0.50, te.tp2ClosePct)}`, 'dz_tp2_50'),
+             Markup.button.callback(`75%${ocCheck(0.75, te.tp2ClosePct)}`, 'dz_tp2_75')],
+            [Markup.button.callback(`ALL (100%)${ocCheck(1.0, te.tp2ClosePct)}`, 'dz_tp2_100')],
+            [Markup.button.callback('⬅️ Back', 'dz_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`dz_cfg_tp2 error: ${e.message}`); }
+    });
+    for (const pct of [33, 50, 75, 100]) {
+      this.bot.action(`dz_tp2_${pct}`, async (ctx) => {
+        try {
+          dzte().tp2ClosePct = pct / 100; dzte().saveConfig();
+          await ctx.answerCbQuery(`TP2 closes ${pct}%`);
+          await showDzSettings(ctx);
+        } catch (e) { logger.error(`dz_tp2 error: ${e.message}`); }
       });
     }
 
