@@ -1127,6 +1127,9 @@ class TradeExecutor {
 
       await db.saveTrade(trade);
 
+      // Place exchange-level TP limit orders for reliability
+      await this.placeTPOrders(trade);
+
       const entryLabel = usedFullEntry ? 'full entry (size too small for DCA)' : '1/3 DCA';
       const sizeLabel = usedFullEntry ? `$${positionSize.toFixed(2)}` : `$${(positionSize / 3).toFixed(2)} of $${positionSize.toFixed(2)}`;
       const dcaLine = usedFullEntry ? 'DCA: disabled (min notional)' : `DCA 2: $${dcaPrice2.toPrecision(6)} | DCA 3: $${dcaPrice3.toPrecision(6)}`;
@@ -1597,10 +1600,16 @@ class TradeExecutor {
       if (exchange?.apiKey) {
         try {
           const pair = `${trade.symbol}/USDT:USDT`;
+          // Cancel exchange TP limit orders first — avoid double execution
+          await this.cancelTPOrders(trade);
           const side = isLong ? 'sell' : 'buy';
           const roundedQty = exchange.amountToPrecision(pair, closeQty);
           await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
           logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: ${roundedQty}`);
+          // Re-place TP orders for remaining position after partial exit
+          if (fraction < 1.0) {
+            await this.placeTPOrders(trade);
+          }
         } catch (e) { logger.error(`Partial close failed for ${trade.symbol}: ${e.message}`); }
       }
     }
@@ -1751,6 +1760,77 @@ class TradeExecutor {
     // Default fallback
     params.stopPrice = stopPrice;
     return exchange.createOrder(pair, 'stop_market', side, qty, undefined, params);
+  }
+
+  async placeTPOrders(trade) {
+    if (trade.mode !== 'live') return;
+    const exchange = this.exchanges[trade.exchange];
+    if (!exchange?.apiKey) return;
+
+    try {
+      const pair = `${trade.symbol}/USDT:USDT`;
+      const isLong = trade.direction === 'long';
+      const closeSide = isLong ? 'sell' : 'buy';
+      const totalQty = trade.quantity;
+
+      const tpLevels = [
+        { price: trade.tp1, fraction: this.tp1ClosePct, label: 'TP1' },
+        { price: trade.tp2, fraction: this.tp2ClosePct, label: 'TP2' },
+        { price: trade.tp3, fraction: 0.5, label: 'TP3' },
+      ];
+
+      let remaining = totalQty;
+      for (const tp of tpLevels) {
+        if (!tp.price || remaining <= 0) continue;
+        const qty = tp.fraction >= 1.0 ? remaining : totalQty * tp.fraction;
+        const closeQty = Math.min(qty, remaining);
+
+        const check = this.calcMinNotional(exchange, pair, closeQty, tp.price);
+        if (!check.ok) {
+          logger.info(`${pair}: ${tp.label} limit order skipped — qty below min notional ($${check.currentNotional.toFixed(2)} < $${check.minNotional})`);
+          continue;
+        }
+
+        try {
+          const roundedQty = exchange.amountToPrecision(pair, closeQty);
+          const roundedPrice = exchange.priceToPrecision(pair, tp.price);
+          await exchange.createOrder(pair, 'limit', closeSide, roundedQty, roundedPrice, { reduceOnly: true });
+          logger.info(`${pair}: ${tp.label} limit order placed — ${closeSide} ${roundedQty} @ $${roundedPrice}`);
+          remaining -= closeQty;
+        } catch (e) {
+          logger.warn(`${pair}: ${tp.label} limit order failed — ${e.message}`);
+        }
+
+        if (tp.fraction >= 1.0) break;
+      }
+    } catch (err) {
+      logger.error(`placeTPOrders failed for ${trade.symbol}: ${err.message}`);
+    }
+  }
+
+  async cancelTPOrders(trade) {
+    if (trade.mode !== 'live') return;
+    const exchange = this.exchanges[trade.exchange];
+    if (!exchange?.apiKey) return;
+
+    try {
+      const pair = `${trade.symbol}/USDT:USDT`;
+      const isLong = trade.direction === 'long';
+      const closeSide = isLong ? 'sell' : 'buy';
+      const openOrders = await exchange.fetchOpenOrders(pair);
+      for (const order of openOrders) {
+        const isTPOrder = order.type === 'limit' && order.side === closeSide
+          && !order.stopPrice && !order.triggerPrice;
+        if (isTPOrder) {
+          try {
+            await exchange.cancelOrder(order.id, pair);
+            logger.info(`Cancelled TP limit order ${order.id} for ${pair}`);
+          } catch (e) { logger.warn(`Cancel TP order failed: ${e.message}`); }
+        }
+      }
+    } catch (err) {
+      logger.error(`cancelTPOrders failed for ${trade.symbol}: ${err.message}`);
+    }
   }
 
   async closeSingleTrade(tradeId) {
