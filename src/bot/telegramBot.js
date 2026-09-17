@@ -2251,7 +2251,7 @@ class TelegramBot {
          Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'oc_cfg_be')],
         [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'oc_cfg_tp1'),
          Markup.button.callback(`🎯 TP2: ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}`, 'oc_cfg_tp2')],
-        [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry')],
+        [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'hybrid' ? `HYBRID ${te.hybridThreshold}%` : te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
@@ -2956,25 +2956,27 @@ class TelegramBot {
       try {
         await ctx.answerCbQuery();
         const te = octe();
+        const cur = te.entryMode === 'hybrid' ? `HYBRID (>${te.hybridThreshold}% → pullback)` : te.entryMode === 'market' ? 'MARKET' : 'PULLBACK';
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — ENTRY MODE</b>\n\n` +
-          `Current: <b>${te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}</b>\n\n` +
+          `Current: <b>${cur}</b>\n\n` +
           `<b>⚡ MARKET</b> — Enter immediately when signal fires\n` +
-          `  + Never misses a trade — every signal = entry\n` +
-          `  + Catches fast runners that pump from signal\n` +
-          `  + Matches what the backtest simulates\n` +
-          `  - No price improvement from pullback\n` +
-          `  - May enter at worse price if signal fires mid-candle\n\n` +
+          `  + Never misses a trade\n` +
+          `  - Can enter at pump top on overextended coins\n\n` +
           `<b>🎯 PULLBACK</b> — Queue signal, wait for 5m zone sweep\n` +
           `  + Better entry price when pullback happens\n` +
-          `  + Tighter SL placed below swept structure\n` +
-          `  - Misses runners that go straight up (5% cancel)\n` +
-          `  - 30min timeout can expire without entry\n` +
-          `  - Can miss 20-40% of signals\n\n` +
-          `<i>For auto-trading, Market is recommended — no missed entries.</i>`,
+          `  - Misses fast runners (5% cancel, 30min timeout)\n\n` +
+          `<b>🔀 HYBRID</b> — Market for fresh moves, pullback for pumped coins\n` +
+          `  + Best of both: catches early runners at market\n` +
+          `  + Waits for pullback on overextended moves (>${te.hybridThreshold}%)\n` +
+          `  + Extended timeout (90min) + wider threshold (20%) for pumps\n` +
+          `  + Pullback bounce detection after peak retracement\n\n` +
+          `<i>Hybrid recommended — avoids pump-top entries while keeping speed.</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`⚡ Market${te.entryMode === 'market' ? ' ✓' : ''}`, 'oc_entry_market')],
             [Markup.button.callback(`🎯 Pullback${te.entryMode === 'pullback' ? ' ✓' : ''}`, 'oc_entry_pullback')],
+            [Markup.button.callback(`🔀 Hybrid${te.entryMode === 'hybrid' ? ' ✓' : ''}`, 'oc_entry_hybrid')],
+            ...(te.entryMode === 'hybrid' ? [[Markup.button.callback(`📏 Threshold: ${te.hybridThreshold}%`, 'oc_cfg_hybridpct')]] : []),
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
@@ -2997,6 +2999,45 @@ class TelegramBot {
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_entry error: ${e.message}`); }
     });
+    this.bot.action('oc_entry_hybrid', async (ctx) => {
+      try {
+        octe().entryMode = 'hybrid';
+        octe().saveConfig();
+        await ctx.answerCbQuery(`Entry: Hybrid (>${octe().hybridThreshold}% → pullback)`);
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_entry error: ${e.message}`); }
+    });
+    this.bot.action('oc_cfg_hybridpct', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        await ctx.editMessageText(
+          `📏 <b>HYBRID THRESHOLD</b>\n\n` +
+          `Current: <b>${te.hybridThreshold}%</b>\n\n` +
+          `If a coin's price already moved more than this %, use pullback entry instead of market.\n\n` +
+          `Lower = more pullbacks (safer but misses more)\nHigher = more market entries (faster but riskier)`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`20%${te.hybridThreshold === 20 ? ' ✓' : ''}`, 'oc_hybpct_20'),
+             Markup.button.callback(`25%${te.hybridThreshold === 25 ? ' ✓' : ''}`, 'oc_hybpct_25'),
+             Markup.button.callback(`30%${te.hybridThreshold === 30 ? ' ✓' : ''}`, 'oc_hybpct_30')],
+            [Markup.button.callback(`40%${te.hybridThreshold === 40 ? ' ✓' : ''}`, 'oc_hybpct_40'),
+             Markup.button.callback(`50%${te.hybridThreshold === 50 ? ' ✓' : ''}`, 'oc_hybpct_50'),
+             Markup.button.callback(`75%${te.hybridThreshold === 75 ? ' ✓' : ''}`, 'oc_hybpct_75')],
+            [Markup.button.callback('⬅️ Back', 'oc_cfg_entry')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_hybridpct error: ${e.message}`); }
+    });
+    for (const pct of [20, 25, 30, 40, 50, 75]) {
+      this.bot.action(`oc_hybpct_${pct}`, async (ctx) => {
+        try {
+          octe().hybridThreshold = pct;
+          octe().saveConfig();
+          await ctx.answerCbQuery(`Hybrid threshold: ${pct}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_hybpct error: ${e.message}`); }
+      });
+    }
 
     // Also wire /onchainsettings command to show the inline panel
     this.bot.command('onchainsettings', async (ctx) => {

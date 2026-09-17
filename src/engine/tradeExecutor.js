@@ -54,9 +54,10 @@ class TradeExecutor {
       return n.getTime();
     };
 
-    // Entry mode: 'pullback' waits for 5m zone sweep + candle confirmation,
-    // 'market' enters immediately at signal price (no missed entries)
+    // Entry mode: 'market' | 'pullback' | 'hybrid'
+    // hybrid = market for fresh moves, pullback for overextended (priceChange > hybridThreshold)
     this.entryMode = config.entryMode || 'pullback';
+    this.hybridThreshold = config.hybridThreshold || 30;
 
     // Pending entries: wait for 5m pullback instead of market entry
     this.pendingEntries = new Map();
@@ -442,6 +443,7 @@ class TradeExecutor {
       minLiveVolume: this.minLiveVolume,
       tradingHours: this.tradingHours,
       entryMode: this.entryMode,
+      hybridThreshold: this.hybridThreshold,
     };
   }
 
@@ -487,6 +489,7 @@ class TradeExecutor {
     if (cfg.minLiveVolume != null) this.minLiveVolume = cfg.minLiveVolume;
     if (cfg.tradingHours != null) this.tradingHours = cfg.tradingHours;
     if (cfg.entryMode != null) this.entryMode = cfg.entryMode;
+    if (cfg.hybridThreshold != null) this.hybridThreshold = cfg.hybridThreshold;
   }
 
   async getCircuitBreakerStatus() {
@@ -639,8 +642,16 @@ class TradeExecutor {
       }
     } catch (e) { /* proceed */ }
 
+    // Resolve effective entry mode for this signal
+    let effectiveEntry = this.entryMode;
+    const priceChg = Math.abs(signal.priceChange || signal.onchainContext?.priceChange || 0);
+    if (this.entryMode === 'hybrid') {
+      effectiveEntry = priceChg >= this.hybridThreshold ? 'pullback' : 'market';
+      logger.info(`Hybrid entry ${signal.symbol}: priceChange ${priceChg.toFixed(1)}% ${effectiveEntry === 'pullback' ? `>= ${this.hybridThreshold}% → PULLBACK` : `< ${this.hybridThreshold}% → MARKET`}`);
+    }
+
     // Market mode: enter immediately at signal price — no pullback queue
-    if (this.entryMode === 'market') {
+    if (effectiveEntry === 'market') {
       logger.info(`Market entry ${signal.direction} ${signal.symbol} at $${signal.currentPrice}`);
       const result = await this.executeSignal(signal);
       if (result) {
@@ -698,30 +709,37 @@ class TradeExecutor {
       }
     } catch (e) { logger.debug(`Demand zone scan failed for ${signal.symbol}: ${e.message}`); }
 
+    const isOverextended = priceChg >= (this.hybridThreshold || 30);
     this.pendingEntries.set(key, {
       signal,
       queuedAt: Date.now(),
       signalPrice: signal.currentPrice,
       demandZone,
+      overextended: isOverextended,
+      peakPrice: signal.currentPrice,
     });
 
+    const timeoutMin = isOverextended ? 90 : 30;
     const dzInfo = demandZone ? `\nEntry zone: $${demandZone.toPrecision(6)}` : '';
-    logger.info(`Queued ${signal.direction} ${signal.symbol} for pullback entry at $${signal.currentPrice}`);
+    logger.info(`Queued ${signal.direction} ${signal.symbol} for ${isOverextended ? 'extended ' : ''}pullback entry at $${signal.currentPrice} (timeout ${timeoutMin}m)`);
     this.notify(
       `⏳ <b>ENTRY QUEUED</b> $${escapeHtml(signal.symbol)}\n\n` +
       `${signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} — waiting for pullback entry\n` +
       `Signal: $${signal.currentPrice}${dzInfo}\n` +
       `SL: $${signal.stopLoss?.toPrecision(6) || '?'}\n` +
-      `Will enter at structure or expire after 30 min`
+      `Will enter at structure or expire after ${timeoutMin} min` +
+      (isOverextended ? `\n⚠️ Extended pullback — price already moved ${priceChg.toFixed(0)}%` : '')
     ).catch(() => {});
   }
 
   async checkPendingEntries() {
     for (const [key, entry] of this.pendingEntries) {
       try {
-        const { signal, queuedAt, signalPrice } = entry;
+        const { signal, queuedAt, signalPrice, overextended } = entry;
         const ageMin = (Date.now() - queuedAt) / 60000;
         const isLong = signal.direction === 'long';
+        const timeoutMin = overextended ? 90 : 30;
+        const runawayPct = overextended ? 0.20 : 0.05;
 
         // Re-check: if a position opened since queuing, cancel
         try {
@@ -742,9 +760,9 @@ class TradeExecutor {
         const latest = candles[candles.length - 1];
         const [, , , , close] = latest;
 
-        // Price ran away 5%+ from signal (either direction) → cancel
-        const ranAwayWithTrend = isLong ? close > signalPrice * 1.05 : close < signalPrice * 0.95;
-        const ranAgainstTrend = isLong ? close < signalPrice * 0.95 : close > signalPrice * 1.05;
+        // Price ran away from signal → cancel (wider threshold for overextended)
+        const ranAwayWithTrend = isLong ? close > signalPrice * (1 + runawayPct) : close < signalPrice * (1 - runawayPct);
+        const ranAgainstTrend = isLong ? close < signalPrice * (1 - runawayPct) : close > signalPrice * (1 + runawayPct);
         if (ranAwayWithTrend || ranAgainstTrend) {
           const reason = ranAgainstTrend ? 'moved against signal' : 'chasing risk too high';
           logger.info(`Pending ${signal.symbol}: price ${reason} ($${signalPrice} → $${close}), cancelling`);
@@ -769,6 +787,10 @@ class TradeExecutor {
             continue;
           }
         }
+
+        // Track peak price for pullback bounce detection
+        if (isLong && close > (entry.peakPrice || 0)) entry.peakPrice = close;
+        if (!isLong && (entry.peakPrice === 0 || close < entry.peakPrice)) entry.peakPrice = close;
 
         // Zone sweep + strong confirmation on COMPLETED candles
         const dz = entry.demandZone;
@@ -835,21 +857,39 @@ class TradeExecutor {
           continue;
         }
 
-        // Timeout after 30 min — only enter if last completed candle is strong
-        if (ageMin >= 30) {
+        // Overextended pullback bounce: price pulled back 15%+ from peak then bounced
+        if (!confirmed && overextended && ageMin >= 30 && entry.peakPrice) {
+          const prev = completed[completed.length - 1];
+          const [, pO, pH, pL, pC] = prev;
+          const pullbackFromPeak = isLong
+            ? (entry.peakPrice - pL) / entry.peakPrice * 100
+            : (pH - entry.peakPrice) / entry.peakPrice * 100;
+          const bounced = isLong ? pC > pO && pC > pL + (pH - pL) * 0.5 : pC < pO && pC < pH - (pH - pL) * 0.5;
+          const cheaper = isLong ? close < signalPrice : close > signalPrice;
+          if (pullbackFromPeak >= 15 && bounced && cheaper) {
+            confirmed = true;
+            sweepLow = isLong ? pL : pH;
+            logger.info(`Pending ${signal.symbol}: pullback bounce — pulled back ${pullbackFromPeak.toFixed(0)}% from peak, entering at $${close}`);
+          }
+        }
+
+        // Timeout — only enter if last candle confirms and price is better than signal
+        if (!confirmed && ageMin >= timeoutMin) {
           this.pendingEntries.delete(key);
           const prev = completed[completed.length - 1];
           const [, pO, , , pC] = prev;
           const lastGreen = isLong ? pC > pO : pC < pO;
-          if (lastGreen) {
+          const cheaper = isLong ? close < signalPrice : close > signalPrice;
+          if (lastGreen && (cheaper || !overextended)) {
             signal.currentPrice = close;
             logger.info(`Pending ${signal.symbol}: timeout entry at $${close} (candle confirms direction)`);
             await this.executeSignal(signal);
           } else {
-            logger.info(`Pending ${signal.symbol}: timeout cancelled — no confirmation after ${ageMin.toFixed(0)}m`);
+            logger.info(`Pending ${signal.symbol}: timeout cancelled — ${!lastGreen ? 'no confirmation' : 'price worse than signal'} after ${ageMin.toFixed(0)}m`);
             await this.notify(
               `⏭ <b>ENTRY EXPIRED</b> $${escapeHtml(signal.symbol)}\n\n` +
-              `No zone sweep + confirmation after 30m\nPrice still moving against — skipping.`
+              `No ${overextended ? 'pullback' : 'zone sweep'} + confirmation after ${timeoutMin}m\n` +
+              (overextended ? 'Price still overextended — skipping.' : 'Price still moving against — skipping.')
             );
           }
           continue;

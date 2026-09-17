@@ -521,7 +521,8 @@ async function main() {
     tp1ClosePct: 0.50,
     tp2ClosePct: 1.0,
     tradingHours: [[0, 4], [5, 16], [19, 24]],
-    entryMode: 'market',
+    entryMode: 'hybrid',
+    hybridThreshold: 30,
   });
 
   // Init swing trade executor — daily timeframe, wide stops, long hold
