@@ -1392,7 +1392,7 @@ function refreshAll() {
   Promise.all([
     apiFetch('/api/signals', { hours: signalHours, minScore: 40 }),
     apiFetch('/api/patterns'),
-    apiFetch('/api/trades'),
+    apiFetch('/api/trades', { period: 'today', limit: 100 }),
   ]).then(function(results) {
     signals = (results[0].signals || []).map(function(s) {
       s.first_score = parseInt(s.score) || 0;
@@ -1405,6 +1405,7 @@ function refreshAll() {
     flowAlerts = results[0].flow_alerts || [];
     patterns = results[1].patterns || [];
     trades = results[2];
+    matchSignalsToTrades(signals, trades);
     dot.className = 'status-dot live';
     label.textContent = 'Live — ' + signals.length + ' signals, ' + flowAlerts.length + ' flow';
     lastUpdate = Date.now();
@@ -1442,10 +1443,15 @@ function renderStats() {
     if (s._dailyBlocked) { blockedCount++; return; }
     var sigHour = new Date(s.created_at).getUTCHours();
     if (blockedHours.indexOf(sigHour) >= 0) return;
-    var sim = simPnl(s);
-    simTotal += sim.pnl;
-    if (sim.pnl > 0) { simWins += sim.pnl; winCount++; }
-    else if (sim.pnl < 0) { simLosses += sim.pnl; lossCount++; }
+    var pnl;
+    if (s._actualTrade && s._actualTrade.pnl_usd != null) {
+      pnl = parseFloat(s._actualTrade.pnl_usd);
+    } else {
+      pnl = simPnl(s).pnl;
+    }
+    simTotal += pnl;
+    if (pnl > 0) { simWins += pnl; winCount++; }
+    else if (pnl < 0) { simLosses += pnl; lossCount++; }
   });
   var totalTrades = winCount + lossCount;
   var winRate = totalTrades > 0 ? ((winCount / totalTrades) * 100).toFixed(0) : '—';
@@ -1668,6 +1674,35 @@ function markDailyBlocked(sigs) {
   });
 }
 
+function matchSignalsToTrades(sigs, tradeData) {
+  if (!tradeData || !tradeData.closed) return;
+  var closed = tradeData.closed || [];
+  var open = tradeData.open || [];
+  sigs.forEach(function(s) { s._actualTrade = null; });
+  sigs.forEach(function(s) {
+    var sym = (s.symbol || '').toUpperCase();
+    var sigTime = new Date(s.created_at).getTime();
+    var match = null;
+    for (var i = 0; i < closed.length; i++) {
+      var t = closed[i];
+      if ((t.symbol || '').toUpperCase() !== sym) continue;
+      if (t.direction !== s.direction) continue;
+      var tradeTime = new Date(t.created_at).getTime();
+      if (Math.abs(tradeTime - sigTime) < 6 * 3600000) { match = t; break; }
+    }
+    if (!match) {
+      for (var j = 0; j < open.length; j++) {
+        var o = open[j];
+        if ((o.symbol || '').toUpperCase() !== sym) continue;
+        if (o.direction !== s.direction) continue;
+        var oTime = new Date(o.created_at).getTime();
+        if (Math.abs(oTime - sigTime) < 6 * 3600000) { match = o; break; }
+      }
+    }
+    if (match) s._actualTrade = match;
+  });
+}
+
 function buildReasons(s) {
   var reasons = [];
   var dir = s.direction, score = parseInt(s.score) || 0;
@@ -1782,9 +1817,30 @@ function renderSignals() {
     var agoMin = Math.floor((Date.now() - dt.getTime()) / 60000);
     var agoStr = agoMin < 60 ? agoMin + 'm ago' : Math.floor(agoMin / 60) + 'h ' + (agoMin % 60) + 'm ago';
     var sim = simPnl(s);
-    var pnlClass = sim.pnl >= 0 ? 'pos' : 'neg';
-    var pnlSign = sim.pnl >= 0 ? '+' : '-';
+    var at = s._actualTrade;
+    var displayPnl = sim.pnl;
+    var isActualTrade = false;
+    if (at && at.pnl_usd != null) {
+      displayPnl = parseFloat(at.pnl_usd);
+      isActualTrade = true;
+    }
+    var pnlClass = displayPnl >= 0 ? 'pos' : 'neg';
+    var pnlSign = displayPnl >= 0 ? '+' : '-';
     var ts = s._status || getTradeStatus(s, levels);
+
+    if (isActualTrade) {
+      var reason = at.close_reason || '';
+      var origTs = ts;
+      if (reason === 'max_loss' || reason === 'sl') { ts = { status: 'STOPPED OUT', css: 'stopped', tip: 'Actual trade — stopped out' }; }
+      else if (reason === 'invalidated' || reason === 'thesis_broken') { ts = { status: 'INVALIDATED', css: 'stopped', tip: 'Actual trade — ' + reason }; }
+      else if (at.hit_tp1 || at.hit_tp2 || at.hit_tp3) { ts = { status: 'BANKED', css: 'played', tip: 'Actual trade — TP hit' }; }
+      else if (reason === 'time_exit') { ts = { status: 'TIME EXIT', css: 'played', tip: 'Actual trade — time exit' }; }
+      else if (reason === 'manual_close') { ts = { status: 'CLOSED', css: 'played', tip: 'Actual trade — manually closed' }; }
+      else if (!reason) { ts = { status: 'LIVE', css: 'active', tip: 'Trade is open' }; }
+      ts.currentPrice = origTs.currentPrice;
+      ts.hitTP1 = origTs.hitTP1; ts.hitTP2 = origTs.hitTP2; ts.hitTP3 = origTs.hitTP3;
+      ts.hitSL = origTs.hitSL; ts.invalidations = origTs.invalidations || [];
+    }
 
     var sigHourUTC = new Date(s.created_at).getUTCHours();
     var inDeadHour = blockedHours.indexOf(sigHourUTC) >= 0;
@@ -1796,14 +1852,15 @@ function renderSignals() {
     html += '<span class="signal-dir ' + s.direction + '">' + s.direction + '</span>';
     if (inDeadHour) html += '<span class="status-badge stopped" title="Signal during blocked hour (' + sigHourUTC + ':00 UTC)">DEAD HR</span>';
     if (isDailyBlocked) html += '<span class="status-badge daily-limit" title="One trade per coin per day — already traded this session">1/DAY</span>';
+    if (isActualTrade) html += '<span class="status-badge ' + (displayPnl >= 0 ? 'played' : 'stopped') + '" title="' + (at.mode || '') + ' ' + (at.source || '') + ' — actual trade result">TRADED</span>';
     html += '<span class="status-badge ' + ts.css + '">' + ts.status + '</span>';
     html += '<span class="signal-symbol">' + s.symbol + '</span>';
     html += '<span class="signal-price">' + fmtPrice(s.price) + ' → ' + fmtPrice(ts.currentPrice) + ' · ' + agoStr + '</span>';
     html += '</div><div class="signal-right">';
-    if (isDailyBlocked) {
+    if (isDailyBlocked && !isActualTrade) {
       html += '<span class="signal-pnl" style="color:var(--muted);text-decoration:line-through">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
     } else {
-      html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(sim.pnl).toFixed(0) + '</span>';
+      html += '<span class="signal-pnl ' + pnlClass + '">' + pnlSign + '$' + Math.abs(displayPnl).toFixed(0) + '</span>';
     }
     html += '<span class="conviction-badge ' + conv + '">' + (conv === 'high' ? 'HIGH' : conv === 'med' ? 'MED' : 'LOW') + '</span>';
     html += '<span class="signal-score">' + (parseInt(s.score) || 0) + '</span>';
@@ -1839,8 +1896,20 @@ function renderSignals() {
     var movePctStr = ((Math.abs(ts.currentPrice - parseFloat(s.price)) / parseFloat(s.price)) * 100).toFixed(1);
     var moveDir = ts.currentPrice >= parseFloat(s.price) ? '+' : '-';
     html += '<div style="font-size:12px;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);padding:6px 10px;background:var(--bg);border-radius:4px;border-left:3px solid ' + tipColor + '">';
-    html += ts.tip + ' — Now: ' + fmtPrice(ts.currentPrice) + ' (' + moveDir + movePctStr + '% from entry)';
-    if (ts.invalidations.length > 1) {
+    if (isActualTrade && at.pnl_usd != null) {
+      var atPnl = parseFloat(at.pnl_usd);
+      var atPct = parseFloat(at.pnl_pct) || 0;
+      html += '<b>ACTUAL TRADE:</b> ' + (at.mode || '') + ' ' + (at.source || '') + ' — ';
+      html += 'Entry $' + fmtPrice(at.entry_price) + ' → Exit $' + fmtPrice(at.exit_price) + ' — ';
+      html += '<span style="color:' + (atPnl >= 0 ? 'var(--accent)' : 'var(--danger)') + '">';
+      html += (atPnl >= 0 ? '+' : '') + '$' + atPnl.toFixed(2) + ' (' + (atPct >= 0 ? '+' : '') + atPct.toFixed(2) + '%)</span>';
+      html += ' — ' + (at.close_reason || 'open');
+    } else if (isActualTrade) {
+      html += '<b>LIVE TRADE:</b> ' + (at.mode || '') + ' ' + (at.source || '') + ' — Entry $' + fmtPrice(at.entry_price);
+    } else {
+      html += ts.tip + ' — Now: ' + fmtPrice(ts.currentPrice) + ' (' + moveDir + movePctStr + '% from entry)';
+    }
+    if (ts.invalidations && ts.invalidations.length > 1) {
       ts.invalidations.forEach(function(inv, idx) {
         if (idx > 0) html += '<br><span style="color:var(--danger)">⚠ ' + inv + '</span>';
       });
