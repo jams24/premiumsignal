@@ -74,6 +74,13 @@ class TradeExecutor {
     this.dcaSpreadMult2 = config.dcaSpreadMult2 || 1.5;
     this.tp1ClosePct = config.tp1ClosePct || 0.33;
     this.tp2ClosePct = config.tp2ClosePct || 0.50;
+    this.tpMultPreset = config.tpMultPreset || 'default';
+    this.tp1Mult = config.tp1Mult || 1.2;
+    this.tp2Mult = config.tp2Mult || 2.5;
+    this.tp3Mult = config.tp3Mult || 4.0;
+    this.tpCapPct1 = config.tpCapPct1 || 3;
+    this.tpCapPct2 = config.tpCapPct2 || 6;
+    this.tpCapPct3 = config.tpCapPct3 || 10;
 
     // Circuit breaker: pause after consecutive losses
     this.cbEnabled = config.cbEnabled !== false;
@@ -449,6 +456,13 @@ class TradeExecutor {
       dcaSpreadMult2: this.dcaSpreadMult2,
       tp1ClosePct: this.tp1ClosePct,
       tp2ClosePct: this.tp2ClosePct,
+      tpMultPreset: this.tpMultPreset,
+      tp1Mult: this.tp1Mult,
+      tp2Mult: this.tp2Mult,
+      tp3Mult: this.tp3Mult,
+      tpCapPct1: this.tpCapPct1,
+      tpCapPct2: this.tpCapPct2,
+      tpCapPct3: this.tpCapPct3,
       cbEnabled: this.cbEnabled,
       cbStreak: this.cbStreak,
       cbPauseMinutes: this.cbPauseMinutes,
@@ -495,6 +509,13 @@ class TradeExecutor {
     if (cfg.dcaSpreadMult2 != null) this.dcaSpreadMult2 = cfg.dcaSpreadMult2;
     if (cfg.tp1ClosePct != null) this.tp1ClosePct = cfg.tp1ClosePct;
     if (cfg.tp2ClosePct != null) this.tp2ClosePct = cfg.tp2ClosePct;
+    if (cfg.tpMultPreset != null) this.tpMultPreset = cfg.tpMultPreset;
+    if (cfg.tp1Mult != null) this.tp1Mult = cfg.tp1Mult;
+    if (cfg.tp2Mult != null) this.tp2Mult = cfg.tp2Mult;
+    if (cfg.tp3Mult != null) this.tp3Mult = cfg.tp3Mult;
+    if (cfg.tpCapPct1 != null) this.tpCapPct1 = cfg.tpCapPct1;
+    if (cfg.tpCapPct2 != null) this.tpCapPct2 = cfg.tpCapPct2;
+    if (cfg.tpCapPct3 != null) this.tpCapPct3 = cfg.tpCapPct3;
     if (cfg.cbEnabled != null) this.cbEnabled = cfg.cbEnabled;
     if (cfg.cbStreak != null) this.cbStreak = cfg.cbStreak;
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
@@ -571,6 +592,24 @@ class TradeExecutor {
     const atr = signal.atr || Math.abs(signal.tp1 - price) / 2;
     const isLong = signal.direction === 'long';
     return isLong ? price + atr * 8 : price - atr * 8;
+  }
+
+  recalcTPs(signal) {
+    const price = signal.currentPrice;
+    const atr = signal.atr;
+    if (!atr || atr <= 0) return;
+    const mult = signal.direction === 'long' ? 1 : -1;
+    const tp1Raw = price + mult * atr * this.tp1Mult;
+    const tp2Raw = price + mult * atr * this.tp2Mult;
+    const tp3Raw = price + mult * atr * this.tp3Mult;
+    const tp1Cap = price * (1 + mult * this.tpCapPct1 / 100);
+    const tp2Cap = price * (1 + mult * this.tpCapPct2 / 100);
+    const tp3Cap = price * (1 + mult * this.tpCapPct3 / 100);
+    const minP = price * 0.05;
+    const pick = signal.direction === 'long' ? Math.min : Math.max;
+    signal.tp1 = Math.max(pick(tp1Raw, tp1Cap), minP);
+    signal.tp2 = Math.max(pick(tp2Raw, tp2Cap), minP);
+    signal.tp3 = Math.max(pick(tp3Raw, tp3Cap), minP);
   }
 
   // Refine TP/SL using SMC order blocks and FVGs
@@ -964,6 +1003,7 @@ class TradeExecutor {
     const dcaQty3 = this.dcaEnabled ? (positionSize / 3) / entryPrice : 0;
     const { dcaPrice2, dcaPrice3 } = this.calcDCALevels(signal);
     const invalidation = this.calcInvalidation(signal);
+    this.recalcTPs(signal);
     const tp4 = this.calcTP4(signal);
 
     const trade = {
@@ -1161,6 +1201,7 @@ class TradeExecutor {
       }
 
       const invalidation = this.calcInvalidation(signal);
+      this.recalcTPs(signal);
       const tp4 = this.calcTP4(signal);
 
       const trade = {

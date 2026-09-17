@@ -2251,7 +2251,8 @@ class TelegramBot {
          Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'oc_cfg_be')],
         [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'oc_cfg_tp1'),
          Markup.button.callback(`🎯 TP2: ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}`, 'oc_cfg_tp2')],
-        [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'hybrid' ? `HYBRID ${te.hybridThreshold}%` : te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry')],
+        [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'hybrid' ? `HYBRID ${te.hybridThreshold}%` : te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry'),
+         Markup.button.callback(`🎯 TP: ${(te.tpMultPreset || 'default').toUpperCase()}`, 'oc_cfg_tpmult')],
         [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
          Markup.button.callback(`📐 Risk-Fit: ${te.riskFitSizing ? 'ON' : 'OFF'}`, 'oc_cfg_riskfit')],
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
@@ -3056,6 +3057,84 @@ class TelegramBot {
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_hybpct error: ${e.message}`); }
       });
+    }
+
+    // ── TP TARGETS CONFIG ──
+    this.bot.action('oc_cfg_tpmult', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const preset = te.tpMultPreset || 'default';
+        const ck = (v) => v === preset ? ' ✓' : '';
+        await ctx.editMessageText(
+          `🎯 <b>ONCHAIN — TP TARGETS</b>\n\n` +
+          `Current: <b>${preset.toUpperCase()}</b>\n` +
+          `TP1: ${te.tp1Mult}x ATR (cap ${te.tpCapPct1}%) → close ${(te.tp1ClosePct * 100).toFixed(0)}%\n` +
+          `TP2: ${te.tp2Mult}x ATR (cap ${te.tpCapPct2}%) → close ${(te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%')}\n` +
+          `TP3: ${te.tp3Mult}x ATR (cap ${te.tpCapPct3}%)\n\n` +
+          `<i>Data: tighter TPs hit more often.\nCurrent TP1 hit rate: 9%. Tight = 15%.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`DEFAULT (1.2x/2.5x/4x)${ck('default')}`, 'oc_tpmult_default')],
+            [Markup.button.callback(`TIGHT (0.5x/1.0x/2x)${ck('tight')}`, 'oc_tpmult_tight')],
+            [Markup.button.callback(`MEDIUM (0.75x/1.5x/2.5x)${ck('medium')}`, 'oc_tpmult_medium')],
+            [Markup.button.callback(`WIDE (1.5x/3x/5x)${ck('wide')}`, 'oc_tpmult_wide')],
+            [Markup.button.callback(`--- TP CAPS ---`, 'noop')],
+            [Markup.button.callback(`TP1 cap: ${te.tpCapPct1}%`, 'oc_tpcap_1'),
+             Markup.button.callback(`TP2 cap: ${te.tpCapPct2}%`, 'oc_tpcap_2'),
+             Markup.button.callback(`TP3 cap: ${te.tpCapPct3}%`, 'oc_tpcap_3')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_tpmult error: ${e.message}`); }
+    });
+    const tpPresets = {
+      default: { tp1Mult: 1.2, tp2Mult: 2.5, tp3Mult: 4.0, tpCapPct1: 3, tpCapPct2: 6, tpCapPct3: 10 },
+      tight:   { tp1Mult: 0.5, tp2Mult: 1.0, tp3Mult: 2.0, tpCapPct1: 2, tpCapPct2: 4, tpCapPct3: 8 },
+      medium:  { tp1Mult: 0.75, tp2Mult: 1.5, tp3Mult: 2.5, tpCapPct1: 2, tpCapPct2: 5, tpCapPct3: 8 },
+      wide:    { tp1Mult: 1.5, tp2Mult: 3.0, tp3Mult: 5.0, tpCapPct1: 5, tpCapPct2: 10, tpCapPct3: 15 },
+    };
+    for (const [name, vals] of Object.entries(tpPresets)) {
+      this.bot.action(`oc_tpmult_${name}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.tpMultPreset = name;
+          Object.assign(te, vals);
+          te.saveConfig();
+          await ctx.answerCbQuery(`TP targets: ${name.toUpperCase()}`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_tpmult_${name} error: ${e.message}`); }
+      });
+    }
+    for (const idx of [1, 2, 3]) {
+      this.bot.action(`oc_tpcap_${idx}`, async (ctx) => {
+        try {
+          await ctx.answerCbQuery();
+          const te = octe();
+          const key = `tpCapPct${idx}`;
+          const cur = te[key];
+          const opts = idx === 1 ? [1, 2, 3, 5] : idx === 2 ? [3, 4, 5, 6, 8, 10] : [5, 8, 10, 12, 15];
+          await ctx.editMessageText(
+            `🎯 <b>TP${idx} CAP %</b>\n\nCurrent: <b>${cur}%</b>\nMax % move for TP${idx} regardless of ATR.`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              ...opts.map(v => [Markup.button.callback(`${v}%${v === cur ? ' ✓' : ''}`, `oc_tpcapset_${idx}_${v}`)]),
+              [Markup.button.callback('⬅️ Back', 'oc_cfg_tpmult')],
+            ]).reply_markup }
+          );
+        } catch (e) { logger.error(`oc_tpcap error: ${e.message}`); }
+      });
+      const capOpts = idx === 1 ? [1, 2, 3, 5] : idx === 2 ? [3, 4, 5, 6, 8, 10] : [5, 8, 10, 12, 15];
+      for (const v of capOpts) {
+        this.bot.action(`oc_tpcapset_${idx}_${v}`, async (ctx) => {
+          try {
+            const te = octe();
+            te[`tpCapPct${idx}`] = v;
+            te.tpMultPreset = 'custom';
+            te.saveConfig();
+            await ctx.answerCbQuery(`TP${idx} cap: ${v}%`);
+            await showOcSettings(ctx);
+          } catch (e) { logger.error(`oc_tpcapset error: ${e.message}`); }
+        });
+      }
     }
 
     // Also wire /onchainsettings command to show the inline panel
