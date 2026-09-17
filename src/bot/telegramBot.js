@@ -2511,11 +2511,13 @@ class TelegramBot {
         const cur = te.minOcScore || (te.minConfidence >= 5 ? 60 : te.minConfidence >= 4 ? 45 : 30);
         const maxCur = te.maxOcScore || 69;
         const shortMin = te.minShortScore || 70;
+        const flipMin = te.flipScore || 70;
         const isBest = cur === 45 && maxCur === 69 && shortMin === 70;
         await ctx.editMessageText(
           `🔗 <b>ONCHAIN — SCORE CONFIG</b>\n\n` +
           `📈 <b>LONG:</b> ${cur} — ${maxCur} (min — max)\n` +
-          `📉 <b>SHORT:</b> ${shortMin}+ (min)\n\n` +
+          `📉 <b>SHORT:</b> ${shortMin}+ (min)\n` +
+          `🔄 <b>FLIP:</b> ${flipMin}+ (re-entry direction flip)\n\n` +
           `${isBest ? '✅ Using <b>BEST</b> preset (data-backed)\n\n' : ''}` +
           `<i>Long 45-49 = 76% WR | Long 70+ = 0% WR\nShort 70+ = 100% WR</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
@@ -2537,6 +2539,11 @@ class TelegramBot {
              Markup.button.callback(`45+${ocCheck(45, shortMin)}`, 'oc_shortmin_45'),
              Markup.button.callback(`50+${ocCheck(50, shortMin)}`, 'oc_shortmin_50'),
              Markup.button.callback(`60+${ocCheck(60, shortMin)}`, 'oc_shortmin_60')],
+            [Markup.button.callback(`--- FLIP MIN ---`, 'noop')],
+            [Markup.button.callback(`45+${ocCheck(45, flipMin)}`, 'oc_flipscore_45'),
+             Markup.button.callback(`55+${ocCheck(55, flipMin)}`, 'oc_flipscore_55'),
+             Markup.button.callback(`60+${ocCheck(60, flipMin)}`, 'oc_flipscore_60'),
+             Markup.button.callback(`70+${ocCheck(70, flipMin)}`, 'oc_flipscore_70')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
@@ -2551,8 +2558,9 @@ class TelegramBot {
         te.minConfidence = 4;
         te.maxOcScore = 69;
         te.minShortScore = 45;
+        te.flipScore = 70;
         te.saveConfig();
-        await ctx.answerCbQuery('Best preset applied: L 45-69, S 45+');
+        await ctx.answerCbQuery('Best preset applied: L 45-69, S 45+, Flip 70+');
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_score_best error: ${e.message}`); }
     });
@@ -2588,6 +2596,17 @@ class TelegramBot {
           await ctx.answerCbQuery(`Short min: ${score}+`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_shortmin error: ${e.message}`); }
+      });
+    }
+    for (const score of [45, 55, 60, 70]) {
+      this.bot.action(`oc_flipscore_${score}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.flipScore = score;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Flip min: ${score}+`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_flipscore error: ${e.message}`); }
       });
     }
 
