@@ -20,7 +20,7 @@ const ENGINE = {
   tp2Mult: 4.5,
   tp3Mult: 7,
   slMult: 3,
-  profitProtectPct: 2.5,
+  profitProtectPct: 3.0,
   partialTP1: 0.33,
   partialTP2: 0.50,
   partialTP3: 0.50,

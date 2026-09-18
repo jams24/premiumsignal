@@ -762,45 +762,108 @@ class TradeExecutor {
       return;
     }
 
-    // Pullback mode: find demand/supply zone from recent 5m candles for structural entry
+    // Pullback mode: find demand/supply zone for structural entry
+    // Overextended coins use 1h candles to find the pre-pump consolidation base
+    // Normal entries use 5m candles for nearby swing structure
     let demandZone = null;
     try {
       const exchange = this.exchanges[signal.exchange];
       if (exchange) {
-        const candles = await exchange.fetchOHLCV(signal.pair, '5m', undefined, 30);
-        if (candles?.length >= 5) {
-          const completed = candles.slice(0, -1);
-          const isLong = signal.direction === 'long';
-          const price = signal.currentPrice;
-          const sl = signal.stopLoss;
+        const isLong = signal.direction === 'long';
+        const price = signal.currentPrice;
+        const sl = signal.stopLoss;
+        const isOverext = priceChg >= (this.hybridThreshold || 30);
 
-          if (isLong) {
-            const swingLows = [];
-            for (let i = 1; i < completed.length - 1; i++) {
-              if (completed[i][3] < completed[i - 1][3] && completed[i][3] < completed[i + 1][3]) {
-                const lvl = completed[i][3];
-                if (lvl < price && lvl > sl) swingLows.push(lvl);
+        if (isOverext) {
+          // Overextended: use 1h candles to find the breakout/consolidation zone
+          const candles1h = await exchange.fetchOHLCV(signal.pair, '1h', undefined, 48);
+          if (candles1h?.length >= 10) {
+            const completed = candles1h.slice(0, -1);
+            const closes = completed.map(c => c[4]);
+            const lows = completed.map(c => c[3]);
+            const highs = completed.map(c => c[2]);
+
+            if (isLong) {
+              // Find the consolidation zone before the pump:
+              // Walk backwards from recent candles, find where the big move started
+              // (first candle whose close is within 15% of the 48h low = base area)
+              const low48h = Math.min(...lows);
+              const baseThreshold = low48h * 1.15;
+              const baseLevels = [];
+              for (let i = 0; i < completed.length; i++) {
+                if (closes[i] <= baseThreshold) {
+                  baseLevels.push(highs[i]); // top of base candles = breakout level
+                }
               }
-            }
-            if (swingLows.length) {
-              demandZone = Math.max(...swingLows);
-            } else {
-              demandZone = price - (price - sl) * 0.4;
-            }
-          } else {
-            const swingHighs = [];
-            for (let i = 1; i < completed.length - 1; i++) {
-              if (completed[i][2] > completed[i - 1][2] && completed[i][2] > completed[i + 1][2]) {
-                const lvl = completed[i][2];
-                if (lvl > price && lvl < sl) swingHighs.push(lvl);
+              if (baseLevels.length >= 2) {
+                // Demand zone = top of the consolidation (breakout level)
+                demandZone = Math.max(...baseLevels);
+                logger.info(`${signal.symbol}: 1h consolidation base — breakout zone at $${demandZone.toPrecision(6)} (${baseLevels.length} base candles, low48h $${low48h.toPrecision(6)})`);
+              } else {
+                // Fallback: use 50% retracement of the move
+                const moveStart = Math.min(...lows.slice(-24));
+                demandZone = moveStart + (price - moveStart) * 0.5;
+                logger.info(`${signal.symbol}: no clear base, using 50% retrace at $${demandZone.toPrecision(6)}`);
               }
-            }
-            if (swingHighs.length) {
-              demandZone = Math.min(...swingHighs);
             } else {
-              demandZone = price + (sl - price) * 0.4;
+              // Short: find the resistance zone (top before the dump)
+              const high48h = Math.max(...highs);
+              const resistThreshold = high48h * 0.85;
+              const resistLevels = [];
+              for (let i = 0; i < completed.length; i++) {
+                if (closes[i] >= resistThreshold) {
+                  resistLevels.push(lows[i]);
+                }
+              }
+              if (resistLevels.length >= 2) {
+                demandZone = Math.min(...resistLevels);
+                logger.info(`${signal.symbol}: 1h resistance zone at $${demandZone.toPrecision(6)}`);
+              } else {
+                const moveStart = Math.max(...highs.slice(-24));
+                demandZone = moveStart - (moveStart - price) * 0.5;
+                logger.info(`${signal.symbol}: no clear resistance, using 50% retrace at $${demandZone.toPrecision(6)}`);
+              }
             }
           }
+        }
+
+        // Normal entries (or fallback): use 5m candles for nearby swing structure
+        if (!demandZone) {
+          const candles = await exchange.fetchOHLCV(signal.pair, '5m', undefined, 30);
+          if (candles?.length >= 5) {
+            const completed = candles.slice(0, -1);
+
+            if (isLong) {
+              const swingLows = [];
+              for (let i = 1; i < completed.length - 1; i++) {
+                if (completed[i][3] < completed[i - 1][3] && completed[i][3] < completed[i + 1][3]) {
+                  const lvl = completed[i][3];
+                  if (lvl < price && lvl > sl) swingLows.push(lvl);
+                }
+              }
+              if (swingLows.length) {
+                demandZone = Math.max(...swingLows);
+              } else {
+                demandZone = price - (price - sl) * 0.4;
+              }
+            } else {
+              const swingHighs = [];
+              for (let i = 1; i < completed.length - 1; i++) {
+                if (completed[i][2] > completed[i - 1][2] && completed[i][2] > completed[i + 1][2]) {
+                  const lvl = completed[i][2];
+                  if (lvl > price && lvl < sl) swingHighs.push(lvl);
+                }
+              }
+              if (swingHighs.length) {
+                demandZone = Math.min(...swingHighs);
+              } else {
+                demandZone = price + (sl - price) * 0.4;
+              }
+            }
+          }
+        }
+
+        if (demandZone) {
           logger.info(`${signal.symbol}: demand zone at $${demandZone.toPrecision(6)} (SL $${sl?.toPrecision(6)})`);
         }
       }
@@ -954,30 +1017,34 @@ class TradeExecutor {
           continue;
         }
 
-        // Overextended pullback bounce: price pulled back 15%+ from peak then bounced
-        if (!confirmed && overextended && ageMin >= 30 && entry.peakPrice) {
+        // Overextended pullback bounce: must pull back to near demand zone, not just any dip
+        if (!confirmed && overextended && ageMin >= 30 && entry.peakPrice && dz) {
           const prev = completed[completed.length - 1];
           const [, pO, pH, pL, pC] = prev;
           const pullbackFromPeak = isLong
             ? (entry.peakPrice - pL) / entry.peakPrice * 100
             : (pH - entry.peakPrice) / entry.peakPrice * 100;
           const bounced = isLong ? pC > pO && pC > pL + (pH - pL) * 0.5 : pC < pO && pC < pH - (pH - pL) * 0.5;
-          const cheaper = isLong ? close < signalPrice : close > signalPrice;
-          if (pullbackFromPeak >= 15 && bounced && cheaper) {
+          // Must be within 5% of demand zone — not just any bounce from a small dip
+          const nearZone = isLong ? pL <= dz * 1.05 : pH >= dz * 0.95;
+          if (pullbackFromPeak >= 15 && bounced && nearZone) {
             confirmed = true;
             sweepLow = isLong ? pL : pH;
-            logger.info(`Pending ${signal.symbol}: pullback bounce — pulled back ${pullbackFromPeak.toFixed(0)}% from peak, entering at $${close}`);
+            logger.info(`Pending ${signal.symbol}: pullback bounce near zone $${dz.toPrecision(6)} — pulled back ${pullbackFromPeak.toFixed(0)}% from peak, entering at $${close}`);
           }
         }
 
-        // Timeout — only enter if last candle confirms and price is better than signal
+        // Timeout — only enter if last candle confirms and price is near demand zone
         if (!confirmed && ageMin >= timeoutMin) {
           this.pendingEntries.delete(key);
           const prev = completed[completed.length - 1];
           const [, pO, , , pC] = prev;
           const lastGreen = isLong ? pC > pO : pC < pO;
           const cheaper = isLong ? close < signalPrice : close > signalPrice;
-          if (lastGreen && (cheaper || !overextended)) {
+          // Overextended timeout: must be near demand zone, not just cheaper than signal
+          const nearZoneOnTimeout = !overextended || !dz ||
+            (isLong ? close <= dz * 1.05 : close >= dz * 0.95);
+          if (lastGreen && (cheaper || !overextended) && nearZoneOnTimeout) {
             signal.currentPrice = close;
             logger.info(`Pending ${signal.symbol}: timeout entry at $${close} (candle confirms direction)`);
             await this.executeSignal(signal);
