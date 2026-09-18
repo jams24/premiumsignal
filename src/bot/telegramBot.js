@@ -1989,7 +1989,8 @@ class TelegramBot {
           [Markup.button.callback(`📊 Pos: ${te.maxConcurrentPositions}`, 'oc_cfg_maxpos'),
            Markup.button.callback(`🎯 L:${ocScoreLabel(te)}-${te.maxOcScore || 69} S:${te.minShortScore || 70}+`, 'oc_cfg_minscore')],
           [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
-           Markup.button.callback('🔄 Refresh', 'oc_settings')],
+           Markup.button.callback(`⏳ Queued (${te.pendingEntries?.size || 0})`, 'oc_queued')],
+          [Markup.button.callback('🔄 Refresh', 'oc_settings')],
           [Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
         ]);
         ctx.replyWithHTML(text, keyboard);
@@ -2196,6 +2197,127 @@ class TelegramBot {
       }
     });
 
+    // ── QUEUED PULLBACK ENTRIES ──
+    this.bot.action('oc_queued', async (ctx) => {
+      const te = this.onchainTradeExecutor;
+      if (!te) return ctx.answerCbQuery('Not initialized.');
+      try {
+        await ctx.answerCbQuery();
+        const entries = [...te.pendingEntries.entries()];
+        if (!entries.length) {
+          return ctx.editMessageText(
+            `⏳ <b>QUEUED ENTRIES</b>\n\nNo pending pullback entries.\n\nTokens queue here when the scanner finds a signal but waits for price to pull back to the demand zone before entering.`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'oc_queued')],
+              [Markup.button.callback('⬅️ Settings', 'oc_settings')],
+            ]).reply_markup }
+          );
+        }
+        let text = `⏳ <b>QUEUED ENTRIES</b> (${entries.length})\n\n`;
+        const buttons = [];
+        for (const [key, entry] of entries) {
+          const { signal, queuedAt, signalPrice, demandZone, overextended } = entry;
+          const ageMin = (Date.now() - queuedAt) / 60000;
+          let timeoutMin = overextended ? 90 : 30;
+          if (overextended && demandZone && signalPrice) {
+            const dzDistPct = Math.abs(signalPrice - demandZone) / signalPrice * 100;
+            if (dzDistPct > 15) timeoutMin = 180;
+            else if (dzDistPct > 10) timeoutMin = 150;
+            else if (dzDistPct > 5) timeoutMin = 120;
+          }
+          const remainMin = Math.max(0, timeoutMin - ageMin);
+          const dir = signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+          const dzLine = demandZone ? `\n   Zone: $${demandZone.toPrecision(6)}` : '';
+          const priceLine = signal.currentPrice ? `\n   Now: ~$${signal.currentPrice.toPrecision(6)}` : '';
+          text += `${dir} <b>${escapeHtml(signal.symbol)}</b>${overextended ? ' 🔥' : ''}\n` +
+            `   Signal: $${signalPrice?.toPrecision(6) || '?'}${dzLine}${priceLine}\n` +
+            `   SL: $${signal.stopLoss?.toPrecision(6) || '?'}\n` +
+            `   ⏱ ${ageMin.toFixed(0)}m elapsed / ${timeoutMin}m timeout (${remainMin.toFixed(0)}m left)\n\n`;
+          const sym = signal.symbol.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+          buttons.push([Markup.button.callback(`❌ Cancel ${signal.symbol}`, `oc_cancel_q_${sym}`)]);
+        }
+        buttons.push([Markup.button.callback('❌ Cancel All', 'oc_cancel_q_all')]);
+        buttons.push([Markup.button.callback('🔄 Refresh', 'oc_queued'), Markup.button.callback('⬅️ Settings', 'oc_settings')]);
+        await ctx.editMessageText(text.trim(), { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup });
+      } catch (e) {
+        logger.error(`oc_queued error: ${e.message}`);
+        ctx.answerCbQuery('Error loading queue').catch(() => {});
+      }
+    });
+
+    this.bot.action('oc_cancel_q_all', async (ctx) => {
+      const te = this.onchainTradeExecutor;
+      if (!te) return ctx.answerCbQuery('Not initialized.');
+      try {
+        const count = te.pendingEntries.size;
+        te.pendingEntries.clear();
+        await ctx.answerCbQuery(`Cancelled ${count} queued entries`);
+        await ctx.editMessageText(
+          `⏳ <b>QUEUED ENTRIES</b>\n\n✅ Cancelled all ${count} queued entries.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Refresh', 'oc_queued')],
+            [Markup.button.callback('⬅️ Settings', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cancel_q_all error: ${e.message}`); }
+    });
+
+    this.bot.action(/^oc_cancel_q_(?!all)(.+)$/, async (ctx) => {
+      const te = this.onchainTradeExecutor;
+      if (!te) return ctx.answerCbQuery('Not initialized.');
+      try {
+        const slug = ctx.match[1];
+        let cancelled = null;
+        for (const [key, entry] of te.pendingEntries) {
+          const sym = entry.signal.symbol.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+          if (sym === slug) {
+            cancelled = entry.signal.symbol;
+            te.pendingEntries.delete(key);
+            break;
+          }
+        }
+        await ctx.answerCbQuery(cancelled ? `Cancelled ${cancelled}` : `${slug} not in queue`);
+        // Re-render queue view inline
+        const entries = [...te.pendingEntries.entries()];
+        if (!entries.length) {
+          return ctx.editMessageText(
+            `⏳ <b>QUEUED ENTRIES</b>\n\n${cancelled ? `✅ Cancelled <b>${escapeHtml(cancelled)}</b>\n\n` : ''}No pending pullback entries.`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'oc_queued')],
+              [Markup.button.callback('⬅️ Settings', 'oc_settings')],
+            ]).reply_markup }
+          );
+        }
+        let text = `⏳ <b>QUEUED ENTRIES</b> (${entries.length})${cancelled ? `\n✅ Cancelled <b>${escapeHtml(cancelled)}</b>` : ''}\n\n`;
+        const buttons = [];
+        for (const [k, e] of entries) {
+          const { signal, queuedAt, signalPrice, demandZone, overextended } = e;
+          const ageMin = (Date.now() - queuedAt) / 60000;
+          let timeoutMin = overextended ? 90 : 30;
+          if (overextended && demandZone && signalPrice) {
+            const dzDistPct = Math.abs(signalPrice - demandZone) / signalPrice * 100;
+            if (dzDistPct > 15) timeoutMin = 180;
+            else if (dzDistPct > 10) timeoutMin = 150;
+            else if (dzDistPct > 5) timeoutMin = 120;
+          }
+          const remainMin = Math.max(0, timeoutMin - ageMin);
+          const dir = signal.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+          const dzLine = demandZone ? `\n   Zone: $${demandZone.toPrecision(6)}` : '';
+          text += `${dir} <b>${escapeHtml(signal.symbol)}</b>${overextended ? ' 🔥' : ''}\n` +
+            `   Signal: $${signalPrice?.toPrecision(6) || '?'}${dzLine}\n` +
+            `   ⏱ ${ageMin.toFixed(0)}m / ${timeoutMin}m (${remainMin.toFixed(0)}m left)\n\n`;
+          const sym = signal.symbol.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+          buttons.push([Markup.button.callback(`❌ Cancel ${signal.symbol}`, `oc_cancel_q_${sym}`)]);
+        }
+        buttons.push([Markup.button.callback('❌ Cancel All', 'oc_cancel_q_all')]);
+        buttons.push([Markup.button.callback('🔄 Refresh', 'oc_queued'), Markup.button.callback('⬅️ Settings', 'oc_settings')]);
+        await ctx.editMessageText(text.trim(), { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup });
+      } catch (e) {
+        logger.error(`oc_cancel_q error: ${e.message}`);
+        ctx.answerCbQuery('Error cancelling').catch(() => {});
+      }
+    });
+
     // ── ONCHAIN SETTINGS PANEL (full inline buttons) ──
     const octe = () => this.onchainTradeExecutor;
     const ocCheck = (val, cur) => val === cur ? ' ✓' : '';
@@ -2321,6 +2443,7 @@ class TelegramBot {
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Score: <b>L:${ocScoreLabel(te)}-${te.maxOcScore || 69} | S:${te.minShortScore || 70}+</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
+        `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
@@ -2348,10 +2471,12 @@ class TelegramBot {
         [Markup.button.callback(`📏 4H: ${te.max4hRange || 15}%`, 'oc_cfg_4hrange'),
          Markup.button.callback(`🎯 L:${ocScoreLabel(te)}-${te.maxOcScore || 69} S:${te.minShortScore || 70}+`, 'oc_cfg_minscore')],
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
-        [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours'),
-         Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
+        [Markup.button.callback(`🔁 Drift: ${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}`, 'oc_cfg_drift'),
+         Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
+        [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
-         Markup.button.callback('🔄 Refresh', 'oc_settings')],
+         Markup.button.callback(`⏳ Queued (${te.pendingEntries?.size || 0})`, 'oc_queued')],
+        [Markup.button.callback('🔄 Refresh', 'oc_settings')],
         [Markup.button.callback('⬅️ Panel', 'panel_main'),
          Markup.button.callback('🛑 Close All & Stop', 'oc_closeall')],
       ]);
@@ -2815,6 +2940,44 @@ class TelegramBot {
           await ctx.answerCbQuery(`4H range limit set to ${val}%`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_4hr_${val} error: ${e.message}`); }
+      });
+    }
+
+    this.bot.action('oc_cfg_drift', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.maxDriftPct;
+        await ctx.editMessageText(
+          `🔁 <b>ONCHAIN — RE-ENTRY DRIFT LIMIT</b>\n\n` +
+          `Current: <b>${cur}%</b>\n\n` +
+          `Blocks re-entry if price has drifted more than this % from the last entry price (in the trade direction).\n\n` +
+          `Lower = stricter (prevents chasing pumps)\n` +
+          `Higher = looser (allows wider re-entries)`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`1%${cur === 1 ? ' ✓' : ''}`, 'oc_drift_1'),
+             Markup.button.callback(`2%${cur === 2 ? ' ✓' : ''}`, 'oc_drift_2'),
+             Markup.button.callback(`3%${cur === 3 ? ' ✓' : ''}`, 'oc_drift_3')],
+            [Markup.button.callback(`5%${cur === 5 ? ' ✓' : ''}`, 'oc_drift_5'),
+             Markup.button.callback(`7%${cur === 7 ? ' ✓' : ''}`, 'oc_drift_7'),
+             Markup.button.callback(`10%${cur === 10 ? ' ✓' : ''}`, 'oc_drift_10')],
+            [Markup.button.callback(`15%${cur === 15 ? ' ✓' : ''}`, 'oc_drift_15'),
+             Markup.button.callback(`20%${cur === 20 ? ' ✓' : ''}`, 'oc_drift_20'),
+             Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_drift_0')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_drift error: ${e.message}`); }
+    });
+    for (const val of [0, 1, 2, 3, 5, 7, 10, 15, 20]) {
+      this.bot.action(`oc_drift_${val}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.maxDriftPct = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(val === 0 ? 'Re-entry drift check OFF' : `Re-entry drift limit set to ${val}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_drift_${val} error: ${e.message}`); }
       });
     }
 

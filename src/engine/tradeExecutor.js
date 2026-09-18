@@ -59,6 +59,7 @@ class TradeExecutor {
     // hybrid = market for fresh moves, pullback for overextended (priceChange > hybridThreshold)
     this.entryMode = config.entryMode || 'pullback';
     this.hybridThreshold = config.hybridThreshold || 30;
+    this.maxDriftPct = config.maxDriftPct ?? 5;
 
     // Pending entries: wait for 5m pullback instead of market entry
     this.pendingEntries = new Map();
@@ -221,14 +222,14 @@ class TradeExecutor {
         logger.info(`${signal.symbol}: cooldown bypassed — direction flip with strong thesis (score ${signal.onchainScore})`);
       } else if (hoursSinceClose < 2) {
         return { ok: false, reason: `${signal.symbol} blocked — 2h cooldown after close (${(hoursSinceClose * 60).toFixed(0)}m elapsed)` };
-      } else if (cooldownData.entryPrice && !isFlip) {
+      } else if (cooldownData.entryPrice && !isFlip && this.maxDriftPct > 0) {
         const drift = (signal.currentPrice - cooldownData.entryPrice) / cooldownData.entryPrice * 100;
-        const chasingUp = signal.direction === 'long' && drift > 10;
-        const chasingDown = signal.direction === 'short' && drift < -10;
+        const chasingUp = signal.direction === 'long' && drift > this.maxDriftPct;
+        const chasingDown = signal.direction === 'short' && drift < -this.maxDriftPct;
         if (chasingUp || chasingDown) {
-          return { ok: false, reason: `${signal.symbol} blocked — re-entry price drifted ${drift.toFixed(1)}% from last entry (chasing)` };
+          return { ok: false, reason: `${signal.symbol} blocked — re-entry price drifted ${drift.toFixed(1)}% from last entry (max ${this.maxDriftPct}%)` };
         }
-        logger.info(`${signal.symbol}: re-entry allowed — price within ${drift.toFixed(1)}% of last entry $${cooldownData.entryPrice} (fresh thesis at similar level)`);
+        logger.info(`${signal.symbol}: re-entry allowed — price within ${drift.toFixed(1)}% of last entry $${cooldownData.entryPrice} (max ${this.maxDriftPct}%)`);
       } else if (isFlip) {
         return { ok: false, reason: `${signal.symbol} blocked — flip needs score >= ${this.flipScore}, got ${signal.onchainScore || 0}` };
       }
@@ -254,12 +255,12 @@ class TradeExecutor {
             logger.info(`${signal.symbol}: daily cooldown bypassed — direction flip (score ${signal.onchainScore})`);
           } else if (hoursSinceClose < 2) {
             return { ok: false, reason: `${signal.symbol} blocked — 2h cooldown after close (${(hoursSinceClose * 60).toFixed(0)}m elapsed)` };
-          } else if (!isFlip && lastEntry > 0) {
+          } else if (!isFlip && lastEntry > 0 && this.maxDriftPct > 0) {
             const drift = (signal.currentPrice - lastEntry) / lastEntry * 100;
-            const chasingUp = signal.direction === 'long' && drift > 10;
-            const chasingDown = signal.direction === 'short' && drift < -10;
+            const chasingUp = signal.direction === 'long' && drift > this.maxDriftPct;
+            const chasingDown = signal.direction === 'short' && drift < -this.maxDriftPct;
             if (chasingUp || chasingDown) {
-              return { ok: false, reason: `${signal.symbol} blocked — re-entry price ${drift.toFixed(1)}% from last entry (chasing)` };
+              return { ok: false, reason: `${signal.symbol} blocked — re-entry price ${drift.toFixed(1)}% from last entry (max ${this.maxDriftPct}%)` };
             }
             logger.info(`${signal.symbol}: re-entry allowed — price ${drift.toFixed(1)}% from last entry $${lastEntry.toPrecision(5)}`);
           } else if (isFlip) {
@@ -491,6 +492,7 @@ class TradeExecutor {
       tradingHours: this.tradingHours,
       entryMode: this.entryMode,
       hybridThreshold: this.hybridThreshold,
+      maxDriftPct: this.maxDriftPct,
     };
   }
 
@@ -545,6 +547,7 @@ class TradeExecutor {
     if (cfg.tradingHours != null) this.tradingHours = cfg.tradingHours;
     if (cfg.entryMode != null) this.entryMode = cfg.entryMode;
     if (cfg.hybridThreshold != null) this.hybridThreshold = cfg.hybridThreshold;
+    if (cfg.maxDriftPct != null) this.maxDriftPct = cfg.maxDriftPct;
   }
 
   async getCircuitBreakerStatus() {
@@ -708,12 +711,12 @@ class TradeExecutor {
           } else if (hoursSinceClose < 2) {
             logger.info(`Queue skip ${signal.symbol}: 2h cooldown (${(hoursSinceClose * 60).toFixed(0)}m elapsed)`);
             return;
-          } else if (!isFlip && lastEntry > 0) {
+          } else if (!isFlip && lastEntry > 0 && this.maxDriftPct > 0) {
             const drift = (signal.currentPrice - lastEntry) / lastEntry * 100;
-            const chasingUp = signal.direction === 'long' && drift > 10;
-            const chasingDown = signal.direction === 'short' && drift < -10;
+            const chasingUp = signal.direction === 'long' && drift > this.maxDriftPct;
+            const chasingDown = signal.direction === 'short' && drift < -this.maxDriftPct;
             if (chasingUp || chasingDown) {
-              logger.info(`Queue skip ${signal.symbol}: re-entry price drifted ${drift.toFixed(1)}% from last entry (chasing)`);
+              logger.info(`Queue skip ${signal.symbol}: re-entry price drifted ${drift.toFixed(1)}% from last entry (max ${this.maxDriftPct}%)`);
               return;
             }
             logger.info(`Queue ${signal.symbol}: re-entry allowed — price ${drift.toFixed(1)}% from last entry $${lastEntry.toPrecision(5)}`);
