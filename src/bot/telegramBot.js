@@ -2205,6 +2205,93 @@ class TelegramBot {
       return te.minConfidence >= 5 ? '60+' : te.minConfidence >= 4 ? '45+' : '30+';
     };
 
+    // Health check: generate warnings/cautions based on current settings
+    const getSettingsHealth = (te) => {
+      const warnings = []; // critical risks
+      const cautions = []; // suboptimal but not dangerous
+
+      // Volatility filter OFF — most dangerous
+      if (!te.volatilityFilter) {
+        warnings.push('⚡ <b>Volatility Filter OFF</b> — extremely volatile coins (60%+ pumps) will enter freely. High risk of max_loss on pump-and-dump entries.');
+      }
+
+      // Max OC score too high — lets exhausted pumps in
+      if ((te.maxOcScore || 69) >= 78) {
+        warnings.push(`📊 <b>Max Score ${te.maxOcScore}</b> — allowing entries on exhausted pumps (score 75+ = late stage). Consider lowering to 70-75.`);
+      }
+
+      // Max loss per trade OFF
+      if (!te.maxLossPerTrade || te.maxLossPerTrade <= 0) {
+        warnings.push('🔒 <b>Per-Trade Loss Cap OFF</b> — no safety net on individual trades. A single bad entry can wipe daily profit.');
+      }
+
+      // Max loss per trade very high relative to position size
+      if (te.maxLossPerTrade > te.maxPositionSize * 0.5) {
+        warnings.push(`🔒 <b>Loss Cap $${te.maxLossPerTrade} > 50% of $${te.maxPositionSize} size</b> — each losing trade risks more than half the position.`);
+      }
+
+      // Circuit breaker OFF
+      if (te.cbEnabled === false) {
+        cautions.push('🔓 Circuit Breaker OFF — consecutive losses won\'t pause trading. Can compound losses in choppy markets.');
+      }
+
+      // High leverage
+      if (te.defaultLeverage >= 15) {
+        warnings.push(`⚡ <b>Leverage ${te.defaultLeverage}x</b> — very high leverage amplifies both gains and losses. Small moves trigger max_loss.`);
+      } else if (te.defaultLeverage >= 10) {
+        cautions.push(`⚡ Leverage ${te.defaultLeverage}x — moderate-high. A 1% move = ${te.defaultLeverage}% P&L.`);
+      }
+
+      // Risk-fit sizing OFF with high max loss
+      if (!te.riskFitSizing && te.maxLossPerTrade > 10) {
+        cautions.push(`📐 Risk-Fit OFF — position size doesn\'t adjust to SL distance. Tight SL coins get same size as wide SL.`);
+      }
+
+      // Breakeven too tight (leveraged ROI < 10%)
+      if (te.profitProtectLevPnl < 10) {
+        cautions.push(`🔄 BE trigger at ${te.profitProtectLevPnl}% ROI — very tight. At ${te.defaultLeverage}x, that\'s only ${(te.profitProtectLevPnl / te.defaultLeverage).toFixed(1)}% price move before trailing starts.`);
+      }
+
+      // Too many concurrent positions
+      if (te.maxConcurrentPositions > 5) {
+        cautions.push(`📊 ${te.maxConcurrentPositions} max positions — high exposure. Correlated crypto drops hit all positions at once.`);
+      }
+
+      // Market entry mode on volatile coins
+      if (te.entryMode === 'market') {
+        cautions.push('🚀 Market entry — enters instantly at signal price. No pullback savings, but avoids missing moves.');
+      }
+
+      // Confidence scaling OFF
+      if (!te.confidenceScaling && !te.riskFitSizing) {
+        cautions.push('🎚️ Both Conf-Scale and Risk-Fit OFF — every trade uses full $' + te.maxPositionSize + ' regardless of signal quality or SL distance.');
+      }
+
+      // 4H range too wide
+      if ((te.max4hRange || 15) > 20) {
+        cautions.push(`📏 4H Range ${te.max4hRange}% — wide threshold allows entries on coins with large 4H candles (still pumping hard).`);
+      }
+
+      // Build health summary
+      if (warnings.length === 0 && cautions.length === 0) {
+        return '\n✅ <b>Settings Health: GOOD</b> — all filters active, parameters look balanced.\n';
+      }
+
+      let health = '\n';
+      if (warnings.length > 0) {
+        health += '🚨 <b>WARNINGS:</b>\n';
+        for (const w of warnings) health += `  ${w}\n`;
+      }
+      if (cautions.length > 0) {
+        health += '⚠️ <b>Cautions:</b>\n';
+        for (const c of cautions) health += `  ${c}\n`;
+      }
+      if (warnings.length === 0) {
+        health += '✅ No critical issues\n';
+      }
+      return health;
+    };
+
     const showOcSettings = async (ctx, isNew = false) => {
       const te = octe();
       if (!te) return;
@@ -2237,7 +2324,8 @@ class TelegramBot {
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
-        `${cbLine}\n\n` +
+        `${cbLine}\n` +
+        `${getSettingsHealth(te)}\n` +
         `Tap any button to configure:`;
 
       const keyboard = Markup.inlineKeyboard([
