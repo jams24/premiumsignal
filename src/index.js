@@ -788,7 +788,7 @@ async function main() {
       if (hotTokens.length > 0) {
         for (const token of hotTokens) {
           try {
-            token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange });
+            token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS });
           } catch (e) { /* skip */ }
         }
         // Attach prior alert tracking data for inline PnL display
@@ -1224,7 +1224,7 @@ async function main() {
         for (const token of significant) {
           try {
             if (token.flow && !token.exchangeFlow) token.exchangeFlow = token.flow;
-            token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange });
+            token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS });
           } catch (e) { /* skip */ }
         }
         // Attach prior alert tracking for inline PnL on flow alerts

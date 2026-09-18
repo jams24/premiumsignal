@@ -1138,20 +1138,24 @@ class OnchainScanner {
       } catch (e) { logger.debug(`${token.symbol}: 4H trend check failed: ${e.message}`); }
 
       // L/S positioning filter — reject trades where smart money disagrees
-      try {
-        const ls = token.lsData || await this.fetchLongShortRatio(token.pair);
-        if (ls && ls.topTraderAcctRatio != null) {
-          const topLS = ls.topTraderAcctRatio;
-          if (direction === 'long' && topLS < 0.75) {
-            logger.info(`${token.symbol}: Reject LONG — top traders heavily short (L/S ${topLS.toFixed(2)})`);
-            return null;
+      const minTopLS = opts.minTopLS ?? 0;
+      if (minTopLS > 0) {
+        try {
+          const ls = token.lsData || await this.fetchLongShortRatio(token.pair);
+          if (ls && ls.topTraderAcctRatio != null) {
+            const topLS = ls.topTraderAcctRatio;
+            const maxTopLS = 1 / minTopLS;
+            if (direction === 'long' && topLS < minTopLS) {
+              logger.info(`${token.symbol}: Reject LONG — top traders heavily short (L/S ${topLS.toFixed(2)}, min ${minTopLS})`);
+              return null;
+            }
+            if (direction === 'short' && topLS > maxTopLS) {
+              logger.info(`${token.symbol}: Reject SHORT — top traders heavily long (L/S ${topLS.toFixed(2)}, max ${maxTopLS.toFixed(2)})`);
+              return null;
+            }
           }
-          if (direction === 'short' && topLS > 1.25) {
-            logger.info(`${token.symbol}: Reject SHORT — top traders heavily long (L/S ${topLS.toFixed(2)})`);
-            return null;
-          }
-        }
-      } catch (e) { /* L/S data unavailable, skip filter */ }
+        } catch (e) { /* L/S data unavailable, skip filter */ }
+      }
 
       const mult = direction === 'long' ? 1 : -1;
 

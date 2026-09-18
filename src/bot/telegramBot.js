@@ -2444,6 +2444,7 @@ class TelegramBot {
         `🎯 Score: <b>L:${ocScoreLabel(te)}-${te.maxOcScore || 69} | S:${te.minShortScore || 70}+</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
+        `📊 L/S Filter: <b>${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}</b>${te.minTopLS > 0 ? ' (rejects longs below this)' : ' (no L/S filtering)'}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
@@ -2472,7 +2473,8 @@ class TelegramBot {
          Markup.button.callback(`🎯 L:${ocScoreLabel(te)}-${te.maxOcScore || 69} S:${te.minShortScore || 70}+`, 'oc_cfg_minscore')],
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(`🔁 Drift: ${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}`, 'oc_cfg_drift'),
-         Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
+         Markup.button.callback(`📊 L/S: ${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}`, 'oc_cfg_ls')],
+        [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback(`⏳ Queued (${te.pendingEntries?.size || 0})`, 'oc_queued')],
@@ -2978,6 +2980,43 @@ class TelegramBot {
           await ctx.answerCbQuery(val === 0 ? 'Re-entry drift check OFF' : `Re-entry drift limit set to ${val}%`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_drift_${val} error: ${e.message}`); }
+      });
+    }
+
+    this.bot.action('oc_cfg_ls', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.minTopLS;
+        await ctx.editMessageText(
+          `📊 <b>ONCHAIN — L/S POSITIONING FILTER</b>\n\n` +
+          `Current: <b>${cur > 0 ? cur.toFixed(2) : 'OFF'}</b>\n\n` +
+          `Blocks LONG entries when top traders' Long/Short ratio is below this threshold.\n` +
+          `Blocks SHORT entries when L/S is above the inverse (1/threshold).\n\n` +
+          `<b>OFF</b> = Recommended. Data shows low L/S coins like BR still produce big winners.\n` +
+          `<b>0.30</b> = Very loose — only blocks extreme shorts\n` +
+          `<b>0.50</b> = Moderate\n` +
+          `<b>0.75</b> = Strict (old default — blocked BR at 0.278)`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_ls_0'),
+             Markup.button.callback(`0.30${cur === 0.3 ? ' ✓' : ''}`, 'oc_ls_030')],
+            [Markup.button.callback(`0.50${cur === 0.5 ? ' ✓' : ''}`, 'oc_ls_050'),
+             Markup.button.callback(`0.75${cur === 0.75 ? ' ✓' : ''}`, 'oc_ls_075')],
+            [Markup.button.callback(`1.00${cur === 1 ? ' ✓' : ''}`, 'oc_ls_100')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_ls error: ${e.message}`); }
+    });
+    for (const [label, val] of [['0', 0], ['030', 0.3], ['050', 0.5], ['075', 0.75], ['100', 1]]) {
+      this.bot.action(`oc_ls_${label}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.minTopLS = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(val === 0 ? 'L/S filter OFF' : `L/S filter set to ${val.toFixed(2)}`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_ls_${label} error: ${e.message}`); }
       });
     }
 

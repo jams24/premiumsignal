@@ -60,6 +60,7 @@ class TradeExecutor {
     this.entryMode = config.entryMode || 'pullback';
     this.hybridThreshold = config.hybridThreshold || 30;
     this.maxDriftPct = config.maxDriftPct ?? 5;
+    this.minTopLS = config.minTopLS ?? 0;
 
     // Pending entries: wait for 5m pullback instead of market entry
     this.pendingEntries = new Map();
@@ -493,6 +494,7 @@ class TradeExecutor {
       entryMode: this.entryMode,
       hybridThreshold: this.hybridThreshold,
       maxDriftPct: this.maxDriftPct,
+      minTopLS: this.minTopLS,
     };
   }
 
@@ -548,6 +550,7 @@ class TradeExecutor {
     if (cfg.entryMode != null) this.entryMode = cfg.entryMode;
     if (cfg.hybridThreshold != null) this.hybridThreshold = cfg.hybridThreshold;
     if (cfg.maxDriftPct != null) this.maxDriftPct = cfg.maxDriftPct;
+    if (cfg.minTopLS != null) this.minTopLS = cfg.minTopLS;
   }
 
   async getCircuitBreakerStatus() {
