@@ -974,8 +974,10 @@ class TradeExecutor {
 
         for (let i = completed.length - 1; i >= Math.max(0, completed.length - 4); i--) {
           const [, cO, cH, cL, cC] = completed[i];
+          // Wider tolerance for overextended entries — price may hold above exact fib level
+          const dzTol = overextended ? 1.10 : 1.003;
           const touchedZone = dz
-            ? (isLong ? cL <= dz * 1.003 : cH >= dz * 0.997)
+            ? (isLong ? cL <= dz * dzTol : cH >= dz * (2 - dzTol))
             : (isLong ? cL < signalPrice * 0.99 : cH > signalPrice * 1.01);
           if (!touchedZone) continue;
 
@@ -1039,8 +1041,8 @@ class TradeExecutor {
             ? (entry.peakPrice - pL) / entry.peakPrice * 100
             : (pH - entry.peakPrice) / entry.peakPrice * 100;
           const bounced = isLong ? pC > pO && pC > pL + (pH - pL) * 0.5 : pC < pO && pC < pH - (pH - pL) * 0.5;
-          // Must be within 5% of demand zone — not just any bounce from a small dip
-          const nearZone = isLong ? pL <= dz * 1.05 : pH >= dz * 0.95;
+          const nearZoneTol = overextended ? 1.10 : 1.05;
+          const nearZone = isLong ? pL <= dz * nearZoneTol : pH >= dz * (2 - nearZoneTol);
           if (pullbackFromPeak >= 15 && bounced && nearZone) {
             confirmed = true;
             sweepLow = isLong ? pL : pH;
@@ -1056,8 +1058,9 @@ class TradeExecutor {
           const lastGreen = isLong ? pC > pO : pC < pO;
           const cheaper = isLong ? close < signalPrice : close > signalPrice;
           // Overextended timeout: must be near demand zone, not just cheaper than signal
+          const nzTimeoutTol = overextended ? 1.10 : 1.05;
           const nearZoneOnTimeout = !overextended || !dz ||
-            (isLong ? close <= dz * 1.05 : close >= dz * 0.95);
+            (isLong ? close <= dz * nzTimeoutTol : close >= dz * (2 - nzTimeoutTol));
           if (lastGreen && (cheaper || !overextended) && nearZoneOnTimeout) {
             signal.currentPrice = close;
             logger.info(`Pending ${signal.symbol}: timeout entry at $${close} (candle confirms direction)`);
