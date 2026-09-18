@@ -2999,16 +2999,18 @@ class TelegramBot {
           `<b>0.75</b> = Strict (old default — blocked BR at 0.278)`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_ls_0'),
-             Markup.button.callback(`0.30${cur === 0.3 ? ' ✓' : ''}`, 'oc_ls_030')],
-            [Markup.button.callback(`0.50${cur === 0.5 ? ' ✓' : ''}`, 'oc_ls_050'),
-             Markup.button.callback(`0.75${cur === 0.75 ? ' ✓' : ''}`, 'oc_ls_075')],
-            [Markup.button.callback(`1.00${cur === 1 ? ' ✓' : ''}`, 'oc_ls_100')],
+             Markup.button.callback(`0.20${cur === 0.2 ? ' ✓' : ''}`, 'oc_ls_020'),
+             Markup.button.callback(`0.25${cur === 0.25 ? ' ✓' : ''}`, 'oc_ls_025')],
+            [Markup.button.callback(`0.30${cur === 0.3 ? ' ✓' : ''}`, 'oc_ls_030'),
+             Markup.button.callback(`0.50${cur === 0.5 ? ' ✓' : ''}`, 'oc_ls_050')],
+            [Markup.button.callback(`0.75${cur === 0.75 ? ' ✓' : ''}`, 'oc_ls_075'),
+             Markup.button.callback(`1.00${cur === 1 ? ' ✓' : ''}`, 'oc_ls_100')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`oc_cfg_ls error: ${e.message}`); }
     });
-    for (const [label, val] of [['0', 0], ['030', 0.3], ['050', 0.5], ['075', 0.75], ['100', 1]]) {
+    for (const [label, val] of [['0', 0], ['020', 0.2], ['025', 0.25], ['030', 0.3], ['050', 0.5], ['075', 0.75], ['100', 1]]) {
       this.bot.action(`oc_ls_${label}`, async (ctx) => {
         try {
           const te = octe();
