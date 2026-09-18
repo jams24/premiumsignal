@@ -70,6 +70,7 @@ class TradeExecutor {
     this.profitProtectLevPnl = config.profitProtectLevPnl || 5;
     this.trailAtrMultPre = config.trailAtrMultPre || 1.5;
     this.trailAtrMultPost = config.trailAtrMultPost || 3;
+    this.trailGivebackPct = config.trailGivebackPct || 0.33;
     this.dcaSpreadMult1 = config.dcaSpreadMult1 || 1.0;
     this.dcaSpreadMult2 = config.dcaSpreadMult2 || 1.5;
     this.tp1ClosePct = config.tp1ClosePct || 0.33;
@@ -466,6 +467,7 @@ class TradeExecutor {
       profitProtectLevPnl: this.profitProtectLevPnl,
       trailAtrMultPre: this.trailAtrMultPre,
       trailAtrMultPost: this.trailAtrMultPost,
+      trailGivebackPct: this.trailGivebackPct,
       dcaSpreadMult1: this.dcaSpreadMult1,
       dcaSpreadMult2: this.dcaSpreadMult2,
       tp1ClosePct: this.tp1ClosePct,
@@ -519,6 +521,7 @@ class TradeExecutor {
     if (cfg.profitProtectLevPnl != null) this.profitProtectLevPnl = cfg.profitProtectLevPnl;
     if (cfg.trailAtrMultPre != null) this.trailAtrMultPre = cfg.trailAtrMultPre;
     if (cfg.trailAtrMultPost != null) this.trailAtrMultPost = cfg.trailAtrMultPost;
+    if (cfg.trailGivebackPct != null) this.trailGivebackPct = cfg.trailGivebackPct;
     if (cfg.dcaSpreadMult1 != null) this.dcaSpreadMult1 = cfg.dcaSpreadMult1;
     if (cfg.dcaSpreadMult2 != null) this.dcaSpreadMult2 = cfg.dcaSpreadMult2;
     if (cfg.tp1ClosePct != null) this.tp1ClosePct = cfg.tp1ClosePct;
@@ -1591,9 +1594,8 @@ class TradeExecutor {
             action = 'profit_protect';
             logger.info(`${trade.symbol}: +${pnlPct.toFixed(1)}% — SL moved to breakeven for profit protection`);
           } else if (trade.atr) {
-            // Already at breakeven — trail SL keeping 67% of profit (give back max 33%)
             const profitDist = Math.abs((trade.peak_price || currentPrice) - trade.entry_price);
-            const trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.33 || trade.atr * this.trailAtrMultPre);
+            const trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * this.trailGivebackPct || trade.atr * this.trailAtrMultPre);
             const peak = trade.peak_price || trade.entry_price;
             const newPeak = isLong ? Math.max(peak, bestPrice) : Math.min(peak, bestPrice);
             if (newPeak !== peak) {
@@ -1652,7 +1654,7 @@ class TradeExecutor {
         }
 
         if (action) {
-          if (trade.mode === 'live' && ['tp4', 'sl', 'invalidated', 'expired', 'thesis_broken', 'time_exit'].includes(action)) {
+          if (trade.mode === 'live' && ['tp4', 'sl', 'max_loss', 'invalidated', 'expired', 'thesis_broken', 'time_exit'].includes(action)) {
             await this.closeExchangePosition(trade);
           }
           if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken', 'time_exit'].includes(action)) {
@@ -1669,6 +1671,50 @@ class TradeExecutor {
     }
 
     return updates;
+  }
+
+  async reconcileExchangePositions() {
+    if (this.mode !== 'live') return;
+    const now = Date.now();
+    if (this._lastReconcile && now - this._lastReconcile < 5 * 60 * 1000) return;
+    this._lastReconcile = now;
+
+    try {
+      const openTrades = await db.getOpenTrades(this.settingsKey);
+      const trackedSymbols = new Set(openTrades.map(t => `${t.symbol}:${t.exchange}`));
+
+      for (const [exchId, exchange] of Object.entries(this.exchanges)) {
+        if (!exchange.apiKey) continue;
+        try {
+          const positions = await exchange.fetchPositions();
+          for (const pos of positions) {
+            if (!pos.contracts || Math.abs(pos.contracts) === 0) continue;
+            const base = pos.symbol?.split('/')[0];
+            if (!base) continue;
+            const key = `${base}:${exchId}`;
+            if (!trackedSymbols.has(key)) {
+              const warnKey = `reconcile:${key}`;
+              const lastWarn = this._orphanWarnings?.get(warnKey) || 0;
+              if (now - lastWarn > 30 * 60 * 1000) {
+                if (!this._orphanWarnings) this._orphanWarnings = new Map();
+                this._orphanWarnings.set(warnKey, now);
+                const side = pos.side || (pos.contracts > 0 ? 'long' : 'short');
+                const size = Math.abs(pos.notional || pos.contracts * (pos.markPrice || 0));
+                const pnl = pos.unrealizedPnl || 0;
+                await this.notify(
+                  `⚠️ <b>ORPHAN POSITION</b>\n\n` +
+                  `${base}/USDT on ${exchId}\n` +
+                  `Side: ${side} | Size: $${size.toFixed(2)} | uPnL: $${Number(pnl).toFixed(2)}\n` +
+                  `Entry: $${pos.entryPrice || '?'} | Mark: $${pos.markPrice || '?'}\n\n` +
+                  `<i>Not tracked by bot — close manually or investigate</i>`
+                );
+                logger.warn(`Orphan position: ${base} on ${exchId} — not in DB`);
+              }
+            }
+          }
+        } catch (e) { logger.debug(`Reconcile fetch failed for ${exchId}: ${e.message}`); }
+      }
+    } catch (e) { logger.error(`Reconcile error: ${e.message}`); }
   }
 
   async checkDCAFills(trade, currentPrice, isLong) {

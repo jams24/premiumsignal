@@ -2248,7 +2248,7 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'oc_cfg_lossbuf'),
-         Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}% ROI`, 'oc_cfg_be')],
+         Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}%/${(te.trailGivebackPct * 100).toFixed(0)}%`, 'oc_cfg_be')],
         [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'oc_cfg_tp1'),
          Markup.button.callback(`🎯 TP2: ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}`, 'oc_cfg_tp2')],
         [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'hybrid' ? `HYBRID ${te.hybridThreshold}%` : te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry'),
@@ -2829,26 +2829,38 @@ class TelegramBot {
           `🔗 <b>ONCHAIN — BREAKEVEN TRIGGER</b>\n\n` +
           `Current: <b>${te.profitProtectLevPnl}% leveraged ROI</b>\n` +
           `At ${te.defaultLeverage}x leverage = <b>${pricePct}%</b> price move\n\n` +
-          `<i>Once a trade reaches this ROI, SL moves to entry (breakeven).\nLower = safer (triggers sooner), higher = gives more room.</i>`,
+          `<i>Once a trade reaches this ROI, SL moves to entry (breakeven).\nLower = safer (triggers sooner), higher = gives more room.\nTrail giveback: ${(te.trailGivebackPct * 100).toFixed(0)}% — how much of profit SL can retrace.</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`3%${ocCheck(3, te.profitProtectLevPnl)}`, 'oc_be_3'),
-             Markup.button.callback(`5%${ocCheck(5, te.profitProtectLevPnl)}`, 'oc_be_5'),
-             Markup.button.callback(`8%${ocCheck(8, te.profitProtectLevPnl)}`, 'oc_be_8')],
-            [Markup.button.callback(`10%${ocCheck(10, te.profitProtectLevPnl)}`, 'oc_be_10'),
-             Markup.button.callback(`12%${ocCheck(12, te.profitProtectLevPnl)}`, 'oc_be_12'),
+            [Markup.button.callback(`5%${ocCheck(5, te.profitProtectLevPnl)}`, 'oc_be_5'),
+             Markup.button.callback(`10%${ocCheck(10, te.profitProtectLevPnl)}`, 'oc_be_10'),
              Markup.button.callback(`15%${ocCheck(15, te.profitProtectLevPnl)}`, 'oc_be_15')],
+            [Markup.button.callback(`20%${ocCheck(20, te.profitProtectLevPnl)}`, 'oc_be_20'),
+             Markup.button.callback(`25%${ocCheck(25, te.profitProtectLevPnl)}`, 'oc_be_25'),
+             Markup.button.callback(`35%${ocCheck(35, te.profitProtectLevPnl)}`, 'oc_be_35')],
+            [Markup.button.callback(`Trail: 25%${ocCheck(0.25, te.trailGivebackPct)}`, 'oc_trail_25'),
+             Markup.button.callback(`Trail: 40%${ocCheck(0.40, te.trailGivebackPct)}`, 'oc_trail_40'),
+             Markup.button.callback(`Trail: 50%${ocCheck(0.50, te.trailGivebackPct)}`, 'oc_trail_50')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`oc_cfg_be error: ${e.message}`); }
     });
-    for (const roi of [3, 5, 8, 10, 12, 15]) {
+    for (const roi of [5, 10, 15, 20, 25, 35]) {
       this.bot.action(`oc_be_${roi}`, async (ctx) => {
         try {
           octe().profitProtectLevPnl = roi; octe().saveConfig();
           await ctx.answerCbQuery(`Breakeven at ${roi}% ROI`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_be error: ${e.message}`); }
+      });
+    }
+    for (const pct of [0.25, 0.40, 0.50]) {
+      this.bot.action(`oc_trail_${Math.round(pct * 100)}`, async (ctx) => {
+        try {
+          octe().trailGivebackPct = pct; octe().saveConfig();
+          await ctx.answerCbQuery(`Trail giveback: ${Math.round(pct * 100)}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_trail error: ${e.message}`); }
       });
     }
 

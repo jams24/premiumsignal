@@ -516,8 +516,9 @@ async function main() {
     dynamicLeverage: false,
     dcaEnabled: false,
     signalFilter: new Set(['ONCHAIN_SETUP']),
-    profitProtectPct: 1.0,
-    profitProtectLevPnl: 5,
+    profitProtectPct: 3.0,
+    profitProtectLevPnl: 25,
+    trailGivebackPct: 0.50,
     tp1ClosePct: 0.50,
     tp2ClosePct: 1.0,
     tradingHours: [[0, 4], [5, 16], [19, 24]],
@@ -1568,6 +1569,7 @@ async function main() {
     }
     try {
       await onchainTradeExecutor.checkOpenTrades();
+      await onchainTradeExecutor.reconcileExchangePositions();
     } catch (err) {
       logger.error(`Onchain trade tracker error: ${err.message}`);
     }
