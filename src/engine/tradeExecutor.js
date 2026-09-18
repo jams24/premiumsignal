@@ -1418,12 +1418,19 @@ class TradeExecutor {
             try {
               ohlcv = await exchange.fetchOHLCV(pair, '4h', undefined, 2);
             } catch (e) { /* ok — invalidation check will be skipped */ }
-            // Fetch recent 1m candles to catch intra-minute spikes/dips for TP/SL
+            // Fetch recent 1m candles for TP checks (use highs/lows for TP to not miss spikes)
+            // SL uses candle CLOSE to avoid stop hunting on wicks that recover
             try {
               const ohlcv1m = await exchange.fetchOHLCV(pair, '1m', undefined, 3);
               if (ohlcv1m && ohlcv1m.length > 0) {
                 trade._recentHigh = Math.max(...ohlcv1m.map(c => c[2]));
                 trade._recentLow = Math.min(...ohlcv1m.map(c => c[3]));
+                // SL: use completed candle closes (not wicks) to avoid stop hunting
+                const completed1m = ohlcv1m.slice(0, -1);
+                if (completed1m.length > 0) {
+                  trade._recentCloseLow = Math.min(...completed1m.map(c => c[4]));
+                  trade._recentCloseHigh = Math.max(...completed1m.map(c => c[4]));
+                }
               }
             } catch (e) { /* ok — falls back to currentPrice only */ }
             break;
@@ -1484,9 +1491,10 @@ class TradeExecutor {
         const curPeak = isLong
           ? Math.max(prevPeak, bestPrice)
           : Math.min(prevPeak, bestPrice);
-        // Use candle extremes for TP/SL checks to never miss a spike
+        // TP: use candle extremes (highs/lows) to never miss a spike
+        // SL: use candle CLOSE to avoid stop hunting on wicks that recover
         const tpCheckPrice = isLong ? (trade._recentHigh || currentPrice) : (trade._recentLow || currentPrice);
-        const slCheckPrice = isLong ? (trade._recentLow || currentPrice) : (trade._recentHigh || currentPrice);
+        const slCheckPrice = isLong ? (trade._recentCloseLow || currentPrice) : (trade._recentCloseHigh || currentPrice);
         if (curPeak !== prevPeak) {
           await db.updateTradePeakPrice(trade.id, curPeak);
           trade.peak_price = curPeak;
