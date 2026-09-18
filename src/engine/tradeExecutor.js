@@ -879,7 +879,14 @@ class TradeExecutor {
       peakPrice: signal.currentPrice,
     });
 
-    const timeoutMin = isOverextended ? 90 : 30;
+    // Scale timeout by distance to demand zone: farther = more patience
+    let timeoutMin = isOverextended ? 90 : 30;
+    if (isOverextended && demandZone && signal.currentPrice) {
+      const dzDistPct = Math.abs(signal.currentPrice - demandZone) / signal.currentPrice * 100;
+      if (dzDistPct > 15) timeoutMin = 180; // 3h for very distant zones
+      else if (dzDistPct > 10) timeoutMin = 150; // 2.5h
+      else if (dzDistPct > 5) timeoutMin = 120; // 2h
+    }
     const dzInfo = demandZone ? `\nEntry zone: $${demandZone.toPrecision(6)}` : '';
     logger.info(`Queued ${signal.direction} ${signal.symbol} for ${isOverextended ? 'extended ' : ''}pullback entry at $${signal.currentPrice} (timeout ${timeoutMin}m)`);
     this.notify(
@@ -895,10 +902,17 @@ class TradeExecutor {
   async checkPendingEntries() {
     for (const [key, entry] of this.pendingEntries) {
       try {
-        const { signal, queuedAt, signalPrice, overextended } = entry;
+        const { signal, queuedAt, signalPrice, overextended, demandZone: entryDz } = entry;
         const ageMin = (Date.now() - queuedAt) / 60000;
         const isLong = signal.direction === 'long';
-        const timeoutMin = overextended ? 90 : 30;
+        // Scale timeout by demand zone distance
+        let timeoutMin = overextended ? 90 : 30;
+        if (overextended && entryDz && signalPrice) {
+          const dzDistPct = Math.abs(signalPrice - entryDz) / signalPrice * 100;
+          if (dzDistPct > 15) timeoutMin = 180;
+          else if (dzDistPct > 10) timeoutMin = 150;
+          else if (dzDistPct > 5) timeoutMin = 120;
+        }
         const runawayPct = overextended ? 0.20 : 0.05;
 
         // Re-check: if a position opened since queuing, cancel
