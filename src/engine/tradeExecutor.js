@@ -783,45 +783,45 @@ class TradeExecutor {
             const lows = completed.map(c => c[3]);
             const highs = completed.map(c => c[2]);
 
+            const low48h = Math.min(...lows);
+            const high48h = Math.max(...highs);
+            const range48h = high48h - low48h;
+
             if (isLong) {
-              // Find the consolidation zone before the pump:
-              // Walk backwards from recent candles, find where the big move started
-              // (first candle whose close is within 15% of the 48h low = base area)
-              const low48h = Math.min(...lows);
-              const baseThreshold = low48h * 1.15;
-              const baseLevels = [];
-              for (let i = 0; i < completed.length; i++) {
-                if (closes[i] <= baseThreshold) {
-                  baseLevels.push(highs[i]); // top of base candles = breakout level
+              // 50% retracement of the 48h range — the most traded pullback level
+              // Also look for a 1h swing low near that level for confluence
+              const fib50 = low48h + range48h * 0.50;
+              const swingLows1h = [];
+              for (let i = 1; i < completed.length - 1; i++) {
+                if (lows[i] < lows[i - 1] && lows[i] < lows[i + 1] && lows[i] < price) {
+                  swingLows1h.push(lows[i]);
                 }
               }
-              if (baseLevels.length >= 2) {
-                // Demand zone = top of the consolidation (breakout level)
-                demandZone = Math.max(...baseLevels);
-                logger.info(`${signal.symbol}: 1h consolidation base — breakout zone at $${demandZone.toPrecision(6)} (${baseLevels.length} base candles, low48h $${low48h.toPrecision(6)})`);
+              // Use swing low nearest to fib50 for confluence, or fib50 alone
+              const nearFib = swingLows1h.filter(l => Math.abs(l - fib50) / fib50 < 0.10);
+              if (nearFib.length) {
+                demandZone = Math.max(...nearFib);
+                logger.info(`${signal.symbol}: 1h swing + fib50 confluence at $${demandZone.toPrecision(6)} (fib50 $${fib50.toPrecision(6)}, range $${low48h.toPrecision(4)}-$${high48h.toPrecision(4)})`);
               } else {
-                // Fallback: use 50% retracement of the move
-                const moveStart = Math.min(...lows.slice(-24));
-                demandZone = moveStart + (price - moveStart) * 0.5;
-                logger.info(`${signal.symbol}: no clear base, using 50% retrace at $${demandZone.toPrecision(6)}`);
+                demandZone = fib50;
+                logger.info(`${signal.symbol}: fib50 retrace at $${demandZone.toPrecision(6)} (range $${low48h.toPrecision(4)}-$${high48h.toPrecision(4)})`);
               }
             } else {
-              // Short: find the resistance zone (top before the dump)
-              const high48h = Math.max(...highs);
-              const resistThreshold = high48h * 0.85;
-              const resistLevels = [];
-              for (let i = 0; i < completed.length; i++) {
-                if (closes[i] >= resistThreshold) {
-                  resistLevels.push(lows[i]);
+              // Short: 50% retracement from top + swing high confluence
+              const fib50 = high48h - range48h * 0.50;
+              const swingHighs1h = [];
+              for (let i = 1; i < completed.length - 1; i++) {
+                if (highs[i] > highs[i - 1] && highs[i] > highs[i + 1] && highs[i] > price) {
+                  swingHighs1h.push(highs[i]);
                 }
               }
-              if (resistLevels.length >= 2) {
-                demandZone = Math.min(...resistLevels);
-                logger.info(`${signal.symbol}: 1h resistance zone at $${demandZone.toPrecision(6)}`);
+              const nearFib = swingHighs1h.filter(h => Math.abs(h - fib50) / fib50 < 0.10);
+              if (nearFib.length) {
+                demandZone = Math.min(...nearFib);
+                logger.info(`${signal.symbol}: 1h swing + fib50 confluence at $${demandZone.toPrecision(6)}`);
               } else {
-                const moveStart = Math.max(...highs.slice(-24));
-                demandZone = moveStart - (moveStart - price) * 0.5;
-                logger.info(`${signal.symbol}: no clear resistance, using 50% retrace at $${demandZone.toPrecision(6)}`);
+                demandZone = fib50;
+                logger.info(`${signal.symbol}: fib50 retrace at $${demandZone.toPrecision(6)}`);
               }
             }
           }
