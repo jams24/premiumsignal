@@ -781,53 +781,71 @@ class TradeExecutor {
         const isOverext = priceChg >= (this.hybridThreshold || 30);
 
         if (isOverext) {
-          // Overextended: use 1h candles to find the breakout/consolidation zone
+          // Overextended: find nearest 1h swing structure for pullback entry
           const candles1h = await exchange.fetchOHLCV(signal.pair, '1h', undefined, 48);
           if (candles1h?.length >= 10) {
             const completed = candles1h.slice(0, -1);
-            const closes = completed.map(c => c[4]);
             const lows = completed.map(c => c[3]);
             const highs = completed.map(c => c[2]);
 
-            const low48h = Math.min(...lows);
-            const high48h = Math.max(...highs);
-            const range48h = high48h - low48h;
-
             if (isLong) {
-              // 50% retracement of the 48h range — the most traded pullback level
-              // Also look for a 1h swing low near that level for confluence
-              const fib50 = low48h + range48h * 0.50;
+              // Find 1h swing lows below current price, nearest first
               const swingLows1h = [];
               for (let i = 1; i < completed.length - 1; i++) {
                 if (lows[i] < lows[i - 1] && lows[i] < lows[i + 1] && lows[i] < price) {
                   swingLows1h.push(lows[i]);
                 }
               }
-              // Use swing low nearest to fib50 for confluence, or fib50 alone
-              const nearFib = swingLows1h.filter(l => Math.abs(l - fib50) / fib50 < 0.10);
-              if (nearFib.length) {
-                demandZone = Math.max(...nearFib);
-                logger.info(`${signal.symbol}: 1h swing + fib50 confluence at $${demandZone.toPrecision(6)} (fib50 $${fib50.toPrecision(6)}, range $${low48h.toPrecision(4)}-$${high48h.toPrecision(4)})`);
+              swingLows1h.sort((a, b) => b - a);
+              const validSwings = swingLows1h.filter(l => {
+                const dist = (price - l) / price * 100;
+                return dist >= 3 && dist <= 20;
+              });
+              if (validSwings.length) {
+                demandZone = validSwings[0];
+                const dzDist = ((price - demandZone) / price * 100).toFixed(1);
+                logger.info(`${signal.symbol}: nearest 1h swing low at $${demandZone.toPrecision(6)} (${dzDist}% below)`);
               } else {
-                demandZone = fib50;
-                logger.info(`${signal.symbol}: fib50 retrace at $${demandZone.toPrecision(6)} (range $${low48h.toPrecision(4)}-$${high48h.toPrecision(4)})`);
+                // Fallback: fib38.2 of the impulse move, capped at 20%
+                const high48h = Math.max(...highs);
+                const peakIdx = highs.indexOf(high48h);
+                const lookback = Math.min(12, peakIdx);
+                const impulseLows = lows.slice(Math.max(0, peakIdx - lookback), peakIdx + 1);
+                const impulseLow = Math.min(...impulseLows);
+                const impulseRange = high48h - impulseLow;
+                demandZone = high48h - impulseRange * 0.382;
+                const maxDz = price * 0.80;
+                if (demandZone < maxDz) demandZone = maxDz;
+                logger.info(`${signal.symbol}: fib38.2 impulse at $${demandZone.toPrecision(6)} (range $${impulseLow.toPrecision(4)}-$${high48h.toPrecision(4)})`);
               }
             } else {
-              // Short: 50% retracement from top + swing high confluence
-              const fib50 = high48h - range48h * 0.50;
+              // Short: nearest 1h swing high above current price
               const swingHighs1h = [];
               for (let i = 1; i < completed.length - 1; i++) {
                 if (highs[i] > highs[i - 1] && highs[i] > highs[i + 1] && highs[i] > price) {
                   swingHighs1h.push(highs[i]);
                 }
               }
-              const nearFib = swingHighs1h.filter(h => Math.abs(h - fib50) / fib50 < 0.10);
-              if (nearFib.length) {
-                demandZone = Math.min(...nearFib);
-                logger.info(`${signal.symbol}: 1h swing + fib50 confluence at $${demandZone.toPrecision(6)}`);
+              swingHighs1h.sort((a, b) => a - b);
+              const validSwings = swingHighs1h.filter(h => {
+                const dist = (h - price) / price * 100;
+                return dist >= 3 && dist <= 20;
+              });
+              if (validSwings.length) {
+                demandZone = validSwings[0];
+                const dzDist = ((demandZone - price) / price * 100).toFixed(1);
+                logger.info(`${signal.symbol}: nearest 1h swing high at $${demandZone.toPrecision(6)} (${dzDist}% above)`);
               } else {
-                demandZone = fib50;
-                logger.info(`${signal.symbol}: fib50 retrace at $${demandZone.toPrecision(6)}`);
+                const low48h = Math.min(...lows);
+                const troughIdx = lows.indexOf(low48h);
+                const lookback = Math.min(12, troughIdx);
+                const impulseHighs = highs.slice(Math.max(0, troughIdx - lookback), troughIdx + 1);
+                const impulseHigh = Math.max(...impulseHighs);
+                const impulseRange = impulseHigh - low48h;
+                demandZone = low48h + impulseRange * 0.382;
+                const maxDz = price * 1.20;
+                if (demandZone > maxDz) demandZone = maxDz;
+                logger.info(`${signal.symbol}: fib38.2 impulse at $${demandZone.toPrecision(6)}`);
               }
             }
           }
