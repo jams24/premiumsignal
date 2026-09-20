@@ -420,7 +420,7 @@ class TradeExecutor {
     const attempts = [...new Set([Math.min(desiredLeverage, maxLev), 10, 5, 3, 2, 1])].filter(v => v >= 1).sort((a, b) => b - a);
 
     // Ensure margin mode is set first
-    try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
+    try { await exchange.setMarginMode('isolated', pair); } catch (e) { /* may already be set */ }
 
     for (const lev of attempts) {
       try {
@@ -1236,7 +1236,7 @@ class TradeExecutor {
         return null;
       }
 
-      try { await exchange.setMarginMode('cross', pair); } catch (e) { /* may already be set */ }
+      try { await exchange.setMarginMode('isolated', pair); } catch (e) { /* may already be set */ }
       const desiredLeverage = this.calcLeverage(signal);
       const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
 
