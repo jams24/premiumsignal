@@ -1607,6 +1607,7 @@ class TradeExecutor {
           }
         }
 
+        let prelimPnlUsd = pnlUsd;
         // --- TP4 CHECK: close remaining runner ---
         if (!action && trade.tp4 && (isLong ? tpCheckPrice >= trade.tp4 : tpCheckPrice <= trade.tp4)) {
           action = 'tp4';
@@ -1615,6 +1616,7 @@ class TradeExecutor {
           const tpPnlUsd = (tpPnlPct / 100) * trade.position_size;
           await db.closeTrade(trade.id, tpExit, tpPnlPct, tpPnlUsd, 'tp4');
           this.dailyPnL += tpPnlUsd;
+          prelimPnlUsd = tpPnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + tpPnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
         }
@@ -1739,7 +1741,6 @@ class TradeExecutor {
             await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'max_loss');
             this.dailyPnL += pnlUsd;
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + pnlUsd;
-            if (trade.mode === 'live') await this.closeExchangePosition(trade);
             this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
             logger.info(`${trade.symbol}: Per-trade loss cap hit ($${pnlUsd.toFixed(2)} >= -$${effectiveCap.toFixed(2)}, cap $${this.maxLossPerTrade} × ${this.lossBufferPct}%)`);
           }
@@ -1755,6 +1756,7 @@ class TradeExecutor {
           const slPnlUsd = (slPnlPct / 100) * (trade.position_size || 0);
           await db.closeTrade(trade.id, slExitPrice, slPnlPct, slPnlUsd, 'sl');
           this.dailyPnL += slPnlUsd;
+          prelimPnlUsd = slPnlUsd;
           if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + slPnlUsd;
           this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
         }
@@ -1770,8 +1772,25 @@ class TradeExecutor {
         }
 
         if (action) {
+          let realPnlPct = pnlPct, realPnlUsd = pnlUsd, realExitPrice = currentPrice;
           if (trade.mode === 'live' && ['tp4', 'sl', 'max_loss', 'invalidated', 'expired', 'thesis_broken', 'time_exit'].includes(action)) {
-            await this.closeExchangePosition(trade);
+            const fillPrice = await this.closeExchangePosition(trade);
+            if (fillPrice) {
+              realExitPrice = fillPrice;
+              realPnlPct = isLong
+                ? ((fillPrice - trade.entry_price) / trade.entry_price) * 100
+                : ((trade.entry_price - fillPrice) / trade.entry_price) * 100;
+              realPnlUsd = (realPnlPct / 100) * (trade.position_size || 0);
+              // Estimate exchange fees (taker ~0.055% × 2 sides)
+              const feePct = 0.0011;
+              const estFees = (trade.position_size || 0) * feePct;
+              realPnlUsd -= estFees;
+              this.dailyPnL -= prelimPnlUsd;
+              this.dailyPnL += realPnlUsd;
+              pnlPct = realPnlPct;
+              pnlUsd = realPnlUsd;
+              currentPrice = realExitPrice;
+            }
           }
           if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken', 'time_exit'].includes(action)) {
             this.saveConfig();
