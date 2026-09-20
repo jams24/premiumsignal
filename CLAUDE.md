@@ -51,6 +51,12 @@ When engine parameters change, update `ENGINE` constants in `src/tests/dryrun.js
 - **4H invalidation**: closes trade if 4H candle closes below invalidation level
 - **Cooldown**: 4h cooldown after SL/invalidation prevents re-entry loops
 
+### Pre-Entry Filters (toggleable from /onchaintrade settings)
+- **Trend Structure Filter** (`trendFilter`, default OFF): Blocks longs when 1H swing structure shows downtrend. Uses lookback=3 swing points — if last 3 swing highs OR last 3 swing lows are all descending, the long is rejected. Unblocks when a new higher high or higher low breaks the descending pattern. Backtested +$102 over 14 days (368 trades). Toggle off on green momentum days to avoid false positives.
+- **Volatility Filter** (`volatilityFilter`, default ON): Rejects entries when 4H candle range exceeds threshold (default 15%)
+- **L/S Filter** (`minTopLS`): Rejects longs when top trader long/short ratio is below threshold
+- **Circuit Breaker** (`cbEnabled`, default ON): Pauses trading after consecutive losses
+
 ## Risk Parameters (current defaults)
 - Size: $12/trade, 5x leverage (10x for high confidence)
 - Max 3 concurrent positions
