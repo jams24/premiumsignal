@@ -1299,6 +1299,20 @@ class TradeExecutor {
       }
 
       try { await exchange.setMarginMode('isolated', pair); } catch (e) { /* may already be set */ }
+
+      // Check exchange for existing position — avoid conflicts with manual trades
+      try {
+        const positions = await exchange.fetchPositions([pair]);
+        const existing = positions.find(p => Math.abs(parseFloat(p.contracts || 0)) > 0);
+        if (existing) {
+          const side = parseFloat(existing.contracts) > 0 ? 'long' : 'short';
+          const size = Math.abs(parseFloat(existing.notional || 0));
+          logger.warn(`${signal.symbol}: Exchange already has ${side} position ($${size.toFixed(0)}) — skipping to protect manual trade`);
+          await this.notify(`⚠️ <b>TRADE SKIPPED</b> ${signal.symbol}\n\nExchange already has a ${side.toUpperCase()} position ($${size.toFixed(0)}).\nBot skipped to avoid conflicting with your manual trade.`);
+          return null;
+        }
+      } catch (e) { logger.debug(`${signal.symbol}: Position check failed: ${e.message}`); }
+
       const desiredLeverage = this.calcLeverage(signal);
       const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
 
