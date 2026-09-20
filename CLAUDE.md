@@ -55,6 +55,7 @@ When engine parameters change, update `ENGINE` constants in `src/tests/dryrun.js
 - **Trend Structure Filter** (`trendFilter`, default OFF): Blocks longs when 1H swing structure shows downtrend. Uses lookback=3 swing points — if last 3 swing highs OR last 3 swing lows are all descending, the long is rejected. Unblocks when a new higher high or higher low breaks the descending pattern. Backtested +$102 over 14 days (368 trades). Toggle off on green momentum days to avoid false positives.
 - **Volatility Filter** (`volatilityFilter`, default ON): Rejects entries when 4H candle range exceeds threshold (default 15%)
 - **L/S Filter** (`minTopLS`): Rejects longs when top trader long/short ratio is below threshold
+- **Pump Exhaustion Filter** (`exhaustionFilter`, default OFF): Detects pump-top setups (big price surge + crowded OI + near 24h high + crowded funding) and flips direction from long to short. Bypasses the "near peak" and "above EMA" short blockers for exhaustion setups. Scoring: priceChange>15% (+3), nearHigh<3% (+2), OI>50% (+3), funding>0.1% (+2). Threshold: score>=5. Backtested +$136 over 5 days (blocks 11 losers saving $171, blocks 17 small winners losing $34). Use for active short edge on pump reversals.
 - **Circuit Breaker** (`cbEnabled`, default ON): Pauses trading after consecutive losses
 
 ## Risk Parameters (current defaults)

@@ -1045,6 +1045,13 @@ class OnchainScanner {
         ? this.liquidationScanner.generateSetupSnapshot(token)
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
 
+      // Pump exhaustion override: flip to short when big pump + crowded OI detected
+      const isExhaustion = opts.exhaustionFilter && snap.exhaustion;
+      if (isExhaustion && snap.direction !== 'short') {
+        logger.info(`${token.symbol}: PUMP EXHAUSTION detected (score ${snap.exhaustionScore}) — flipping to SHORT`);
+        snap.direction = 'short';
+      }
+
       const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : null;
       if (!direction) return null;
       const price = token.price;
@@ -1061,7 +1068,7 @@ class OnchainScanner {
             logger.info(`${token.symbol}: Skipping LONG — last 3 5m candles red (falling knife)`);
             return null;
           }
-          if (direction === 'short' && g1 && g2 && g3) {
+          if (direction === 'short' && g1 && g2 && g3 && !isExhaustion) {
             logger.info(`${token.symbol}: Skipping SHORT — last 3 5m candles green (chasing strength)`);
             return null;
           }
@@ -1103,7 +1110,7 @@ class OnchainScanner {
               logger.info(`${token.symbol}: Reject LONG — price ${trendGap.toFixed(1)}% below 4H EMA20 (downtrend)`);
               return null;
             }
-            if (direction === 'short' && trendGap > 5) {
+            if (direction === 'short' && trendGap > 5 && !isExhaustion) {
               logger.info(`${token.symbol}: Reject SHORT — price ${trendGap.toFixed(1)}% above 4H EMA20 (uptrend)`);
               return null;
             }
@@ -1116,7 +1123,7 @@ class OnchainScanner {
             logger.info(`${token.symbol}: Reject LONG — ${drawdown.toFixed(1)}% below 4H high $${recentHigh.toPrecision(4)} (post-pump dump)`);
             return null;
           }
-          if (direction === 'short' && drawdown < 5) {
+          if (direction === 'short' && drawdown < 5 && !isExhaustion) {
             logger.info(`${token.symbol}: Reject SHORT — only ${drawdown.toFixed(1)}% from highs (still near peak)`);
             return null;
           }
@@ -1163,10 +1170,13 @@ class OnchainScanner {
       const tp1Raw = price + mult * atr * 1.2;
       const tp2Raw = price + mult * atr * 2.5;
       const tp3Raw = price + mult * atr * 4.0;
-      // Cap TPs by absolute % — inflated ATR from pumps makes ATR-based targets unreachable
-      const tp1Cap = price * (1 + mult * 0.03);  // max 3%
-      const tp2Cap = price * (1 + mult * 0.06);  // max 6%
-      const tp3Cap = price * (1 + mult * 0.10);  // max 10%
+      // Cap TPs — exhaustion shorts get wider targets (reversal moves are bigger than scalps)
+      const tp1Pct = isExhaustion ? 0.05 : 0.03;
+      const tp2Pct = isExhaustion ? 0.10 : 0.06;
+      const tp3Pct = isExhaustion ? 0.15 : 0.10;
+      const tp1Cap = price * (1 + mult * tp1Pct);
+      const tp2Cap = price * (1 + mult * tp2Pct);
+      const tp3Cap = price * (1 + mult * tp3Pct);
       const tp1 = Math.max(direction === 'long' ? Math.min(tp1Raw, tp1Cap) : Math.max(tp1Raw, tp1Cap), minPrice);
       const tp2 = Math.max(direction === 'long' ? Math.min(tp2Raw, tp2Cap) : Math.max(tp2Raw, tp2Cap), minPrice);
       const tp3 = Math.max(direction === 'long' ? Math.min(tp3Raw, tp3Cap) : Math.max(tp3Raw, tp3Cap), minPrice);
@@ -1264,6 +1274,15 @@ class OnchainScanner {
         }
       }
 
+      // Exhaustion shorts: cap SL at +4% — pump-inflated ATR makes SL too wide otherwise
+      if (isExhaustion) {
+        const exhMaxSL = price * 1.04;
+        if (sl > exhMaxSL) {
+          logger.info(`${token.symbol}: Exhaustion SL capped from $${sl.toPrecision(6)} (${((sl - price) / price * 100).toFixed(1)}%) to $${exhMaxSL.toPrecision(6)} (+4%)`);
+          sl = exhMaxSL;
+        }
+      }
+
       // Floor: SL must be at least 3% from entry AND on correct side
       const slOnWrongSide = direction === 'long' ? sl >= price : sl <= price;
       const slDistPct = Math.abs((price - sl) / price) * 100;
@@ -1315,6 +1334,8 @@ class OnchainScanner {
             liquidations: token.setupData.liquidations || null,
             orderBook: token.setupData.orderBook || null,
           } : null,
+          exhaustion: isExhaustion || false,
+          exhaustionScore: snap.exhaustionScore || 0,
         },
       };
     } catch (err) {

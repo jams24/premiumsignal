@@ -309,6 +309,32 @@ class LiquidationScanner {
     const { symbol, score, signals, oiChange4h, fundingRate, fundingBias, priceChange, price, exchangeFlow, setupData } = tokenData;
     const snap = { direction: 'neutral', confidence: 'low', levels: [], thesis: [], risks: [] };
 
+    // Pump exhaustion detection — big pump + crowded OI = short reversal, not long continuation
+    let exhaustionScore = 0;
+    const exhaustionSignals = [];
+    const high24h = tokenData.high24h || 0;
+    const nearHighPct = high24h > 0 ? ((high24h - price) / high24h) * 100 : 999;
+
+    if (priceChange > 15) { exhaustionScore += 3; exhaustionSignals.push(`pump+${priceChange.toFixed(0)}%`); }
+    else if (priceChange > 10) { exhaustionScore += 2; exhaustionSignals.push(`pump+${priceChange.toFixed(0)}%`); }
+    else if (priceChange > 5) { exhaustionScore += 1; }
+
+    if (nearHighPct < 3) { exhaustionScore += 2; exhaustionSignals.push('near top'); }
+    else if (nearHighPct < 6) { exhaustionScore += 1; }
+
+    if (oiChange4h > 50) { exhaustionScore += 3; exhaustionSignals.push(`OI+${oiChange4h.toFixed(0)}%`); }
+    else if (oiChange4h > 25) { exhaustionScore += 2; exhaustionSignals.push(`OI+${oiChange4h.toFixed(0)}%`); }
+    else if (oiChange4h > 15) { exhaustionScore += 1; }
+
+    if (fundingRate > 0.001) { exhaustionScore += 2; exhaustionSignals.push('funding crowded'); }
+    else if (fundingRate > 0.0003) { exhaustionScore += 1; }
+
+    snap.exhaustion = exhaustionScore >= 5;
+    snap.exhaustionScore = exhaustionScore;
+    if (snap.exhaustion) {
+      snap.thesis.push('PUMP EXHAUSTION: ' + exhaustionSignals.join(' + ') + ' → short reversal setup');
+    }
+
     let bullPoints = 0;
     let bearPoints = 0;
 
