@@ -2015,19 +2015,6 @@ class TradeExecutor {
     const exchange = this.exchanges[trade.exchange];
     if (!exchange || !exchange.apiKey || trade.mode !== 'live') return;
 
-    // Bybit: keep exchange stop at original SL as safety net only.
-    // Trailing is managed by the bot's candle-close SL check to avoid
-    // exchange stops firing on wicks before the bot's check runs.
-    if (trade.exchange === 'bybit' && trade.original_stop_loss) {
-      const isLong = trade.direction === 'long';
-      const origSL = parseFloat(trade.original_stop_loss);
-      const isTrailing = isLong ? newSLPrice > origSL : newSLPrice < origSL;
-      if (isTrailing) {
-        logger.info(`${trade.symbol}: Bybit SL trail to $${newSLPrice} managed internally (exchange stop stays at $${origSL})`);
-        return;
-      }
-    }
-
     try {
       const pair = `${trade.symbol}/USDT:USDT`;
       const closeSide = trade.direction === 'long' ? 'sell' : 'buy';
