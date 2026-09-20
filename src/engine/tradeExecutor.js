@@ -1289,7 +1289,23 @@ class TradeExecutor {
       const side = signal.direction === 'long' ? 'buy' : 'sell';
       const order = await exchange.createOrder(pair, 'market', side, roundedQty);
 
-      logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (1/3 DCA)`);
+      // Resolve actual entry fill — market order response may not return real average
+      let entryFill = order.average || order.price || entryPrice;
+      if (order.id) {
+        try {
+          const settled = await exchange.fetchOrder(order.id, pair);
+          if (settled.average > 0) entryFill = settled.average;
+          else if (settled.cost > 0 && settled.filled > 0) entryFill = settled.cost / settled.filled;
+        } catch (e) {
+          try {
+            const trades = await exchange.fetchMyTrades(pair, Date.now() - 10000, 5);
+            const match = trades.find(t => t.order === order.id) || trades[trades.length - 1];
+            if (match) entryFill = match.price;
+          } catch (e2) { logger.warn(`Entry fill fetch failed: ${e2.message}`); }
+        }
+      }
+
+      logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (fill: $${entryFill})`);
 
       // Place SL at the signal's structural level — derived from swing lows, OB walls,
       // liq zones in buildTradeSetup. Max loss cap enforced by checkOpenTrades every minute.
@@ -1349,7 +1365,7 @@ class TradeExecutor {
         exchange: signal.exchange,
         direction: signal.direction,
         mode: 'live',
-        entryPrice: order.average || order.price || entryPrice,
+        entryPrice: entryFill,
         quantity: parseFloat(roundedQty),
         positionSize: usedFullEntry ? positionSize : positionSize / 3,
         leverage,

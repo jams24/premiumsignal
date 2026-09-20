@@ -83,8 +83,31 @@ async function testExchange(exchange, id) {
     return null;
   }
 
-  const entryFill = entryOrder.average || entryOrder.price || price;
-  console.log(`  Entry fill: $${entryFill} (ticker was $${price})`);
+  let entryFill = entryOrder.average || entryOrder.price || price;
+  const rawEntryFill = entryFill;
+  console.log(`  Entry raw response: $${entryFill} (ticker was $${price})`);
+
+  // Re-fetch actual entry fill (same fix as tradeExecutor)
+  if (entryOrder.id) {
+    try {
+      const settled = await exchange.fetchOrder(entryOrder.id, PAIR);
+      if (settled.average > 0) entryFill = settled.average;
+      else if (settled.cost > 0 && settled.filled > 0) entryFill = settled.cost / settled.filled;
+      console.log(`  Entry settled fill: $${entryFill} (from fetchOrder)`);
+    } catch (e) {
+      try {
+        const trades = await exchange.fetchMyTrades(PAIR, Date.now() - 10000, 5);
+        const match = trades.find(t => t.order === entryOrder.id) || trades[trades.length - 1];
+        if (match) {
+          entryFill = match.price;
+          console.log(`  Entry trades fill:  $${entryFill} (from fetchMyTrades)`);
+        }
+      } catch (e2) {
+        console.log(`  Entry fill fetch failed: ${e2.message.slice(0, 80)}`);
+      }
+    }
+  }
+  console.log(`  Entry final fill:   $${entryFill}${entryFill !== rawEntryFill ? ' (CORRECTED from ' + rawEntryFill + ')' : ''}`);
 
   // Small delay to let exchange process
   await new Promise(r => setTimeout(r, 2000));
