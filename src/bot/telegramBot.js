@@ -2445,6 +2445,7 @@ class TelegramBot {
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
         `📊 L/S Filter: <b>${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}</b>${te.minTopLS > 0 ? ' (rejects longs below this)' : ' (no L/S filtering)'}\n` +
+        `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
@@ -2474,7 +2475,8 @@ class TelegramBot {
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(`🔁 Drift: ${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}`, 'oc_cfg_drift'),
          Markup.button.callback(`📊 L/S: ${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}`, 'oc_cfg_ls')],
-        [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
+        [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours'),
+         Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
          Markup.button.callback(`⏳ Queued (${te.pendingEntries?.size || 0})`, 'oc_queued')],
@@ -2980,6 +2982,42 @@ class TelegramBot {
           await ctx.answerCbQuery(val === 0 ? 'Re-entry drift check OFF' : `Re-entry drift limit set to ${val}%`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_drift_${val} error: ${e.message}`); }
+      });
+    }
+
+    this.bot.action('oc_cfg_symcap', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.maxDailyLossPerSymbol;
+        await ctx.editMessageText(
+          `🚫 <b>ONCHAIN — PER-SYMBOL DAILY LOSS CAP</b>\n\n` +
+          `Current: <b>$${cur || 'OFF'}</b>\n\n` +
+          `Blocks re-entry on a coin if net P&amp;L on that symbol today exceeds this loss.\n` +
+          `Resets at <b>midnight UTC</b> daily.\n\n` +
+          `Prevents the bot from repeatedly entering the same losing coin.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`$5${cur === 5 ? ' ✓' : ''}`, 'oc_symcap_5'),
+             Markup.button.callback(`$10${cur === 10 ? ' ✓' : ''}`, 'oc_symcap_10'),
+             Markup.button.callback(`$15${cur === 15 ? ' ✓' : ''}`, 'oc_symcap_15')],
+            [Markup.button.callback(`$20${cur === 20 ? ' ✓' : ''}`, 'oc_symcap_20'),
+             Markup.button.callback(`$25${cur === 25 ? ' ✓' : ''}`, 'oc_symcap_25'),
+             Markup.button.callback(`$50${cur === 50 ? ' ✓' : ''}`, 'oc_symcap_50')],
+            [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_symcap_0')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_symcap error: ${e.message}`); }
+    });
+    for (const val of [0, 5, 10, 15, 20, 25, 50]) {
+      this.bot.action(`oc_symcap_${val}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.maxDailyLossPerSymbol = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(val === 0 ? 'Per-symbol daily cap OFF' : `Per-symbol daily cap set to $${val}`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_symcap_${val} error: ${e.message}`); }
       });
     }
 

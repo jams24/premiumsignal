@@ -107,6 +107,10 @@ class TradeExecutor {
     // Min 24h quote volume for live trades (skip low-liquidity tokens that slip badly)
     this.minLiveVolume = config.minLiveVolume ?? 5000000;
 
+    // Per-symbol daily loss limit: block re-entry if net P&L on symbol is below this today
+    // Resets at midnight UTC. 0 = disabled.
+    this.maxDailyLossPerSymbol = config.maxDailyLossPerSymbol ?? this.maxLossPerTrade;
+
     // Trading schedule: array of [startHour, endHour] UTC ranges when trading is allowed
     // Empty = 24/7 (no restriction). Example: [[8,12],[13,20]] = trade 08-12 and 13-20 UTC only
     this.tradingHours = config.tradingHours || [];
@@ -270,6 +274,22 @@ class TradeExecutor {
         }
       }
     } catch (e) { /* DB error, skip check */ }
+
+    // Per-symbol daily loss limit — block if already lost too much on this coin today
+    if (this.maxDailyLossPerSymbol > 0) {
+      try {
+        const midnightUTC = new Date();
+        midnightUTC.setUTCHours(0, 0, 0, 0);
+        const { rows } = await db.query(
+          `SELECT COALESCE(SUM(pnl_usd), 0) as net_pnl, COUNT(*) as cnt FROM trades WHERE symbol = $1 AND status = 'closed' AND closed_at >= $2 AND source = $3`,
+          [signal.symbol, midnightUTC.toISOString(), this.settingsKey]
+        );
+        if (rows.length && parseFloat(rows[0].net_pnl) <= -this.maxDailyLossPerSymbol) {
+          const netPnl = parseFloat(rows[0].net_pnl).toFixed(2);
+          return { ok: false, reason: `${signal.symbol} blocked — daily symbol loss $${netPnl} exceeds -$${this.maxDailyLossPerSymbol} limit (${rows[0].cnt} trades today)` };
+        }
+      } catch (e) { /* DB error, skip check */ }
+    }
 
     const openPositions = await db.getOpenTrades(this.settingsKey);
     if (openPositions.length >= this.maxConcurrentPositions) {
@@ -495,6 +515,7 @@ class TradeExecutor {
       hybridThreshold: this.hybridThreshold,
       maxDriftPct: this.maxDriftPct,
       minTopLS: this.minTopLS,
+      maxDailyLossPerSymbol: this.maxDailyLossPerSymbol,
     };
   }
 
@@ -551,6 +572,7 @@ class TradeExecutor {
     if (cfg.hybridThreshold != null) this.hybridThreshold = cfg.hybridThreshold;
     if (cfg.maxDriftPct != null) this.maxDriftPct = cfg.maxDriftPct;
     if (cfg.minTopLS != null) this.minTopLS = cfg.minTopLS;
+    if (cfg.maxDailyLossPerSymbol != null) this.maxDailyLossPerSymbol = cfg.maxDailyLossPerSymbol;
   }
 
   async getCircuitBreakerStatus() {
