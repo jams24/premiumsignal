@@ -1773,6 +1773,9 @@ class TradeExecutor {
 
         if (action) {
           let realPnlPct = pnlPct, realPnlUsd = pnlUsd, realExitPrice = currentPrice;
+          const tickerPrice = currentPrice;
+          let estFees = 0;
+          let fillCorrected = false;
           if (trade.mode === 'live' && ['tp4', 'sl', 'max_loss', 'invalidated', 'expired', 'thesis_broken', 'time_exit'].includes(action)) {
             const fillPrice = await this.closeExchangePosition(trade);
             if (fillPrice) {
@@ -1781,22 +1784,25 @@ class TradeExecutor {
                 ? ((fillPrice - trade.entry_price) / trade.entry_price) * 100
                 : ((trade.entry_price - fillPrice) / trade.entry_price) * 100;
               realPnlUsd = (realPnlPct / 100) * (trade.position_size || 0);
-              // Estimate exchange fees (taker ~0.055% × 2 sides)
               const feePct = 0.0011;
-              const estFees = (trade.position_size || 0) * feePct;
+              estFees = (trade.position_size || 0) * feePct;
               realPnlUsd -= estFees;
               this.dailyPnL -= prelimPnlUsd;
               this.dailyPnL += realPnlUsd;
               pnlPct = realPnlPct;
               pnlUsd = realPnlUsd;
               currentPrice = realExitPrice;
+              fillCorrected = true;
             }
           }
           if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken', 'time_exit'].includes(action)) {
             this.saveConfig();
           }
 
-          const msg = this.formatTradeUpdate(trade, action, currentPrice, pnlPct, pnlUsd);
+          let msg = this.formatTradeUpdate(trade, action, currentPrice, pnlPct, pnlUsd);
+          if (fillCorrected) {
+            msg += `\n\n📊 <i>Ticker: $${tickerPrice.toPrecision(6)} → Fill: $${realExitPrice.toPrecision(6)} | Fees: ~$${estFees.toFixed(2)}</i>`;
+          }
           updates.push({ trade, action, msg });
           await this.notify(msg);
         }
