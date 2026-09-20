@@ -1502,10 +1502,10 @@ class TradeExecutor {
         await this.checkDCAFills(trade, currentPrice, isLong);
 
         // P&L uses exitPrice (bid/ask for live, last for paper) for realistic tracking
-        const pnlPct = isLong
+        let pnlPct = isLong
           ? ((exitPrice - trade.entry_price) / trade.entry_price) * 100
           : ((trade.entry_price - exitPrice) / trade.entry_price) * 100;
-        const pnlUsd = (pnlPct / 100) * trade.position_size;
+        let pnlUsd = (pnlPct / 100) * trade.position_size;
 
         // Always track peak price — use candle high/low to catch intra-minute spikes
         const prevPeak = trade.peak_price || trade.entry_price;
@@ -1746,7 +1746,7 @@ class TradeExecutor {
           }
         }
         // --- SL CHECK: use candle low/high to catch intra-minute wicks ---
-        else if (!action && trade.stop_loss && (isLong ? slCheckPrice <= trade.stop_loss : slCheckPrice >= trade.stop_loss)) {
+        if (!action && trade.stop_loss && (isLong ? slCheckPrice <= trade.stop_loss : slCheckPrice >= trade.stop_loss)) {
           action = 'sl';
           // Paper: SL price as exit; Live: bid/ask for realistic fill
           const slExitPrice = trade.mode === 'paper' ? trade.stop_loss : exitPrice;
