@@ -2059,22 +2059,31 @@ class TradeExecutor {
       const pair = `${trade.symbol}/USDT:USDT`;
       const closeSide = trade.direction === 'long' ? 'sell' : 'buy';
 
-      // Cancel existing SL orders
+      const qty = trade.quantity || exchange.amountToPrecision(pair, trade.position_size / newSLPrice);
+      const slPrice = exchange.priceToPrecision(pair, newSLPrice);
+
+      // Place new SL FIRST — if it fails, old stop stays as protection
+      try {
+        await this.placeStopOrder(exchange, trade.exchange, pair, closeSide, qty, slPrice);
+        logger.info(`Placed new SL for ${pair} at $${newSLPrice}`);
+      } catch (e) {
+        logger.warn(`New SL rejected for ${pair} at $${newSLPrice}: ${e.message} — keeping old SL`);
+        return;
+      }
+
+      // New stop confirmed — now cancel old stop orders (skip the one we just placed)
       try {
         const openOrders = await exchange.fetchOpenOrders(pair);
         for (const order of openOrders) {
           if (order.type === 'stop_market' || order.type === 'stop' || order.stopPrice) {
-            await exchange.cancelOrder(order.id, pair);
-            logger.info(`Cancelled old SL order ${order.id}`);
+            const trigPrice = parseFloat(order.stopPrice || order.triggerPrice || order.info?.triggerPrice || 0);
+            if (Math.abs(trigPrice - parseFloat(slPrice)) > 0.0000001) {
+              await exchange.cancelOrder(order.id, pair);
+              logger.info(`Cancelled old SL order ${order.id} (was $${trigPrice})`);
+            }
           }
         }
       } catch (e) { logger.warn(`Failed to cancel old SL: ${e.message}`); }
-
-      // Place new SL at updated price
-      const qty = trade.quantity || exchange.amountToPrecision(pair, trade.position_size / newSLPrice);
-      const slPrice = exchange.priceToPrecision(pair, newSLPrice);
-      await this.placeStopOrder(exchange, trade.exchange, pair, closeSide, qty, slPrice);
-      logger.info(`Updated SL for ${pair} to $${newSLPrice}`);
     } catch (err) {
       logger.error(`Failed to update SL for ${trade.symbol}: ${err.message}`);
     }
