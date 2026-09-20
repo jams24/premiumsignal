@@ -895,7 +895,8 @@ async function main() {
               logger.info(`Onchain skip ${token.symbol}: LONG score ${token.score} > ${ocMaxScore} — likely exhausted pump, alert only`);
               continue;
             }
-            if (setup.direction === 'short' && token.score < minShortScore) {
+            const isExhaustionShort = setup.onchainContext?.exhaustion && setup.direction === 'short';
+            if (setup.direction === 'short' && token.score < minShortScore && !isExhaustionShort) {
               logger.info(`Onchain skip ${token.symbol}: SHORT score ${token.score} < ${minShortScore} — not enough conviction`);
               continue;
             }
