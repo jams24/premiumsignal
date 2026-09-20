@@ -95,6 +95,9 @@ class TradeExecutor {
     this.volatilityFilter = config.volatilityFilter !== false;
     this.max4hRange = config.max4hRange || 15;
 
+    // Trend structure filter: block longs in downtrends (1H lower highs/lows)
+    this.trendFilter = config.trendFilter || false;
+
     // Risk-fit sizing: shrink position so SL hit = maxLossPerTrade
     this.riskFitSizing = config.riskFitSizing !== false;
 
@@ -322,7 +325,59 @@ class TradeExecutor {
       return { ok: false, reason: `Likely duplicate: ${signal.symbol} ≈ ${priceMatch.symbol} (same price $${signal.currentPrice.toPrecision(4)})` };
     }
 
+    // Trend structure filter: block longs when 1H swing structure shows downtrend
+    if (this.trendFilter && signal.direction === 'long') {
+      try {
+        const trendResult = await this.checkTrendStructure(signal);
+        if (trendResult.blocked) {
+          return { ok: false, reason: `Trend filter: ${signal.symbol} ${trendResult.reason} on 1H — longs blocked` };
+        }
+      } catch (e) {
+        logger.warn(`Trend filter error for ${signal.symbol}: ${e.message}`);
+      }
+    }
+
     return { ok: true };
+  }
+
+  // Trend structure filter: checks 1H swing highs/lows for downtrend
+  async checkTrendStructure(signal) {
+    const exchange = this.exchanges[signal.exchange];
+    if (!exchange) return { blocked: false, reason: 'no exchange' };
+
+    const pair = `${signal.symbol}/USDT:USDT`;
+    if (!exchange.markets[pair]) return { blocked: false, reason: 'no market' };
+
+    const candles = await exchange.fetchOHLCV(pair, '1h', undefined, 100);
+    if (!candles || candles.length < 15) return { blocked: false, reason: 'no data' };
+
+    const lookback = 3;
+    const swingHighs = [], swingLows = [];
+    for (let i = lookback; i < candles.length - lookback; i++) {
+      const high = candles[i][2], low = candles[i][3];
+      let isHigh = true, isLow = true;
+      for (let j = 1; j <= lookback; j++) {
+        if (candles[i - j][2] >= high || candles[i + j][2] >= high) isHigh = false;
+        if (candles[i - j][3] <= low || candles[i + j][3] <= low) isLow = false;
+      }
+      if (isHigh) swingHighs.push(high);
+      if (isLow) swingLows.push(low);
+    }
+
+    let highDesc = false, lowDesc = false;
+    if (swingHighs.length >= 3) {
+      const r = swingHighs.slice(-3);
+      highDesc = r[1] < r[0] && r[2] < r[1];
+    }
+    if (swingLows.length >= 3) {
+      const r = swingLows.slice(-3);
+      lowDesc = r[1] < r[0] && r[2] < r[1];
+    }
+
+    if (highDesc && lowDesc) return { blocked: true, reason: 'lower highs + lower lows' };
+    if (highDesc) return { blocked: true, reason: 'lower highs' };
+    if (lowDesc) return { blocked: true, reason: 'lower lows' };
+    return { blocked: false, reason: 'trend OK' };
   }
 
   // Get available balance for sizing
@@ -506,6 +561,7 @@ class TradeExecutor {
       cbPauseMinutes: this.cbPauseMinutes,
       volatilityFilter: this.volatilityFilter,
       max4hRange: this.max4hRange,
+      trendFilter: this.trendFilter,
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
@@ -563,6 +619,7 @@ class TradeExecutor {
     if (cfg.cbPauseMinutes != null) this.cbPauseMinutes = cfg.cbPauseMinutes;
     if (cfg.volatilityFilter != null) this.volatilityFilter = cfg.volatilityFilter;
     if (cfg.max4hRange != null) this.max4hRange = cfg.max4hRange;
+    if (cfg.trendFilter != null) this.trendFilter = cfg.trendFilter;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
