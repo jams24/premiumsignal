@@ -1,5 +1,5 @@
 const logger = require('../utils/logger');
-const { EMA, ATR } = require('technicalindicators');
+const { EMA, ATR, RSI } = require('technicalindicators');
 const https = require('https');
 const { STOCK_TOKENS } = require('./technicalScanner');
 
@@ -1041,6 +1041,16 @@ class OnchainScanner {
       const atr = atrSum / 14;
       if (!atr || atr <= 0) return null;
 
+      // 5m RSI for exhaustion scoring
+      try {
+        const rsiCandles = await exchange.fetchOHLCV(token.pair, '5m', undefined, 20);
+        if (rsiCandles && rsiCandles.length >= 15) {
+          const closes = rsiCandles.slice(0, -1).map(c => c[4]);
+          const rsiValues = RSI.calculate({ values: closes, period: 14 });
+          if (rsiValues.length > 0) token.rsi5m = rsiValues[rsiValues.length - 1];
+        }
+      } catch (e) { logger.debug(`${token.symbol}: 5m RSI fetch failed: ${e.message}`); }
+
       const snap = this.liquidationScanner
         ? this.liquidationScanner.generateSetupSnapshot(token)
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
@@ -1336,6 +1346,7 @@ class OnchainScanner {
           } : null,
           exhaustion: isExhaustion || false,
           exhaustionScore: snap.exhaustionScore || 0,
+          rsi5m: snap.rsi5m || 0,
         },
       };
     } catch (err) {

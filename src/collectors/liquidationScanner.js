@@ -329,7 +329,11 @@ class LiquidationScanner {
     if (fundingRate > 0.001) { exhaustionScore += 2; exhaustionSignals.push('funding crowded'); }
     else if (fundingRate > 0.0003) { exhaustionScore += 1; }
 
+    const rsi5m = tokenData.rsi5m || 0;
+    if (rsi5m > 80) { exhaustionScore += 2; exhaustionSignals.push(`RSI ${rsi5m.toFixed(0)}`); }
+
     snap.exhaustion = exhaustionScore >= 5;
+    snap.rsi5m = rsi5m;
     snap.exhaustionScore = exhaustionScore;
     if (snap.exhaustion) {
       snap.thesis.push('PUMP EXHAUSTION: ' + exhaustionSignals.join(' + ') + ' → short reversal setup');
