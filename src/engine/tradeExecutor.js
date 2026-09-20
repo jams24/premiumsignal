@@ -1991,7 +1991,22 @@ class TradeExecutor {
           : ticker.last * (1 + slipTol);
         const precisePrice = exchange.priceToPrecision(pair, limitPrice);
         const order = await exchange.createOrder(pair, 'limit', side, qty, precisePrice, { reduceOnly: true, timeInForce: 'IOC' });
-        fillPrice = order.average || order.price || parseFloat(precisePrice);
+
+        // IOC response often returns limit price as "average", not actual fill — re-fetch settled data
+        if (order.id) {
+          try {
+            const settled = await exchange.fetchOrder(order.id, pair);
+            fillPrice = settled.average || (settled.cost > 0 && settled.filled > 0 ? settled.cost / settled.filled : null);
+          } catch (e) {
+            // Bybit unified doesn't support fetchOrder — fall back to fetchMyTrades
+            try {
+              const trades = await exchange.fetchMyTrades(pair, Date.now() - 10000, 5);
+              const match = trades.find(t => t.order === order.id) || trades[trades.length - 1];
+              if (match) fillPrice = match.price;
+            } catch (e2) { logger.warn(`Fill price fetch failed: ${e2.message}`); }
+          }
+        }
+        if (!fillPrice) fillPrice = order.average || order.price || parseFloat(precisePrice);
         logger.info(`Closed live position with IOC limit: ${pair} at $${precisePrice} (fill: $${fillPrice}) on ${trade.exchange}`);
 
         // Verify fully closed — fetch position again
