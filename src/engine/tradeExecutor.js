@@ -173,7 +173,8 @@ class TradeExecutor {
         return { ok: false, reason: `Long score ${ocScore} > max ${this.maxOcScore} (use short for high scores)` };
       }
     }
-    if (signal.direction === 'short' && this.minShortScore > 0 && ocScore < this.minShortScore && !signal.onchainContext?.exhaustion) {
+    const isReversalShort = signal.onchainContext?.exhaustion || signal.onchainContext?.crowdedFlip;
+    if (signal.direction === 'short' && this.minShortScore > 0 && ocScore < this.minShortScore && !isReversalShort) {
       return { ok: false, reason: `Short score ${ocScore} < minimum ${this.minShortScore}` };
     }
 
@@ -230,9 +231,9 @@ class TradeExecutor {
       const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
       const isFlip = cooldownData.lastDir && cooldownData.lastDir !== signal.direction;
       const hoursSinceClose = cooldownData.closedAt ? (Date.now() - cooldownData.closedAt) / 3600000 : 999;
-      const isExhaustionFlip = isFlip && signal.onchainContext?.exhaustion;
-      if (isExhaustionFlip) {
-        logger.info(`${signal.symbol}: cooldown bypassed — exhaustion flip (LONG loss → SHORT reversal)`);
+      const isReversalFlip = isFlip && isReversalShort;
+      if (isReversalFlip) {
+        logger.info(`${signal.symbol}: cooldown bypassed — reversal flip (LONG loss → SHORT reversal)`);
       } else if (isFlip && (signal.onchainScore || 0) >= this.flipScore) {
         logger.info(`${signal.symbol}: cooldown bypassed — direction flip with strong thesis (score ${signal.onchainScore})`);
       } else if (hoursSinceClose < 2) {
@@ -266,9 +267,9 @@ class TradeExecutor {
         next1am.setUTCHours(1, 0, 0, 0);
         if (next1am.getTime() <= closedAt) next1am.setUTCDate(next1am.getUTCDate() + 1);
         if (Date.now() < next1am.getTime()) {
-          const isExhaustionFlip2 = isFlip && signal.onchainContext?.exhaustion;
-          if (isExhaustionFlip2) {
-            logger.info(`${signal.symbol}: daily cooldown bypassed — exhaustion flip (LONG loss → SHORT reversal)`);
+          const isReversalFlip2 = isFlip && isReversalShort;
+          if (isReversalFlip2) {
+            logger.info(`${signal.symbol}: daily cooldown bypassed — reversal flip (LONG loss → SHORT reversal)`);
           } else if (isFlip && (signal.onchainScore || 0) >= this.flipScore) {
             logger.info(`${signal.symbol}: daily cooldown bypassed — direction flip (score ${signal.onchainScore})`);
           } else if (hoursSinceClose < 2) {
@@ -826,10 +827,13 @@ class TradeExecutor {
     let effectiveEntry = this.entryMode;
     const priceChg = Math.abs(signal.priceChange || signal.onchainContext?.priceChange || 0);
 
-    // Exhaustion shorts enter at market — the signal is "price is at the pump top NOW"
-    if (signal.onchainContext?.exhaustion) {
+    // Reversal shorts enter at market — the signal is "price is at the top NOW"
+    if (signal.onchainContext?.exhaustion || signal.onchainContext?.crowdedFlip) {
       effectiveEntry = 'market';
-      logger.info(`Exhaustion entry ${signal.symbol}: forcing MARKET — pump top detected (score ${signal.onchainContext.exhaustionScore})`);
+      const reason = signal.onchainContext.exhaustion
+        ? `exhaustion score ${signal.onchainContext.exhaustionScore}`
+        : `OI crowded ${signal.onchainContext.oiChange4h?.toFixed(1)}%`;
+      logger.info(`Reversal entry ${signal.symbol}: forcing MARKET — ${reason}`);
     } else if (this.entryMode === 'hybrid') {
       effectiveEntry = priceChg >= this.hybridThreshold ? 'pullback' : 'market';
       // Falling edge detection: if price retraced >5% from 24h high, force pullback

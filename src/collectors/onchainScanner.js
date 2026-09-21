@@ -1062,6 +1062,19 @@ class OnchainScanner {
         snap.direction = 'short';
       }
 
+      // OI crowded override: flip long to short when OI > 60% (crowd trap territory)
+      const isCrowdedFlip = !isExhaustion && snap.direction === 'long' && (snap.oiChange4h || 0) > 60;
+      if (isCrowdedFlip) {
+        logger.info(`${token.symbol}: OI CROWDED ${(snap.oiChange4h || 0).toFixed(1)}% — flipping LONG to SHORT`);
+        snap.direction = 'short';
+      }
+
+      // OI too low: block longs when OI < 10% (no momentum confirmation)
+      if (snap.direction === 'long' && (snap.oiChange4h || 0) < 10) {
+        logger.info(`${token.symbol}: BLOCKED — OI ${(snap.oiChange4h || 0).toFixed(1)}% too low for LONG (need 10%+ momentum)`);
+        return null;
+      }
+
       const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : null;
       if (!direction) return null;
       const price = token.price;
@@ -1078,7 +1091,7 @@ class OnchainScanner {
             logger.info(`${token.symbol}: Skipping LONG — last 3 5m candles red (falling knife)`);
             return null;
           }
-          if (direction === 'short' && g1 && g2 && g3 && !isExhaustion) {
+          if (direction === 'short' && g1 && g2 && g3 && !isExhaustion && !isCrowdedFlip) {
             logger.info(`${token.symbol}: Skipping SHORT — last 3 5m candles green (chasing strength)`);
             return null;
           }
@@ -1120,7 +1133,7 @@ class OnchainScanner {
               logger.info(`${token.symbol}: Reject LONG — price ${trendGap.toFixed(1)}% below 4H EMA20 (downtrend)`);
               return null;
             }
-            if (direction === 'short' && trendGap > 5 && !isExhaustion) {
+            if (direction === 'short' && trendGap > 5 && !isExhaustion && !isCrowdedFlip) {
               logger.info(`${token.symbol}: Reject SHORT — price ${trendGap.toFixed(1)}% above 4H EMA20 (uptrend)`);
               return null;
             }
@@ -1133,7 +1146,7 @@ class OnchainScanner {
             logger.info(`${token.symbol}: Reject LONG — ${drawdown.toFixed(1)}% below 4H high $${recentHigh.toPrecision(4)} (post-pump dump)`);
             return null;
           }
-          if (direction === 'short' && drawdown < 5 && !isExhaustion) {
+          if (direction === 'short' && drawdown < 5 && !isExhaustion && !isCrowdedFlip) {
             logger.info(`${token.symbol}: Reject SHORT — only ${drawdown.toFixed(1)}% from highs (still near peak)`);
             return null;
           }
@@ -1181,9 +1194,10 @@ class OnchainScanner {
       const tp2Raw = price + mult * atr * 2.5;
       const tp3Raw = price + mult * atr * 4.0;
       // Cap TPs — exhaustion shorts get wider targets (reversal moves are bigger than scalps)
-      const tp1Pct = isExhaustion ? 0.05 : 0.03;
-      const tp2Pct = isExhaustion ? 0.10 : 0.06;
-      const tp3Pct = isExhaustion ? 0.15 : 0.10;
+      const isReversalShort = isExhaustion || isCrowdedFlip;
+      const tp1Pct = isReversalShort ? 0.05 : 0.03;
+      const tp2Pct = isReversalShort ? 0.10 : 0.06;
+      const tp3Pct = isReversalShort ? 0.15 : 0.10;
       const tp1Cap = price * (1 + mult * tp1Pct);
       const tp2Cap = price * (1 + mult * tp2Pct);
       const tp3Cap = price * (1 + mult * tp3Pct);
@@ -1284,8 +1298,8 @@ class OnchainScanner {
         }
       }
 
-      // Exhaustion shorts: cap SL at +4% — pump-inflated ATR makes SL too wide otherwise
-      if (isExhaustion) {
+      // Reversal shorts: cap SL at +4% — pump-inflated ATR makes SL too wide otherwise
+      if (isReversalShort) {
         const exhMaxSL = price * 1.04;
         if (sl > exhMaxSL) {
           logger.info(`${token.symbol}: Exhaustion SL capped from $${sl.toPrecision(6)} (${((sl - price) / price * 100).toFixed(1)}%) to $${exhMaxSL.toPrecision(6)} (+4%)`);
@@ -1345,6 +1359,7 @@ class OnchainScanner {
             orderBook: token.setupData.orderBook || null,
           } : null,
           exhaustion: isExhaustion || false,
+          crowdedFlip: isCrowdedFlip || false,
           exhaustionScore: snap.exhaustionScore || 0,
           rsi5m: snap.rsi5m || 0,
         },
