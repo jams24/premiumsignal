@@ -1,4 +1,5 @@
 const ccxt = require('ccxt');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
@@ -1913,6 +1914,11 @@ class TradeExecutor {
               pnlUsd = realPnlUsd;
               currentPrice = realExitPrice;
               fillCorrected = true;
+            } else {
+              logger.error(`${trade.symbol}: closeExchangePosition returned null — re-opening trade in DB for safety`);
+              await db.query(`UPDATE trades SET status = 'open', close_reason = NULL, close_price = NULL, pnl_usd = NULL, pnl_pct = NULL, closed_at = NULL WHERE id = $1`, [trade.id]);
+              await this.notify(`🚨 <b>CLOSE FAILED</b> — $${escapeHtml(trade.symbol)}\n\nBot could not confirm position closed on ${trade.exchange}.\nTrade re-opened in tracker. Will retry next cycle.\nCheck exchange manually!`);
+              continue;
             }
           }
           if (['tp4', 'sl', 'invalidated', 'expired', 'max_loss', 'thesis_broken', 'time_exit'].includes(action)) {
@@ -2082,6 +2088,12 @@ class TradeExecutor {
         await exchange.cancelAllOrders(pair);
         logger.info(`Cancelled open orders for ${pair}`);
       } catch (e) { logger.warn(`Cancel orders failed for ${pair}: ${e.message}`); }
+      if (trade.exchange === 'binance') {
+        try {
+          const market = exchange.market(pair);
+          await this._binanceCancelAlgoOrders(exchange, market.id);
+        } catch (e) { logger.warn(`Cancel Binance algo orders failed for ${pair}: ${e.message}`); }
+      }
 
       // Fetch actual position size from exchange (may differ after partial closes)
       let qty = trade.quantity;
@@ -2112,13 +2124,15 @@ class TradeExecutor {
         const precisePrice = exchange.priceToPrecision(pair, limitPrice);
         const order = await exchange.createOrder(pair, 'limit', side, qty, precisePrice, { reduceOnly: true, timeInForce: 'IOC' });
 
-        // IOC response often returns limit price as "average", not actual fill — re-fetch settled data
         if (order.id) {
           try {
             const settled = await exchange.fetchOrder(order.id, pair);
-            fillPrice = settled.average || (settled.cost > 0 && settled.filled > 0 ? settled.cost / settled.filled : null);
+            if (settled.filled > 0) {
+              fillPrice = settled.average || (settled.cost > 0 ? settled.cost / settled.filled : null);
+            } else {
+              logger.warn(`${pair}: IOC order ${order.id} expired with zero fills`);
+            }
           } catch (e) {
-            // Bybit unified doesn't support fetchOrder — fall back to fetchMyTrades
             try {
               const trades = await exchange.fetchMyTrades(pair, Date.now() - 10000, 5);
               const match = trades.find(t => t.order === order.id) || trades[trades.length - 1];
@@ -2126,29 +2140,47 @@ class TradeExecutor {
             } catch (e2) { logger.warn(`Fill price fetch failed: ${e2.message}`); }
           }
         }
-        if (!fillPrice) fillPrice = order.average || order.price || parseFloat(precisePrice);
-        logger.info(`Closed live position with IOC limit: ${pair} at $${precisePrice} (fill: $${fillPrice}) on ${trade.exchange}`);
+        if (fillPrice) {
+          logger.info(`Closed live position with IOC limit: ${pair} fill $${fillPrice} on ${trade.exchange}`);
+        }
 
-        // Verify fully closed — fetch position again
-        try {
-          const remaining = await exchange.fetchPositions([pair]);
-          const rem = remaining.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
-          if (rem && Math.abs(rem.contracts) > 0) {
-            const remQty = Math.abs(rem.contracts);
-            logger.warn(`${pair}: ${remQty} remaining after IOC limit — sending market order for residual`);
-            const mktOrder = await exchange.createOrder(pair, 'market', side, remQty, undefined, { reduceOnly: true });
-            if (mktOrder.average) fillPrice = mktOrder.average;
-          }
-        } catch (e) { logger.warn(`Residual position check failed for ${pair}: ${e.message}`); }
+        // Always verify — fetch position to check if anything remains
+        const remaining = await exchange.fetchPositions([pair]);
+        const rem = remaining.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+        if (rem && Math.abs(rem.contracts) > 0) {
+          const remQty = Math.abs(rem.contracts);
+          logger.warn(`${pair}: ${remQty} remaining after IOC — sending market order`);
+          const mktOrder = await exchange.createOrder(pair, 'market', side, remQty, undefined, { reduceOnly: true });
+          fillPrice = mktOrder.average || mktOrder.price || fillPrice;
+        }
       } catch (limitErr) {
         logger.warn(`Limit close failed for ${pair}: ${limitErr.message} — falling back to market`);
         const mktOrder = await exchange.createOrder(pair, 'market', side, qty, undefined, { reduceOnly: true });
         fillPrice = mktOrder.average || mktOrder.price || null;
       }
 
+      // Final safety: verify position is actually closed
+      if (!fillPrice) {
+        try {
+          const finalCheck = await exchange.fetchPositions([pair]);
+          const still = finalCheck.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+          if (still && Math.abs(still.contracts) > 0) {
+            const remQty = Math.abs(still.contracts);
+            logger.error(`${pair}: POSITION STILL OPEN after close attempts — emergency market close`);
+            const emergOrder = await exchange.createOrder(pair, 'market', side, remQty, undefined, { reduceOnly: true });
+            fillPrice = emergOrder.average || emergOrder.price || null;
+            if (!fillPrice) {
+              await this.notify(`🚨 <b>CRITICAL — POSITION UNPROTECTED</b>\n\n$${escapeHtml(trade.symbol)} position could NOT be closed!\nClose manually NOW on ${trade.exchange}!`);
+            }
+          }
+        } catch (e) {
+          logger.error(`${pair}: Emergency position check failed: ${e.message}`);
+          await this.notify(`🚨 <b>CRITICAL — CLOSE VERIFY FAILED</b>\n\n$${escapeHtml(trade.symbol)} close could not be verified!\nCheck position on ${trade.exchange} immediately!`);
+        }
+      }
+
       logger.info(`Closed live position: ${pair} on ${trade.exchange} (fillPrice: $${fillPrice})`);
 
-      // Update DB with actual fill price if available
       if (fillPrice && trade.id) {
         const isLong = trade.direction === 'long';
         const realPnlPct = isLong
@@ -2191,15 +2223,31 @@ class TradeExecutor {
         return;
       }
 
-      // New stop confirmed — now cancel old stop orders (skip the one we just placed)
+      // New stop confirmed — now cancel old stop orders
       try {
-        const openOrders = await exchange.fetchOpenOrders(pair);
-        for (const order of openOrders) {
-          if (order.type === 'stop_market' || order.type === 'stop' || order.stopPrice) {
-            const trigPrice = parseFloat(order.stopPrice || order.triggerPrice || order.info?.triggerPrice || 0);
-            if (Math.abs(trigPrice - parseFloat(slPrice)) > 0.0000001) {
-              await exchange.cancelOrder(order.id, pair);
-              logger.info(`Cancelled old SL order ${order.id} (was $${trigPrice})`);
+        if (trade.exchange === 'binance') {
+          const market = exchange.market(pair);
+          const qs = new URLSearchParams({ algoType: 'CONDITIONAL', timestamp: Date.now().toString(), recvWindow: '5000' }).toString();
+          const sig = crypto.createHmac('sha256', exchange.secret).update(qs).digest('hex');
+          const res = await fetch('https://fapi.binance.com/fapi/v1/openAlgoOrders?' + qs + '&signature=' + sig, { headers: { 'X-MBX-APIKEY': exchange.apiKey } });
+          const orders = await res.json();
+          if (Array.isArray(orders)) {
+            for (const order of orders) {
+              if (order.symbol === market.id && Math.abs(parseFloat(order.triggerPrice) - parseFloat(slPrice)) > 0.0000001) {
+                await this._binanceAlgoOrder('DELETE', exchange, { algoId: order.algoId.toString() });
+                logger.info(`Cancelled old Binance SL algoId ${order.algoId} (was $${order.triggerPrice})`);
+              }
+            }
+          }
+        } else {
+          const openOrders = await exchange.fetchOpenOrders(pair);
+          for (const order of openOrders) {
+            if (order.type === 'stop_market' || order.type === 'stop' || order.stopPrice) {
+              const trigPrice = parseFloat(order.stopPrice || order.triggerPrice || order.info?.triggerPrice || 0);
+              if (Math.abs(trigPrice - parseFloat(slPrice)) > 0.0000001) {
+                await exchange.cancelOrder(order.id, pair);
+                logger.info(`Cancelled old SL order ${order.id} (was $${trigPrice})`);
+              }
             }
           }
         }
@@ -2214,19 +2262,50 @@ class TradeExecutor {
     if (exchangeId === 'bybit') {
       params.triggerPrice = stopPrice;
       params.triggerBy = 'LastPrice';
-      // triggerDirection: 1 = rising (buy stop), 2 = falling (sell stop)
       params.triggerDirection = side === 'sell' ? 2 : 1;
       return exchange.createOrder(pair, 'market', side, qty, undefined, params);
     }
     if (exchangeId === 'binance') {
-      // Binance moved stop orders to Algo API (ccxt doesn't support yet)
-      // SL is enforced by checkOpenTrades every minute instead
-      logger.info(`${pair}: Binance SL at $${stopPrice} managed by trade checker (algo API not supported)`);
-      return null;
+      const market = exchange.market(pair);
+      const result = await this._binanceAlgoOrder('POST', exchange, {
+        algoType: 'CONDITIONAL',
+        symbol: market.id,
+        side: side.toUpperCase(),
+        type: 'STOP_MARKET',
+        triggerPrice: stopPrice.toString(),
+        quantity: qty.toString(),
+        reduceOnly: 'true',
+        workingType: 'CONTRACT_PRICE',
+      });
+      if (!result.algoId) throw new Error(result.msg || 'Binance algo order failed');
+      logger.info(`${pair}: Binance SL placed (algoId: ${result.algoId}) at $${stopPrice}`);
+      return { id: result.algoId, type: 'stop_market', stopPrice: parseFloat(stopPrice) };
     }
-    // Default fallback
     params.stopPrice = stopPrice;
     return exchange.createOrder(pair, 'stop_market', side, qty, undefined, params);
+  }
+
+  async _binanceAlgoOrder(method, exchange, params) {
+    const qs = new URLSearchParams({ ...params, timestamp: Date.now().toString(), recvWindow: '5000' }).toString();
+    const signature = crypto.createHmac('sha256', exchange.secret).update(qs).digest('hex');
+    const url = 'https://fapi.binance.com/fapi/v1/algoOrder?' + qs + '&signature=' + signature;
+    const res = await fetch(url, { method, headers: { 'X-MBX-APIKEY': exchange.apiKey } });
+    return res.json();
+  }
+
+  async _binanceCancelAlgoOrders(exchange, symbol) {
+    const qs = new URLSearchParams({ algoType: 'CONDITIONAL', timestamp: Date.now().toString(), recvWindow: '5000' }).toString();
+    const signature = crypto.createHmac('sha256', exchange.secret).update(qs).digest('hex');
+    const url = 'https://fapi.binance.com/fapi/v1/openAlgoOrders?' + qs + '&signature=' + signature;
+    const res = await fetch(url, { headers: { 'X-MBX-APIKEY': exchange.apiKey } });
+    const orders = await res.json();
+    if (!Array.isArray(orders)) return;
+    for (const order of orders) {
+      if (order.symbol === symbol) {
+        await this._binanceAlgoOrder('DELETE', exchange, { algoId: order.algoId.toString() });
+        logger.info(`Cancelled Binance algo order ${order.algoId} (${order.orderType} ${order.side} at $${order.triggerPrice})`);
+      }
+    }
   }
 
   async placeTPOrders(trade) {
