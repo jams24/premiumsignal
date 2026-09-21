@@ -825,7 +825,12 @@ class TradeExecutor {
     // Resolve effective entry mode for this signal
     let effectiveEntry = this.entryMode;
     const priceChg = Math.abs(signal.priceChange || signal.onchainContext?.priceChange || 0);
-    if (this.entryMode === 'hybrid') {
+
+    // Exhaustion shorts enter at market — the signal is "price is at the pump top NOW"
+    if (signal.onchainContext?.exhaustion) {
+      effectiveEntry = 'market';
+      logger.info(`Exhaustion entry ${signal.symbol}: forcing MARKET — pump top detected (score ${signal.onchainContext.exhaustionScore})`);
+    } else if (this.entryMode === 'hybrid') {
       effectiveEntry = priceChg >= this.hybridThreshold ? 'pullback' : 'market';
       // Falling edge detection: if price retraced >5% from 24h high, force pullback
       // Prevents market entry on falling knives (coin pumped then dumping)
@@ -1619,6 +1624,40 @@ class TradeExecutor {
 
         const isLong = trade.direction === 'long';
 
+        // --- POSITION EXISTENCE CHECK: detect if exchange SL closed the position ---
+        if (trade.mode === 'live' && exchange.apiKey) {
+          try {
+            const pair = `${trade.symbol}/USDT:USDT`;
+            const positions = await this._fetchPositions(exchange, trade.exchange, [pair]);
+            const pos = positions.find(p => Math.abs(p.contracts || 0) > 0);
+            if (!pos || Math.abs(pos.contracts) === 0) {
+              const slPnlPct = isLong
+                ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
+                : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
+              const slPnlUsd = (slPnlPct / 100) * trade.position_size;
+              const feePct = 0.0011;
+              const estFees = trade.position_size * feePct;
+              const netPnl = slPnlUsd - estFees;
+              logger.warn(`${trade.symbol}: position GONE on ${trade.exchange} — exchange SL likely fired. Closing in DB.`);
+              await db.closeTrade(trade.id, currentPrice, slPnlPct, netPnl, 'sl');
+              this.dailyPnL += netPnl;
+              await this._binanceCancelAlgoOrders(exchange, exchange.market(pair).id).catch(() => {});
+              const pnlEmoji = netPnl >= 0 ? '🟢' : '🔴';
+              const pnlSign = netPnl >= 0 ? '+' : '';
+              await this.notify(
+                `${trade.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'} 🔴 <b>EXCHANGE SL HIT</b> $${escapeHtml(trade.symbol)}\n\n` +
+                `PnL: ${pnlEmoji} ${pnlSign}$${netPnl.toFixed(2)} (${pnlSign}${slPnlPct.toFixed(2)}%)\n` +
+                `Entry: $${trade.entry_price} → ~$${currentPrice}\n\n` +
+                `Position closed by exchange stop order.\n` +
+                `<i>Note: PnL estimated from current price, not exact fill.</i>`
+              );
+              this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
+              updates.push({ trade, action: 'sl', msg: '' });
+              continue;
+            }
+          } catch (e) { logger.debug(`${trade.symbol}: position check failed: ${e.message}`); }
+        }
+
         // --- DCA CHECK: fill DCA 2 and DCA 3 if price reaches levels ---
         await this.checkDCAFills(trade, currentPrice, isLong);
 
@@ -2040,22 +2079,33 @@ class TradeExecutor {
     const remainQty = trade.quantity - closeQty;
     const remainSize = trade.position_size * (1 - fraction);
     const isLong = trade.direction === 'long';
-    const pnlPct = isLong
-      ? ((trade.stop_loss - trade.entry_price) / trade.entry_price) * 100
-      : ((trade.entry_price - trade.stop_loss) / trade.entry_price) * 100;
+
+    let fillPrice = null;
 
     if (trade.mode === 'live') {
       const exchange = this.exchanges[trade.exchange];
       if (exchange?.apiKey) {
         try {
           const pair = `${trade.symbol}/USDT:USDT`;
-          // Cancel exchange TP limit orders first — avoid double execution
           await this.cancelTPOrders(trade);
           const side = isLong ? 'sell' : 'buy';
           const roundedQty = exchange.amountToPrecision(pair, closeQty);
-          await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
-          logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: ${roundedQty}`);
-          // Re-place TP orders for remaining position after partial exit
+          const order = await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
+          fillPrice = order.average || order.price || null;
+          if (order.id) {
+            try {
+              const settled = await exchange.fetchOrder(order.id, pair);
+              if (settled.average > 0) fillPrice = settled.average;
+              else if (settled.cost > 0 && settled.filled > 0) fillPrice = settled.cost / settled.filled;
+            } catch (e) {
+              try {
+                const trades = await exchange.fetchMyTrades(pair, Date.now() - 10000, 5);
+                const match = trades.find(t => t.order === order.id) || trades[trades.length - 1];
+                if (match) fillPrice = match.price;
+              } catch (e2) { /* use order price */ }
+            }
+          }
+          logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: ${roundedQty} (fill: $${fillPrice || '?'})`);
           if (fraction < 1.0) {
             await this.placeTPOrders(trade);
           }
@@ -2063,11 +2113,15 @@ class TradeExecutor {
       }
     }
 
-    const currentPrice = arguments[2] || trade.entry_price;
+    const exitPrice = fillPrice || arguments[2] || trade.entry_price;
     const partialPnlPct = isLong
-      ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
-      : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
-    const partialPnlUsd = (partialPnlPct / 100) * (trade.position_size * fraction);
+      ? ((exitPrice - trade.entry_price) / trade.entry_price) * 100
+      : ((trade.entry_price - exitPrice) / trade.entry_price) * 100;
+    let partialPnlUsd = (partialPnlPct / 100) * (trade.position_size * fraction);
+    if (fillPrice) {
+      const feePct = 0.0011;
+      partialPnlUsd -= (trade.position_size * fraction) * feePct;
+    }
 
     await db.updateTradePartialClose(trade.id, remainQty, remainSize, partialPnlUsd);
     this.dailyPnL += partialPnlUsd;
@@ -2075,6 +2129,8 @@ class TradeExecutor {
 
     trade.quantity = remainQty;
     trade.position_size = remainSize;
+    trade._partialPnl = partialPnlUsd;
+    trade._partialFillPrice = fillPrice || exitPrice;
     return partialPnlUsd;
   }
 
@@ -2509,13 +2565,22 @@ class TradeExecutor {
     const pnlSign = pnlUsd >= 0 ? '+' : '';
 
     if (action === 'tp1') {
-      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 <b>Closed 33% — profit locked</b>\n🔒 SL moved to breakeven ($${trade.entry_price})\n🎯 67% running for TP2/TP3/TP4.`;
+      const locked = trade._partialPnl != null ? trade._partialPnl : pnlUsd * 0.33;
+      const lockedSign = locked >= 0 ? '+' : '';
+      const fillTag = trade._partialFillPrice ? `\n📊 Fill: $${trade._partialFillPrice.toPrecision(6)}` : '';
+      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\n💰 Locked: ${lockedSign}$${locked.toFixed(2)} (33% closed)\nEntry: $${trade.entry_price} → $${currentPrice}${fillTag}\n\n🔒 SL moved to breakeven ($${trade.entry_price})\n🎯 67% running for TP2/TP3/TP4.`;
     }
     if (action === 'tp2') {
-      return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed another 50% — more profit locked</b>\n🔒 SL trailed to TP1 ($${trade.tp1})\n🚀 34% riding to TP3/TP4...`;
+      const locked = trade._partialPnl != null ? trade._partialPnl : pnlUsd * 0.5;
+      const lockedSign = locked >= 0 ? '+' : '';
+      const fillTag = trade._partialFillPrice ? `\n📊 Fill: $${trade._partialFillPrice.toPrecision(6)}` : '';
+      return `${modeTag} ✅✅ <b>TP2 HIT</b> $${escapeHtml(trade.symbol)}\n\n💰 Locked: ${lockedSign}$${locked.toFixed(2)} (50% of remaining closed)\nEntry: $${trade.entry_price} → $${currentPrice}${fillTag}\n\n🔒 SL trailed to TP1 ($${trade.tp1})\n🚀 34% riding to TP3/TP4...`;
     }
     if (action === 'tp3') {
-      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\n\n💰 <b>Closed 50% — runner stays open</b>\n🔒 SL trailed to TP2 ($${trade.tp2})\n🏃 Runner riding with wide trail (3x ATR)`;
+      const locked = trade._partialPnl != null ? trade._partialPnl : pnlUsd * 0.5;
+      const lockedSign = locked >= 0 ? '+' : '';
+      const fillTag = trade._partialFillPrice ? `\n📊 Fill: $${trade._partialFillPrice.toPrecision(6)}` : '';
+      return `${modeTag} ✅✅✅ <b>TP3 HIT</b> $${escapeHtml(trade.symbol)}\n\n💰 Locked: ${lockedSign}$${locked.toFixed(2)} (50% of remaining closed)\nEntry: $${trade.entry_price} → $${currentPrice}${fillTag}\n\n🔒 SL trailed to TP2 ($${trade.tp2})\n🏃 Runner riding with wide trail (3x ATR)`;
     }
     if (action === 'tp4') {
       return `${modeTag} 🏆 <b>TP4 FULL TARGET!</b> $${escapeHtml(trade.symbol)}\n\nPnL: ${pnlEmoji} ${pnlSign}$${pnlUsd.toFixed(2)} (${pnlSign}${pnlPct.toFixed(2)}%)\nEntry: $${trade.entry_price} → $${currentPrice}\n\n💰 Extended target hit. Maximum profit captured.`;
