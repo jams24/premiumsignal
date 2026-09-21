@@ -1309,7 +1309,7 @@ class TradeExecutor {
 
       // Check exchange for existing position — avoid conflicts with manual trades
       try {
-        const positions = await exchange.fetchPositions([pair]);
+        const positions = await this._fetchPositions(exchange, signal.exchange, [pair]);
         const existing = positions.find(p => Math.abs(parseFloat(p.contracts || 0)) > 0);
         if (existing) {
           const side = parseFloat(existing.contracts) > 0 ? 'long' : 'short';
@@ -1953,7 +1953,7 @@ class TradeExecutor {
       for (const [exchId, exchange] of Object.entries(this.exchanges)) {
         if (!exchange.apiKey) continue;
         try {
-          const positions = await exchange.fetchPositions();
+          const positions = await this._fetchPositions(exchange, exchId);
           for (const pos of positions) {
             if (!pos.contracts || Math.abs(pos.contracts) === 0) continue;
             const base = pos.symbol?.split('/')[0];
@@ -2098,8 +2098,8 @@ class TradeExecutor {
       // Fetch actual position size from exchange (may differ after partial closes)
       let qty = trade.quantity;
       try {
-        const positions = await exchange.fetchPositions([pair]);
-        const pos = positions.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+        const positions = await this._fetchPositions(exchange, trade.exchange, [pair]);
+        const pos = positions.find(p => Math.abs(p.contracts || 0) > 0);
         if (pos && Math.abs(pos.contracts) > 0) {
           qty = Math.abs(pos.contracts);
           logger.info(`Actual position size for ${pair}: ${qty} (trade.quantity was ${trade.quantity})`);
@@ -2145,8 +2145,8 @@ class TradeExecutor {
         }
 
         // Always verify — fetch position to check if anything remains
-        const remaining = await exchange.fetchPositions([pair]);
-        const rem = remaining.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+        const remaining = await this._fetchPositions(exchange, trade.exchange, [pair]);
+        const rem = remaining.find(p => Math.abs(p.contracts || 0) > 0);
         if (rem && Math.abs(rem.contracts) > 0) {
           const remQty = Math.abs(rem.contracts);
           logger.warn(`${pair}: ${remQty} remaining after IOC — sending market order`);
@@ -2162,8 +2162,8 @@ class TradeExecutor {
       // Final safety: verify position is actually closed
       if (!fillPrice) {
         try {
-          const finalCheck = await exchange.fetchPositions([pair]);
-          const still = finalCheck.find(p => p.symbol === pair && Math.abs(p.contracts || 0) > 0);
+          const finalCheck = await this._fetchPositions(exchange, trade.exchange, [pair]);
+          const still = finalCheck.find(p => Math.abs(p.contracts || 0) > 0);
           if (still && Math.abs(still.contracts) > 0) {
             const remQty = Math.abs(still.contracts);
             logger.error(`${pair}: POSITION STILL OPEN after close attempts — emergency market close`);
@@ -2291,6 +2291,36 @@ class TradeExecutor {
     const url = 'https://fapi.binance.com/fapi/v1/algoOrder?' + qs + '&signature=' + signature;
     const res = await fetch(url, { method, headers: { 'X-MBX-APIKEY': exchange.apiKey } });
     return res.json();
+  }
+
+  async _fetchPositions(exchange, exchangeId, symbols) {
+    if (exchangeId === 'binance') {
+      const params = { timestamp: Date.now().toString(), recvWindow: '5000' };
+      if (symbols?.length === 1) {
+        const market = exchange.market(symbols[0]);
+        params.symbol = market.id;
+      }
+      const qs = new URLSearchParams(params).toString();
+      const sig = crypto.createHmac('sha256', exchange.secret).update(qs).digest('hex');
+      const res = await fetch('https://fapi.binance.com/fapi/v2/positionRisk?' + qs + '&signature=' + sig, {
+        headers: { 'X-MBX-APIKEY': exchange.apiKey }
+      });
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error(data.msg || 'positionRisk failed');
+      return data.map(p => ({
+        symbol: p.symbol.replace('USDT', '/USDT:USDT'),
+        contracts: parseFloat(p.positionAmt),
+        contractSize: 1,
+        notional: Math.abs(parseFloat(p.notional || 0)),
+        side: parseFloat(p.positionAmt) > 0 ? 'long' : parseFloat(p.positionAmt) < 0 ? 'short' : undefined,
+        entryPrice: parseFloat(p.entryPrice),
+        unrealizedPnl: parseFloat(p.unRealizedProfit),
+        liquidationPrice: parseFloat(p.liquidationPrice),
+        leverage: parseFloat(p.leverage),
+        initialMargin: parseFloat(p.isolatedMargin || p.initialMargin || 0),
+      }));
+    }
+    return exchange.fetchPositions(symbols);
   }
 
   async _binanceCancelAlgoOrders(exchange, symbol) {
