@@ -862,6 +862,57 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
       <div class="edu-card">
         <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
+          <h3>📉 Real Trade: MUBARAK Structure Analysis</h3><span class="edu-arrow">▼</span>
+        </div>
+        <div class="edu-body">
+
+          <div class="edu-term">
+            <h4>MUBARAK/USDT — Sep 21-22, 2026</h4>
+            <div class="what">A real exhaustion short trade showing how CHoCH and BOS played out after a pump-and-dump. Trade #767 caught the real pump top (+$5.39). Trade #771 shorted into confirmed BOS and lost $16.68. This case study led to the OI >25% hard floor for exhaustion.</div>
+            <div class="edu-diagram">
+              <div class="edu-diagram-title">MUBARAK Price Structure — 5min Chart</div>
+              <canvas id="mubarak-case" width="600" height="380" style="width:100%;max-width:600px;height:auto;display:block;margin:0 auto"></canvas>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text2);margin-top:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#f59e0b;display:inline-block"></span> CHoCH (trend reversal)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:#3b82f6;display:inline-block"></span> BOS (trend confirmation)</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span> Winning SHORT #767</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span> Losing SHORT #771</span>
+              </div>
+            </div>
+            <div class="how">
+              <strong>Step 1 — Consolidation:</strong> Price ranges at $0.044. OI flat, funding neutral.<br><br>
+              <strong>Step 2 — Pump:</strong> Price launches to $0.057 (Pump SH). OI surges +30%, funding spikes to +0.18%. Exhaustion scored 7 → bot enters SHORT #767 here. <span style="color:#22c55e">Won +$5.39.</span><br><br>
+              <strong>Step 3 — Bearish CHoCH:</strong> Price breaks below Pump SH, dumps to $0.050. First lower low after the high = pump is over.<br><br>
+              <strong>Step 4 — Higher Lows form:</strong> SL1 $0.050 → SL2 $0.053 → SL3 $0.054. Each low higher than the last — buyers stepping in.<br><br>
+              <strong>Step 5 — Bullish CHoCH:</strong> Price breaks above SH1 at $0.057. First higher high after higher lows = trend flip to bullish.<br><br>
+              <strong>Step 6 — BOS + Bot Error:</strong> Price continues to $0.060+. Exhaustion re-detected same pump (score 6) but OI had unwound to 15%, funding dropped to 0.05%. Bot entered SHORT #771 against confirmed BOS. <span style="color:#ef4444">Lost -$16.68.</span><br><br>
+              <strong>Step 7 — Peak:</strong> Price hits $0.063. The crowd had already exited — this was continuation, not a pump top.
+            </div>
+            <div class="example">Lesson: OI dropped from 30% to 15% and funding from 0.18% to 0.05% between trades. The crowd exited but priceChange alone carried the exhaustion score. Fix: OI >25% hard floor blocks exhaustion when crowd isn't positioned (commit ae9401e).</div>
+          </div>
+          <hr class="edu-divider">
+
+          <div class="edu-term">
+            <h4>What The Bot Missed — Reading Structure</h4>
+            <div class="how">
+              <strong>The winning trade (#767) worked because:</strong><br>
+              • Real pump top — OI 30.3%, funding 0.179%, price 63.7% up<br>
+              • All 5 exhaustion axes confirmed: crowd IS positioned, pump IS extreme<br>
+              • No structure contradiction — shorting AT the peak, before any higher lows formed<br><br>
+              <strong>The losing trade (#771) failed because:</strong><br>
+              • Stale signal — same pump re-detected 2h later, but positioning unwound<br>
+              • OI only 15.4% (crowd already exited), funding only 0.051% (market cooling)<br>
+              • Structure was bullish — higher lows (SL1→SL2→SL3) + CHoCH (break above $0.057)<br>
+              • Shorting against a confirmed BOS = countertrend = high risk<br><br>
+              <strong>Rule of thumb:</strong> If price is making higher lows AND has broken above the last swing high, the structure is bullish. Don't short it unless the crowd is still positioned (OI >25% minimum).
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="edu-card">
+        <div class="edu-header" onclick="this.parentElement.classList.toggle('open')">
           <h3>🔗 Exchange Flow (Whale Tracking)</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
@@ -3217,6 +3268,114 @@ function drawFVGChart() {
   ctx.fillText('C1 high does not overlap C3 low — gap between them — price returns to fill it', W/2, H - 6);
 }
 
+function drawMubarakCase() {
+  var c = document.getElementById('mubarak-case');
+  if (!c || c.dataset.drawn) return;
+  c.dataset.drawn = '1';
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var W = 600, H = 380;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  var ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  var data = [
+    [44,43.5,44.5,43],[43.5,44.2,44.8,43],[44.2,44,44.6,43.5],
+    [44,48,48.5,43.5],[48,53,54,47],[53,57,57.5,52],
+    [57,52,57.5,51],[52,50,53,49.5],
+    [50,53,54,49.5],[53,55,55.5,52],[55,52,55.5,51.5],[52,53.5,54,51.5],
+    [53.5,55,56,53],[55,54,55.5,53.5],[54,56,56.5,53.5],[56,57.5,58,55.5],
+    [57.5,59,59.5,57],[59,56.5,59.5,56],[56.5,58,58.5,56],
+    [58,60,60.5,57.5],[60,62,62.5,59.5],[62,63,63.5,61.5],
+    [63,61,63.5,60.5],[61,59.5,61.5,59]
+  ];
+
+  var padL = 50, padR = 20, padT = 30, padB = 30;
+  var cW = W - padL - padR, cH = H - padT - padB;
+  var gap = cW / data.length;
+  var minV = 41, maxV = 66, range = maxV - minV;
+  var yOf = function(v) { return padT + (1 - (v - minV) / range) * cH; };
+  var green = '#22c55e', red = '#ef4444', dim = '#6b7280';
+
+  // grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 0.5;
+  for (var p = 44; p <= 64; p += 4) {
+    ctx.beginPath(); ctx.moveTo(padL, yOf(p)); ctx.lineTo(W - padR, yOf(p)); ctx.stroke();
+    ctx.font = '500 9px "JetBrains Mono",monospace'; ctx.fillStyle = dim; ctx.textAlign = 'right';
+    ctx.fillText('$0.0' + p, padL - 6, yOf(p) + 3);
+  }
+
+  // candles
+  for (var i = 0; i < data.length; i++) {
+    var d = data[i], x = padL + gap * i + gap / 2, cw = 7;
+    var bull = d[1] >= d[0];
+    var col = bull ? green : red;
+    drawCandle(ctx, x - cw/2, cw, d[0], d[1], d[2], d[3], yOf, col);
+  }
+
+  function lbl(text, x, y, color, size, bold) {
+    ctx.font = (bold ? '600 ' : '500 ') + (size || 9) + 'px "JetBrains Mono",monospace';
+    ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.fillText(text, x, y);
+  }
+  function dash(x1, y1, x2, y2, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  function pt(x, y, r, color) {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  var xOf = function(idx) { return padL + gap * idx + gap / 2; };
+
+  // Pump SH level line
+  dash(xOf(5), yOf(57), xOf(16), yOf(57), '#c084fc');
+  lbl('$0.057 Pump SH', xOf(5), yOf(57) - 8, '#c084fc', 8, true);
+  pt(xOf(5), yOf(57.5) - 5, 3, '#c084fc');
+
+  // SL1
+  pt(xOf(7), yOf(49.5) + 5, 3, '#22d3ee');
+  lbl('SL1', xOf(7), yOf(49.5) + 16, '#22d3ee', 8, true);
+  lbl('$0.050', xOf(7), yOf(49.5) + 25, dim, 7);
+
+  // Bearish CHoCH label
+  lbl('Bearish CHoCH', xOf(6.5), yOf(49) + 38, '#f59e0b', 9, true);
+
+  // SL2 SL3
+  pt(xOf(11), yOf(51.5) + 5, 3, '#22d3ee');
+  lbl('SL2', xOf(11), yOf(51.5) + 16, '#22d3ee', 8, true);
+  pt(xOf(13), yOf(53.5) + 5, 3, '#22d3ee');
+  lbl('SL3', xOf(13), yOf(53.5) + 16, '#22d3ee', 8, true);
+
+  // Higher lows trendline
+  dash(xOf(7), yOf(49.5), xOf(13), yOf(53.5), green);
+  lbl('Higher Lows', xOf(10), yOf(49), green, 8);
+
+  // Bullish CHoCH
+  lbl('Bullish CHoCH', xOf(15), yOf(59) - 6, '#f59e0b', 10, true);
+  lbl('Breaks $0.057', xOf(15), yOf(59) + 5, '#f59e0b', 7);
+
+  // BOS
+  dash(xOf(16), yOf(59.5), xOf(20), yOf(59.5), '#3b82f6');
+  lbl('BOS', xOf(19), yOf(61) - 8, '#3b82f6', 10, true);
+
+  // Bot SHORT #771 marker
+  ctx.fillStyle = 'rgba(239,83,80,0.12)';
+  ctx.fillRect(xOf(18) - 10, yOf(60), 20, yOf(54) - yOf(60));
+  pt(xOf(18), yOf(56.5), 4, red);
+  lbl('SHORT #771', xOf(18), yOf(53.5), red, 8, true);
+  lbl('-$16.68', xOf(18), yOf(53.5) + 10, red, 7);
+
+  // Trade #767 winner
+  lbl('SHORT #767', xOf(5) + 30, yOf(57) + 16, green, 8, true);
+  lbl('+$5.39', xOf(5) + 30, yOf(57) + 26, green, 7);
+  lbl('OI 30% / Fund 0.18%', xOf(5) + 30, yOf(57) + 35, dim, 6);
+
+  // Peak
+  pt(xOf(21), yOf(63.5) - 5, 3, '#c084fc');
+  lbl('PEAK $0.063', xOf(21), yOf(63.5) - 13, '#c084fc', 8, true);
+}
+
 // Draw all educational charts when sections open
 document.addEventListener('click', function(e) {
   var hdr = e.target.closest('.edu-header');
@@ -3229,6 +3388,7 @@ document.addEventListener('click', function(e) {
   if (card.querySelector('#choch-chart')) setTimeout(drawCHoCHChart, 50);
   if (card.querySelector('#ob-chart')) setTimeout(drawOBChart, 50);
   if (card.querySelector('#fvg-chart')) setTimeout(drawFVGChart, 50);
+  if (card.querySelector('#mubarak-case')) setTimeout(drawMubarakCase, 50);
 });
 // Also draw on load if already open
 setTimeout(drawSweepChart, 500);
