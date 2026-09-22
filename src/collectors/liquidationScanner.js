@@ -336,6 +336,9 @@ class LiquidationScanner {
     if (nearHighPct >= 10 && exhaustionScore >= 5) {
       exhaustionSignals.push(`too far from top (${nearHighPct.toFixed(1)}%)`);
       snap.exhaustion = false;
+    } else if (oiChange4h < 25 && exhaustionScore >= 5) {
+      exhaustionSignals.push(`OI too low (${oiChange4h.toFixed(1)}%)`);
+      snap.exhaustion = false;
     } else {
       snap.exhaustion = exhaustionScore >= 5;
     }
