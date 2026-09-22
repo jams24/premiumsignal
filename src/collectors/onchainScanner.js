@@ -1060,6 +1060,8 @@ class OnchainScanner {
       if (isExhaustion && snap.direction !== 'short') {
         logger.info(`${token.symbol}: PUMP EXHAUSTION detected (score ${snap.exhaustionScore}) — flipping to SHORT`);
         snap.direction = 'short';
+      } else if (opts.exhaustionFilter && !snap.exhaustion && snap.exhaustionScore >= 5) {
+        logger.info(`${token.symbol}: Exhaustion score ${snap.exhaustionScore} but BLOCKED — ${(snap.nearHighPct || 0).toFixed(1)}% from high (need <10%)`);
       }
 
       // OI crowded override: flip long to short when OI > 60% (crowd trap territory)
@@ -1361,6 +1363,7 @@ class OnchainScanner {
           exhaustion: isExhaustion || false,
           crowdedFlip: isCrowdedFlip || false,
           exhaustionScore: snap.exhaustionScore || 0,
+          nearHighPct: snap.nearHighPct ?? null,
           rsi5m: snap.rsi5m || 0,
         },
       };

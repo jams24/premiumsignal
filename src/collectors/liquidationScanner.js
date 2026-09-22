@@ -332,9 +332,16 @@ class LiquidationScanner {
     const rsi5m = tokenData.rsi5m || 0;
     if (rsi5m > 80) { exhaustionScore += 2; exhaustionSignals.push(`RSI ${rsi5m.toFixed(0)}`); }
 
-    snap.exhaustion = exhaustionScore >= 5;
+    // Gate: if price is >10% below 24h high, the pump top window has closed
+    if (nearHighPct >= 10 && exhaustionScore >= 5) {
+      exhaustionSignals.push(`too far from top (${nearHighPct.toFixed(1)}%)`);
+      snap.exhaustion = false;
+    } else {
+      snap.exhaustion = exhaustionScore >= 5;
+    }
     snap.rsi5m = rsi5m;
     snap.exhaustionScore = exhaustionScore;
+    snap.nearHighPct = nearHighPct;
     if (snap.exhaustion) {
       snap.thesis.push('PUMP EXHAUSTION: ' + exhaustionSignals.join(' + ') + ' → short reversal setup');
     }
