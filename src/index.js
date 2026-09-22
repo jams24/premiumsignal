@@ -883,10 +883,12 @@ async function main() {
         // (calling buildTradeSetup again can flip direction between neutral/long)
         const ocMinScore = onchainTradeExecutor.minOcScore || (onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35);
         for (const token of qualityTokens) {
-          if (token.score < ocMinScore || !onchainTradeExecutor.enabled) continue;
+          if (!onchainTradeExecutor.enabled) continue;
           try {
             const setup = token._tradeSetup;
             if (!setup) continue;
+            const isReversalShort = (setup.onchainContext?.exhaustion || setup.onchainContext?.crowdedFlip) && setup.direction === 'short';
+            if (token.score < ocMinScore && !isReversalShort) continue;
             // Long: score must be within min-max range (high score = exhausted pump)
             // Short: separate min threshold (shorts need higher conviction)
             const ocMaxScore = onchainTradeExecutor.maxOcScore || 69;
@@ -895,8 +897,7 @@ async function main() {
               logger.info(`Onchain skip ${token.symbol}: LONG score ${token.score} > ${ocMaxScore} — likely exhausted pump, alert only`);
               continue;
             }
-            const isExhaustionShort = setup.onchainContext?.exhaustion && setup.direction === 'short';
-            if (setup.direction === 'short' && token.score < minShortScore && !isExhaustionShort) {
+            if (setup.direction === 'short' && token.score < minShortScore && !isReversalShort) {
               logger.info(`Onchain skip ${token.symbol}: SHORT score ${token.score} < ${minShortScore} — not enough conviction`);
               continue;
             }

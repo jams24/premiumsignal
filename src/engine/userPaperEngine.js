@@ -192,6 +192,14 @@ class UserPaperEngine {
       }
     } catch (e) { /* proceed */ }
 
+    // Reversal shorts enter immediately — no demand zone wait
+    const isReversalShort = (setup.onchainContext?.exhaustion || setup.onchainContext?.crowdedFlip) && setup.direction === 'short';
+    if (isReversalShort) {
+      logger.info(`User ${telegramId} reversal entry ${setup.symbol}: forcing immediate — ${setup.onchainContext.exhaustion ? 'exhaustion' : 'OI crowded'}`);
+      await this._executeQueuedEntry(telegramId, setup, source, user);
+      return;
+    }
+
     // Find demand/supply zone from recent 5m candles
     let demandZone = null;
     try {
