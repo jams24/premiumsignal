@@ -150,6 +150,29 @@ async function init(retries = 3) {
     CREATE INDEX IF NOT EXISTS idx_dex_time ON dex_alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type, created_at);
 
+    CREATE TABLE IF NOT EXISTS trade_skips (
+      id SERIAL PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      direction TEXT,
+      score INTEGER,
+      price NUMERIC,
+      block_reason TEXT NOT NULL,
+      block_stage TEXT,
+      source TEXT,
+      onchain_data JSONB,
+      price_1h NUMERIC,
+      price_4h NUMERIC,
+      best_price NUMERIC,
+      worst_price NUMERIC,
+      would_hit_tp1 BOOLEAN,
+      would_hit_sl BOOLEAN,
+      outcome TEXT,
+      checked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_trade_skips_symbol ON trade_skips(symbol, created_at);
+    CREATE INDEX IF NOT EXISTS idx_trade_skips_reason ON trade_skips(block_reason, created_at);
+
     CREATE TABLE IF NOT EXISTS trades (
       id SERIAL PRIMARY KEY,
       signal_id INTEGER,
@@ -388,6 +411,41 @@ async function logAlert(alertType, symbol, data, message) {
   await query(
     'INSERT INTO alert_log (alert_type, symbol, data, message) VALUES ($1,$2,$3,$4)',
     [alertType, symbol, JSON.stringify(data), message]
+  );
+}
+
+async function logSkip(symbol, data) {
+  await query(
+    'INSERT INTO trade_skips (symbol, direction, score, price, block_reason, block_stage, source, onchain_data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    [
+      symbol,
+      data.direction || null,
+      data.score || null,
+      data.price || null,
+      data.blockReason,
+      data.blockStage || null,
+      data.source || null,
+      JSON.stringify(data.onchainData || {}),
+    ]
+  );
+}
+
+async function getUncheckedSkips() {
+  const { rows } = await query(
+    `SELECT id, symbol, direction, score, price, onchain_data, created_at
+     FROM trade_skips
+     WHERE checked_at IS NULL AND created_at < NOW() - INTERVAL '1 hour'
+     ORDER BY created_at ASC LIMIT 50`
+  );
+  return rows;
+}
+
+async function updateSkipOutcome(id, data) {
+  await query(
+    `UPDATE trade_skips SET price_1h=$1, price_4h=$2, best_price=$3, worst_price=$4,
+     would_hit_tp1=$5, would_hit_sl=$6, outcome=$7, checked_at=NOW() WHERE id=$8`,
+    [data.price1h, data.price4h, data.bestPrice, data.worstPrice,
+     data.wouldHitTp1, data.wouldHitSl, data.outcome, id]
   );
 }
 
@@ -935,4 +993,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades };

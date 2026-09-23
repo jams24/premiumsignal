@@ -773,6 +773,7 @@ class TradeExecutor {
       const existing = openPositions.find(p => p.symbol === signal.symbol);
       if (existing) {
         logger.info(`Queue skip ${signal.symbol}: already in position (${existing.exchange})`);
+        db.logSkip(signal.symbol, { direction: signal.direction, score: signal.onchainScore, price: signal.currentPrice, blockReason: `Already in position on ${existing.exchange}`, blockStage: 'queue', source: this.settingsKey, onchainData: signal.onchainContext || {} }).catch(() => {});
         return;
       }
       if (this.mode === 'live') {
@@ -780,6 +781,7 @@ class TradeExecutor {
         const crossConflict = allOpen.find(p => p.symbol === signal.symbol && p.source !== this.settingsKey);
         if (crossConflict) {
           logger.info(`Queue skip ${signal.symbol}: open in ${crossConflict.source} — avoiding exchange conflict`);
+          db.logSkip(signal.symbol, { direction: signal.direction, score: signal.onchainScore, price: signal.currentPrice, blockReason: `Cross-source conflict: open in ${crossConflict.source}`, blockStage: 'queue', source: this.settingsKey, onchainData: signal.onchainContext || {} }).catch(() => {});
           return;
         }
       }
@@ -805,6 +807,7 @@ class TradeExecutor {
             logger.info(`Queue ${signal.symbol}: cooldown bypassed — direction flip (score ${signal.onchainScore})`);
           } else if (hoursSinceClose < 2) {
             logger.info(`Queue skip ${signal.symbol}: 2h cooldown (${(hoursSinceClose * 60).toFixed(0)}m elapsed)`);
+            db.logSkip(signal.symbol, { direction: signal.direction, score: signal.onchainScore, price: signal.currentPrice, blockReason: `2h cooldown after close (${(hoursSinceClose * 60).toFixed(0)}m elapsed, last dir: ${lastTrades[0].direction})`, blockStage: 'queue', source: this.settingsKey, onchainData: { ...(signal.onchainContext || {}), lastDirection: lastTrades[0].direction, lastEntryPrice: lastEntry, hoursSinceClose } }).catch(() => {});
             return;
           } else if (!isFlip && lastEntry > 0 && this.maxDriftPct > 0) {
             const drift = (signal.currentPrice - lastEntry) / lastEntry * 100;
@@ -812,11 +815,13 @@ class TradeExecutor {
             const chasingDown = signal.direction === 'short' && drift < -this.maxDriftPct;
             if (chasingUp || chasingDown) {
               logger.info(`Queue skip ${signal.symbol}: re-entry price drifted ${drift.toFixed(1)}% from last entry (max ${this.maxDriftPct}%)`);
+              db.logSkip(signal.symbol, { direction: signal.direction, score: signal.onchainScore, price: signal.currentPrice, blockReason: `Re-entry drift ${drift.toFixed(1)}% from last entry $${lastEntry.toPrecision(5)} (max ${this.maxDriftPct}%)`, blockStage: 'queue', source: this.settingsKey, onchainData: { ...(signal.onchainContext || {}), lastEntryPrice: lastEntry, driftPct: drift } }).catch(() => {});
               return;
             }
             logger.info(`Queue ${signal.symbol}: re-entry allowed — price ${drift.toFixed(1)}% from last entry $${lastEntry.toPrecision(5)}`);
           } else if (isFlip) {
             logger.info(`Queue skip ${signal.symbol}: flip needs score >= ${this.flipScore}, got ${signal.onchainScore || 0}`);
+            db.logSkip(signal.symbol, { direction: signal.direction, score: signal.onchainScore, price: signal.currentPrice, blockReason: `Flip needs score >= ${this.flipScore}, got ${signal.onchainScore || 0} (last dir: ${lastTrades[0].direction})`, blockStage: 'queue', source: this.settingsKey, onchainData: { ...(signal.onchainContext || {}), lastDirection: lastTrades[0].direction } }).catch(() => {});
             return;
           }
         }
@@ -1209,6 +1214,23 @@ class TradeExecutor {
     const check = await this.canTrade(signal);
     if (!check.ok) {
       logger.info(`Trade skipped for ${signal.symbol}: ${check.reason}`);
+      db.logSkip(signal.symbol, {
+        direction: signal.direction,
+        score: signal.onchainScore || 0,
+        price: signal.currentPrice || signal.entryPrice,
+        blockReason: check.reason,
+        blockStage: 'can_trade',
+        source: this.settingsKey,
+        onchainData: {
+          ...(signal.onchainContext || {}),
+          confidence: signal.confidence,
+          type: signal.type,
+          exchange: signal.exchange,
+          tp1: signal.tp1, tp2: signal.tp2, tp3: signal.tp3,
+          stopLoss: signal.stopLoss, atr: signal.atr,
+          dailyPnL: this.dailyPnL,
+        },
+      }).catch(() => {});
       if (check.reason.includes('Daily loss limit')) {
         await this.notify(
           `🛑 <b>DAILY LOSS LIMIT</b>\n\n` +

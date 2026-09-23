@@ -882,31 +882,50 @@ async function main() {
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
         // (calling buildTradeSetup again can flip direction between neutral/long)
         const ocMinScore = onchainTradeExecutor.minOcScore || (onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35);
+        const buildSkipData = (token, setup) => ({
+          oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h,
+          fundingRate: token.fundingRate, fundingBias: token.fundingBias,
+          priceChange: token.priceChange, volume: token.volume,
+          signals: token.signals, lsData: token.lsData || null,
+          exchangeFlow: token.exchangeFlow || null,
+          exhaustion: setup?.onchainContext?.exhaustion || false,
+          exhaustionScore: setup?.onchainContext?.exhaustionScore || 0,
+          crowdedFlip: setup?.onchainContext?.crowdedFlip || false,
+          tp1: setup?.tp1, tp2: setup?.tp2, tp3: setup?.tp3,
+          stopLoss: setup?.stopLoss, atr: setup?.atr,
+          confidence: setup?.confidence, exchange: token.exchange,
+        });
+
         for (const token of qualityTokens) {
           if (!onchainTradeExecutor.enabled) continue;
           try {
             const setup = token._tradeSetup;
             if (!setup) continue;
             const isReversalShort = (setup.onchainContext?.exhaustion || setup.onchainContext?.crowdedFlip) && setup.direction === 'short';
-            if (token.score < ocMinScore && !isReversalShort) continue;
-            // Long: score must be within min-max range (high score = exhausted pump)
-            // Short: separate min threshold (shorts need higher conviction)
+            if (token.score < ocMinScore && !isReversalShort) {
+              db.logSkip(token.symbol, { direction: setup.direction, score: token.score, price: token.price, blockReason: `Score ${token.score} < minOcScore ${ocMinScore}`, blockStage: 'pre_filter', source: 'onchain', onchainData: buildSkipData(token, setup) }).catch(() => {});
+              continue;
+            }
             const ocMaxScore = onchainTradeExecutor.maxOcScore || 69;
             const minShortScore = onchainTradeExecutor.minShortScore || 70;
             if (setup.direction === 'long' && token.score > ocMaxScore) {
               logger.info(`Onchain skip ${token.symbol}: LONG score ${token.score} > ${ocMaxScore} — likely exhausted pump, alert only`);
+              db.logSkip(token.symbol, { direction: 'long', score: token.score, price: token.price, blockReason: `Long score ${token.score} > maxOcScore ${ocMaxScore}`, blockStage: 'pre_filter', source: 'onchain', onchainData: buildSkipData(token, setup) }).catch(() => {});
               continue;
             }
             if (setup.direction === 'short' && token.score < minShortScore && !isReversalShort) {
               logger.info(`Onchain skip ${token.symbol}: SHORT score ${token.score} < ${minShortScore} — not enough conviction`);
+              db.logSkip(token.symbol, { direction: 'short', score: token.score, price: token.price, blockReason: `Short score ${token.score} < minShortScore ${minShortScore}`, blockStage: 'pre_filter', source: 'onchain', onchainData: buildSkipData(token, setup) }).catch(() => {});
               continue;
             }
             const pumpLimit = token.score >= 60 ? 200 : token.score >= 45 ? 150 : 80;
             if (Math.abs(token.priceChange) > pumpLimit) {
               logger.info(`Onchain skip ${token.symbol}: price moved ${token.priceChange.toFixed(1)}% (limit ${pumpLimit}% for score ${token.score}) — late entry risk`);
+              db.logSkip(token.symbol, { direction: setup.direction, score: token.score, price: token.price, blockReason: `Price moved ${token.priceChange.toFixed(1)}% > limit ${pumpLimit}% — late entry`, blockStage: 'pre_filter', source: 'onchain', onchainData: buildSkipData(token, setup) }).catch(() => {});
               continue;
             }
             // Entry drift check: skip if price drifted >2% from recent alert (falling knife)
+            let driftBlocked = false;
             try {
               const { rows: recentAlerts } = await db.query(
                 `SELECT (data->>'price')::numeric as price, data->>'direction' as dir
@@ -922,10 +941,12 @@ async function main() {
                 if (badDrift) {
                   const reason = (setup.direction === 'long' ? driftPct > 0 : driftPct < 0) ? 'chasing pump' : 'falling knife';
                   logger.info(`Onchain skip ${token.symbol}: entry drifted ${driftPct.toFixed(1)}% from first alert $${firstAlertPrice.toPrecision(4)} — ${reason}`);
-                  continue;
+                  db.logSkip(token.symbol, { direction: setup.direction, score: token.score, price: token.price, blockReason: `Entry drift ${driftPct.toFixed(1)}% from alert price $${firstAlertPrice.toPrecision(4)} — ${reason}`, blockStage: 'pre_filter', source: 'onchain', onchainData: { ...buildSkipData(token, setup), firstAlertPrice, driftPct } }).catch(() => {});
+                  driftBlocked = true;
                 }
               }
             } catch (e) { /* skip drift check on error */ }
+            if (driftBlocked) continue;
             await onchainTradeExecutor.queueSignal(setup);
           } catch (e) {
             logger.debug(`Onchain auto-trade failed for ${token.symbol}: ${e.message}`);
@@ -1612,6 +1633,70 @@ async function main() {
       await listingMonitor.checkAnnouncementPages();
     } catch (err) {
       logger.error(`Announcement check error: ${err.message}`);
+    }
+  });
+
+  // Skip outcome checker — every 15 min, check what happened to skipped trades
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const skips = await db.getUncheckedSkips();
+      if (!skips.length) return;
+      const exchange = Object.values(listingMonitor.exchanges).find(e => e.id === 'binance') || Object.values(listingMonitor.exchanges)[0];
+      if (!exchange) return;
+      for (const skip of skips) {
+        try {
+          const pair = `${skip.symbol}/USDT`;
+          const since = new Date(skip.created_at).getTime();
+          const now = Date.now();
+          const age = (now - since) / 3600000;
+          if (age < 1) continue;
+          const candles = await exchange.fetchOHLCV(pair, '5m', since, 50);
+          if (!candles || candles.length < 2) continue;
+          const skipPrice = parseFloat(skip.price);
+          const dir = skip.direction;
+          const tp1 = parseFloat(skip.onchain_data?.tp1 || 0);
+          const sl = parseFloat(skip.onchain_data?.stopLoss || skip.onchain_data?.stop_loss || 0);
+          let bestPrice = skipPrice, worstPrice = skipPrice;
+          let price1h = null, price4h = null;
+          let wouldHitTp1 = false, wouldHitSl = false;
+          for (const c of candles) {
+            const [ts, o, h, l, close] = c;
+            const elapsed = (ts - since) / 3600000;
+            if (dir === 'long') {
+              if (h > bestPrice) bestPrice = h;
+              if (l < worstPrice) worstPrice = l;
+              if (tp1 && h >= tp1) wouldHitTp1 = true;
+              if (sl && l <= sl) wouldHitSl = true;
+            } else {
+              if (l < bestPrice) bestPrice = l;
+              if (h > worstPrice) worstPrice = h;
+              if (tp1 && l <= tp1) wouldHitTp1 = true;
+              if (sl && h >= sl) wouldHitSl = true;
+            }
+            if (!price1h && elapsed >= 1) price1h = close;
+            if (!price4h && elapsed >= 4) price4h = close;
+          }
+          if (!price1h) price1h = candles[candles.length - 1][4];
+          const movePct = dir === 'long'
+            ? ((bestPrice - skipPrice) / skipPrice) * 100
+            : ((skipPrice - bestPrice) / skipPrice) * 100;
+          let outcome;
+          if (wouldHitSl && !wouldHitTp1) outcome = 'would_lose';
+          else if (wouldHitTp1 && !wouldHitSl) outcome = 'would_win';
+          else if (wouldHitTp1 && wouldHitSl) outcome = 'would_sl_first';
+          else if (movePct > 2) outcome = 'missed_profit';
+          else if (movePct < -2) outcome = 'dodged_loss';
+          else outcome = 'neutral';
+          await db.updateSkipOutcome(skip.id, {
+            price1h, price4h: price4h || price1h,
+            bestPrice, worstPrice,
+            wouldHitTp1, wouldHitSl, outcome,
+          });
+        } catch (e) { /* skip individual check errors */ }
+      }
+      logger.info(`Skip outcomes checked: ${skips.length} entries`);
+    } catch (err) {
+      logger.debug(`Skip outcome check error: ${err.message}`);
     }
   });
 
