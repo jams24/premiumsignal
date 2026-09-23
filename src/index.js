@@ -789,7 +789,9 @@ async function main() {
         for (const token of hotTokens) {
           try {
             token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS, exhaustionFilter: onchainTradeExecutor.exhaustionFilter });
-          } catch (e) { /* skip */ }
+          } catch (e) {
+            token._setupError = e.message;
+          }
         }
         // Attach prior alert tracking data for inline PnL display
         try {
@@ -845,7 +847,13 @@ async function main() {
           }
         } catch (e) { logger.debug(`Alert tracking lookup failed: ${e.message}`); }
 
-        const qualityTokens = hotTokens.filter(t => onchainScanner.passesQualityGate(t));
+        const qualityTokens = hotTokens.filter(t => {
+          const passes = onchainScanner.passesQualityGate(t);
+          if (!passes && t._tradeSetup) {
+            db.logSkip(t.symbol, { direction: t._tradeSetup.direction || (t.priceChange > 0 ? 'long' : 'short'), score: t.score, price: t.price, blockReason: 'Quality gate rejected', blockStage: 'pre_filter', source: 'onchain', onchainData: { oiChange1h: t.oiChange1h, oiChange4h: t.oiChange4h, fundingRate: t.fundingRate, fundingBias: t.fundingBias, priceChange: t.priceChange, volume: t.volume, signals: t.signals, exchange: t.exchange } }).catch(() => {});
+          }
+          return passes;
+        });
         const msg = onchainScanner.formatAlerts(qualityTokens, 5);
         if (msg) {
           await bot.sendRaw(msg);
@@ -900,7 +908,10 @@ async function main() {
           if (!onchainTradeExecutor.enabled) continue;
           try {
             const setup = token._tradeSetup;
-            if (!setup) continue;
+            if (!setup) {
+              db.logSkip(token.symbol, { direction: token.priceChange > 0 ? 'long' : 'short', score: token.score, price: token.price, blockReason: `No trade setup built${token._setupError ? ': ' + token._setupError : ''}`, blockStage: 'pre_filter', source: 'onchain', onchainData: { oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h, fundingRate: token.fundingRate, priceChange: token.priceChange, volume: token.volume, signals: token.signals, exchange: token.exchange } }).catch(() => {});
+              continue;
+            }
             const isReversalShort = (setup.onchainContext?.exhaustion || setup.onchainContext?.crowdedFlip) && setup.direction === 'short';
             if (token.score < ocMinScore && !isReversalShort) {
               db.logSkip(token.symbol, { direction: setup.direction, score: token.score, price: token.price, blockReason: `Score ${token.score} < minOcScore ${ocMinScore}`, blockStage: 'pre_filter', source: 'onchain', onchainData: buildSkipData(token, setup) }).catch(() => {});
