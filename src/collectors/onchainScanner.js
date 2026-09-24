@@ -1424,10 +1424,17 @@ class OnchainScanner {
     const funding = token.fundingRate || 0;
     const fundingNeutral = Math.abs(funding) <= 0.0003;
 
-    // Exhaustion/crowded shorts bypass quality gate — they have their own confirmation
+    // Exhaustion/crowded shorts use their own min score (lower than regular shorts)
     const isReversalShort = dir === 'short' && token._tradeSetup &&
       (token._tradeSetup.onchainContext?.exhaustion || token._tradeSetup.onchainContext?.crowdedFlip);
-    if (isReversalShort) return true;
+    if (isReversalShort) {
+      const minExhShort = opts.minExhShortScore ?? 0;
+      if (minExhShort > 0 && token.score < minExhShort) {
+        logger.debug(`${token.symbol}: Quality gate REJECT — exhaustion short score ${token.score} < ${minExhShort}`);
+        return false;
+      }
+      return true;
+    }
 
     if (oi < 5 && momentum < 3 && !hasFlow) {
       logger.debug(`${token.symbol}: Quality gate REJECT — weak signal (no OI, no momentum, no flow)`);
