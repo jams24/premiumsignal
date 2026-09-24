@@ -352,7 +352,7 @@ class LiquidationScanner {
     let bullPoints = 0;
     let bearPoints = 0;
 
-    if (oiChange4h > 15) bullPoints += 2;
+    if (oiChange4h > 10) bullPoints += 2;
     if (oiChange4h > 25) bullPoints += 1;
     if (oiChange4h < -15) bearPoints += 1;
 
@@ -361,7 +361,8 @@ class LiquidationScanner {
     if (fundingRate < -0.0003 && fundingRate >= -0.005) bearPoints += 1;
     if (fundingRate < -0.005) bullPoints += 1;
 
-    if (priceChange > 3) bullPoints += 1;
+    if (priceChange > 10) bullPoints += 2;
+    else if (priceChange > 3) bullPoints += 1;
     if (priceChange < -3) bearPoints += 1;
 
     if (exchangeFlow) {
