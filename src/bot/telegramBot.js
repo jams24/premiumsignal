@@ -4553,8 +4553,12 @@ class TelegramBot {
       const openTrades = await db.getOpenTrades('demandzone').catch(() => []);
       const paperTrades = openTrades.filter(t => t.mode === 'paper');
       const liveTrades = openTrades.filter(t => t.mode === 'live');
-      const paperPnl = await db.getTodayPnL('paper', 'demandzone').catch(() => 0);
-      const livePnl = await db.getTodayPnL('live', 'demandzone').catch(() => 0);
+      const paperClosedPnl = await db.getTodayPnL('paper', 'demandzone').catch(() => 0);
+      const liveClosedPnl = await db.getTodayPnL('live', 'demandzone').catch(() => 0);
+      const paperOpenPartials = paperTrades.reduce((s, t) => s + (parseFloat(t.realized_pnl) || 0), 0);
+      const liveOpenPartials = liveTrades.reduce((s, t) => s + (parseFloat(t.realized_pnl) || 0), 0);
+      const paperPnl = paperClosedPnl + paperOpenPartials;
+      const livePnl = liveClosedPnl + liveOpenPartials;
       const cbStatus = await te.getCircuitBreakerStatus().catch(() => ({ active: false, enabled: true }));
       const cbLine = !cbStatus.enabled ? '🔓 Circuit Breaker: <b>OFF</b>'
         : cbStatus.active ? `🚨 Circuit Breaker: <b>PAUSED ${cbStatus.minsLeft}m</b> (${cbStatus.streak} losses)`

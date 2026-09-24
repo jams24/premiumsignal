@@ -556,14 +556,14 @@ async function getTradeStats() {
       COUNT(*) FILTER (WHERE status = 'closed') as closed,
       COUNT(*) FILTER (WHERE status = 'open') as open,
       COUNT(*) FILTER (WHERE close_reason = 'tp4') as full_wins,
-      COUNT(*) FILTER (WHERE pnl_usd > 0 AND status = 'closed') as wins,
-      COUNT(*) FILTER (WHERE pnl_usd <= 0 AND status = 'closed') as losses,
+      COUNT(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) > 0 AND status = 'closed') as wins,
+      COUNT(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) <= 0 AND status = 'closed') as losses,
       COUNT(*) FILTER (WHERE close_reason = 'invalidated') as invalidated,
       COUNT(*) FILTER (WHERE close_reason = 'expired') as expired,
-      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      COALESCE(SUM(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as total_pnl,
       COALESCE(AVG(pnl_pct) FILTER (WHERE status = 'closed'), 0) as avg_pnl_pct,
-      MAX(pnl_usd) as best_trade,
-      MIN(pnl_usd) as worst_trade
+      MAX(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) as best_trade,
+      MIN(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed') as worst_trade
     FROM trades GROUP BY mode
   `);
   return rows;
@@ -574,7 +574,7 @@ async function getTodayPnL(mode, source) {
   const params = [];
   if (mode) { params.push(mode); conditions.push(`mode = $${params.length}`); }
   if (source) { params.push(source); conditions.push(`source = $${params.length}`); }
-  const sql = `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE ${conditions.join(' AND ')}`;
+  const sql = `SELECT COALESCE(SUM(COALESCE(pnl_usd, 0) + COALESCE(realized_pnl, 0)), 0) as total FROM trades WHERE ${conditions.join(' AND ')}`;
   const { rows } = await query(sql, params);
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
@@ -584,7 +584,7 @@ async function getAllTimePnL(since, mode) {
   const params = [];
   if (since) { params.push(since); conditions.push(`closed_at >= $${params.length}`); }
   if (mode) { params.push(mode); conditions.push(`mode = $${params.length}`); }
-  const sql = `SELECT COALESCE(SUM(pnl_usd), 0) as total FROM trades WHERE ${conditions.join(' AND ')}`;
+  const sql = `SELECT COALESCE(SUM(COALESCE(pnl_usd, 0) + COALESCE(realized_pnl, 0)), 0) as total FROM trades WHERE ${conditions.join(' AND ')}`;
   const { rows } = await query(sql, params);
   return rows.length ? parseFloat(rows[0].total) : 0;
 }
@@ -760,11 +760,11 @@ async function getTradeStatsBySource(source) {
     SELECT
       COUNT(*) as total,
       COUNT(*) FILTER (WHERE status = 'open') as open,
-      COUNT(*) FILTER (WHERE pnl_usd > 0 AND status = 'closed') as wins,
-      COUNT(*) FILTER (WHERE pnl_usd <= 0 AND status = 'closed') as losses,
-      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
-      MAX(pnl_usd) as best_trade,
-      MIN(pnl_usd) as worst_trade
+      COUNT(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) > 0 AND status = 'closed') as wins,
+      COUNT(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) <= 0 AND status = 'closed') as losses,
+      COALESCE(SUM(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      MAX(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) as best_trade,
+      MIN(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed') as worst_trade
     FROM trades WHERE source = $1
   `, [source]);
   return rows[0] || {};
@@ -925,14 +925,14 @@ async function getSwingTradePerformance(days = 30) {
       count(*) as total,
       count(*) FILTER (WHERE status = 'open') as open_count,
       count(*) FILTER (WHERE status = 'closed') as closed_count,
-      count(*) FILTER (WHERE pnl_usd > 0 AND status = 'closed') as wins,
-      count(*) FILTER (WHERE pnl_usd <= 0 AND status = 'closed') as losses,
-      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
-      COALESCE(MAX(pnl_usd), 0) as best_trade,
-      COALESCE(MIN(pnl_usd) FILTER (WHERE status = 'closed'), 0) as worst_trade,
-      round(AVG(pnl_usd) FILTER (WHERE status = 'closed')::numeric, 2) as avg_pnl,
-      round(AVG(pnl_pct) FILTER (WHERE pnl_usd > 0 AND status = 'closed')::numeric, 2) as avg_win_pct,
-      round(AVG(pnl_pct) FILTER (WHERE pnl_usd <= 0 AND status = 'closed')::numeric, 2) as avg_loss_pct,
+      count(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) > 0 AND status = 'closed') as wins,
+      count(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) <= 0 AND status = 'closed') as losses,
+      COALESCE(SUM(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      COALESCE(MAX(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)), 0) as best_trade,
+      COALESCE(MIN(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as worst_trade,
+      round(AVG(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed')::numeric, 2) as avg_pnl,
+      round(AVG(pnl_pct) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) > 0 AND status = 'closed')::numeric, 2) as avg_win_pct,
+      round(AVG(pnl_pct) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) <= 0 AND status = 'closed')::numeric, 2) as avg_loss_pct,
       round(AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 3600) FILTER (WHERE status = 'closed')::numeric, 1) as avg_hold_hours,
       count(*) FILTER (WHERE hit_tp1 = true) as tp1_hits,
       count(*) FILTER (WHERE hit_tp2 = true) as tp2_hits,
@@ -962,14 +962,14 @@ async function getDemandZonePerformance(days = 30) {
       count(*) as total,
       count(*) FILTER (WHERE status = 'open') as open_count,
       count(*) FILTER (WHERE status = 'closed') as closed_count,
-      count(*) FILTER (WHERE pnl_usd > 0 AND status = 'closed') as wins,
-      count(*) FILTER (WHERE pnl_usd <= 0 AND status = 'closed') as losses,
-      COALESCE(SUM(pnl_usd) FILTER (WHERE status = 'closed'), 0) as total_pnl,
-      COALESCE(MAX(pnl_usd), 0) as best_trade,
-      COALESCE(MIN(pnl_usd) FILTER (WHERE status = 'closed'), 0) as worst_trade,
-      round(AVG(pnl_usd) FILTER (WHERE status = 'closed')::numeric, 2) as avg_pnl,
-      round(AVG(pnl_pct) FILTER (WHERE pnl_usd > 0 AND status = 'closed')::numeric, 2) as avg_win_pct,
-      round(AVG(pnl_pct) FILTER (WHERE pnl_usd <= 0 AND status = 'closed')::numeric, 2) as avg_loss_pct,
+      count(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) > 0 AND status = 'closed') as wins,
+      count(*) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) <= 0 AND status = 'closed') as losses,
+      COALESCE(SUM(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+      COALESCE(MAX(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)), 0) as best_trade,
+      COALESCE(MIN(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as worst_trade,
+      round(AVG(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed')::numeric, 2) as avg_pnl,
+      round(AVG(pnl_pct) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) > 0 AND status = 'closed')::numeric, 2) as avg_win_pct,
+      round(AVG(pnl_pct) FILTER (WHERE COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0) <= 0 AND status = 'closed')::numeric, 2) as avg_loss_pct,
       round(AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 3600) FILTER (WHERE status = 'closed')::numeric, 1) as avg_hold_hours,
       count(*) FILTER (WHERE hit_tp1 = true) as tp1_hits,
       count(*) FILTER (WHERE hit_tp2 = true) as tp2_hits,
