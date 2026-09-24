@@ -103,7 +103,7 @@ class TradeExecutor {
     this.exhaustionFilter = config.exhaustionFilter || false;
     this.minExhScore = config.minExhScore ?? 5;
     this.minExhRsi = config.minExhRsi ?? 80;
-    this.minExhShortScore = config.minExhShortScore ?? 0;
+    this.minExhShortScore = config.minExhShortScore ?? 40;
 
     // OI gate: minimum OI% for long entries and direction scoring
     this.minOiLong = config.minOiLong ?? 10;

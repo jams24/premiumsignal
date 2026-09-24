@@ -848,7 +848,7 @@ async function main() {
         } catch (e) { logger.debug(`Alert tracking lookup failed: ${e.message}`); }
 
         const qualityTokens = hotTokens.filter(t => {
-          const passes = onchainScanner.passesQualityGate(t, { minShortScore: onchainTradeExecutor.minShortScore || 45, minExhShortScore: onchainTradeExecutor.minExhShortScore ?? 0 });
+          const passes = onchainScanner.passesQualityGate(t, { minShortScore: onchainTradeExecutor.minShortScore || 45, minExhShortScore: onchainTradeExecutor.minExhShortScore ?? 40 });
           if (!passes && t._tradeSetup) {
             db.logSkip(t.symbol, { direction: t._tradeSetup.direction || (t.priceChange > 0 ? 'long' : 'short'), score: t.score, price: t.price, blockReason: 'Quality gate rejected', blockStage: 'pre_filter', source: 'onchain', onchainData: { oiChange1h: t.oiChange1h, oiChange4h: t.oiChange4h, fundingRate: t.fundingRate, fundingBias: t.fundingBias, priceChange: t.priceChange, volume: t.volume, signals: t.signals, exchange: t.exchange } }).catch(() => {});
           }

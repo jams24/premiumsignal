@@ -2447,7 +2447,7 @@ class TelegramBot {
         `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
         `📊 L/S Filter: <b>${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}</b>${te.minTopLS > 0 ? ' (rejects longs below this)' : ' (no L/S filtering)'}\n` +
         `📉 Trend Filter: <b>${te.trendFilter ? 'ON' : 'OFF'}</b>${te.trendFilter ? ' (blocks longs in 1H downtrends — lower highs/lows)' : ' (no trend structure check)'}\n` +
-        `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI>${te.minExhRsi ?? 80}, minScore:${(te.minExhShortScore ?? 0) || 'OFF'})` : ' (no pump exhaustion shorts)'}\n` +
+        `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI>${te.minExhRsi ?? 80}, score≥${te.minExhShortScore ?? 40})` : ' (no pump exhaustion shorts)'}\n` +
         `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
@@ -2483,7 +2483,7 @@ class TelegramBot {
          Markup.button.callback(`🔥 Exhaust: ${te.exhaustionFilter ? 'ON' : 'OFF'}`, 'oc_cfg_exhaust')],
         [Markup.button.callback(`🔥 Detect: ${te.minExhScore ?? 5}`, 'oc_cfg_exhaust_score'),
          Markup.button.callback(`🔥 RSI: ${te.minExhRsi ?? 80}`, 'oc_cfg_exhaust_rsi'),
-         Markup.button.callback(`🔥 S:${(te.minExhShortScore ?? 0) || 'OFF'}`, 'oc_cfg_exhaust_short')],
+         Markup.button.callback(`🔥 S:${te.minExhShortScore ?? 40}+`, 'oc_cfg_exhaust_short')],
         [Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
@@ -3035,16 +3035,16 @@ class TelegramBot {
         const cur = te.minExhShortScore ?? 0;
         await ctx.editMessageText(
           `🔥 <b>ONCHAIN — EXHAUSTION SHORT MIN SCORE</b>\n\n` +
-          `Current: <b>${cur || 'OFF (no minimum)'}</b>\n\n` +
+          `Current: <b>${cur}+</b>\n\n` +
           `Minimum onchain score required for exhaustion/crowded short trades.\n` +
           `Regular shorts use S:${te.minShortScore || 45}+, this is a separate gate for pump-top shorts.\n\n` +
-          `OFF = exhaustion shorts bypass score gate entirely\n` +
-          `Set a value = exhaustion shorts need at least this score`,
+          `Lower = more exhaustion shorts pass\n` +
+          `Higher = only high-conviction pump-top shorts`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_exhss_0'),
-             Markup.button.callback(`30${cur === 30 ? ' ✓' : ''}`, 'oc_exhss_30')],
-            [Markup.button.callback(`35${cur === 35 ? ' ✓' : ''}`, 'oc_exhss_35'),
-             Markup.button.callback(`40${cur === 40 ? ' ✓' : ''}`, 'oc_exhss_40')],
+            [Markup.button.callback(`30${cur === 30 ? ' ✓' : ''}`, 'oc_exhss_30'),
+             Markup.button.callback(`35${cur === 35 ? ' ✓' : ''}`, 'oc_exhss_35')],
+            [Markup.button.callback(`40${cur === 40 ? ' ✓' : ''}`, 'oc_exhss_40'),
+             Markup.button.callback(`42${cur === 42 ? ' ✓' : ''}`, 'oc_exhss_42')],
             [Markup.button.callback(`45${cur === 45 ? ' ✓' : ''}`, 'oc_exhss_45'),
              Markup.button.callback(`50${cur === 50 ? ' ✓' : ''}`, 'oc_exhss_50')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
@@ -3053,7 +3053,7 @@ class TelegramBot {
       } catch (e) { logger.error(`oc_cfg_exhaust_short error: ${e.message}`); }
     });
 
-    for (const v of [0, 30, 35, 40, 45, 50]) {
+    for (const v of [30, 35, 40, 42, 45, 50]) {
       this.bot.action(`oc_exhss_${v}`, async (ctx) => {
         try {
           const te = octe();

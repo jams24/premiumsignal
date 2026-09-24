@@ -1428,8 +1428,8 @@ class OnchainScanner {
     const isReversalShort = dir === 'short' && token._tradeSetup &&
       (token._tradeSetup.onchainContext?.exhaustion || token._tradeSetup.onchainContext?.crowdedFlip);
     if (isReversalShort) {
-      const minExhShort = opts.minExhShortScore ?? 0;
-      if (minExhShort > 0 && token.score < minExhShort) {
+      const minExhShort = opts.minExhShortScore ?? 40;
+      if (token.score < minExhShort) {
         logger.debug(`${token.symbol}: Quality gate REJECT — exhaustion short score ${token.score} < ${minExhShort}`);
         return false;
       }
