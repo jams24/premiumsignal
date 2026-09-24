@@ -1413,7 +1413,7 @@ class OnchainScanner {
     return map[cgChain] || null;
   }
 
-  passesQualityGate(token) {
+  passesQualityGate(token, opts = {}) {
     const dir = token._tradeSetup?.direction || token.direction ||
       (token.priceChange > 0 ? 'long' : 'short');
     const oi = Math.abs(token.oiChange4h || 0);
@@ -1423,14 +1423,20 @@ class OnchainScanner {
     const funding = token.fundingRate || 0;
     const fundingNeutral = Math.abs(funding) <= 0.0003;
 
+    // Exhaustion/crowded shorts bypass quality gate — they have their own confirmation
+    const isReversalShort = dir === 'short' && token._tradeSetup &&
+      (token._tradeSetup.onchainContext?.exhaustion || token._tradeSetup.onchainContext?.crowdedFlip);
+    if (isReversalShort) return true;
+
     if (oi < 5 && momentum < 3 && !hasFlow) {
       logger.debug(`${token.symbol}: Quality gate REJECT — weak signal (no OI, no momentum, no flow)`);
       return false;
     }
 
     if (dir === 'short') {
-      if (token.score < 70) {
-        logger.debug(`${token.symbol}: Quality gate REJECT — short score ${token.score} < 70`);
+      const minShort = opts.minShortScore || 45;
+      if (token.score < minShort) {
+        logger.debug(`${token.symbol}: Quality gate REJECT — short score ${token.score} < ${minShort}`);
         return false;
       }
       if (oi > 15 && momentum > 5) return true;
