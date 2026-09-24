@@ -305,7 +305,7 @@ class LiquidationScanner {
   }
 
   // === SETUP SNAPSHOT GENERATION ===
-  generateSetupSnapshot(tokenData) {
+  generateSetupSnapshot(tokenData, opts = {}) {
     const { symbol, score, signals, oiChange4h, fundingRate, fundingBias, priceChange, price, exchangeFlow, setupData } = tokenData;
     const snap = { direction: 'neutral', confidence: 'low', levels: [], thesis: [], risks: [] };
 
@@ -352,7 +352,8 @@ class LiquidationScanner {
     let bullPoints = 0;
     let bearPoints = 0;
 
-    if (oiChange4h > 10) bullPoints += 2;
+    const minOiBull = opts.minOiLong ?? 10;
+    if (oiChange4h > minOiBull) bullPoints += 2;
     if (oiChange4h > 25) bullPoints += 1;
     if (oiChange4h < -15) bearPoints += 1;
 

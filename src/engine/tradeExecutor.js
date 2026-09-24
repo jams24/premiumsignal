@@ -102,6 +102,9 @@ class TradeExecutor {
     // Pump exhaustion filter: flip pump-top longs to shorts when OI crowded + big pump
     this.exhaustionFilter = config.exhaustionFilter || false;
 
+    // OI gate: minimum OI% for long entries and direction scoring
+    this.minOiLong = config.minOiLong ?? 10;
+
     // Risk-fit sizing: shrink position so SL hit = maxLossPerTrade
     this.riskFitSizing = config.riskFitSizing !== false;
 
@@ -584,6 +587,7 @@ class TradeExecutor {
       maxDriftPct: this.maxDriftPct,
       minTopLS: this.minTopLS,
       maxDailyLossPerSymbol: this.maxDailyLossPerSymbol,
+      minOiLong: this.minOiLong,
     };
   }
 
@@ -643,6 +647,7 @@ class TradeExecutor {
     if (cfg.maxDriftPct != null) this.maxDriftPct = cfg.maxDriftPct;
     if (cfg.minTopLS != null) this.minTopLS = cfg.minTopLS;
     if (cfg.maxDailyLossPerSymbol != null) this.maxDailyLossPerSymbol = cfg.maxDailyLossPerSymbol;
+    if (cfg.minOiLong != null) this.minOiLong = cfg.minOiLong;
   }
 
   async getCircuitBreakerStatus() {

@@ -2440,6 +2440,7 @@ class TelegramBot {
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📏 4H Range: <b>${te.max4hRange || 15}%</b> (rejects pumps above this)\n` +
+        `📊 OI Gate: <b>${te.minOiLong ?? 10}%</b> (min OI 4h for longs + direction scoring)\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
         `🎯 Score: <b>L:${ocScoreLabel(te)}-${te.maxOcScore || 69} | S:${te.minShortScore || 70}+</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
@@ -2473,7 +2474,8 @@ class TelegramBot {
         [Markup.button.callback(`🎚️ Conf: ${te.confidenceScaling ? 'ON' : 'OFF'}`, 'oc_cfg_confscale'),
          Markup.button.callback(`${te.volatilityFilter ? '🌊 Vol: ON' : '⚡ Vol: OFF'}`, 'oc_cfg_volfilt')],
         [Markup.button.callback(`📏 4H: ${te.max4hRange || 15}%`, 'oc_cfg_4hrange'),
-         Markup.button.callback(`🎯 L:${ocScoreLabel(te)}-${te.maxOcScore || 69} S:${te.minShortScore || 70}+`, 'oc_cfg_minscore')],
+         Markup.button.callback(`📊 OI: ${te.minOiLong ?? 10}%`, 'oc_cfg_oigate')],
+        [Markup.button.callback(`🎯 L:${ocScoreLabel(te)}-${te.maxOcScore || 69} S:${te.minShortScore || 70}+`, 'oc_cfg_minscore')],
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(`🔁 Drift: ${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}`, 'oc_cfg_drift'),
          Markup.button.callback(`📊 L/S: ${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}`, 'oc_cfg_ls')],
@@ -2970,6 +2972,43 @@ class TelegramBot {
           await ctx.answerCbQuery(`4H range limit set to ${val}%`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_4hr_${val} error: ${e.message}`); }
+      });
+    }
+
+    // OI gate threshold for longs
+    this.bot.action('oc_cfg_oigate', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.minOiLong ?? 10;
+        await ctx.editMessageText(
+          `📊 <b>ONCHAIN — OI GATE (Long Entry)</b>\n\n` +
+          `Current: <b>${cur}%</b>\n\n` +
+          `Minimum OI 4h change required to enter longs. Also used as the bull-point threshold in direction scoring.\n\n` +
+          `Lower = more long entries (catches early momentum)\n` +
+          `Higher = stricter (only enters on confirmed OI buildup)\n\n` +
+          `⚠️ Below 5% risks entering without real momentum confirmation.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3%${cur === 3 ? ' ✓' : ''}`, 'oc_oi_3'),
+             Markup.button.callback(`5%${cur === 5 ? ' ✓' : ''}`, 'oc_oi_5')],
+            [Markup.button.callback(`7%${cur === 7 ? ' ✓' : ''}`, 'oc_oi_7'),
+             Markup.button.callback(`10%${cur === 10 ? ' ✓' : ''}`, 'oc_oi_10')],
+            [Markup.button.callback(`15%${cur === 15 ? ' ✓' : ''}`, 'oc_oi_15'),
+             Markup.button.callback(`20%${cur === 20 ? ' ✓' : ''}`, 'oc_oi_20')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_oigate error: ${e.message}`); }
+    });
+    for (const val of [3, 5, 7, 10, 15, 20]) {
+      this.bot.action(`oc_oi_${val}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.minOiLong = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(`OI gate set to ${val}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_oi_${val} error: ${e.message}`); }
       });
     }
 

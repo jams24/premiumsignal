@@ -1052,7 +1052,7 @@ class OnchainScanner {
       } catch (e) { logger.debug(`${token.symbol}: 5m RSI fetch failed: ${e.message}`); }
 
       const snap = this.liquidationScanner
-        ? this.liquidationScanner.generateSetupSnapshot(token)
+        ? this.liquidationScanner.generateSetupSnapshot(token, { minOiLong: opts.minOiLong })
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
 
       // Pump exhaustion override: flip to short when big pump + crowded OI detected
@@ -1075,9 +1075,10 @@ class OnchainScanner {
       }
 
       // OI too low: block longs when OI < 10% (no momentum confirmation)
-      if (snap.direction === 'long' && (snap.oiChange4h || 0) < 10) {
-        logger.info(`${token.symbol}: BLOCKED — OI ${(snap.oiChange4h || 0).toFixed(1)}% too low for LONG (need 10%+ momentum)`);
-        token._rejectReason = `OI ${(snap.oiChange4h || 0).toFixed(1)}% < 10% (too low for long)`;
+      const minOiLong = opts.minOiLong ?? 10;
+      if (snap.direction === 'long' && (snap.oiChange4h || 0) < minOiLong) {
+        logger.info(`${token.symbol}: BLOCKED — OI ${(snap.oiChange4h || 0).toFixed(1)}% too low for LONG (need ${minOiLong}%+ momentum)`);
+        token._rejectReason = `OI ${(snap.oiChange4h || 0).toFixed(1)}% < ${minOiLong}% (too low for long)`;
         return null;
       }
 
