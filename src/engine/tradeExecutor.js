@@ -101,6 +101,8 @@ class TradeExecutor {
 
     // Pump exhaustion filter: flip pump-top longs to shorts when OI crowded + big pump
     this.exhaustionFilter = config.exhaustionFilter || false;
+    this.minExhScore = config.minExhScore ?? 5;
+    this.minExhRsi = config.minExhRsi ?? 80;
 
     // OI gate: minimum OI% for long entries and direction scoring
     this.minOiLong = config.minOiLong ?? 10;
@@ -577,6 +579,8 @@ class TradeExecutor {
       max4hRange: this.max4hRange,
       trendFilter: this.trendFilter,
       exhaustionFilter: this.exhaustionFilter,
+      minExhScore: this.minExhScore,
+      minExhRsi: this.minExhRsi,
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
@@ -637,6 +641,8 @@ class TradeExecutor {
     if (cfg.max4hRange != null) this.max4hRange = cfg.max4hRange;
     if (cfg.trendFilter != null) this.trendFilter = cfg.trendFilter;
     if (cfg.exhaustionFilter != null) this.exhaustionFilter = cfg.exhaustionFilter;
+    if (cfg.minExhScore != null) this.minExhScore = cfg.minExhScore;
+    if (cfg.minExhRsi != null) this.minExhRsi = cfg.minExhRsi;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;

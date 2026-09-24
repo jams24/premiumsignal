@@ -1052,15 +1052,16 @@ class OnchainScanner {
       } catch (e) { logger.debug(`${token.symbol}: 5m RSI fetch failed: ${e.message}`); }
 
       const snap = this.liquidationScanner
-        ? this.liquidationScanner.generateSetupSnapshot(token, { minOiLong: opts.minOiLong })
+        ? this.liquidationScanner.generateSetupSnapshot(token, { minOiLong: opts.minOiLong, minExhScore: opts.minExhScore, minExhRsi: opts.minExhRsi })
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
 
       // Pump exhaustion override: flip to short when big pump + crowded OI detected
       const isExhaustion = opts.exhaustionFilter && snap.exhaustion;
+      const minExhScore = opts.minExhScore ?? 5;
       if (isExhaustion && snap.direction !== 'short') {
-        logger.info(`${token.symbol}: PUMP EXHAUSTION detected (score ${snap.exhaustionScore}) — flipping to SHORT`);
+        logger.info(`${token.symbol}: PUMP EXHAUSTION detected (score ${snap.exhaustionScore}/${minExhScore}) — flipping to SHORT`);
         snap.direction = 'short';
-      } else if (opts.exhaustionFilter && !snap.exhaustion && snap.exhaustionScore >= 5) {
+      } else if (opts.exhaustionFilter && !snap.exhaustion && snap.exhaustionScore >= minExhScore) {
         const oi4h = token.oiChange4h ?? 0;
         const reason = (snap.nearHighPct || 0) >= 10
           ? `${(snap.nearHighPct || 0).toFixed(1)}% from high (need <10%)`

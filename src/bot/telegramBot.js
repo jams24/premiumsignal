@@ -2447,7 +2447,7 @@ class TelegramBot {
         `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
         `📊 L/S Filter: <b>${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}</b>${te.minTopLS > 0 ? ' (rejects longs below this)' : ' (no L/S filtering)'}\n` +
         `📉 Trend Filter: <b>${te.trendFilter ? 'ON' : 'OFF'}</b>${te.trendFilter ? ' (blocks longs in 1H downtrends — lower highs/lows)' : ' (no trend structure check)'}\n` +
-        `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ' (flips pump-top longs to shorts — big pump + crowded OI)' : ' (no pump exhaustion shorts)'}\n` +
+        `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (score≥${te.minExhScore ?? 5}, RSI>${te.minExhRsi ?? 80})` : ' (no pump exhaustion shorts)'}\n` +
         `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
@@ -2481,6 +2481,8 @@ class TelegramBot {
          Markup.button.callback(`📊 L/S: ${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}`, 'oc_cfg_ls')],
         [Markup.button.callback(`📉 Trend: ${te.trendFilter ? 'ON' : 'OFF'}`, 'oc_cfg_trend'),
          Markup.button.callback(`🔥 Exhaust: ${te.exhaustionFilter ? 'ON' : 'OFF'}`, 'oc_cfg_exhaust')],
+        [Markup.button.callback(`🔥 ExhScore: ${te.minExhScore ?? 5}`, 'oc_cfg_exhaust_score'),
+         Markup.button.callback(`🔥 ExhRSI: ${te.minExhRsi ?? 80}`, 'oc_cfg_exhaust_rsi')],
         [Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
@@ -2944,6 +2946,85 @@ class TelegramBot {
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_exhaust error: ${e.message}`); }
     });
+
+    // Exhaustion min score setting
+    this.bot.action('oc_cfg_exhaust_score', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.minExhScore ?? 5;
+        await ctx.editMessageText(
+          `🔥 <b>ONCHAIN — EXHAUSTION MIN SCORE</b>\n\n` +
+          `Current: <b>${cur}</b>\n\n` +
+          `Exhaustion scoring axes (max 12):\n` +
+          `• Price pump: +1/+2/+3 (5%/10%/15%)\n` +
+          `• Near 24h high: +1/+2 (6%/3%)\n` +
+          `• OI 4h: +1/+2/+3 (15%/25%/50%)\n` +
+          `• Funding: +1/+2 (0.03%/0.1%)\n` +
+          `• RSI 5m: +2 (above ${te.minExhRsi ?? 80})\n\n` +
+          `Lower = more exhaustion shorts triggered\n` +
+          `Higher = only strongest pump-tops flip`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`3${cur === 3 ? ' ✓' : ''}`, 'oc_exhs_3'),
+             Markup.button.callback(`4${cur === 4 ? ' ✓' : ''}`, 'oc_exhs_4')],
+            [Markup.button.callback(`5${cur === 5 ? ' ✓' : ''}`, 'oc_exhs_5'),
+             Markup.button.callback(`6${cur === 6 ? ' ✓' : ''}`, 'oc_exhs_6')],
+            [Markup.button.callback(`7${cur === 7 ? ' ✓' : ''}`, 'oc_exhs_7'),
+             Markup.button.callback(`8${cur === 8 ? ' ✓' : ''}`, 'oc_exhs_8')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_exhaust_score error: ${e.message}`); }
+    });
+
+    for (const v of [3, 4, 5, 6, 7, 8]) {
+      this.bot.action(`oc_exhs_${v}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.minExhScore = v;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Exhaustion min score set to ${v}`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_exhs_${v} error: ${e.message}`); }
+      });
+    }
+
+    // Exhaustion min RSI setting
+    this.bot.action('oc_cfg_exhaust_rsi', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.minExhRsi ?? 80;
+        await ctx.editMessageText(
+          `🔥 <b>ONCHAIN — EXHAUSTION MIN RSI (5m)</b>\n\n` +
+          `Current: <b>${cur}</b>\n\n` +
+          `When 5m RSI is above this threshold, it adds +2 to the exhaustion score.\n` +
+          `Lower RSI = more likely to add RSI points → more shorts\n` +
+          `Higher RSI = only extreme overbought triggers RSI bonus`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`65${cur === 65 ? ' ✓' : ''}`, 'oc_exhr_65'),
+             Markup.button.callback(`70${cur === 70 ? ' ✓' : ''}`, 'oc_exhr_70')],
+            [Markup.button.callback(`75${cur === 75 ? ' ✓' : ''}`, 'oc_exhr_75'),
+             Markup.button.callback(`80${cur === 80 ? ' ✓' : ''}`, 'oc_exhr_80')],
+            [Markup.button.callback(`85${cur === 85 ? ' ✓' : ''}`, 'oc_exhr_85'),
+             Markup.button.callback(`90${cur === 90 ? ' ✓' : ''}`, 'oc_exhr_90')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_exhaust_rsi error: ${e.message}`); }
+    });
+
+    for (const v of [65, 70, 75, 80, 85, 90]) {
+      this.bot.action(`oc_exhr_${v}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.minExhRsi = v;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Exhaustion RSI threshold set to ${v}`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_exhr_${v} error: ${e.message}`); }
+      });
+    }
 
     // 4H candle range threshold
     this.bot.action('oc_cfg_4hrange', async (ctx) => {

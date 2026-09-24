@@ -330,17 +330,19 @@ class LiquidationScanner {
     else if (fundingRate > 0.0003) { exhaustionScore += 1; }
 
     const rsi5m = tokenData.rsi5m || 0;
-    if (rsi5m > 80) { exhaustionScore += 2; exhaustionSignals.push(`RSI ${rsi5m.toFixed(0)}`); }
+    const minExhRsi = opts.minExhRsi ?? 80;
+    if (rsi5m > minExhRsi) { exhaustionScore += 2; exhaustionSignals.push(`RSI ${rsi5m.toFixed(0)}`); }
 
+    const minExhScore = opts.minExhScore ?? 5;
     // Gate: if price is >10% below 24h high, the pump top window has closed
-    if (nearHighPct >= 10 && exhaustionScore >= 5) {
+    if (nearHighPct >= 10 && exhaustionScore >= minExhScore) {
       exhaustionSignals.push(`too far from top (${nearHighPct.toFixed(1)}%)`);
       snap.exhaustion = false;
-    } else if (oiChange4h < 25 && exhaustionScore >= 5) {
+    } else if (oiChange4h < 25 && exhaustionScore >= minExhScore) {
       exhaustionSignals.push(`OI too low (${oiChange4h.toFixed(1)}%)`);
       snap.exhaustion = false;
     } else {
-      snap.exhaustion = exhaustionScore >= 5;
+      snap.exhaustion = exhaustionScore >= minExhScore;
     }
     snap.rsi5m = rsi5m;
     snap.exhaustionScore = exhaustionScore;
