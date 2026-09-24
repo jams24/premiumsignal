@@ -3004,10 +3004,13 @@ class TelegramBot {
           `Higher RSI = only extreme overbought triggers RSI bonus`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`65${cur === 65 ? ' ✓' : ''}`, 'oc_exhr_65'),
-             Markup.button.callback(`70${cur === 70 ? ' ✓' : ''}`, 'oc_exhr_70')],
+             Markup.button.callback(`70${cur === 70 ? ' ✓' : ''}`, 'oc_exhr_70'),
+             Markup.button.callback(`73${cur === 73 ? ' ✓' : ''}`, 'oc_exhr_73')],
             [Markup.button.callback(`75${cur === 75 ? ' ✓' : ''}`, 'oc_exhr_75'),
-             Markup.button.callback(`80${cur === 80 ? ' ✓' : ''}`, 'oc_exhr_80')],
-            [Markup.button.callback(`85${cur === 85 ? ' ✓' : ''}`, 'oc_exhr_85'),
+             Markup.button.callback(`77${cur === 77 ? ' ✓' : ''}`, 'oc_exhr_77'),
+             Markup.button.callback(`78${cur === 78 ? ' ✓' : ''}`, 'oc_exhr_78')],
+            [Markup.button.callback(`80${cur === 80 ? ' ✓' : ''}`, 'oc_exhr_80'),
+             Markup.button.callback(`85${cur === 85 ? ' ✓' : ''}`, 'oc_exhr_85'),
              Markup.button.callback(`90${cur === 90 ? ' ✓' : ''}`, 'oc_exhr_90')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
@@ -3015,7 +3018,7 @@ class TelegramBot {
       } catch (e) { logger.error(`oc_cfg_exhaust_rsi error: ${e.message}`); }
     });
 
-    for (const v of [65, 70, 75, 80, 85, 90]) {
+    for (const v of [65, 70, 73, 75, 77, 78, 80, 85, 90]) {
       this.bot.action(`oc_exhr_${v}`, async (ctx) => {
         try {
           const te = octe();
