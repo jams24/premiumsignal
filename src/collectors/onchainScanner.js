@@ -1061,24 +1061,26 @@ class OnchainScanner {
         logger.info(`${token.symbol}: PUMP EXHAUSTION detected (score ${snap.exhaustionScore}) — flipping to SHORT`);
         snap.direction = 'short';
       } else if (opts.exhaustionFilter && !snap.exhaustion && snap.exhaustionScore >= 5) {
+        const oi4h = token.oiChange4h ?? 0;
         const reason = (snap.nearHighPct || 0) >= 10
           ? `${(snap.nearHighPct || 0).toFixed(1)}% from high (need <10%)`
-          : `OI ${(snap.oiChange4h || 0).toFixed(1)}% too low (need >25%)`;
+          : `OI ${oi4h.toFixed(1)}% too low (need >25%)`;
         logger.info(`${token.symbol}: Exhaustion score ${snap.exhaustionScore} but BLOCKED — ${reason}`);
       }
 
       // OI crowded override: flip long to short when OI > 60% (crowd trap territory)
-      const isCrowdedFlip = !isExhaustion && snap.direction === 'long' && (snap.oiChange4h || 0) > 60;
+      const isCrowdedFlip = !isExhaustion && snap.direction === 'long' && (token.oiChange4h ?? 0) > 60;
       if (isCrowdedFlip) {
-        logger.info(`${token.symbol}: OI CROWDED ${(snap.oiChange4h || 0).toFixed(1)}% — flipping LONG to SHORT`);
+        logger.info(`${token.symbol}: OI CROWDED ${(token.oiChange4h ?? 0).toFixed(1)}% — flipping LONG to SHORT`);
         snap.direction = 'short';
       }
 
-      // OI too low: block longs when OI < 10% (no momentum confirmation)
+      // OI too low: block longs when OI < gate (no momentum confirmation)
       const minOiLong = opts.minOiLong ?? 10;
-      if (snap.direction === 'long' && (snap.oiChange4h || 0) < minOiLong) {
-        logger.info(`${token.symbol}: BLOCKED — OI ${(snap.oiChange4h || 0).toFixed(1)}% too low for LONG (need ${minOiLong}%+ momentum)`);
-        token._rejectReason = `OI ${(snap.oiChange4h || 0).toFixed(1)}% < ${minOiLong}% (too low for long)`;
+      const tokenOi = token.oiChange4h ?? 0;
+      if (snap.direction === 'long' && tokenOi < minOiLong) {
+        logger.info(`${token.symbol}: BLOCKED — OI ${tokenOi.toFixed(1)}% too low for LONG (need ${minOiLong}%+ momentum)`);
+        token._rejectReason = `OI ${tokenOi.toFixed(1)}% < ${minOiLong}% (too low for long)`;
         return null;
       }
 
