@@ -1027,10 +1027,10 @@ class OnchainScanner {
   async buildTradeSetup(token, exchanges, type = 'ONCHAIN_SETUP', opts = {}) {
     try {
       const exchange = exchanges[token.exchange];
-      if (!exchange) return null;
+      if (!exchange) { token._rejectReason = 'No exchange'; return null; }
 
       const ohlcv = await exchange.fetchOHLCV(token.pair, '1h', undefined, 20);
-      if (!ohlcv || ohlcv.length < 14) return null;
+      if (!ohlcv || ohlcv.length < 14) { token._rejectReason = 'Insufficient 1H candle data'; return null; }
 
       // ATR(14)
       let atrSum = 0;
@@ -1039,7 +1039,7 @@ class OnchainScanner {
         atrSum += h - l;
       }
       const atr = atrSum / 14;
-      if (!atr || atr <= 0) return null;
+      if (!atr || atr <= 0) { token._rejectReason = 'ATR zero or invalid'; return null; }
 
       // 5m RSI for exhaustion scoring
       try {
@@ -1077,11 +1077,12 @@ class OnchainScanner {
       // OI too low: block longs when OI < 10% (no momentum confirmation)
       if (snap.direction === 'long' && (snap.oiChange4h || 0) < 10) {
         logger.info(`${token.symbol}: BLOCKED — OI ${(snap.oiChange4h || 0).toFixed(1)}% too low for LONG (need 10%+ momentum)`);
+        token._rejectReason = `OI ${(snap.oiChange4h || 0).toFixed(1)}% < 10% (too low for long)`;
         return null;
       }
 
       const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : null;
-      if (!direction) return null;
+      if (!direction) { token._rejectReason = `Invalid direction: ${snap.direction}`; return null; }
       const price = token.price;
 
       // Candle confirmation on 5m — reject if last 3 completed 5m candles contradict direction
@@ -1094,10 +1095,12 @@ class OnchainScanner {
           const g1 = c1[4] >= c1[1], g2 = c2[4] >= c2[1], g3 = c3[4] >= c3[1];
           if (direction === 'long' && !g1 && !g2 && !g3) {
             logger.info(`${token.symbol}: Skipping LONG — last 3 5m candles red (falling knife)`);
+            token._rejectReason = '5m falling knife (3 red candles)';
             return null;
           }
           if (direction === 'short' && g1 && g2 && g3 && !isExhaustion && !isCrowdedFlip) {
             logger.info(`${token.symbol}: Skipping SHORT — last 3 5m candles green (chasing strength)`);
+            token._rejectReason = '5m chasing strength (3 green candles)';
             return null;
           }
         }
@@ -1116,6 +1119,7 @@ class OnchainScanner {
           const atr5mPct = (atr5m / price) * 100;
           if (atr5mPct > 2.5) {
             logger.info(`${token.symbol}: Reject — 5m ATR ${atr5mPct.toFixed(1)}% of price (too volatile for reliable entry)`);
+            token._rejectReason = `5m ATR ${atr5mPct.toFixed(1)}% > 2.5% (too volatile)`;
             return null;
           }
         }
@@ -1136,10 +1140,12 @@ class OnchainScanner {
             const trendGap = ((price - currentEma4h) / currentEma4h) * 100;
             if (direction === 'long' && trendGap < -5) {
               logger.info(`${token.symbol}: Reject LONG — price ${trendGap.toFixed(1)}% below 4H EMA20 (downtrend)`);
+              token._rejectReason = `4H EMA20 downtrend (${trendGap.toFixed(1)}% below)`;
               return null;
             }
             if (direction === 'short' && trendGap > 5 && !isExhaustion && !isCrowdedFlip) {
               logger.info(`${token.symbol}: Reject SHORT — price ${trendGap.toFixed(1)}% above 4H EMA20 (uptrend)`);
+              token._rejectReason = `4H EMA20 uptrend (${trendGap.toFixed(1)}% above)`;
               return null;
             }
           }
@@ -1149,10 +1155,12 @@ class OnchainScanner {
           const drawdown = ((recentHigh - price) / recentHigh) * 100;
           if (direction === 'long' && drawdown > 30) {
             logger.info(`${token.symbol}: Reject LONG — ${drawdown.toFixed(1)}% below 4H high $${recentHigh.toPrecision(4)} (post-pump dump)`);
+            token._rejectReason = `Post-pump dump (${drawdown.toFixed(1)}% from 4H high)`;
             return null;
           }
           if (direction === 'short' && drawdown < 5 && !isExhaustion && !isCrowdedFlip) {
             logger.info(`${token.symbol}: Reject SHORT — only ${drawdown.toFixed(1)}% from highs (still near peak)`);
+            token._rejectReason = `Near peak (only ${drawdown.toFixed(1)}% from highs)`;
             return null;
           }
 
@@ -1165,6 +1173,7 @@ class OnchainScanner {
             if (rangePct > maxRange) {
               const which = ci === ohlcv4h.length - 1 ? 'current' : 'previous';
               logger.info(`${token.symbol}: Reject — ${which} 4H candle range ${rangePct.toFixed(1)}% > ${maxRange}% (pump not settled, wait for consolidation)`);
+              token._rejectReason = `4H range ${rangePct.toFixed(1)}% > ${maxRange}% (pump not settled)`;
               return null;
             }
           }
@@ -1182,10 +1191,12 @@ class OnchainScanner {
             const maxTopLS = 1 / minTopLS;
             if (direction === 'long' && topLS < minTopLS) {
               logger.info(`${token.symbol}: Reject LONG — top traders heavily short (L/S ${topLS.toFixed(2)}, min ${minTopLS})`);
+              token._rejectReason = `L/S ratio ${topLS.toFixed(2)} < ${minTopLS} (top traders short)`;
               return null;
             }
             if (direction === 'short' && topLS > maxTopLS) {
               logger.info(`${token.symbol}: Reject SHORT — top traders heavily long (L/S ${topLS.toFixed(2)}, max ${maxTopLS.toFixed(2)})`);
+              token._rejectReason = `L/S ratio ${topLS.toFixed(2)} > ${maxTopLS.toFixed(2)} (top traders long)`;
               return null;
             }
           }

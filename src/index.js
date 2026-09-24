@@ -909,7 +909,7 @@ async function main() {
           try {
             const setup = token._tradeSetup;
             if (!setup) {
-              db.logSkip(token.symbol, { direction: token.priceChange > 0 ? 'long' : 'short', score: token.score, price: token.price, blockReason: `No trade setup built${token._setupError ? ': ' + token._setupError : ''}`, blockStage: 'pre_filter', source: 'onchain', onchainData: { oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h, fundingRate: token.fundingRate, priceChange: token.priceChange, volume: token.volume, signals: token.signals, exchange: token.exchange } }).catch(() => {});
+              db.logSkip(token.symbol, { direction: token.priceChange > 0 ? 'long' : 'short', score: token.score, price: token.price, blockReason: token._rejectReason || `No trade setup built${token._setupError ? ': ' + token._setupError : ''}`, blockStage: 'pre_filter', source: 'onchain', onchainData: { oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h, fundingRate: token.fundingRate, priceChange: token.priceChange, volume: token.volume, signals: token.signals, exchange: token.exchange } }).catch(() => {});
               continue;
             }
             const isReversalShort = (setup.onchainContext?.exhaustion || setup.onchainContext?.crowdedFlip) && setup.direction === 'short';
