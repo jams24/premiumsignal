@@ -1052,7 +1052,7 @@ class OnchainScanner {
       } catch (e) { logger.debug(`${token.symbol}: 5m RSI fetch failed: ${e.message}`); }
 
       const snap = this.liquidationScanner
-        ? this.liquidationScanner.generateSetupSnapshot(token, { minOiLong: opts.minOiLong, minExhScore: opts.minExhScore, minExhRsi: opts.minExhRsi })
+        ? this.liquidationScanner.generateSetupSnapshot(token, { minOiLong: opts.minOiLong, minExhScore: opts.minExhScore, minExhRsi: opts.minExhRsi, maxNearHigh: opts.maxNearHigh })
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
 
       // Pump exhaustion override: flip to short when big pump + crowded OI detected

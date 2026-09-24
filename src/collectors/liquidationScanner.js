@@ -334,8 +334,9 @@ class LiquidationScanner {
     if (rsi5m > minExhRsi) { exhaustionScore += 2; exhaustionSignals.push(`RSI ${rsi5m.toFixed(0)}`); }
 
     const minExhScore = opts.minExhScore ?? 5;
-    // Gate: if price is >10% below 24h high, the pump top window has closed
-    if (nearHighPct >= 10 && exhaustionScore >= minExhScore) {
+    const maxNearHigh = opts.maxNearHigh ?? 10;
+    // Gate: if price is too far below 24h high, the pump top window has closed
+    if (nearHighPct >= maxNearHigh && exhaustionScore >= minExhScore) {
       exhaustionSignals.push(`too far from top (${nearHighPct.toFixed(1)}%)`);
       snap.exhaustion = false;
     } else if (oiChange4h < 25 && exhaustionScore >= minExhScore) {

@@ -2447,7 +2447,7 @@ class TelegramBot {
         `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
         `📊 L/S Filter: <b>${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}</b>${te.minTopLS > 0 ? ' (rejects longs below this)' : ' (no L/S filtering)'}\n` +
         `📉 Trend Filter: <b>${te.trendFilter ? 'ON' : 'OFF'}</b>${te.trendFilter ? ' (blocks longs in 1H downtrends — lower highs/lows)' : ' (no trend structure check)'}\n` +
-        `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI>${te.minExhRsi ?? 80}, score≥${te.minExhShortScore ?? 40})` : ' (no pump exhaustion shorts)'}\n` +
+        `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI>${te.minExhRsi ?? 80}, score≥${te.minExhShortScore ?? 40}, nearHigh<${te.maxNearHigh ?? 10}%)` : ' (no pump exhaustion shorts)'}\n` +
         `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
@@ -2482,8 +2482,9 @@ class TelegramBot {
         [Markup.button.callback(`📉 Trend: ${te.trendFilter ? 'ON' : 'OFF'}`, 'oc_cfg_trend'),
          Markup.button.callback(`🔥 Exhaust: ${te.exhaustionFilter ? 'ON' : 'OFF'}`, 'oc_cfg_exhaust')],
         [Markup.button.callback(`🔥 Detect: ${te.minExhScore ?? 5}`, 'oc_cfg_exhaust_score'),
-         Markup.button.callback(`🔥 RSI: ${te.minExhRsi ?? 80}`, 'oc_cfg_exhaust_rsi'),
-         Markup.button.callback(`🔥 S:${te.minExhShortScore ?? 40}+`, 'oc_cfg_exhaust_short')],
+         Markup.button.callback(`🔥 RSI: ${te.minExhRsi ?? 80}`, 'oc_cfg_exhaust_rsi')],
+        [Markup.button.callback(`🔥 S:${te.minExhShortScore ?? 40}+`, 'oc_cfg_exhaust_short'),
+         Markup.button.callback(`🔥 Top: ${te.maxNearHigh ?? 10}%`, 'oc_cfg_nearhigh')],
         [Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
@@ -3065,6 +3066,43 @@ class TelegramBot {
           await ctx.answerCbQuery(`Exhaustion short min score ${v === 0 ? 'OFF (bypass)' : `set to ${v}`}`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_exhss_${v} error: ${e.message}`); }
+      });
+    }
+
+    // Near-high gate: max % from 24h high for exhaustion to trigger
+    this.bot.action('oc_cfg_nearhigh', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.maxNearHigh ?? 10;
+        await ctx.editMessageText(
+          `🔥 <b>ONCHAIN — EXHAUSTION NEAR-HIGH GATE</b>\n\n` +
+          `Current: <b>${cur}%</b>\n\n` +
+          `If price is more than this % below the 24h high, the pump top window is considered closed and exhaustion is blocked.\n\n` +
+          `Lower = stricter (only catches entries very near the peak)\n` +
+          `Higher = looser (allows shorts further from the top)`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`5%${cur === 5 ? ' ✓' : ''}`, 'oc_nh_5'),
+             Markup.button.callback(`7%${cur === 7 ? ' ✓' : ''}`, 'oc_nh_7')],
+            [Markup.button.callback(`8%${cur === 8 ? ' ✓' : ''}`, 'oc_nh_8'),
+             Markup.button.callback(`10%${cur === 10 ? ' ✓' : ''}`, 'oc_nh_10')],
+            [Markup.button.callback(`12%${cur === 12 ? ' ✓' : ''}`, 'oc_nh_12'),
+             Markup.button.callback(`15%${cur === 15 ? ' ✓' : ''}`, 'oc_nh_15')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_nearhigh error: ${e.message}`); }
+    });
+
+    for (const v of [5, 7, 8, 10, 12, 15]) {
+      this.bot.action(`oc_nh_${v}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.maxNearHigh = v;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Near-high gate set to ${v}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_nh_${v} error: ${e.message}`); }
       });
     }
 
