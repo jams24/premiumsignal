@@ -2446,6 +2446,8 @@ class TelegramBot {
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `🔁 Re-entry Drift: <b>${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}</b>${te.maxDriftPct > 0 ? ' (blocks chasing above this)' : ' (no drift limit)'}\n` +
         `📊 L/S Filter: <b>${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}</b>${te.minTopLS > 0 ? ' (rejects longs below this)' : ' (no L/S filtering)'}\n` +
+        `📊 Long RSI: <b>${te.minLongRsi ?? 35}+</b> (blocks falling knife longs below this RSI)\n` +
+        `📊 Long Top: <b>&lt;${te.maxLongNearHigh ?? 15}%</b> (blocks longs when pump faded past this)\n` +
         `📉 Trend Filter: <b>${te.trendFilter ? 'ON' : 'OFF'}</b>${te.trendFilter ? ' (blocks longs in 1H downtrends — lower highs/lows)' : ' (no trend structure check)'}\n` +
         `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI&gt;${te.minExhRsi ?? 80}, score≥${te.minExhShortScore ?? 40}, top&lt;${te.maxNearHigh ?? 10}%)` : ' (no pump exhaustion shorts)'}\n` +
         `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
@@ -2479,6 +2481,8 @@ class TelegramBot {
         [Markup.button.callback(`🏦 Exchanges${te.disabledExchanges?.size ? ` (${te.disabledExchanges.size} off)` : ''}`, 'oc_cfg_exchanges')],
         [Markup.button.callback(`🔁 Drift: ${te.maxDriftPct > 0 ? te.maxDriftPct + '%' : 'OFF'}`, 'oc_cfg_drift'),
          Markup.button.callback(`📊 L/S: ${te.minTopLS > 0 ? te.minTopLS.toFixed(2) : 'OFF'}`, 'oc_cfg_ls')],
+        [Markup.button.callback(`📊 LongRSI: ${te.minLongRsi ?? 35}+`, 'oc_cfg_longrsi'),
+         Markup.button.callback(`📊 LongTop: ${te.maxLongNearHigh ?? 15}%`, 'oc_cfg_longnh')],
         [Markup.button.callback(`📉 Trend: ${te.trendFilter ? 'ON' : 'OFF'}`, 'oc_cfg_trend'),
          Markup.button.callback(`🔥 Exhaust: ${te.exhaustionFilter ? 'ON' : 'OFF'}`, 'oc_cfg_exhaust')],
         [Markup.button.callback(`🔥 Detect: ${te.minExhScore ?? 5}`, 'oc_cfg_exhaust_score'),
@@ -2926,6 +2930,80 @@ class TelegramBot {
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_volfilt error: ${e.message}`); }
     });
+
+    // Long RSI filter: min RSI for long entries (blocks falling knives)
+    this.bot.action('oc_cfg_longrsi', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.minLongRsi ?? 35;
+        await ctx.editMessageText(
+          `📊 <b>ONCHAIN — LONG MIN RSI (5m)</b>\n\n` +
+          `Current: <b>${cur}</b>\n\n` +
+          `Blocks long entries when 5m RSI is below this — prevents buying into a falling knife where no base has formed.\n\n` +
+          `Lower = allows entries in deeper pullbacks\n` +
+          `Higher = waits for RSI recovery before entering`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`25${cur === 25 ? ' ✓' : ''}`, 'oc_lrsi_25'),
+             Markup.button.callback(`30${cur === 30 ? ' ✓' : ''}`, 'oc_lrsi_30')],
+            [Markup.button.callback(`35${cur === 35 ? ' ✓' : ''}`, 'oc_lrsi_35'),
+             Markup.button.callback(`40${cur === 40 ? ' ✓' : ''}`, 'oc_lrsi_40')],
+            [Markup.button.callback(`45${cur === 45 ? ' ✓' : ''}`, 'oc_lrsi_45'),
+             Markup.button.callback(`50${cur === 50 ? ' ✓' : ''}`, 'oc_lrsi_50')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_longrsi error: ${e.message}`); }
+    });
+
+    for (const v of [25, 30, 35, 40, 45, 50]) {
+      this.bot.action(`oc_lrsi_${v}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.minLongRsi = v;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Long min RSI set to ${v}`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_lrsi_${v} error: ${e.message}`); }
+      });
+    }
+
+    // Long near-high gate: block longs when pump has faded too far from 24h high
+    this.bot.action('oc_cfg_longnh', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.maxLongNearHigh ?? 15;
+        await ctx.editMessageText(
+          `📊 <b>ONCHAIN — LONG MAX DISTANCE FROM HIGH</b>\n\n` +
+          `Current: <b>${cur}%</b>\n\n` +
+          `Blocks long entries when price is more than this % below the 24h high — means the pump has faded and you're buying into a dump.\n\n` +
+          `Lower = stricter (only enters near the peak area)\n` +
+          `Higher = allows buying deeper pullbacks`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`8%${cur === 8 ? ' ✓' : ''}`, 'oc_lnh_8'),
+             Markup.button.callback(`10%${cur === 10 ? ' ✓' : ''}`, 'oc_lnh_10')],
+            [Markup.button.callback(`12%${cur === 12 ? ' ✓' : ''}`, 'oc_lnh_12'),
+             Markup.button.callback(`15%${cur === 15 ? ' ✓' : ''}`, 'oc_lnh_15')],
+            [Markup.button.callback(`18%${cur === 18 ? ' ✓' : ''}`, 'oc_lnh_18'),
+             Markup.button.callback(`20%${cur === 20 ? ' ✓' : ''}`, 'oc_lnh_20')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_longnh error: ${e.message}`); }
+    });
+
+    for (const v of [8, 10, 12, 15, 18, 20]) {
+      this.bot.action(`oc_lnh_${v}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.maxLongNearHigh = v;
+          te.saveConfig();
+          await ctx.answerCbQuery(`Long max near-high set to ${v}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_lnh_${v} error: ${e.message}`); }
+      });
+    }
 
     // Trend structure filter toggle
     this.bot.action('oc_cfg_trend', async (ctx) => {

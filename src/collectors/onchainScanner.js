@@ -1085,6 +1085,23 @@ class OnchainScanner {
         return null;
       }
 
+      // Pullback base filter: block longs when RSI is oversold (falling knife, no base formed)
+      const minLongRsi = opts.minLongRsi ?? 35;
+      if (snap.direction === 'long' && (token.rsi5m || 0) > 0 && token.rsi5m < minLongRsi) {
+        logger.info(`${token.symbol}: BLOCKED — RSI ${token.rsi5m.toFixed(0)} too low for LONG (need ${minLongRsi}+, no base formed)`);
+        token._rejectReason = `RSI ${token.rsi5m.toFixed(0)} < ${minLongRsi} (falling knife, no base)`;
+        return null;
+      }
+
+      // Near-high gate for longs: block when price has fallen too far from 24h high (pump faded)
+      const maxLongNearHigh = opts.maxLongNearHigh ?? 15;
+      const longNearHigh = snap.nearHighPct || 0;
+      if (snap.direction === 'long' && longNearHigh > maxLongNearHigh) {
+        logger.info(`${token.symbol}: BLOCKED — ${longNearHigh.toFixed(1)}% from 24h high (pump faded, need <${maxLongNearHigh}%)`);
+        token._rejectReason = `${longNearHigh.toFixed(1)}% from high > ${maxLongNearHigh}% (pump faded)`;
+        return null;
+      }
+
       const direction = snap.direction === 'long' || snap.direction === 'short' ? snap.direction : null;
       if (!direction) { token._rejectReason = `Invalid direction: ${snap.direction}`; return null; }
       const price = token.price;
