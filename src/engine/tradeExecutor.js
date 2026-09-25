@@ -110,6 +110,10 @@ class TradeExecutor {
     this.maxLongNearHigh = config.maxLongNearHigh ?? 15;
     this.maxLongPriceChange = config.maxLongPriceChange ?? 0;
 
+    // Direction toggles: disable longs or shorts entirely
+    this.allowLong = config.allowLong !== false;
+    this.allowShort = config.allowShort !== false;
+
     // OI gate: minimum OI% for long entries and direction scoring
     this.minOiLong = config.minOiLong ?? 10;
 
@@ -163,6 +167,13 @@ class TradeExecutor {
 
   async canTrade(signal) {
     if (!this.enabled) return { ok: false, reason: 'Trading disabled' };
+
+    if (signal.direction === 'long' && !this.allowLong) {
+      return { ok: false, reason: 'Longs disabled' };
+    }
+    if (signal.direction === 'short' && !this.allowShort) {
+      return { ok: false, reason: 'Shorts disabled' };
+    }
 
     this.resetDailyPnL();
 
@@ -593,6 +604,8 @@ class TradeExecutor {
       maxLongRsi: this.maxLongRsi,
       maxLongNearHigh: this.maxLongNearHigh,
       maxLongPriceChange: this.maxLongPriceChange,
+      allowLong: this.allowLong,
+      allowShort: this.allowShort,
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
@@ -661,6 +674,8 @@ class TradeExecutor {
     if (cfg.maxLongRsi != null) this.maxLongRsi = cfg.maxLongRsi;
     if (cfg.maxLongNearHigh != null) this.maxLongNearHigh = cfg.maxLongNearHigh;
     if (cfg.maxLongPriceChange != null) this.maxLongPriceChange = cfg.maxLongPriceChange;
+    if (cfg.allowLong != null) this.allowLong = cfg.allowLong;
+    if (cfg.allowShort != null) this.allowShort = cfg.allowShort;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
@@ -793,6 +808,8 @@ class TradeExecutor {
   }
 
   async queueSignal(signal) {
+    if (signal.direction === 'long' && !this.allowLong) return;
+    if (signal.direction === 'short' && !this.allowShort) return;
     const key = `${signal.symbol}_${signal.exchange}`;
     if (this.pendingEntries.has(key)) return;
 

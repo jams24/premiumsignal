@@ -2430,6 +2430,7 @@ class TelegramBot {
       const text =
         `🔗 <b>ONCHAIN SETTINGS</b>\n\n` +
         `${te.mode === 'paper' ? '📝' : '💰'} Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+        `↕️ Directions: <b>${te.allowLong !== false ? '🟢 Long' : '⛔ Long OFF'}${te.allowShort !== false ? ' | 🔴 Short' : ' | ⛔ Short OFF'}</b>\n` +
         `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
         `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
         `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
@@ -2462,6 +2463,8 @@ class TelegramBot {
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback(`${te.mode === 'paper' ? '📝' : '🔴'} Mode: ${te.mode.toUpperCase()}`, 'oc_cfg_mode'),
          Markup.button.callback(`${te.enabled ? '✅ ON' : '⛔ OFF'}`, 'oc_cfg_toggle')],
+        [Markup.button.callback(`🟢 Long: ${te.allowLong !== false ? 'ON' : 'OFF'}`, 'oc_cfg_allowlong'),
+         Markup.button.callback(`🔴 Short: ${te.allowShort !== false ? 'ON' : 'OFF'}`, 'oc_cfg_allowshort')],
         [Markup.button.callback(`💵 Size: $${te.maxPositionSize}`, 'oc_cfg_size'),
          Markup.button.callback(`⚡ Lev: ${te.defaultLeverage}x`, 'oc_cfg_lev')],
         [Markup.button.callback(`🛡️ Daily: $${te.maxDailyLoss}`, 'oc_cfg_dailyloss'),
@@ -2574,6 +2577,27 @@ class TelegramBot {
         await ctx.answerCbQuery(te.enabled ? 'Trading ENABLED' : 'Trading DISABLED');
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_toggle error: ${e.message}`); }
+    });
+
+    // ── DIRECTION TOGGLES ──
+    this.bot.action('oc_cfg_allowlong', async (ctx) => {
+      try {
+        const te = octe();
+        te.allowLong = te.allowLong === false ? true : false;
+        te.saveConfig();
+        await ctx.answerCbQuery(te.allowLong ? 'Longs ENABLED' : 'Longs DISABLED — all long signals will be skipped');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_cfg_allowlong error: ${e.message}`); }
+    });
+
+    this.bot.action('oc_cfg_allowshort', async (ctx) => {
+      try {
+        const te = octe();
+        te.allowShort = te.allowShort === false ? true : false;
+        te.saveConfig();
+        await ctx.answerCbQuery(te.allowShort ? 'Shorts ENABLED' : 'Shorts DISABLED — all short signals will be skipped');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_cfg_allowshort error: ${e.message}`); }
     });
 
     // ── POSITION SIZE ──
