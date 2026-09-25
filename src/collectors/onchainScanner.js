@@ -1093,6 +1093,22 @@ class OnchainScanner {
         return null;
       }
 
+      // RSI ceiling for longs: block when RSI is overbought (buying at pump peak)
+      const maxLongRsi = opts.maxLongRsi ?? 0;
+      if (maxLongRsi > 0 && snap.direction === 'long' && (token.rsi5m || 0) > 0 && token.rsi5m > maxLongRsi) {
+        logger.info(`${token.symbol}: BLOCKED — RSI ${token.rsi5m.toFixed(0)} too high for LONG (max ${maxLongRsi}, overbought)`);
+        token._rejectReason = `RSI ${token.rsi5m.toFixed(0)} > ${maxLongRsi} (overbought, buying at peak)`;
+        return null;
+      }
+
+      // Price change gate: block longs on tokens that already pumped too much
+      const maxLongPriceChange = opts.maxLongPriceChange ?? 0;
+      if (maxLongPriceChange > 0 && snap.direction === 'long' && (token.priceChange || 0) > maxLongPriceChange) {
+        logger.info(`${token.symbol}: BLOCKED — already pumped ${token.priceChange.toFixed(1)}% (max ${maxLongPriceChange}% for longs)`);
+        token._rejectReason = `${token.priceChange.toFixed(1)}% pump > ${maxLongPriceChange}% (chasing)`;
+        return null;
+      }
+
       // Near-high gate for longs: block when price has fallen too far from 24h high (pump faded)
       const maxLongNearHigh = opts.maxLongNearHigh ?? 15;
       const longNearHigh = snap.nearHighPct || 0;

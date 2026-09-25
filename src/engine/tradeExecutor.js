@@ -106,7 +106,9 @@ class TradeExecutor {
     this.minExhShortScore = config.minExhShortScore ?? 40;
     this.maxNearHigh = config.maxNearHigh ?? 10;
     this.minLongRsi = config.minLongRsi ?? 35;
+    this.maxLongRsi = config.maxLongRsi ?? 0;
     this.maxLongNearHigh = config.maxLongNearHigh ?? 15;
+    this.maxLongPriceChange = config.maxLongPriceChange ?? 0;
 
     // OI gate: minimum OI% for long entries and direction scoring
     this.minOiLong = config.minOiLong ?? 10;
@@ -588,7 +590,9 @@ class TradeExecutor {
       minExhShortScore: this.minExhShortScore,
       maxNearHigh: this.maxNearHigh,
       minLongRsi: this.minLongRsi,
+      maxLongRsi: this.maxLongRsi,
       maxLongNearHigh: this.maxLongNearHigh,
+      maxLongPriceChange: this.maxLongPriceChange,
       riskFitSizing: this.riskFitSizing,
       confidenceScaling: this.confidenceScaling,
       lossBufferPct: this.lossBufferPct,
@@ -654,7 +658,9 @@ class TradeExecutor {
     if (cfg.minExhShortScore != null) this.minExhShortScore = cfg.minExhShortScore;
     if (cfg.maxNearHigh != null) this.maxNearHigh = cfg.maxNearHigh;
     if (cfg.minLongRsi != null) this.minLongRsi = cfg.minLongRsi;
+    if (cfg.maxLongRsi != null) this.maxLongRsi = cfg.maxLongRsi;
     if (cfg.maxLongNearHigh != null) this.maxLongNearHigh = cfg.maxLongNearHigh;
+    if (cfg.maxLongPriceChange != null) this.maxLongPriceChange = cfg.maxLongPriceChange;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
     if (cfg.confidenceScaling != null) this.confidenceScaling = cfg.confidenceScaling;
     if (cfg.lossBufferPct != null) this.lossBufferPct = cfg.lossBufferPct;
