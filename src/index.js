@@ -788,7 +788,7 @@ async function main() {
       if (hotTokens.length > 0) {
         for (const token of hotTokens) {
           try {
-            token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS, exhaustionFilter: onchainTradeExecutor.exhaustionFilter, minOiLong: onchainTradeExecutor.minOiLong, minExhScore: onchainTradeExecutor.minExhScore, minExhRsi: onchainTradeExecutor.minExhRsi, maxNearHigh: onchainTradeExecutor.maxNearHigh, minLongRsi: onchainTradeExecutor.minLongRsi, maxLongRsi: onchainTradeExecutor.maxLongRsi, maxLongNearHigh: onchainTradeExecutor.maxLongNearHigh, maxLongPriceChange: onchainTradeExecutor.maxLongPriceChange });
+            token._tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'ONCHAIN_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS, exhaustionFilter: onchainTradeExecutor.exhaustionFilter, minOiLong: onchainTradeExecutor.minOiLong, minExhScore: onchainTradeExecutor.minExhScore, minExhRsi: onchainTradeExecutor.minExhRsi, maxNearHigh: onchainTradeExecutor.maxNearHigh, minLongRsi: onchainTradeExecutor.minLongRsi, maxLongRsi: onchainTradeExecutor.maxLongRsi, maxLongNearHigh: onchainTradeExecutor.maxLongNearHigh, maxLongPriceChange: onchainTradeExecutor.maxLongPriceChange, crowdedFlip: onchainTradeExecutor.crowdedFlip });
           } catch (e) {
             token._setupError = e.message;
           }
@@ -1258,7 +1258,7 @@ async function main() {
         for (const token of significant) {
           try {
             if (token.flow && !token.exchangeFlow) token.exchangeFlow = token.flow;
-            token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS, exhaustionFilter: onchainTradeExecutor.exhaustionFilter, minOiLong: onchainTradeExecutor.minOiLong, minExhScore: onchainTradeExecutor.minExhScore, minExhRsi: onchainTradeExecutor.minExhRsi, maxNearHigh: onchainTradeExecutor.maxNearHigh, minLongRsi: onchainTradeExecutor.minLongRsi, maxLongRsi: onchainTradeExecutor.maxLongRsi, maxLongNearHigh: onchainTradeExecutor.maxLongNearHigh, maxLongPriceChange: onchainTradeExecutor.maxLongPriceChange });
+            token.tradeSetup = await onchainScanner.buildTradeSetup(token, listingMonitor.exchanges, 'FLOW_SETUP', { volatilityFilter: onchainTradeExecutor.volatilityFilter, max4hRange: onchainTradeExecutor.max4hRange, minTopLS: onchainTradeExecutor.minTopLS, exhaustionFilter: onchainTradeExecutor.exhaustionFilter, minOiLong: onchainTradeExecutor.minOiLong, minExhScore: onchainTradeExecutor.minExhScore, minExhRsi: onchainTradeExecutor.minExhRsi, maxNearHigh: onchainTradeExecutor.maxNearHigh, minLongRsi: onchainTradeExecutor.minLongRsi, maxLongRsi: onchainTradeExecutor.maxLongRsi, maxLongNearHigh: onchainTradeExecutor.maxLongNearHigh, maxLongPriceChange: onchainTradeExecutor.maxLongPriceChange, crowdedFlip: onchainTradeExecutor.crowdedFlip });
           } catch (e) { /* skip */ }
         }
         // Attach prior alert tracking for inline PnL on flow alerts

@@ -110,6 +110,9 @@ class TradeExecutor {
     this.maxLongNearHigh = config.maxLongNearHigh ?? 15;
     this.maxLongPriceChange = config.maxLongPriceChange ?? 0;
 
+    // OI crowded flip: flip long to short when OI > 60% and funding positive
+    this.crowdedFlip = config.crowdedFlip !== false;
+
     // Direction toggles: disable longs or shorts entirely
     this.allowLong = config.allowLong !== false;
     this.allowShort = config.allowShort !== false;
@@ -604,6 +607,7 @@ class TradeExecutor {
       maxLongRsi: this.maxLongRsi,
       maxLongNearHigh: this.maxLongNearHigh,
       maxLongPriceChange: this.maxLongPriceChange,
+      crowdedFlip: this.crowdedFlip,
       allowLong: this.allowLong,
       allowShort: this.allowShort,
       riskFitSizing: this.riskFitSizing,
@@ -674,6 +678,7 @@ class TradeExecutor {
     if (cfg.maxLongRsi != null) this.maxLongRsi = cfg.maxLongRsi;
     if (cfg.maxLongNearHigh != null) this.maxLongNearHigh = cfg.maxLongNearHigh;
     if (cfg.maxLongPriceChange != null) this.maxLongPriceChange = cfg.maxLongPriceChange;
+    if (cfg.crowdedFlip != null) this.crowdedFlip = cfg.crowdedFlip;
     if (cfg.allowLong != null) this.allowLong = cfg.allowLong;
     if (cfg.allowShort != null) this.allowShort = cfg.allowShort;
     if (cfg.riskFitSizing != null) this.riskFitSizing = cfg.riskFitSizing;
