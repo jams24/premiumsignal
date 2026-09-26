@@ -1069,15 +1069,12 @@ class OnchainScanner {
         logger.info(`${token.symbol}: Exhaustion score ${snap.exhaustionScore} but BLOCKED — ${reason}`);
       }
 
-      // OI crowded override: flip long to short when OI > 60% AND funding positive (longs actually crowded)
+      // OI crowded override: flip long to short when OI > 60% (backup for exhaustion when nearHigh gate blocks)
       const crowdedFlipEnabled = opts.crowdedFlip !== false;
-      const fundingPositive = (token.fundingRate ?? 0) > 0;
-      const isCrowdedFlip = crowdedFlipEnabled && !isExhaustion && snap.direction === 'long' && (token.oiChange4h ?? 0) > 60 && fundingPositive;
+      const isCrowdedFlip = crowdedFlipEnabled && !isExhaustion && snap.direction === 'long' && (token.oiChange4h ?? 0) > 60;
       if (isCrowdedFlip) {
-        logger.info(`${token.symbol}: OI CROWDED ${(token.oiChange4h ?? 0).toFixed(1)}% + funding +${((token.fundingRate ?? 0) * 100).toFixed(3)}% — flipping LONG to SHORT`);
+        logger.info(`${token.symbol}: OI CROWDED ${(token.oiChange4h ?? 0).toFixed(1)}% — flipping LONG to SHORT (funding ${((token.fundingRate ?? 0) * 100).toFixed(3)}%)`);
         snap.direction = 'short';
-      } else if (crowdedFlipEnabled && !isExhaustion && snap.direction === 'long' && (token.oiChange4h ?? 0) > 60 && !fundingPositive) {
-        logger.info(`${token.symbol}: OI CROWDED ${(token.oiChange4h ?? 0).toFixed(1)}% but funding negative (shorts crowded, not longs) — keeping LONG`);
       }
 
       // OI too low: block longs when OI < gate (no momentum confirmation)

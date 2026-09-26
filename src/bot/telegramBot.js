@@ -2452,7 +2452,7 @@ class TelegramBot {
         `📊 Max Pump: <b>${te.maxLongPriceChange > 0 ? te.maxLongPriceChange + '%' : 'OFF'}</b>${te.maxLongPriceChange > 0 ? ' (blocks longs on tokens already pumped this much)' : ' (no pump chase filter)'}\n` +
         `📉 Trend Filter: <b>${te.trendFilter ? 'ON' : 'OFF'}</b>${te.trendFilter ? ' (blocks longs in 1H downtrends — lower highs/lows)' : ' (no trend structure check)'}\n` +
         `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI&gt;${te.minExhRsi ?? 80}, score≥${te.minExhShortScore ?? 40}, top&lt;${te.maxNearHigh ?? 10}%)` : ' (no pump exhaustion shorts)'}\n` +
-        `🔄 OI Crowded Flip: <b>${te.crowdedFlip !== false ? 'ON' : 'OFF'}</b>${te.crowdedFlip !== false ? ' (flips long→short when OI&gt;60% + funding positive)' : ' (no OI crowd flip)'}\n` +
+        `🔄 OI Crowded Flip: <b>${te.crowdedFlip !== false ? 'ON' : 'OFF'}</b>${te.crowdedFlip !== false ? ' (flips long→short when OI&gt;60%)' : ' (no OI crowd flip)'}\n` +
         `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
@@ -3143,7 +3143,7 @@ class TelegramBot {
         const te = octe();
         te.crowdedFlip = te.crowdedFlip === false ? true : false;
         te.saveConfig();
-        await ctx.answerCbQuery(te.crowdedFlip ? 'OI Crowded Flip ON — flips long→short when OI>60% + funding positive' : 'OI Crowded Flip OFF');
+        await ctx.answerCbQuery(te.crowdedFlip ? 'OI Crowded Flip ON — flips long→short when OI>60%' : 'OI Crowded Flip OFF');
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_cfg_crowdedflip error: ${e.message}`); }
     });
