@@ -328,6 +328,8 @@ class LiquidationScanner {
 
     if (fundingRate > 0.001) { exhaustionScore += 2; exhaustionSignals.push('funding crowded'); }
     else if (fundingRate > 0.0003) { exhaustionScore += 1; }
+    else if (fundingRate < -0.003) { exhaustionScore -= 2; exhaustionSignals.push('shorts crowded (squeeze fuel)'); }
+    else if (fundingRate < -0.001) { exhaustionScore -= 1; exhaustionSignals.push('shorts paying'); }
 
     const rsi5m = tokenData.rsi5m || 0;
     const minExhRsi = opts.minExhRsi ?? 80;
