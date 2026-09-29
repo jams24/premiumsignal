@@ -730,7 +730,6 @@ class OnchainScanner {
     const risk = Math.abs(entryPrice - sl);
     const tp1 = entryPrice + mult * risk * 1.5;
     const tp2 = entryPrice + mult * risk * 3;
-    const tp3 = entryPrice + mult * risk * 5;
     const rr = 1.5;
 
     const confidence = token.score >= 55 ? 5 : token.score >= 40 ? 4 : 3;
@@ -738,7 +737,7 @@ class OnchainScanner {
     return {
       type: 'DEMAND_ZONE_SETUP', symbol: token.symbol, exchange: exchangeId, pair, direction,
       currentPrice: entryPrice, entryLow: zone.zoneLow, entryHigh: zone.zoneHigh,
-      tp1, tp2, tp3, stopLoss: sl, atr, confidence,
+      tp1, tp2, tp3: null, stopLoss: sl, atr, confidence,
       rr: parseFloat(rr.toFixed(1)),
       catalyst: `DEMAND_ZONE: ${token.signals.slice(0, 3).join(', ')}`,
       suggestedLeverage: null,
@@ -797,7 +796,8 @@ class OnchainScanner {
         msg += `   🎯 <b>${dir}</b> R:R ${s.rr}:1\n`;
         msg += `   Entry: ${fmt(s.entryLow)} — ${fmt(s.entryHigh)}\n`;
         msg += `   SL: ${fmt(s.stopLoss)} (${slPct}% — below zone structure)\n`;
-        msg += `   TP1: ${fmt(s.tp1)} | TP2: ${fmt(s.tp2)} | TP3: ${fmt(s.tp3)}\n`;
+        msg += s.tp3 ? `   TP1: ${fmt(s.tp1)} | TP2: ${fmt(s.tp2)} | TP3: ${fmt(s.tp3)}\n`
+                     : `   TP1: ${fmt(s.tp1)} | TP2: ${fmt(s.tp2)}\n`;
       }
 
       if (r.oiChange4h) msg += `   📈 OI ${r.oiChange4h > 0 ? '+' : ''}${r.oiChange4h.toFixed(1)}% 4h\n`;
@@ -1435,7 +1435,7 @@ class OnchainScanner {
     msg += `   Entry: ${fmt(setup.currentPrice)}\n`;
     msg += `   📈 TP1: ${fmt(setup.tp1)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp1)}%)\n`;
     msg += `   📈 TP2: ${fmt(setup.tp2)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp2)}%)\n`;
-    msg += `   📈 TP3: ${fmt(setup.tp3)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp3)}%)\n`;
+    if (setup.tp3) msg += `   📈 TP3: ${fmt(setup.tp3)} (${setup.direction === 'long' ? '+' : ''}${pct(setup.currentPrice, setup.tp3)}%)\n`;
     msg += `   🛑 SL: ${fmt(setup.stopLoss)} (${pct(setup.currentPrice, setup.stopLoss)}%)\n`;
     return msg;
   }
