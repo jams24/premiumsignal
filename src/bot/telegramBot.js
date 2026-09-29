@@ -2791,7 +2791,8 @@ class TelegramBot {
              Markup.button.callback(`45+${ocCheck(45, cur)}`, 'oc_minscore_45'),
              Markup.button.callback(`50+${ocCheck(50, cur)}`, 'oc_minscore_50')],
             [Markup.button.callback(`55+${ocCheck(55, cur)}`, 'oc_minscore_55'),
-             Markup.button.callback(`60+${ocCheck(60, cur)}`, 'oc_minscore_60')],
+             Markup.button.callback(`60+${ocCheck(60, cur)}`, 'oc_minscore_60'),
+             Markup.button.callback(`65+${ocCheck(65, cur)}`, 'oc_minscore_65')],
             [Markup.button.callback(`--- LONG MAX ---`, 'noop')],
             [Markup.button.callback(`59${ocCheck(59, maxCur)}`, 'oc_maxscore_59'),
              Markup.button.callback(`69${ocCheck(69, maxCur)}`, 'oc_maxscore_69'),
@@ -2803,12 +2804,15 @@ class TelegramBot {
              Markup.button.callback(`45+${ocCheck(45, shortMin)}`, 'oc_shortmin_45')],
             [Markup.button.callback(`50+${ocCheck(50, shortMin)}`, 'oc_shortmin_50'),
              Markup.button.callback(`55+${ocCheck(55, shortMin)}`, 'oc_shortmin_55'),
-             Markup.button.callback(`60+${ocCheck(60, shortMin)}`, 'oc_shortmin_60')],
+             Markup.button.callback(`60+${ocCheck(60, shortMin)}`, 'oc_shortmin_60'),
+             Markup.button.callback(`65+${ocCheck(65, shortMin)}`, 'oc_shortmin_65')],
             [Markup.button.callback(`--- FLIP MIN ---`, 'noop')],
-            [Markup.button.callback(`45+${ocCheck(45, flipMin)}`, 'oc_flipscore_45'),
-             Markup.button.callback(`55+${ocCheck(55, flipMin)}`, 'oc_flipscore_55'),
-             Markup.button.callback(`60+${ocCheck(60, flipMin)}`, 'oc_flipscore_60'),
+            [Markup.button.callback(`55+${ocCheck(55, flipMin)}`, 'oc_flipscore_55'),
+             Markup.button.callback(`65+${ocCheck(65, flipMin)}`, 'oc_flipscore_65'),
              Markup.button.callback(`70+${ocCheck(70, flipMin)}`, 'oc_flipscore_70')],
+            [Markup.button.callback(`75+${ocCheck(75, flipMin)}`, 'oc_flipscore_75'),
+             Markup.button.callback(`80+${ocCheck(80, flipMin)}`, 'oc_flipscore_80'),
+             Markup.button.callback(`85+${ocCheck(85, flipMin)}`, 'oc_flipscore_85')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
@@ -2829,7 +2833,7 @@ class TelegramBot {
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_score_best error: ${e.message}`); }
     });
-    for (const score of [30, 35, 40, 42, 45, 50, 55, 60]) {
+    for (const score of [30, 35, 40, 42, 45, 50, 55, 60, 65]) {
       this.bot.action(`oc_minscore_${score}`, async (ctx) => {
         try {
           const te = octe();
@@ -2852,7 +2856,7 @@ class TelegramBot {
         } catch (e) { logger.error(`oc_maxscore error: ${e.message}`); }
       });
     }
-    for (const score of [35, 40, 45, 50, 55, 60]) {
+    for (const score of [35, 40, 45, 50, 55, 60, 65]) {
       this.bot.action(`oc_shortmin_${score}`, async (ctx) => {
         try {
           const te = octe();
@@ -2863,7 +2867,7 @@ class TelegramBot {
         } catch (e) { logger.error(`oc_shortmin error: ${e.message}`); }
       });
     }
-    for (const score of [45, 55, 60, 70]) {
+    for (const score of [55, 65, 70, 75, 80, 85]) {
       this.bot.action(`oc_flipscore_${score}`, async (ctx) => {
         try {
           const te = octe();
@@ -3250,14 +3254,15 @@ class TelegramBot {
             [Markup.button.callback(`45${cur === 45 ? ' ✓' : ''}`, 'oc_exhss_45'),
              Markup.button.callback(`50${cur === 50 ? ' ✓' : ''}`, 'oc_exhss_50'),
              Markup.button.callback(`55${cur === 55 ? ' ✓' : ''}`, 'oc_exhss_55')],
-            [Markup.button.callback(`60${cur === 60 ? ' ✓' : ''}`, 'oc_exhss_60')],
+            [Markup.button.callback(`60${cur === 60 ? ' ✓' : ''}`, 'oc_exhss_60'),
+             Markup.button.callback(`65${cur === 65 ? ' ✓' : ''}`, 'oc_exhss_65')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
       } catch (e) { logger.error(`oc_cfg_exhaust_short error: ${e.message}`); }
     });
 
-    for (const v of [30, 35, 40, 45, 50, 55, 60]) {
+    for (const v of [30, 35, 40, 45, 50, 55, 60, 65]) {
       this.bot.action(`oc_exhss_${v}`, async (ctx) => {
         try {
           const te = octe();
