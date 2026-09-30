@@ -2454,6 +2454,8 @@ class TelegramBot {
         `🔥 Exhaustion: <b>${te.exhaustionFilter ? 'ON' : 'OFF'}</b>${te.exhaustionFilter ? ` (detect≥${te.minExhScore ?? 5}, RSI&gt;${te.minExhRsi ?? 80}, score≥${te.minExhShortScore ?? 40}, top&lt;${te.maxNearHigh ?? 10}%)` : ' (no pump exhaustion shorts)'}\n` +
         `🔄 OI Crowded Flip: <b>${te.crowdedFlip !== false ? 'ON' : 'OFF'}</b>${te.crowdedFlip !== false ? ' (flips long→short when OI&gt;60% + funding positive)' : ' (no OI crowd flip)'}\n` +
         `🚫 Symbol Cap: <b>${te.maxDailyLossPerSymbol > 0 ? '$' + te.maxDailyLossPerSymbol : 'OFF'}</b>${te.maxDailyLossPerSymbol > 0 ? ' (per-symbol daily loss limit, resets midnight UTC)' : ''}\n` +
+        `⏱️ Hard Cooldown: <b>${te.minCooldownMinutes > 0 ? te.minCooldownMinutes + ' min' : 'OFF'}</b>${te.minCooldownMinutes > 0 ? ' (no bypass — blocks ALL re-entries on same symbol)' : ''}\n` +
+        `💰 Long Funding Gate: <b>${te.maxLongFunding < 0 ? (te.maxLongFunding * 100).toFixed(2) + '%' : 'OFF'}</b>${te.maxLongFunding < 0 ? ' (blocks longs when shorts crowded)' : ''}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')} UTC`).join(', ') : '24/7'}</b>\n` +
         `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
         `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
@@ -2497,7 +2499,9 @@ class TelegramBot {
          Markup.button.callback(`🔥 RSI: ${te.minExhRsi ?? 80}`, 'oc_cfg_exhaust_rsi')],
         [Markup.button.callback(`🔥 S:${te.minExhShortScore ?? 40}+`, 'oc_cfg_exhaust_short'),
          Markup.button.callback(`🔥 Top: ${te.maxNearHigh ?? 10}%`, 'oc_cfg_nearhigh')],
-        [Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap')],
+        [Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap'),
+         Markup.button.callback(`⏱️ HardCD: ${te.minCooldownMinutes > 0 ? te.minCooldownMinutes + 'm' : 'OFF'}`, 'oc_cfg_hardcd')],
+        [Markup.button.callback(`💰 FundGate: ${te.maxLongFunding < 0 ? (te.maxLongFunding * 100).toFixed(2) + '%' : 'OFF'}`, 'oc_cfg_fundgate')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
@@ -3453,6 +3457,78 @@ class TelegramBot {
           await ctx.answerCbQuery(val === 0 ? 'Per-symbol daily cap OFF' : `Per-symbol daily cap set to $${val}`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_symcap_${val} error: ${e.message}`); }
+      });
+    }
+
+    // ── HARD COOLDOWN ──
+    this.bot.action('oc_cfg_hardcd', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.minCooldownMinutes ?? 0;
+        await ctx.editMessageText(
+          `⏱️ <b>HARD COOLDOWN (minutes)</b>\n\n` +
+          `Current: <b>${cur > 0 ? cur + ' min' : 'OFF'}</b>\n\n` +
+          `Minimum time between trades on the same symbol.\n` +
+          `<b>Cannot be bypassed</b> — no flip, no reversal, no high score overrides.\n` +
+          `Prevents whipsaw re-entries like NMR 5x in 2 hours.`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_hardcd_0'),
+             Markup.button.callback(`15m${cur === 15 ? ' ✓' : ''}`, 'oc_hardcd_15'),
+             Markup.button.callback(`30m${cur === 30 ? ' ✓' : ''}`, 'oc_hardcd_30')],
+            [Markup.button.callback(`45m${cur === 45 ? ' ✓' : ''}`, 'oc_hardcd_45'),
+             Markup.button.callback(`60m${cur === 60 ? ' ✓' : ''}`, 'oc_hardcd_60'),
+             Markup.button.callback(`90m${cur === 90 ? ' ✓' : ''}`, 'oc_hardcd_90')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_hardcd error: ${e.message}`); }
+    });
+    for (const val of [0, 15, 30, 45, 60, 90]) {
+      this.bot.action(`oc_hardcd_${val}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.minCooldownMinutes = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(val === 0 ? 'Hard cooldown OFF' : `Hard cooldown set to ${val} min`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_hardcd_${val} error: ${e.message}`); }
+      });
+    }
+
+    // ── FUNDING GATE (block longs when funding deeply negative) ──
+    this.bot.action('oc_cfg_fundgate', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const cur = te.maxLongFunding ?? 0;
+        await ctx.editMessageText(
+          `💰 <b>LONG FUNDING GATE</b>\n\n` +
+          `Current: <b>${cur < 0 ? (cur * 100).toFixed(2) + '%' : 'OFF'}</b>\n\n` +
+          `Blocks LONG entries when funding rate is below this threshold.\n` +
+          `Deeply negative funding = shorts are crowded = squeeze risk for longs.\n\n` +
+          `Example: -0.05% blocks longs when funding < -0.05%`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_fundgate_0'),
+             Markup.button.callback(`-0.03%${cur === -0.0003 ? ' ✓' : ''}`, 'oc_fundgate_3')],
+            [Markup.button.callback(`-0.05%${cur === -0.0005 ? ' ✓' : ''}`, 'oc_fundgate_5'),
+             Markup.button.callback(`-0.10%${cur === -0.001 ? ' ✓' : ''}`, 'oc_fundgate_10')],
+            [Markup.button.callback(`-0.15%${cur === -0.0015 ? ' ✓' : ''}`, 'oc_fundgate_15'),
+             Markup.button.callback(`-0.20%${cur === -0.002 ? ' ✓' : ''}`, 'oc_fundgate_20')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_fundgate error: ${e.message}`); }
+    });
+    for (const [label, val] of [[0, 0], [3, -0.0003], [5, -0.0005], [10, -0.001], [15, -0.0015], [20, -0.002]]) {
+      this.bot.action(`oc_fundgate_${label}`, async (ctx) => {
+        try {
+          const te = octe();
+          te.maxLongFunding = val;
+          te.saveConfig();
+          await ctx.answerCbQuery(val === 0 ? 'Funding gate OFF' : `Long funding gate: ${(val * 100).toFixed(2)}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_fundgate_${label} error: ${e.message}`); }
       });
     }
 

@@ -136,6 +136,9 @@ class TradeExecutor {
     // Resets at midnight UTC. 0 = disabled.
     this.maxDailyLossPerSymbol = config.maxDailyLossPerSymbol ?? this.maxLossPerTrade;
 
+    this.minCooldownMinutes = config.minCooldownMinutes ?? 0;
+    this.maxLongFunding = config.maxLongFunding ?? 0;
+
     // Trading schedule: array of [startHour, endHour] UTC ranges when trading is allowed
     // Empty = 24/7 (no restriction). Example: [[8,12],[13,20]] = trade 08-12 and 13-20 UTC only
     this.tradingHours = config.tradingHours || [];
@@ -252,6 +255,12 @@ class TradeExecutor {
     // Re-entry rules: allow if price near original entry (fresh thesis at similar level)
     // Block if chasing (price drifted >10% in trade direction from last entry)
     const cooldownData = this.cooldowns.get(signal.symbol?.toUpperCase());
+    if (this.minCooldownMinutes > 0 && cooldownData?.closedAt) {
+      const minsSinceClose = (Date.now() - cooldownData.closedAt) / 60000;
+      if (minsSinceClose < this.minCooldownMinutes) {
+        return { ok: false, reason: `${signal.symbol} blocked — hard cooldown (${minsSinceClose.toFixed(0)}m < ${this.minCooldownMinutes}m min)` };
+      }
+    }
     if (cooldownData && Date.now() < cooldownData.until) {
       const minsLeft = Math.ceil((cooldownData.until - Date.now()) / 60000);
       const isFlip = cooldownData.lastDir && cooldownData.lastDir !== signal.direction;
@@ -328,6 +337,13 @@ class TradeExecutor {
           return { ok: false, reason: `${signal.symbol} blocked — daily symbol loss $${netPnl} exceeds -$${this.maxDailyLossPerSymbol} limit (${rows[0].cnt} trades today)` };
         }
       } catch (e) { /* DB error, skip check */ }
+    }
+
+    if (this.maxLongFunding < 0 && signal.direction === 'long') {
+      const funding = signal.onchainContext?.fundingRate ?? 0;
+      if (funding < this.maxLongFunding) {
+        return { ok: false, reason: `${signal.symbol} LONG blocked — funding ${(funding * 100).toFixed(3)}% < ${(this.maxLongFunding * 100).toFixed(3)}% (shorts crowded, squeeze risk)` };
+      }
     }
 
     const openPositions = await db.getOpenTrades(this.settingsKey);
@@ -621,6 +637,8 @@ class TradeExecutor {
       minTopLS: this.minTopLS,
       maxDailyLossPerSymbol: this.maxDailyLossPerSymbol,
       minOiLong: this.minOiLong,
+      minCooldownMinutes: this.minCooldownMinutes,
+      maxLongFunding: this.maxLongFunding,
     };
   }
 
@@ -692,6 +710,8 @@ class TradeExecutor {
     if (cfg.minTopLS != null) this.minTopLS = cfg.minTopLS;
     if (cfg.maxDailyLossPerSymbol != null) this.maxDailyLossPerSymbol = cfg.maxDailyLossPerSymbol;
     if (cfg.minOiLong != null) this.minOiLong = cfg.minOiLong;
+    if (cfg.minCooldownMinutes != null) this.minCooldownMinutes = cfg.minCooldownMinutes;
+    if (cfg.maxLongFunding != null) this.maxLongFunding = cfg.maxLongFunding;
   }
 
   async getCircuitBreakerStatus() {
