@@ -3507,7 +3507,7 @@ class TelegramBot {
           `Current: <b>${cur < 0 ? (cur * 100).toFixed(2) + '%' : 'OFF'}</b>\n\n` +
           `Blocks LONG entries when funding rate is below this threshold.\n` +
           `Deeply negative funding = shorts are crowded = squeeze risk for longs.\n\n` +
-          `Example: -0.05% blocks longs when funding < -0.05%`,
+          `Example: -0.05% blocks longs when funding is below -0.05%`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(`OFF${cur === 0 ? ' ✓' : ''}`, 'oc_fundgate_0'),
              Markup.button.callback(`-0.03%${cur === -0.0003 ? ' ✓' : ''}`, 'oc_fundgate_3')],
