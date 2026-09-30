@@ -3499,7 +3499,7 @@ class TelegramBot {
     // ── FUNDING GATE (block longs when funding deeply negative) ──
     this.bot.action('oc_cfg_fundgate', async (ctx) => {
       try {
-        await ctx.answerCbQuery();
+        try { await ctx.answerCbQuery(); } catch (e) {}
         const te = octe();
         const cur = te.maxLongFunding ?? 0;
         await ctx.editMessageText(
@@ -3518,7 +3518,7 @@ class TelegramBot {
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
         );
-      } catch (e) { logger.error(`oc_cfg_fundgate error: ${e.message}`); }
+      } catch (e) { logger.error(`oc_cfg_fundgate error: ${e.stack || e.message}`); }
     });
     for (const [label, val] of [[0, 0], [3, -0.0003], [5, -0.0005], [10, -0.001], [15, -0.0015], [20, -0.002]]) {
       this.bot.action(`oc_fundgate_${label}`, async (ctx) => {
