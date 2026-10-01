@@ -907,9 +907,21 @@ async function main() {
 
         // Spot signals: first long per coin after midnight UTC, 06-17 UTC, ANY score
         for (const token of results) {
-          const dir = token._tradeSetup?.direction || (token.fundingBias === 'bullish' || token.priceChange > 0 ? 'long' : 'short');
+          const setup = token._tradeSetup;
+          const dir = setup?.direction || (token.fundingBias === 'bullish' || token.priceChange > 0 ? 'long' : 'short');
           if (isSpotEligible(token.symbol, dir)) {
-            bot.sendSpotSignal(token, token._tradeSetup || { direction: dir }).catch(e => logger.debug(`Spot signal failed: ${e.message}`));
+            bot.sendSpotSignal(token, setup || { direction: dir }).catch(e => logger.debug(`Spot signal failed: ${e.message}`));
+            db.logSpotSignal(token.symbol, {
+              direction: dir, score: token.score, price: token.price,
+              tp1: setup?.tp1, tp2: setup?.tp2, stopLoss: setup?.stopLoss,
+              confluence: {
+                oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h,
+                fundingRate: token.fundingRate, fundingBias: token.fundingBias,
+                priceChange: token.priceChange, volume: token.volume,
+                signals: token.signals, exchange: token.exchange,
+                lsData: token.lsData || null,
+              },
+            }).catch(e => logger.debug(`Spot log failed: ${e.message}`));
           }
         }
 
@@ -1734,6 +1746,28 @@ async function main() {
       logger.info(`Skip outcomes checked: ${skips.length} entries`);
     } catch (err) {
       logger.debug(`Skip outcome check error: ${err.message}`);
+    }
+  });
+
+  // Spot signal price tracker — fill in 1h/4h/12h/24h prices
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const pending = await db.getUnfilledSpotSignals();
+      if (!pending.length) return;
+      const exchange = Object.values(listingMonitor.exchanges).find(e => e.id === 'binance') || Object.values(listingMonitor.exchanges)[0];
+      if (!exchange) return;
+      for (const sig of pending) {
+        try {
+          const h = parseFloat(sig.hours_ago);
+          if (h < 1) continue;
+          const ticker = await exchange.fetchTicker(`${sig.symbol}/USDT:USDT`);
+          if (!ticker?.last) continue;
+          await db.updateSpotPrice(sig.id, h, ticker.last, sig.price, sig.direction);
+        } catch (e) { /* skip individual */ }
+      }
+      logger.info(`Spot price tracker: checked ${pending.length} signals`);
+    } catch (err) {
+      logger.debug(`Spot price tracker error: ${err.message}`);
     }
   });
 
