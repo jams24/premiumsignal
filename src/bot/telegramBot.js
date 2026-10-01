@@ -16,6 +16,7 @@ class TelegramBot {
       logger.error(`Telegraf error: ${msg}`);
     });
     this.channelId = config.telegram.channelId;
+    this.spotChannelId = config.telegram.spotChannelId;
     this.technicalScanner = technicalScanner;
     this.socialScanner = socialScanner;
     this.onchainTracker = onchainTracker;
@@ -7285,6 +7286,36 @@ class TelegramBot {
       });
     } catch (err) {
       logger.error(`Failed to send photo: ${err.message}`);
+    }
+  }
+
+  async sendSpotSignal(token, setup) {
+    if (!this.spotChannelId) return;
+    try {
+      const dir = setup.direction || 'long';
+      const dirEmoji = dir === 'long' ? '🟢' : '🔴';
+      const price = token.price;
+      const score = token.score;
+      const signals = (token.signals || []).slice(0, 4).map(s => `  • ${s}`).join('\n');
+      const tracking = token._alertTracking;
+      const isFirst = !tracking || tracking.alertCount <= 1;
+
+      let msg = `${dirEmoji} <b>SPOT SIGNAL — ${token.symbol}</b>\n\n`;
+      msg += `💰 Price: <b>$${price}</b>\n`;
+      msg += `📊 Score: <b>${score}/100</b>\n`;
+      msg += `📈 Direction: <b>${dir.toUpperCase()}</b>\n`;
+      if (setup.tp1) msg += `🎯 TP1: $${parseFloat(setup.tp1).toPrecision(6)}\n`;
+      if (setup.tp2) msg += `🎯 TP2: $${parseFloat(setup.tp2).toPrecision(6)}\n`;
+      if (setup.stopLoss) msg += `🛑 SL: $${parseFloat(setup.stopLoss).toPrecision(6)}\n`;
+      msg += `\n📡 <b>Signals:</b>\n${signals}\n`;
+      if (token.exchange) msg += `\n📊 ${token.exchange.toUpperCase()}`;
+      if (isFirst) msg += `\n\n⚡ <i>First alert after daily reset — historically 73% accurate for longs</i>`;
+      msg += `\n\n<i>${new Date().toUTCString()}</i>`;
+
+      await this.bot.telegram.sendMessage(this.spotChannelId, msg, { parse_mode: 'HTML' });
+      logger.info(`Spot signal sent to channel: ${token.symbol} ${dir}`);
+    } catch (err) {
+      logger.error(`Failed to send spot signal: ${err.message}`);
     }
   }
 

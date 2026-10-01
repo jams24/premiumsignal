@@ -27,6 +27,24 @@ let exchangeRef = null;
 // Alert cooldown — skip duplicate symbol+direction within 30 min
 const alertCooldowns = new Map();
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+
+// Spot signal tracker — first long alert per coin after midnight UTC reset
+const spotAlertsSent = new Map(); // symbol → date string (YYYY-MM-DD)
+let spotResetDate = '';
+function isSpotEligible(symbol, direction) {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const today = now.toISOString().slice(0, 10);
+  if (today !== spotResetDate) {
+    spotAlertsSent.clear();
+    spotResetDate = today;
+  }
+  if (direction !== 'long') return false;
+  if (utcHour < 6 || utcHour >= 17) return false;
+  if (spotAlertsSent.has(symbol)) return false;
+  spotAlertsSent.set(symbol, today);
+  return true;
+}
 function shouldLogAlert(type, symbol, direction) {
   const key = `${type}:${symbol}:${direction}`;
   const last = alertCooldowns.get(key);
@@ -885,6 +903,12 @@ async function main() {
             stopLoss: setup?.stopLoss, atr: setup?.atr,
             confidence: setup?.confidence,
           }, `ONCHAIN ${setup?.direction || dir} ${token.symbol} score=${token.score}`).catch(() => {});
+
+          // Spot signal: first long alert per coin after midnight UTC, 06-17 UTC window
+          const spotDir = setup?.direction || dir;
+          if (setup && isSpotEligible(token.symbol, spotDir)) {
+            bot.sendSpotSignal(token, setup).catch(e => logger.debug(`Spot signal failed: ${e.message}`));
+          }
         }
 
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
