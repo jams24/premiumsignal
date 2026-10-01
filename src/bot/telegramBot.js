@@ -2474,6 +2474,7 @@ class TelegramBot {
          Markup.button.callback(`🔒 Trade: ${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}`, 'oc_cfg_tradeloss')],
         [Markup.button.callback(`🔰 Buffer: ${te.lossBufferPct}%`, 'oc_cfg_lossbuf'),
          Markup.button.callback(`🔄 BE: ${te.profitProtectLevPnl}%/${(te.trailGivebackPct * 100).toFixed(0)}%`, 'oc_cfg_be')],
+        [Markup.button.callback(`📈 BE Price: ${te.profitProtectPct}%`, 'oc_cfg_pppct')],
         [Markup.button.callback(`🎯 TP1: ${(te.tp1ClosePct * 100).toFixed(0)}%`, 'oc_cfg_tp1'),
          Markup.button.callback(`🎯 TP2: ${te.tp2ClosePct >= 1 ? 'ALL' : (te.tp2ClosePct * 100).toFixed(0) + '%'}`, 'oc_cfg_tp2')],
         [Markup.button.callback(`🚀 Entry: ${te.entryMode === 'hybrid' ? `HYBRID ${te.hybridThreshold}%` : te.entryMode === 'market' ? 'MARKET' : 'PULLBACK'}`, 'oc_cfg_entry'),
@@ -3702,6 +3703,39 @@ class TelegramBot {
           await ctx.answerCbQuery(`Trail giveback: ${Math.round(pct * 100)}%`);
           await showOcSettings(ctx);
         } catch (e) { logger.error(`oc_trail error: ${e.message}`); }
+      });
+    }
+
+    // ── PROFIT PROTECT PCT (price %) ──
+    this.bot.action('oc_cfg_pppct', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        await ctx.editMessageText(
+          `📈 <b>ONCHAIN — BE PRICE THRESHOLD</b>\n\n` +
+          `Current: <b>${te.profitProtectPct}%</b> price move\n` +
+          `At ${te.defaultLeverage}x leverage = <b>${(te.profitProtectPct * te.defaultLeverage).toFixed(1)}%</b> ROI\n\n` +
+          `<i>Minimum price move before SL trails to breakeven.\nToo low = chokes small winners. Too high = gives back profit.\nWorks with OR logic alongside BE ROI (${te.profitProtectLevPnl}%) — whichever hits first.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`1%${ocCheck(1, te.profitProtectPct)}`, 'oc_pppct_1'),
+             Markup.button.callback(`1.5%${ocCheck(1.5, te.profitProtectPct)}`, 'oc_pppct_1.5'),
+             Markup.button.callback(`2%${ocCheck(2, te.profitProtectPct)}`, 'oc_pppct_2')],
+            [Markup.button.callback(`2.5%${ocCheck(2.5, te.profitProtectPct)}`, 'oc_pppct_2.5'),
+             Markup.button.callback(`3%${ocCheck(3, te.profitProtectPct)}`, 'oc_pppct_3'),
+             Markup.button.callback(`4%${ocCheck(4, te.profitProtectPct)}`, 'oc_pppct_4')],
+            [Markup.button.callback(`5%${ocCheck(5, te.profitProtectPct)}`, 'oc_pppct_5')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_pppct error: ${e.message}`); }
+    });
+    for (const pct of [1, 1.5, 2, 2.5, 3, 4, 5]) {
+      this.bot.action(`oc_pppct_${pct}`, async (ctx) => {
+        try {
+          octe().profitProtectPct = pct; octe().saveConfig();
+          await ctx.answerCbQuery(`BE price threshold: ${pct}%`);
+          await showOcSettings(ctx);
+        } catch (e) { logger.error(`oc_pppct error: ${e.message}`); }
       });
     }
 
