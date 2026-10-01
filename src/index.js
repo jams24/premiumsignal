@@ -903,11 +903,13 @@ async function main() {
             stopLoss: setup?.stopLoss, atr: setup?.atr,
             confidence: setup?.confidence,
           }, `ONCHAIN ${setup?.direction || dir} ${token.symbol} score=${token.score}`).catch(() => {});
+        }
 
-          // Spot signal: first long alert per coin after midnight UTC, 06-17 UTC window
-          const spotDir = setup?.direction || dir;
-          if (setup && isSpotEligible(token.symbol, spotDir)) {
-            bot.sendSpotSignal(token, setup).catch(e => logger.debug(`Spot signal failed: ${e.message}`));
+        // Spot signals: first long per coin after midnight UTC, 06-17 UTC, ANY score
+        for (const token of results) {
+          const dir = token._tradeSetup?.direction || (token.fundingBias === 'bullish' || token.priceChange > 0 ? 'long' : 'short');
+          if (isSpotEligible(token.symbol, dir)) {
+            bot.sendSpotSignal(token, token._tradeSetup || { direction: dir }).catch(e => logger.debug(`Spot signal failed: ${e.message}`));
           }
         }
 
