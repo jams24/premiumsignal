@@ -29,21 +29,17 @@ const alertCooldowns = new Map();
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 
 // Spot signal tracker — first long alert per coin after midnight UTC reset
-const spotAlertsSent = new Map(); // symbol → date string (YYYY-MM-DD)
-let spotResetDate = '';
-function isSpotEligible(symbol, direction) {
+// Uses DB check instead of in-memory map to survive restarts/deploys
+async function isSpotEligible(symbol, direction) {
   const now = new Date();
   const utcHour = now.getUTCHours();
-  const today = now.toISOString().slice(0, 10);
-  if (today !== spotResetDate) {
-    spotAlertsSent.clear();
-    spotResetDate = today;
-  }
   if (direction !== 'long') return false;
   if (utcHour < 6 || utcHour >= 17) return false;
-  if (spotAlertsSent.has(symbol)) return false;
-  spotAlertsSent.set(symbol, today);
-  return true;
+  const { rows } = await db.query(
+    `SELECT 1 FROM spot_signals WHERE symbol = $1 AND created_at >= (NOW() AT TIME ZONE 'UTC')::date LIMIT 1`,
+    [symbol]
+  );
+  return rows.length === 0;
 }
 function shouldLogAlert(type, symbol, direction) {
   const key = `${type}:${symbol}:${direction}`;
@@ -909,7 +905,7 @@ async function main() {
         for (const token of results) {
           const setup = token._tradeSetup;
           const dir = setup?.direction || (token.fundingBias === 'bullish' || token.priceChange > 0 ? 'long' : 'short');
-          if (isSpotEligible(token.symbol, dir)) {
+          if (await isSpotEligible(token.symbol, dir)) {
             bot.sendSpotSignal(token, setup || { direction: dir }).catch(e => logger.debug(`Spot signal failed: ${e.message}`));
             db.logSpotSignal(token.symbol, {
               direction: dir, score: token.score, price: token.price,
