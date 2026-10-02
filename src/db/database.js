@@ -453,9 +453,9 @@ async function updateSpotPrice(id, hours, currentPrice, entryPrice, direction) {
     ? ((currentPrice - entryPrice) / entryPrice) * 100
     : ((entryPrice - currentPrice) / entryPrice) * 100;
   const col = hours <= 1.5 ? '1h' : hours <= 5 ? '4h' : hours <= 14 ? '12h' : '24h';
+  const outcomeClause = col === '24h' ? `, outcome = CASE WHEN $2 > 0 THEN 'win' ELSE 'loss' END` : '';
   await query(
-    `UPDATE spot_signals SET price_${col} = $1, pnl_${col} = $2,
-     outcome = CASE WHEN $2 > 0 THEN 'win' ELSE 'loss' END
+    `UPDATE spot_signals SET price_${col} = $1, pnl_${col} = $2${outcomeClause}
      WHERE id = $3`,
     [currentPrice, parseFloat(pnl.toFixed(2)), id]
   );

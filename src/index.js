@@ -1756,14 +1756,22 @@ async function main() {
       if (!pending.length) return;
       const exchange = Object.values(listingMonitor.exchanges).find(e => e.id === 'binance') || Object.values(listingMonitor.exchanges)[0];
       if (!exchange) return;
+      let filled = 0;
       for (const sig of pending) {
         try {
           const h = parseFloat(sig.hours_ago);
           if (h < 1) continue;
-          const ticker = await exchange.fetchTicker(`${sig.symbol}/USDT:USDT`);
+          let ticker = null;
+          for (const ex of Object.values(listingMonitor.exchanges)) {
+            try {
+              ticker = await ex.fetchTicker(`${sig.symbol}/USDT:USDT`);
+              if (ticker?.last) break;
+            } catch (_) { /* try next exchange */ }
+          }
           if (!ticker?.last) continue;
           await db.updateSpotPrice(sig.id, h, ticker.last, sig.price, sig.direction);
-        } catch (e) { /* skip individual */ }
+          filled++;
+        } catch (e) { logger.debug(`Spot price check failed ${sig.symbol}: ${e.message}`); }
       }
       logger.info(`Spot price tracker: checked ${pending.length} signals`);
     } catch (err) {
