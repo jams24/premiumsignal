@@ -2503,7 +2503,8 @@ class TelegramBot {
          Markup.button.callback(`🔥 Top: ${te.maxNearHigh ?? 10}%`, 'oc_cfg_nearhigh')],
         [Markup.button.callback(`🚫 SymCap: $${te.maxDailyLossPerSymbol || 'OFF'}`, 'oc_cfg_symcap'),
          Markup.button.callback(`⏱️ HardCD: ${te.minCooldownMinutes > 0 ? te.minCooldownMinutes + 'm' : 'OFF'}`, 'oc_cfg_hardcd')],
-        [Markup.button.callback(`💰 FundGate: ${te.maxLongFunding < 0 ? (te.maxLongFunding * 100).toFixed(2) + '%' : 'OFF'}`, 'oc_cfg_fundgate')],
+        [Markup.button.callback(`💰 FundGate: ${te.maxLongFunding < 0 ? (te.maxLongFunding * 100).toFixed(2) + '%' : 'OFF'}`, 'oc_cfg_fundgate'),
+         Markup.button.callback(`🧭 BiasAlign: ${te.biasAlignFilter ? 'ON' : 'OFF'}`, 'oc_cfg_biasalign')],
         [Markup.button.callback(`🕐 Hours: ${te.tradingHours?.length ? te.tradingHours.length + ' windows' : '24/7'}`, 'oc_cfg_hours')],
         [Markup.button.callback(cbBtnLabel, 'oc_cfg_cb')],
         [Markup.button.callback(`📋 Positions (${openTrades.length})`, 'oc_refresh'),
@@ -3534,6 +3535,41 @@ class TelegramBot {
       });
     }
 
+    // ── BIAS ALIGNMENT FILTER ──
+    this.bot.action('oc_cfg_biasalign', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = octe();
+        const on = te.biasAlignFilter;
+        await ctx.editMessageText(
+          `🧭 <b>ONCHAIN — BIAS ALIGNMENT FILTER</b>\n\n` +
+          `Current: <b>${on ? 'ON' : 'OFF'}</b>\n\n` +
+          `<i>Blocks longs when funding bias is bearish, and shorts when bias is bullish.\n` +
+          `Data shows 56% of max_loss blowups entered against funding bias.\n` +
+          `This filter would have prevented 15 of 27 worst trades.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`ON${on ? ' ✓' : ''}`, 'oc_biasalign_on'),
+             Markup.button.callback(`OFF${!on ? ' ✓' : ''}`, 'oc_biasalign_off')],
+            [Markup.button.callback('⬅️ Back', 'oc_settings')],
+          ]).reply_markup }
+        );
+      } catch (e) { logger.error(`oc_cfg_biasalign error: ${e.message}`); }
+    });
+    this.bot.action('oc_biasalign_on', async (ctx) => {
+      try {
+        octe().biasAlignFilter = true; octe().saveConfig();
+        await ctx.answerCbQuery('Bias alignment filter ON');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_biasalign error: ${e.message}`); }
+    });
+    this.bot.action('oc_biasalign_off', async (ctx) => {
+      try {
+        octe().biasAlignFilter = false; octe().saveConfig();
+        await ctx.answerCbQuery('Bias alignment filter OFF');
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_biasalign error: ${e.message}`); }
+    });
+
     this.bot.action('oc_cfg_ls', async (ctx) => {
       try {
         await ctx.answerCbQuery();
@@ -3827,6 +3863,7 @@ class TelegramBot {
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback('🌙 Safe: Skip 5AM + 5-8PM WAT', 'oc_hrs_safe')],
             [Markup.button.callback('🎯 Best only: 6AM-5PM + 8PM-5AM WAT', 'oc_hrs_best')],
+            [Markup.button.callback('🌅 Morning: 1AM-12PM WAT (00-11 UTC)', 'oc_hrs_morning')],
             [Markup.button.callback('🔓 24/7 (no restrictions)', 'oc_hrs_247')],
             [Markup.button.callback('⬅️ Back', 'oc_settings')],
           ]).reply_markup }
@@ -3846,6 +3883,14 @@ class TelegramBot {
       try {
         await ctx.answerCbQuery('Hours: best windows only');
         octe().tradingHours = [[0, 4], [5, 9], [11, 16], [19, 24]];
+        await octe().saveConfig();
+        await showOcSettings(ctx);
+      } catch (e) { logger.error(`oc_hrs error: ${e.message}`); await ctx.answerCbQuery('Error: ' + e.message).catch(() => {}); }
+    });
+    this.bot.action('oc_hrs_morning', async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Hours: morning only (00-11 UTC)');
+        octe().tradingHours = [[0, 11]];
         await octe().saveConfig();
         await showOcSettings(ctx);
       } catch (e) { logger.error(`oc_hrs error: ${e.message}`); await ctx.answerCbQuery('Error: ' + e.message).catch(() => {}); }

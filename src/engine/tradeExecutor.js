@@ -138,6 +138,7 @@ class TradeExecutor {
 
     this.minCooldownMinutes = config.minCooldownMinutes ?? 0;
     this.maxLongFunding = config.maxLongFunding ?? 0;
+    this.biasAlignFilter = config.biasAlignFilter ?? false;
 
     // Trading schedule: array of [startHour, endHour] UTC ranges when trading is allowed
     // Empty = 24/7 (no restriction). Example: [[8,12],[13,20]] = trade 08-12 and 13-20 UTC only
@@ -343,6 +344,16 @@ class TradeExecutor {
       const funding = signal.onchainContext?.fundingRate ?? 0;
       if (funding < this.maxLongFunding) {
         return { ok: false, reason: `${signal.symbol} LONG blocked — funding ${(funding * 100).toFixed(3)}% < ${(this.maxLongFunding * 100).toFixed(3)}% (shorts crowded, squeeze risk)` };
+      }
+    }
+
+    if (this.biasAlignFilter) {
+      const bias = signal.onchainContext?.fundingBias;
+      if (signal.direction === 'long' && bias === 'short') {
+        return { ok: false, reason: `${signal.symbol} LONG blocked — funding bias is bearish (bias alignment filter)` };
+      }
+      if (signal.direction === 'short' && bias === 'long') {
+        return { ok: false, reason: `${signal.symbol} SHORT blocked — funding bias is bullish (bias alignment filter)` };
       }
     }
 
@@ -639,6 +650,7 @@ class TradeExecutor {
       minOiLong: this.minOiLong,
       minCooldownMinutes: this.minCooldownMinutes,
       maxLongFunding: this.maxLongFunding,
+      biasAlignFilter: this.biasAlignFilter,
     };
   }
 
@@ -712,6 +724,7 @@ class TradeExecutor {
     if (cfg.minOiLong != null) this.minOiLong = cfg.minOiLong;
     if (cfg.minCooldownMinutes != null) this.minCooldownMinutes = cfg.minCooldownMinutes;
     if (cfg.maxLongFunding != null) this.maxLongFunding = cfg.maxLongFunding;
+    if (cfg.biasAlignFilter != null) this.biasAlignFilter = cfg.biasAlignFilter;
   }
 
   async getCircuitBreakerStatus() {
