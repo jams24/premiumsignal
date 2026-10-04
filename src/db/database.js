@@ -173,6 +173,35 @@ async function init(retries = 3) {
     );
     CREATE INDEX IF NOT EXISTS idx_spot_signals_time ON spot_signals(created_at);
 
+    CREATE TABLE IF NOT EXISTS pump_signals (
+      id SERIAL PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      direction TEXT NOT NULL DEFAULT 'short',
+      score INTEGER,
+      exhaustion_score INTEGER,
+      pump_pct DOUBLE PRECISION,
+      oi_change DOUBLE PRECISION,
+      funding_rate DOUBLE PRECISION,
+      funding_bias TEXT,
+      rsi_5m DOUBLE PRECISION,
+      price DOUBLE PRECISION,
+      tp1 DOUBLE PRECISION,
+      tp2 DOUBLE PRECISION,
+      stop_loss DOUBLE PRECISION,
+      confluence JSONB,
+      price_1h DOUBLE PRECISION,
+      price_4h DOUBLE PRECISION,
+      price_12h DOUBLE PRECISION,
+      price_24h DOUBLE PRECISION,
+      pnl_1h DOUBLE PRECISION,
+      pnl_4h DOUBLE PRECISION,
+      pnl_12h DOUBLE PRECISION,
+      pnl_24h DOUBLE PRECISION,
+      outcome TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_pump_signals_time ON pump_signals(created_at);
+
     CREATE TABLE IF NOT EXISTS trade_skips (
       id SERIAL PRIMARY KEY,
       symbol TEXT NOT NULL,
@@ -456,6 +485,39 @@ async function updateSpotPrice(id, hours, currentPrice, entryPrice, direction) {
   const outcomeClause = col === '24h' ? `, outcome = CASE WHEN $2 > 0 THEN 'win' ELSE 'loss' END` : '';
   await query(
     `UPDATE spot_signals SET price_${col} = $1, pnl_${col} = $2${outcomeClause}
+     WHERE id = $3`,
+    [currentPrice, parseFloat(pnl.toFixed(2)), id]
+  );
+}
+
+async function logPumpSignal(symbol, data) {
+  await query(
+    `INSERT INTO pump_signals (symbol, direction, score, exhaustion_score, pump_pct, oi_change, funding_rate, funding_bias, rsi_5m, price, tp1, tp2, stop_loss, confluence)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    [symbol, data.direction || 'short', data.score, data.exhaustionScore, data.pumpPct,
+     data.oiChange, data.fundingRate, data.fundingBias, data.rsi5m,
+     data.price, data.tp1 || null, data.tp2 || null, data.stopLoss || null,
+     JSON.stringify(data.confluence)]
+  );
+}
+
+async function getUnfilledPumpSignals() {
+  const { rows } = await query(
+    `SELECT id, symbol, direction, price, created_at,
+       EXTRACT(EPOCH FROM (NOW() - created_at))/3600 as hours_ago
+     FROM pump_signals WHERE price_24h IS NULL AND created_at > NOW() - INTERVAL '48 hours'`
+  );
+  return rows;
+}
+
+async function updatePumpPrice(id, hours, currentPrice, entryPrice, direction) {
+  const pnl = direction === 'long'
+    ? ((currentPrice - entryPrice) / entryPrice) * 100
+    : ((entryPrice - currentPrice) / entryPrice) * 100;
+  const col = hours <= 1.5 ? '1h' : hours <= 5 ? '4h' : hours <= 14 ? '12h' : '24h';
+  const outcomeClause = col === '24h' ? `, outcome = CASE WHEN $2 > 0 THEN 'win' ELSE 'loss' END` : '';
+  await query(
+    `UPDATE pump_signals SET price_${col} = $1, pnl_${col} = $2${outcomeClause}
      WHERE id = $3`,
     [currentPrice, parseFloat(pnl.toFixed(2)), id]
   );
@@ -1047,4 +1109,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice, logPumpSignal, getUnfilledPumpSignals, updatePumpPrice };

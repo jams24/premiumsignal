@@ -5,6 +5,7 @@ module.exports = {
     botToken: process.env.TELEGRAM_BOT_TOKEN,
     channelId: process.env.TELEGRAM_CHANNEL_ID,
     spotChannelId: process.env.SPOT_CHANNEL_ID,
+    pumpChannelId: process.env.PUMP_CHANNEL_ID,
     // Comma-separated Telegram user IDs that are auto-promoted to admin
     adminIds: (process.env.ADMIN_TELEGRAM_IDS || '')
       .split(',')

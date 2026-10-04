@@ -921,6 +921,43 @@ async function main() {
           }
         }
 
+        // Pump exhaustion signals: forward to pump channel + record for analysis
+        for (const token of results) {
+          const setup = token._tradeSetup;
+          if (!setup) continue;
+          const ctx = setup.onchainContext || {};
+          const isExhaustion = (ctx.exhaustion || ctx.crowdedFlip) && setup.direction === 'short';
+          if (!isExhaustion) continue;
+          try {
+            const today = new Date().toISOString().slice(0, 10);
+            const { rows } = await db.query(
+              `SELECT 1 FROM pump_signals WHERE symbol = $1 AND created_at::date = $2::date LIMIT 1`,
+              [token.symbol, today]
+            );
+            if (rows.length > 0) continue;
+            bot.sendPumpSignal(token, setup).catch(e => logger.debug(`Pump signal failed: ${e.message}`));
+            db.logPumpSignal(token.symbol, {
+              direction: 'short', score: token.score,
+              exhaustionScore: ctx.exhaustionScore || 0,
+              pumpPct: ctx.priceChange || token.priceChange,
+              oiChange: ctx.oiChange4h || token.oiChange4h,
+              fundingRate: ctx.fundingRate || token.fundingRate,
+              fundingBias: ctx.fundingBias || token.fundingBias,
+              rsi5m: ctx.rsi5m || null,
+              price: token.price,
+              tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss,
+              confluence: {
+                oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h,
+                fundingRate: token.fundingRate, fundingBias: token.fundingBias,
+                priceChange: token.priceChange, volume: token.volume,
+                signals: token.signals, exchange: token.exchange,
+                nearHighPct: ctx.nearHighPct, exhaustionScore: ctx.exhaustionScore,
+                crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
+              },
+            }).catch(e => logger.debug(`Pump log failed: ${e.message}`));
+          } catch (e) { logger.debug(`Pump signal check failed: ${e.message}`); }
+        }
+
         // Auto-trade onchain signals — reuse _tradeSetup from alert phase
         // (calling buildTradeSetup again can flip direction between neutral/long)
         const ocMinScore = onchainTradeExecutor.minOcScore || (onchainTradeExecutor.minConfidence >= 5 ? 60 : onchainTradeExecutor.minConfidence >= 4 ? 45 : 35);
@@ -1772,6 +1809,34 @@ async function main() {
       logger.info(`Spot price tracker: checked ${pending.length} signals`);
     } catch (err) {
       logger.debug(`Spot price tracker error: ${err.message}`);
+    }
+  });
+
+  // Pump signal price tracker — fill in 1h/4h/12h/24h prices
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const pending = await db.getUnfilledPumpSignals();
+      if (!pending.length) return;
+      let filled = 0;
+      for (const sig of pending) {
+        try {
+          const h = parseFloat(sig.hours_ago);
+          if (h < 1) continue;
+          let ticker = null;
+          for (const ex of Object.values(listingMonitor.exchanges)) {
+            try {
+              ticker = await ex.fetchTicker(`${sig.symbol}/USDT:USDT`);
+              if (ticker?.last) break;
+            } catch (_) {}
+          }
+          if (!ticker?.last) continue;
+          await db.updatePumpPrice(sig.id, h, ticker.last, sig.price, sig.direction);
+          filled++;
+        } catch (e) { logger.debug(`Pump price check failed ${sig.symbol}: ${e.message}`); }
+      }
+      if (filled) logger.info(`Pump price tracker: filled ${filled}/${pending.length} signals`);
+    } catch (err) {
+      logger.debug(`Pump price tracker error: ${err.message}`);
     }
   });
 

@@ -17,6 +17,7 @@ class TelegramBot {
     });
     this.channelId = config.telegram.channelId;
     this.spotChannelId = config.telegram.spotChannelId;
+    this.pumpChannelId = config.telegram.pumpChannelId;
     this.technicalScanner = technicalScanner;
     this.socialScanner = socialScanner;
     this.onchainTracker = onchainTracker;
@@ -7361,6 +7362,47 @@ class TelegramBot {
       logger.info(`Spot signal sent to channel: ${token.symbol} ${dir}`);
     } catch (err) {
       logger.error(`Failed to send spot signal: ${err.message}`);
+    }
+  }
+
+  async sendPumpSignal(token, setup) {
+    if (!this.pumpChannelId) return;
+    try {
+      const ctx = setup.onchainContext || {};
+      const price = token.price;
+      const pumpPct = parseFloat(ctx.priceChange || token.priceChange || 0).toFixed(1);
+      const oiChange = parseFloat(ctx.oiChange4h || token.oiChange4h || 0).toFixed(1);
+      const exhScore = ctx.exhaustionScore || 0;
+      const fundingBias = ctx.fundingBias || token.fundingBias || 'unknown';
+      const rsi = ctx.rsi5m || 'N/A';
+      const nearHigh = ctx.nearHighPct != null ? `${parseFloat(ctx.nearHighPct).toFixed(1)}%` : 'N/A';
+
+      let grade = '⚪ WEAK';
+      const pump = Math.abs(parseFloat(pumpPct));
+      const oi = parseFloat(oiChange);
+      if (pump >= 40 && oi >= 30 && oi < 100 && exhScore >= 7 && fundingBias !== 'long') grade = '🟢 PERFECT';
+      else if (pump >= 40 && oi >= 30 && oi < 100) grade = '🟡 STRONG';
+      else if (pump >= 40) grade = '🟠 PUMP ONLY';
+
+      let msg = `🔴 <b>PUMP EXHAUSTION — ${token.symbol}</b>\n`;
+      msg += `${grade}\n\n`;
+      msg += `💰 Price: <b>$${price}</b>\n`;
+      msg += `📈 Pump: <b>+${pumpPct}%</b>\n`;
+      msg += `📊 OI Change 4H: <b>${oiChange}%</b>\n`;
+      msg += `🔥 Exhaustion Score: <b>${exhScore}/10</b>\n`;
+      msg += `💵 Funding Bias: <b>${fundingBias}</b>\n`;
+      msg += `📉 RSI 5m: <b>${rsi}</b>\n`;
+      msg += `📍 Near 24H High: <b>${nearHigh}</b>\n`;
+      if (setup.tp1) msg += `\n🎯 TP1: $${parseFloat(setup.tp1).toPrecision(6)}`;
+      if (setup.tp2) msg += `\n🎯 TP2: $${parseFloat(setup.tp2).toPrecision(6)}`;
+      if (setup.stopLoss) msg += `\n🛑 SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`;
+      if (token.exchange) msg += `\n\n📊 ${token.exchange.toUpperCase()}`;
+      msg += `\n\n<i>${new Date().toUTCString()}</i>`;
+
+      await this.bot.telegram.sendMessage(this.pumpChannelId, msg, { parse_mode: 'HTML' });
+      logger.info(`Pump signal sent to channel: ${token.symbol}`);
+    } catch (err) {
+      logger.error(`Failed to send pump signal: ${err.message}`);
     }
   }
 
