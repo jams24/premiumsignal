@@ -637,203 +637,548 @@ class TelegramBot {
       }
     });
 
-    // === MANUAL TRADE COMMANDS (uses main TradeExecutor with all features) ===
-    // /long BTC 20 3  → long BTC, $20 margin, 3x leverage
-    // /short RLC 20 5 → short RLC, $20 margin, 5x leverage
-    // /mclose BTC    → close manual trade
-    // /mpositions    → view manual trades
-    const handleManualTrade = async (ctx, direction) => {
+    // === MANUAL TRADE PANEL (uses main TradeExecutor with all features) ===
+    // /trade RLC — opens interactive trade panel
+    // /long RLC [size] [lev] — quick long
+    // /short RLC [size] [lev] — quick short
+    // /mclose RLC — close position
+    // /mpositions — view all open positions
+    this.manualTradeState = {};
+
+    const findSymbolExchange = async (symbol) => {
+      const octe = this.onchainTradeExecutor;
+      if (!octe) return null;
+      const preferred = ['binance', 'bybit', 'mexc'];
+      for (const id of preferred) {
+        const ex = octe.exchanges[id];
+        if (!ex) continue;
+        const p = `${symbol}/USDT:USDT`;
+        if (ex.markets?.[p]) return { exchange: ex, exchangeId: id, pair: p };
+      }
+      for (const [id, ex] of Object.entries(octe.exchanges)) {
+        const p = `${symbol}/USDT:USDT`;
+        if (ex.markets?.[p]) return { exchange: ex, exchangeId: id, pair: p };
+      }
+      return null;
+    };
+
+    const calcTradeSetup = async (symbol, exchangeId, exchange, pair, direction, margin, leverage, slPct) => {
+      const ticker = await exchange.fetchTicker(pair);
+      const price = ticker.last;
+      let atr;
       try {
-        if (!ctx.state?.user?.is_admin) return ctx.replyWithHTML('⚠️ Admin only.');
+        const ohlcv = await exchange.fetchOHLCV(pair, '1h', undefined, 20);
+        let atrSum = 0;
+        for (let i = ohlcv.length - 14; i < ohlcv.length; i++) atrSum += ohlcv[i][2] - ohlcv[i][3];
+        atr = atrSum / 14;
+      } catch (e) { atr = price * 0.02; }
+
+      const isLong = direction === 'long';
+      const posSize = margin * leverage;
+      let stopLoss, tp1, tp2, tp3;
+      if (slPct > 0) {
+        stopLoss = isLong ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
+        const rr = price * slPct / 100;
+        tp1 = isLong ? price + rr * 1.5 : price - rr * 1.5;
+        tp2 = isLong ? price + rr * 3 : price - rr * 3;
+        tp3 = isLong ? price + rr * 5 : price - rr * 5;
+      } else {
+        stopLoss = isLong ? price - atr * 3 : price + atr * 3;
+        tp1 = isLong ? price + atr * 3 : price - atr * 3;
+        tp2 = isLong ? price + atr * 6 : price - atr * 6;
+        tp3 = isLong ? price + atr * 10 : price - atr * 10;
+      }
+      const tp4 = isLong ? price + atr * 8 : price - atr * 8;
+      const slDistPct = (Math.abs(price - stopLoss) / price * 100).toFixed(1);
+      const maxLoss = (posSize * Math.abs(price - stopLoss) / price).toFixed(2);
+      return { price, atr, posSize, stopLoss, tp1, tp2, tp3, tp4, slDistPct, maxLoss };
+    };
+
+    const showTradePanel = async (ctx, isNew = false) => {
+      const uid = ctx.from.id;
+      const st = this.manualTradeState[uid];
+      if (!st) return;
+      const octe = this.onchainTradeExecutor;
+      const s = st;
+
+      try {
+        const setup = await calcTradeSetup(s.symbol, s.exchangeId, s.exchange, s.pair, s.direction, s.margin, s.leverage, s.slPct);
+        s.cachedSetup = setup;
+
+        const dirEmoji = s.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+        const modeLabel = octe.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
+        const text =
+          `🔧 <b>MANUAL TRADE — ${s.symbol}</b>\n\n` +
+          `${dirEmoji} | ${modeLabel}\n` +
+          `📊 Exchange: <b>${s.exchangeId.toUpperCase()}</b>\n` +
+          `💰 Price: <b>$${setup.price.toPrecision(6)}</b>\n\n` +
+          `💵 Margin: <b>$${s.margin}</b> × ${s.leverage}x = <b>$${setup.posSize}</b> position\n\n` +
+          `🎯 TP1: $${setup.tp1.toPrecision(6)}\n` +
+          `🎯 TP2: $${setup.tp2.toPrecision(6)}\n` +
+          `🎯 TP3: $${setup.tp3.toPrecision(6)}\n` +
+          `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss})\n\n` +
+          `<i>Tap to configure, then confirm:</i>`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback(`${s.direction === 'long' ? '🟢 LONG ✓' : '🟢 LONG'}`, 'mt_dir_long'),
+           Markup.button.callback(`${s.direction === 'short' ? '🔴 SHORT ✓' : '🔴 SHORT'}`, 'mt_dir_short')],
+          [Markup.button.callback(`💵 Margin: $${s.margin}`, 'mt_margin'),
+           Markup.button.callback(`⚡ Lev: ${s.leverage}x`, 'mt_lev')],
+          [Markup.button.callback(`🛑 SL: ${s.slPct > 0 ? s.slPct + '%' : 'ATR'}`, 'mt_sl'),
+           Markup.button.callback(`📊 ${s.exchangeId.toUpperCase()}`, 'mt_exchange')],
+          [Markup.button.callback(`✅ CONFIRM ${s.direction.toUpperCase()}`, 'mt_confirm')],
+          [Markup.button.callback('🔄 Refresh Price', 'mt_refresh'),
+           Markup.button.callback('❌ Cancel', 'mt_cancel')],
+        ]);
+
+        if (isNew) {
+          await ctx.replyWithHTML(text, keyboard);
+        } else {
+          await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+        }
+      } catch (e) {
+        const msg = `⚠️ ${escapeHtml(e.message)}`;
+        if (isNew) ctx.replyWithHTML(msg); else ctx.editMessageText(msg, { parse_mode: 'HTML' });
+      }
+    };
+
+    // /panel — main trading control panel
+    this.bot.command('panel', async (ctx) => {
+      if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
+      const octe = this.onchainTradeExecutor;
+      const mode = octe?.mode?.toUpperCase() || 'N/A';
+      const trades = octe ? await db.getOpenTrades(octe.settingsKey) : [];
+
+      ctx.replyWithHTML(
+        `🎛 <b>TRADE PANEL</b>\n\n` +
+        `Mode: <b>${mode}</b> | Open: <b>${trades.length}</b>\n\n` +
+        `<i>Tap a button or type a command:</i>`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('📊 Positions', 'panel_positions'),
+           Markup.button.callback('📈 Stats', 'panel_stats')],
+          [Markup.button.callback('🟢 Quick Long', 'panel_long'),
+           Markup.button.callback('🔴 Quick Short', 'panel_short')],
+          [Markup.button.callback('⚙️ Onchain Settings', 'panel_oc'),
+           Markup.button.callback('🔄 Refresh', 'panel_refresh')],
+        ])
+      );
+    });
+
+    this.bot.action('panel_positions', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const octe = this.onchainTradeExecutor;
+        const trades = await db.getOpenTrades(octe.settingsKey);
+        if (!trades.length) return ctx.editMessageText('📭 No open positions.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+        const { msg, totalPnl } = await formatPositions(trades, octe.exchanges);
+        const pnlEmoji = totalPnl >= 0 ? '🟩' : '🟥';
+        const closeButtons = trades.slice(0, 5).map(t => Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} Close ${t.symbol}`, `mt_close_${t.symbol}`));
+        await ctx.editMessageText(
+          `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([closeButtons, [Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+        );
+      } catch (e) {}
+    });
+
+    this.bot.action('panel_long', async (ctx) => {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText('🟢 <b>Quick Long</b>\n\nType: <code>/long SYMBOL</code>\nExample: <code>/long RLC</code>', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+    });
+
+    this.bot.action('panel_short', async (ctx) => {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText('🔴 <b>Quick Short</b>\n\nType: <code>/short SYMBOL</code>\nExample: <code>/short RLC</code>', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+    });
+
+    this.bot.action('panel_stats', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const octe = this.onchainTradeExecutor;
+        const { rows: closedTrades } = await db.pool.query(`SELECT * FROM trades WHERE source = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 50`, [octe.settingsKey]);
+        const wins = closedTrades.filter(t => parseFloat(t.pnl_usd) > 0).length;
+        const losses = closedTrades.filter(t => parseFloat(t.pnl_usd) <= 0).length;
+        const totalPnl = closedTrades.reduce((s, t) => s + parseFloat(t.pnl_usd || 0), 0);
+        const wr = closedTrades.length > 0 ? ((wins / closedTrades.length) * 100).toFixed(0) : 0;
+        await ctx.editMessageText(
+          `📈 <b>Trade Stats</b> (last ${closedTrades.length})\n\n` +
+          `✅ Wins: ${wins} | ❌ Losses: ${losses}\n` +
+          `📊 Win Rate: <b>${wr}%</b>\n` +
+          `💰 Total P&L: <b>$${totalPnl.toFixed(2)}</b>\n` +
+          `📊 Daily P&L: <b>$${(octe?.dailyPnL || 0).toFixed(2)}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+        );
+      } catch (e) {}
+    });
+
+    this.bot.action('panel_oc', async (ctx) => {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText('⚙️ Type <code>/onchaintrade</code> for full settings panel.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+    });
+
+    this.bot.action('panel_refresh', async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Refreshed');
+        const octe = this.onchainTradeExecutor;
+        const mode = octe?.mode?.toUpperCase() || 'N/A';
+        const trades = octe ? await db.getOpenTrades(octe.settingsKey) : [];
+        await ctx.editMessageText(
+          `🎛 <b>TRADE PANEL</b>\n\n` +
+          `Mode: <b>${mode}</b> | Open: <b>${trades.length}</b>\n\n` +
+          `<i>Tap a button or type a command:</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('📊 Positions', 'panel_positions'),
+             Markup.button.callback('📈 Stats', 'panel_stats')],
+            [Markup.button.callback('🟢 Quick Long', 'panel_long'),
+             Markup.button.callback('🔴 Quick Short', 'panel_short')],
+            [Markup.button.callback('⚙️ Onchain Settings', 'panel_oc'),
+             Markup.button.callback('🔄 Refresh', 'panel_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+
+    this.bot.command('trade', async (ctx) => {
+      try {
+        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
         const octe = this.onchainTradeExecutor;
         if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
 
-        const parts = ctx.message.text.trim().split(/\s+/);
-        const symbol = (parts[1] || '').toUpperCase();
-        if (!symbol) return ctx.replyWithHTML(`Usage: <code>/${direction} SYMBOL [size] [leverage] [sl%]</code>\n\nExamples:\n<code>/${direction} RLC</code> — uses default size + leverage\n<code>/${direction} RLC 20 3</code> — $20 margin, 3x\n<code>/${direction} RLC 20 5 10</code> — $20, 5x, 10% SL`);
+        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
+        if (!symbol) return ctx.replyWithHTML(
+          `🔧 <b>Manual Trade</b>\n\n` +
+          `<code>/trade SYMBOL</code> — open trade panel\n` +
+          `<code>/long SYMBOL [size] [lev]</code> — quick long\n` +
+          `<code>/short SYMBOL [size] [lev]</code> — quick short\n` +
+          `<code>/mclose SYMBOL</code> — close position\n` +
+          `<code>/mpositions</code> — view positions`
+        );
 
-        const margin = parseFloat(parts[2]) || octe.maxPositionSize || 12;
-        const leverage = parseInt(parts[3]) || octe.defaultLeverage || 3;
-        const customSlPct = parseFloat(parts[4]) || 0;
+        const found = await findSymbolExchange(symbol);
+        if (!found) return ctx.replyWithHTML(`⚠️ ${symbol} not found on any exchange`);
 
-        // Find symbol on exchange
-        let exchange = null, exchangeId = null, pair = null;
-        for (const [id, ex] of Object.entries(octe.exchanges)) {
-          const p = `${symbol}/USDT:USDT`;
-          if (ex.markets?.[p]) { exchange = ex; exchangeId = id; pair = p; break; }
-        }
-        if (!exchange) return ctx.replyWithHTML(`⚠️ ${symbol} not found on any exchange`);
-
-        // Check for existing position
         const openTrades = await db.getOpenTrades(octe.settingsKey);
         if (openTrades.some(t => t.symbol === symbol)) {
           return ctx.replyWithHTML(`⚠️ Already have a position in ${symbol}`);
         }
 
-        const ticker = await exchange.fetchTicker(pair);
-        const price = ticker.last;
-
-        // Calculate ATR
-        let atr;
-        try {
-          const ohlcv = await exchange.fetchOHLCV(pair, '1h', undefined, 20);
-          let atrSum = 0;
-          for (let i = ohlcv.length - 14; i < ohlcv.length; i++) atrSum += ohlcv[i][2] - ohlcv[i][3];
-          atr = atrSum / 14;
-        } catch (e) { atr = price * 0.02; }
-
-        const isLong = direction === 'long';
-        const posSize = margin * leverage;
-
-        // TP/SL calculation
-        let stopLoss, tp1, tp2, tp3;
-        if (customSlPct > 0) {
-          stopLoss = isLong ? price * (1 - customSlPct / 100) : price * (1 + customSlPct / 100);
-          const rr = price * customSlPct / 100;
-          tp1 = isLong ? price + rr * 1.5 : price - rr * 1.5;
-          tp2 = isLong ? price + rr * 3 : price - rr * 3;
-          tp3 = isLong ? price + rr * 5 : price - rr * 5;
-        } else {
-          stopLoss = isLong ? price - atr * 3 : price + atr * 3;
-          tp1 = isLong ? price + atr * 3 : price - atr * 3;
-          tp2 = isLong ? price + atr * 6 : price - atr * 6;
-          tp3 = isLong ? price + atr * 10 : price - atr * 10;
-        }
-        const tp4 = isLong ? price + atr * 8 : price - atr * 8;
-        const invalidation = stopLoss;
-
-        // Build signal object compatible with executeSignal
-        const signal = {
-          id: null,
-          type: 'MANUAL',
+        this.manualTradeState[ctx.from.id] = {
           symbol,
-          exchange: exchangeId,
-          pair,
-          direction,
-          currentPrice: price,
-          entryPrice: price,
-          tp1, tp2, tp3,
-          stopLoss,
-          atr,
-          confidence: 5,
-          onchainScore: 100,
-          onchainContext: { manual: true, source: 'manual_trade' },
+          exchange: found.exchange,
+          exchangeId: found.exchangeId,
+          pair: found.pair,
+          direction: 'short',
+          margin: octe.maxPositionSize || 12,
+          leverage: octe.defaultLeverage || 3,
+          slPct: 0,
+          cachedSetup: null,
         };
 
-        // Execute through trade executor (gets all features: partial exits, trailing, etc.)
-        if (octe.mode === 'paper') {
-          const entryQty = posSize / price;
-          const trade = {
-            signalId: null,
-            symbol,
-            exchange: exchangeId,
-            direction,
-            mode: 'paper',
-            entryPrice: price,
-            quantity: entryQty,
-            positionSize: posSize,
-            leverage,
-            tp1, tp2, tp3, tp4,
-            stopLoss,
-            originalStopLoss: stopLoss,
-            invalidation,
-            atr,
-            dcaQty2: 0, dcaQty3: 0,
-            dcaPrice2: null, dcaPrice3: null,
-            dcaStage: 1,
-            status: 'open',
-            source: octe.settingsKey,
-            onchainContext: { manual: true, margin, leverage: leverage },
-          };
-          await db.saveTrade(trade);
-
-          const slPct = (Math.abs(price - stopLoss) / price * 100).toFixed(1);
-          const maxLoss = (posSize * Math.abs(price - stopLoss) / price).toFixed(2);
-          ctx.replyWithHTML(
-            `${isLong ? '🟢' : '🔴'} <b>MANUAL ${direction.toUpperCase()} OPENED</b> — $${escapeHtml(symbol)}\n\n` +
-            `💰 Entry: <b>$${price.toPrecision(6)}</b>\n` +
-            `📊 Margin: <b>$${margin}</b> × ${leverage}x = $${posSize} position\n` +
-            `🎯 TP1: $${tp1.toPrecision(6)}\n` +
-            `🎯 TP2: $${tp2.toPrecision(6)}\n` +
-            `🎯 TP3: $${tp3.toPrecision(6)}\n` +
-            `🛑 SL: $${stopLoss.toPrecision(6)} (-${slPct}% / -$${maxLoss})\n\n` +
-            `<i>All features active: partial exits, trailing SL, profit protection, max loss cap</i>`
-          );
-        } else if (octe.mode === 'live') {
-          // Live execution through the executor
-          signal.suggestedLeverage = leverage;
-          const trade = await octe.executeLiveTrade(signal);
-          if (trade) {
-            ctx.replyWithHTML(
-              `${isLong ? '🟢' : '🔴'} <b>LIVE ${direction.toUpperCase()} OPENED</b> — $${escapeHtml(symbol)}\n\n` +
-              `💰 Entry: <b>$${price.toPrecision(6)}</b>\n` +
-              `📊 Margin: <b>$${margin}</b> × ${leverage}x\n` +
-              `🎯 TP1: $${tp1.toPrecision(6)} | TP2: $${tp2.toPrecision(6)}\n` +
-              `🛑 SL: $${stopLoss.toPrecision(6)}\n\n` +
-              `<i>LIVE — real money on exchange</i>`
-            );
-          } else {
-            ctx.replyWithHTML(`⚠️ Live trade execution failed for ${symbol}`);
-          }
-        }
-      } catch (e) {
-        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
-      }
-    };
-
-    this.bot.command('long', (ctx) => handleManualTrade(ctx, 'long'));
-    this.bot.command('short', (ctx) => handleManualTrade(ctx, 'short'));
-
-    this.bot.command('mclose', async (ctx) => {
-      try {
-        if (!ctx.state?.user?.is_admin) return ctx.replyWithHTML('⚠️ Admin only.');
-        const octe = this.onchainTradeExecutor;
-        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
-
-        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
-        if (!symbol) return ctx.replyWithHTML('Usage: <code>/mclose SYMBOL</code>');
-
-        const openTrades = await db.getOpenTrades(octe.settingsKey);
-        const trade = openTrades.find(t => t.symbol === symbol);
-        if (!trade) return ctx.replyWithHTML(`⚠️ No open position in ${symbol}`);
-
-        // Get current price
-        let exitPrice = parseFloat(trade.entry_price);
-        try {
-          for (const [id, ex] of Object.entries(octe.exchanges)) {
-            const p = `${symbol}/USDT:USDT`;
-            if (ex.markets?.[p]) {
-              const tk = await ex.fetchTicker(p);
-              exitPrice = tk.last;
-              break;
-            }
-          }
-        } catch (e) {}
-
-        const entry = parseFloat(trade.entry_price);
-        const posSize = parseFloat(trade.position_size);
-        const isLong = trade.direction === 'long';
-        const pnlPct = isLong ? ((exitPrice - entry) / entry) * 100 : ((entry - exitPrice) / entry) * 100;
-        const pnlUsd = (pnlPct / 100) * posSize + parseFloat(trade.realized_pnl || 0);
-
-        await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'manual_close');
-        octe.dailyPnL += pnlUsd;
-
-        const emoji = pnlUsd >= 0 ? '✅' : '❌';
-        ctx.replyWithHTML(
-          `${emoji} <b>MANUAL CLOSE</b> — $${escapeHtml(symbol)}\n\n` +
-          `${isLong ? '🟢 LONG' : '🔴 SHORT'}\n` +
-          `Entry: $${entry.toPrecision(6)} → Exit: $${exitPrice.toPrecision(6)}\n` +
-          `P&L: <b>$${pnlUsd.toFixed(2)}</b> (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`
-        );
+        await showTradePanel(ctx, true);
       } catch (e) {
         ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
       }
     });
 
+    // Direction buttons
+    this.bot.action('mt_dir_long', async (ctx) => {
+      try { await ctx.answerCbQuery('Long'); this.manualTradeState[ctx.from.id].direction = 'long'; await showTradePanel(ctx); } catch (e) {}
+    });
+    this.bot.action('mt_dir_short', async (ctx) => {
+      try { await ctx.answerCbQuery('Short'); this.manualTradeState[ctx.from.id].direction = 'short'; await showTradePanel(ctx); } catch (e) {}
+    });
+
+    // Margin selector
+    this.bot.action('mt_margin', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const st = this.manualTradeState[ctx.from.id];
+        const mk = (v) => Markup.button.callback(`$${v}${st.margin === v ? ' ✓' : ''}`, `mt_m_${v}`);
+        await ctx.editMessageText(
+          `💵 <b>SELECT MARGIN</b>\n\nCurrent: <b>$${st.margin}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [mk(5), mk(10), mk(15), mk(20)],
+            [mk(25), mk(30), mk(50), mk(100)],
+            [mk(200), mk(500), mk(1000)],
+            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+    for (const m of [5, 10, 15, 20, 25, 30, 50, 100, 200, 500, 1000]) {
+      this.bot.action(`mt_m_${m}`, async (ctx) => {
+        try { await ctx.answerCbQuery(`$${m}`); this.manualTradeState[ctx.from.id].margin = m; await showTradePanel(ctx); } catch (e) {}
+      });
+    }
+
+    // Leverage selector
+    this.bot.action('mt_lev', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const st = this.manualTradeState[ctx.from.id];
+        const mk = (v) => Markup.button.callback(`${v}x${st.leverage === v ? ' ✓' : ''}`, `mt_l_${v}`);
+        await ctx.editMessageText(
+          `⚡ <b>SELECT LEVERAGE</b>\n\nCurrent: <b>${st.leverage}x</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [mk(1), mk(2), mk(3), mk(5)],
+            [mk(10), mk(15), mk(20), mk(25)],
+            [mk(30), mk(50), mk(75), mk(100)],
+            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+    for (const l of [1, 2, 3, 5, 10, 15, 20, 25, 30, 50, 75, 100]) {
+      this.bot.action(`mt_l_${l}`, async (ctx) => {
+        try { await ctx.answerCbQuery(`${l}x`); this.manualTradeState[ctx.from.id].leverage = l; await showTradePanel(ctx); } catch (e) {}
+      });
+    }
+
+    // SL selector
+    this.bot.action('mt_sl', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const st = this.manualTradeState[ctx.from.id];
+        const mk = (v, label) => Markup.button.callback(`${label}${st.slPct === v ? ' ✓' : ''}`, `mt_sl_${v}`);
+        await ctx.editMessageText(
+          `🛑 <b>STOP LOSS</b>\n\nCurrent: <b>${st.slPct > 0 ? st.slPct + '%' : 'ATR-based (auto)'}</b>\n\n` +
+          `ATR = automatic based on volatility\n% = fixed percentage from entry`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [mk(0, 'ATR (auto)'), mk(3, '3%'), mk(5, '5%')],
+            [mk(7, '7%'), mk(10, '10%'), mk(15, '15%')],
+            [mk(20, '20%'), mk(25, '25%'), mk(30, '30%')],
+            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+    for (const sl of [0, 3, 5, 7, 10, 15, 20, 25, 30]) {
+      this.bot.action(`mt_sl_${sl}`, async (ctx) => {
+        try { await ctx.answerCbQuery(sl === 0 ? 'ATR' : `${sl}%`); this.manualTradeState[ctx.from.id].slPct = sl; await showTradePanel(ctx); } catch (e) {}
+      });
+    }
+
+    // Exchange selector
+    this.bot.action('mt_exchange', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const st = this.manualTradeState[ctx.from.id];
+        const octe = this.onchainTradeExecutor;
+        const buttons = [];
+        for (const [id, ex] of Object.entries(octe.exchanges)) {
+          const p = `${st.symbol}/USDT:USDT`;
+          if (ex.markets?.[p]) {
+            buttons.push(Markup.button.callback(`${id.toUpperCase()}${st.exchangeId === id ? ' ✓' : ''}`, `mt_ex_${id}`));
+          }
+        }
+        await ctx.editMessageText(
+          `📊 <b>SELECT EXCHANGE</b>\n\n${st.symbol} available on:`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            buttons,
+            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+    for (const exId of ['binance', 'bybit', 'mexc']) {
+      this.bot.action(`mt_ex_${exId}`, async (ctx) => {
+        try {
+          const st = this.manualTradeState[ctx.from.id];
+          const octe = this.onchainTradeExecutor;
+          const ex = octe.exchanges[exId];
+          const p = `${st.symbol}/USDT:USDT`;
+          if (ex?.markets?.[p]) {
+            st.exchangeId = exId;
+            st.exchange = ex;
+            st.pair = p;
+          }
+          await ctx.answerCbQuery(exId.toUpperCase());
+          await showTradePanel(ctx);
+        } catch (e) {}
+      });
+    }
+
+    // Refresh price
+    this.bot.action('mt_refresh', async (ctx) => {
+      try { await ctx.answerCbQuery('Refreshed'); await showTradePanel(ctx); } catch (e) {}
+    });
+
+    // Cancel
+    this.bot.action('mt_cancel', async (ctx) => {
+      try {
+        delete this.manualTradeState[ctx.from.id];
+        await ctx.answerCbQuery('Cancelled');
+        await ctx.editMessageText('❌ Trade cancelled.', { parse_mode: 'HTML' });
+      } catch (e) {}
+    });
+
+    // CONFIRM — execute the trade
+    this.bot.action('mt_confirm', async (ctx) => {
+      try {
+        const uid = ctx.from.id;
+        const st = this.manualTradeState[uid];
+        if (!st) return ctx.answerCbQuery('No trade to confirm');
+        const octe = this.onchainTradeExecutor;
+        await ctx.answerCbQuery('Executing...');
+
+        const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct);
+        const isLong = st.direction === 'long';
+
+        if (octe.mode === 'paper') {
+          const trade = {
+            signalId: null, symbol: st.symbol, exchange: st.exchangeId, direction: st.direction,
+            mode: 'paper', entryPrice: setup.price, quantity: setup.posSize / setup.price,
+            positionSize: setup.posSize, leverage: st.leverage,
+            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4: setup.tp4,
+            stopLoss: setup.stopLoss, originalStopLoss: setup.stopLoss, invalidation: setup.stopLoss,
+            atr: setup.atr, dcaQty2: 0, dcaQty3: 0, dcaPrice2: null, dcaPrice3: null, dcaStage: 1,
+            status: 'open', source: octe.settingsKey,
+            onchainContext: { manual: true, margin: st.margin, leverage: st.leverage },
+          };
+          await db.saveTrade(trade);
+          delete this.manualTradeState[uid];
+
+          await ctx.editMessageText(
+            `${isLong ? '🟢' : '🔴'} <b>MANUAL ${st.direction.toUpperCase()} OPENED</b> — $${escapeHtml(st.symbol)}\n\n` +
+            `📝 ${octe.mode.toUpperCase()} | ${st.exchangeId.toUpperCase()}\n` +
+            `💰 Entry: <b>$${setup.price.toPrecision(6)}</b>\n` +
+            `💵 Margin: <b>$${st.margin}</b> × ${st.leverage}x = $${setup.posSize}\n\n` +
+            `🎯 TP1: $${setup.tp1.toPrecision(6)}\n` +
+            `🎯 TP2: $${setup.tp2.toPrecision(6)}\n` +
+            `🎯 TP3: $${setup.tp3.toPrecision(6)}\n` +
+            `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss})\n\n` +
+            `✅ <i>All features: partial exits, trailing SL, profit protection, max loss cap</i>`,
+            { parse_mode: 'HTML' }
+          );
+        } else {
+          const signal = {
+            id: null, type: 'MANUAL', symbol: st.symbol, exchange: st.exchangeId, pair: st.pair,
+            direction: st.direction, currentPrice: setup.price, entryPrice: setup.price,
+            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, stopLoss: setup.stopLoss,
+            atr: setup.atr, confidence: 5, onchainScore: 100, suggestedLeverage: st.leverage,
+            onchainContext: { manual: true },
+          };
+          const trade = await octe.executeLiveTrade(signal);
+          delete this.manualTradeState[uid];
+          if (trade) {
+            await ctx.editMessageText(
+              `${isLong ? '🟢' : '🔴'} <b>LIVE ${st.direction.toUpperCase()} OPENED</b> — $${escapeHtml(st.symbol)}\n\n` +
+              `💰 ${st.exchangeId.toUpperCase()} | Entry: $${setup.price.toPrecision(6)}\n` +
+              `💵 $${st.margin} × ${st.leverage}x\n` +
+              `🎯 TP1: $${setup.tp1.toPrecision(6)} | TP2: $${setup.tp2.toPrecision(6)}\n` +
+              `🛑 SL: $${setup.stopLoss.toPrecision(6)}\n\n` +
+              `⚠️ <i>LIVE — real money on exchange</i>`,
+              { parse_mode: 'HTML' }
+            );
+          } else {
+            await ctx.editMessageText(`⚠️ Live execution failed for ${st.symbol}`, { parse_mode: 'HTML' });
+          }
+        }
+      } catch (e) {
+        ctx.editMessageText(`⚠️ ${escapeHtml(e.message)}`, { parse_mode: 'HTML' }).catch(() => {});
+      }
+    });
+
+    // Quick commands (still work)
+    const handleQuickTrade = async (ctx, direction) => {
+      try {
+        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
+        const octe = this.onchainTradeExecutor;
+        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
+        const parts = ctx.message.text.trim().split(/\s+/);
+        const symbol = (parts[1] || '').toUpperCase();
+        if (!symbol) return ctx.replyWithHTML(`Usage: <code>/${direction} SYMBOL [size] [lev]</code>`);
+
+        const found = await findSymbolExchange(symbol);
+        if (!found) return ctx.replyWithHTML(`⚠️ ${symbol} not found`);
+
+        const openTrades = await db.getOpenTrades(octe.settingsKey);
+        if (openTrades.some(t => t.symbol === symbol)) return ctx.replyWithHTML(`⚠️ Already in ${symbol}`);
+
+        const margin = parseFloat(parts[2]) || octe.maxPositionSize || 12;
+        const leverage = parseInt(parts[3]) || octe.defaultLeverage || 3;
+
+        this.manualTradeState[ctx.from.id] = {
+          symbol, exchange: found.exchange, exchangeId: found.exchangeId, pair: found.pair,
+          direction, margin, leverage, slPct: 0, cachedSetup: null,
+        };
+        await showTradePanel(ctx, true);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    };
+
+    this.bot.command('long', (ctx) => handleQuickTrade(ctx, 'long'));
+    this.bot.command('short', (ctx) => handleQuickTrade(ctx, 'short'));
+
+    this.bot.command('mclose', async (ctx) => {
+      try {
+        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
+        const octe = this.onchainTradeExecutor;
+        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
+
+        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
+        if (!symbol) {
+          const openTrades = await db.getOpenTrades(octe.settingsKey);
+          if (!openTrades.length) return ctx.replyWithHTML('📭 No open positions.');
+          const buttons = openTrades.map(t => {
+            const emoji = t.direction === 'long' ? '🟢' : '🔴';
+            return [Markup.button.callback(`${emoji} Close ${t.symbol}`, `mt_close_${t.symbol}`)];
+          });
+          return ctx.replyWithHTML(
+            `🔧 <b>Close Position</b>\n\nSelect position to close:`,
+            Markup.inlineKeyboard(buttons)
+          );
+        }
+
+        await executeManualClose(ctx, symbol, octe);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+
+    const executeManualClose = async (ctx, symbol, octe) => {
+      const openTrades = await db.getOpenTrades(octe.settingsKey);
+      const trade = openTrades.find(t => t.symbol === symbol);
+      if (!trade) return ctx.replyWithHTML(`⚠️ No open position in ${symbol}`);
+
+      let exitPrice = parseFloat(trade.entry_price);
+      try {
+        for (const [id, ex] of Object.entries(octe.exchanges)) {
+          const p = `${symbol}/USDT:USDT`;
+          if (ex.markets?.[p]) { const tk = await ex.fetchTicker(p); exitPrice = tk.last; break; }
+        }
+      } catch (e) {}
+
+      const entry = parseFloat(trade.entry_price);
+      const posSize = parseFloat(trade.position_size);
+      const isLong = trade.direction === 'long';
+      const pnlPct = isLong ? ((exitPrice - entry) / entry) * 100 : ((entry - exitPrice) / entry) * 100;
+      const pnlUsd = (pnlPct / 100) * posSize + parseFloat(trade.realized_pnl || 0);
+
+      await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'manual_close');
+      octe.dailyPnL += pnlUsd;
+
+      const emoji = pnlUsd >= 0 ? '✅' : '❌';
+      const msg = `${emoji} <b>CLOSED</b> — $${escapeHtml(symbol)}\n\n` +
+        `${isLong ? '🟢 LONG' : '🔴 SHORT'}\n` +
+        `Entry: $${entry.toPrecision(6)} → Exit: $${exitPrice.toPrecision(6)}\n` +
+        `P&L: <b>$${pnlUsd.toFixed(2)}</b> (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`;
+
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(msg, { parse_mode: 'HTML' });
+      } else {
+        ctx.replyWithHTML(msg);
+      }
+    };
+
+    // Close buttons from /mclose panel
+    this.bot.action(/^mt_close_(.+)$/, async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Closing...');
+        const symbol = ctx.match[1];
+        await executeManualClose(ctx, symbol, this.onchainTradeExecutor);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+
     this.bot.command('mpositions', async (ctx) => {
       try {
-        if (!ctx.state?.user?.is_admin) return ctx.replyWithHTML('⚠️ Admin only.');
+        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
         const octe = this.onchainTradeExecutor;
         if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
 
@@ -842,13 +1187,39 @@ class TelegramBot {
 
         const { msg, totalPnl } = await formatPositions(trades, octe.exchanges);
         const pnlEmoji = totalPnl >= 0 ? '🟩' : '🟥';
+        const closeButtons = trades.slice(0, 5).map(t => {
+          const emoji = t.direction === 'long' ? '🟢' : '🔴';
+          return Markup.button.callback(`${emoji} Close ${t.symbol}`, `mt_close_${t.symbol}`);
+        });
+        const keyboard = Markup.inlineKeyboard([
+          closeButtons,
+          [Markup.button.callback('🔄 Refresh', 'mt_pos_refresh')],
+        ]);
         ctx.replyWithHTML(
           `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}` +
-          `${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`
+          `${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`,
+          keyboard
         );
-      } catch (e) {
-        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
-      }
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+
+    this.bot.action('mt_pos_refresh', async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Refreshed');
+        const octe = this.onchainTradeExecutor;
+        const trades = await db.getOpenTrades(octe.settingsKey);
+        if (!trades.length) return ctx.editMessageText('📭 No open positions.', { parse_mode: 'HTML' });
+        const { msg, totalPnl } = await formatPositions(trades, octe.exchanges);
+        const pnlEmoji = totalPnl >= 0 ? '🟩' : '🟥';
+        const closeButtons = trades.slice(0, 5).map(t => {
+          const emoji = t.direction === 'long' ? '🟢' : '🔴';
+          return Markup.button.callback(`${emoji} Close ${t.symbol}`, `mt_close_${t.symbol}`);
+        });
+        await ctx.editMessageText(
+          `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([closeButtons, [Markup.button.callback('🔄 Refresh', 'mt_pos_refresh')]]).reply_markup }
+        );
+      } catch (e) {}
     });
 
     const formatPositions = async (trades, exchanges) => {
