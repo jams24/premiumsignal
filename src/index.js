@@ -953,6 +953,7 @@ async function main() {
                 signals: token.signals, exchange: token.exchange,
                 nearHighPct: ctx.nearHighPct, exhaustionScore: ctx.exhaustionScore,
                 crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
+                cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
               },
             }).catch(e => logger.debug(`Pump log failed: ${e.message}`));
           } catch (e) { logger.debug(`Pump signal check failed: ${e.message}`); }

@@ -7387,7 +7387,10 @@ class TelegramBot {
       const nearHighVal = ctx.nearHighPct != null ? parseFloat(ctx.nearHighPct) : null;
       const momentumLive = nearHighVal != null && nearHighVal <= 3;
       const rsiHot = typeof rsi === 'number' && rsi >= 80;
-      const entryWarning = momentumLive || rsiHot;
+      const cisdScore = ctx.cisdScore || 0;
+      const cisdFlags = (ctx.cisdFlags || []).join('+') || 'none';
+      const hasCISD = cisdScore >= 2;
+      const entryWarning = (momentumLive || rsiHot) && !hasCISD;
 
       let msg = `🔴 <b>PUMP EXHAUSTION — ${token.symbol}</b>\n`;
       msg += `${grade}\n\n`;
@@ -7404,11 +7407,18 @@ class TelegramBot {
       msg += `💵 Funding Bias: <b>${fundingBias}</b>\n`;
       msg += `📉 RSI 5m: <b>${rsi}</b>\n`;
       msg += `📍 Near 24H High: <b>${nearHigh}</b>\n`;
+      msg += `\n🔄 <b>CISD (${cisdScore}/4):</b> ${cisdFlags}\n`;
+      if (hasCISD) {
+        msg += `✅ <i>1H reversal confirmed — entry zone</i>\n`;
+      } else {
+        msg += `⏳ <i>No 1H reversal yet (19% WR without CISD vs 67% with)</i>\n`;
+      }
       if (setup.tp1) msg += `\n🎯 TP1: $${parseFloat(setup.tp1).toPrecision(6)}`;
       if (setup.tp2) msg += `\n🎯 TP2: $${parseFloat(setup.tp2).toPrecision(6)}`;
       if (setup.stopLoss) msg += `\n🛑 SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`;
       if (token.exchange) msg += `\n\n📊 ${token.exchange.toUpperCase()}`;
-      if (!entryWarning) msg += `\n\n✅ <i>Pullback confirmed — entry zone</i>`;
+      if (!entryWarning && hasCISD) msg += `\n\n✅ <i>CISD + Pullback confirmed — ENTER</i>`;
+      else if (!entryWarning && !hasCISD) msg += `\n\n⏳ <i>Pullback OK but no CISD — wait for 1H reversal</i>`;
       msg += `\n\n<i>${new Date().toUTCString()}</i>`;
 
       await this.bot.telegram.sendMessage(this.pumpChannelId, msg, { parse_mode: 'HTML' });

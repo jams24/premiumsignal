@@ -1051,6 +1051,25 @@ class OnchainScanner {
         }
       } catch (e) { logger.debug(`${token.symbol}: 5m RSI fetch failed: ${e.message}`); }
 
+      // CISD score: bearish 1H confirmation for short entries
+      let cisdScore = 0;
+      const cisdFlags = [];
+      if (ohlcv.length >= 3) {
+        const curr = ohlcv[ohlcv.length - 1];
+        const prev1 = ohlcv[ohlcv.length - 2];
+        const currBearish = curr[4] < curr[1];
+        const lowerHigh = curr[2] < prev1[2];
+        const prevGreen = prev1[4] > prev1[1];
+        const firstRed = currBearish && prevGreen;
+        const breakOfLow = curr[4] < prev1[3];
+        if (currBearish) { cisdScore++; cisdFlags.push('bearish'); }
+        if (lowerHigh) { cisdScore++; cisdFlags.push('lowerHigh'); }
+        if (firstRed) { cisdScore++; cisdFlags.push('firstRed'); }
+        if (breakOfLow) { cisdScore++; cisdFlags.push('BOS'); }
+      }
+      token.cisdScore = cisdScore;
+      token.cisdFlags = cisdFlags;
+
       const snap = this.liquidationScanner
         ? this.liquidationScanner.generateSetupSnapshot(token, { minOiLong: opts.minOiLong, minExhScore: opts.minExhScore, minExhRsi: opts.minExhRsi, maxNearHigh: opts.maxNearHigh })
         : { direction: token.priceChange > 0 ? 'long' : 'short' };
@@ -1418,6 +1437,8 @@ class OnchainScanner {
           exhaustionScore: snap.exhaustionScore || 0,
           nearHighPct: snap.nearHighPct ?? null,
           rsi5m: snap.rsi5m || 0,
+          cisdScore: token.cisdScore || 0,
+          cisdFlags: token.cisdFlags || [],
         },
       };
     } catch (err) {
