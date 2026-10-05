@@ -7384,8 +7384,19 @@ class TelegramBot {
       else if (pump >= 40 && oi >= 30 && oi < 100) grade = '🟡 STRONG';
       else if (pump >= 40) grade = '🟠 PUMP ONLY';
 
+      const nearHighVal = ctx.nearHighPct != null ? parseFloat(ctx.nearHighPct) : null;
+      const momentumLive = nearHighVal != null && nearHighVal <= 3;
+      const rsiHot = typeof rsi === 'number' && rsi >= 80;
+      const entryWarning = momentumLive || rsiHot;
+
       let msg = `🔴 <b>PUMP EXHAUSTION — ${token.symbol}</b>\n`;
       msg += `${grade}\n\n`;
+      if (entryWarning) {
+        msg += `⚠️ <b>MOMENTUM STILL LIVE — WAIT FOR PULLBACK</b>\n`;
+        if (momentumLive) msg += `  → Price within ${nearHigh} of 24H high\n`;
+        if (rsiHot) msg += `  → RSI 5m at ${rsi} (overbought)\n`;
+        msg += `  → Wait for 5-10% pullback from peak before entry\n\n`;
+      }
       msg += `💰 Price: <b>$${price}</b>\n`;
       msg += `📈 Pump: <b>+${pumpPct}%</b>\n`;
       msg += `📊 OI Change 4H: <b>${oiChange}%</b>\n`;
@@ -7397,6 +7408,7 @@ class TelegramBot {
       if (setup.tp2) msg += `\n🎯 TP2: $${parseFloat(setup.tp2).toPrecision(6)}`;
       if (setup.stopLoss) msg += `\n🛑 SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`;
       if (token.exchange) msg += `\n\n📊 ${token.exchange.toUpperCase()}`;
+      if (!entryWarning) msg += `\n\n✅ <i>Pullback confirmed — entry zone</i>`;
       msg += `\n\n<i>${new Date().toUTCString()}</i>`;
 
       await this.bot.telegram.sendMessage(this.pumpChannelId, msg, { parse_mode: 'HTML' });
