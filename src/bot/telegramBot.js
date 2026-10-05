@@ -5061,6 +5061,10 @@ class TelegramBot {
          Markup.button.callback('🔗 Onchain', 'oc_settings')],
         [Markup.button.callback('🌊 Swing Trade', 'sw_settings'),
          Markup.button.callback('🎯 Demand Zone', 'dz_settings')],
+        [Markup.button.callback('🟢 Manual Long', 'pnl_long'),
+         Markup.button.callback('🔴 Manual Short', 'pnl_short')],
+        [Markup.button.callback('📊 All Positions', 'pnl_positions'),
+         Markup.button.callback('📈 All Stats', 'pnl_stats')],
       ]);
       if (isNew) {
         await ctx.replyWithHTML(text, keyboard);
@@ -5073,6 +5077,60 @@ class TelegramBot {
     this.bot.action('panel_main', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showPanel(ctx); } catch (e) { logger.error(`panel_main error: ${e.message}`); }
+    });
+
+    this.bot.action('pnl_long', async (ctx) => {
+      await ctx.answerCbQuery();
+      ctx.replyWithHTML(
+        `🟢 <b>Manual Long</b>\n\n` +
+        `<code>/trade SYMBOL</code> — full trade panel (configure size, leverage, SL, exchange)\n` +
+        `<code>/long SYMBOL</code> — quick long with defaults\n\n` +
+        `Example: <code>/trade RLC</code>`
+      );
+    });
+
+    this.bot.action('pnl_short', async (ctx) => {
+      await ctx.answerCbQuery();
+      ctx.replyWithHTML(
+        `🔴 <b>Manual Short</b>\n\n` +
+        `<code>/trade SYMBOL</code> — full trade panel (configure size, leverage, SL, exchange)\n` +
+        `<code>/short SYMBOL</code> — quick short with defaults\n\n` +
+        `Example: <code>/trade BTC</code>`
+      );
+    });
+
+    this.bot.action('pnl_positions', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const { rows: trades } = await db.query(`SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC`);
+        if (!trades.length) return ctx.replyWithHTML('📭 No open positions.');
+        let msg = '';
+        for (const t of trades.slice(0, 10)) {
+          const dir = t.direction === 'long' ? '🟢' : '🔴';
+          const src = t.source === 'main' ? '📡' : t.source === 'onchain' ? '🔗' : t.source === 'swing' ? '📈' : t.source === 'demandzone' ? '🎯' : '🔧';
+          msg += `${src} ${dir} <b>${t.symbol}</b> @ $${parseFloat(t.entry_price).toPrecision(6)} (${t.leverage}x)\n`;
+        }
+        const closeButtons = trades.slice(0, 5).map(t => [Markup.button.callback(`Close ${t.symbol}`, `mt_close_${t.symbol}`)]);
+        ctx.replyWithHTML(
+          `📊 <b>All Positions</b> (${trades.length})\n\n${msg}`,
+          Markup.inlineKeyboard([...closeButtons, [Markup.button.callback('⬅️ Panel', 'panel_main')]])
+        );
+      } catch (e) {}
+    });
+
+    this.bot.action('pnl_stats', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const { rows } = await db.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN pnl_usd::numeric > 0 THEN 1 ELSE 0 END) as wins, SUM(pnl_usd::numeric) as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
+        if (!rows.length) return ctx.replyWithHTML('📈 No closed trades yet.');
+        let msg = '';
+        for (const r of rows) {
+          const src = r.source === 'main' ? '📡 Main' : r.source === 'onchain' ? '🔗 Onchain' : r.source === 'swing' ? '📈 Swing' : r.source === 'demandzone' ? '🎯 DZ' : `🔧 ${r.source}`;
+          const wr = r.total > 0 ? ((r.wins / r.total) * 100).toFixed(0) : 0;
+          msg += `${src}: ${r.total} trades | WR: ${wr}% | $${parseFloat(r.total_pnl || 0).toFixed(2)}\n`;
+        }
+        ctx.replyWithHTML(`📈 <b>Stats by Mode</b>\n\n${msg}`);
+      } catch (e) {}
     });
 
     // === SWING TRADE SETTINGS PANEL (sw_ prefix) ===
