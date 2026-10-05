@@ -742,39 +742,113 @@ class TelegramBot {
       }
     };
 
-    // /panel — main trading control panel
+    // /panel — main trading control panel with all modes
     this.bot.command('panel', async (ctx) => {
       if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-      const octe = this.onchainTradeExecutor;
-      const mode = octe?.mode?.toUpperCase() || 'N/A';
-      const trades = octe ? await db.getOpenTrades(octe.settingsKey) : [];
+      await this.showMainPanel(ctx, true);
+    });
 
-      ctx.replyWithHTML(
+    this.showMainPanel = async (ctx, isNew = false) => {
+      const te = this.tradeExecutor;
+      const octe = this.onchainTradeExecutor;
+      const ste = this.swingTradeExecutor;
+      const dzte = this.dzTradeExecutor;
+
+      const mainMode = te?.mode?.toUpperCase() || 'N/A';
+      const mainOn = te?.enabled ? '✅' : '❌';
+      const ocMode = octe?.mode?.toUpperCase() || 'N/A';
+      const stMode = ste?.mode?.toUpperCase() || 'N/A';
+      const dzMode = dzte?.mode?.toUpperCase() || 'N/A';
+
+      const allTrades = await db.pool.query(`SELECT source, direction, symbol FROM trades WHERE status = 'open'`);
+      const mainCount = allTrades.rows.filter(t => t.source === 'main' || !t.source).length;
+      const ocCount = allTrades.rows.filter(t => t.source === octe?.settingsKey).length;
+      const stCount = allTrades.rows.filter(t => t.source === ste?.settingsKey).length;
+      const dzCount = allTrades.rows.filter(t => t.source === dzte?.settingsKey).length;
+
+      const text =
         `🎛 <b>TRADE PANEL</b>\n\n` +
-        `Mode: <b>${mode}</b> | Open: <b>${trades.length}</b>\n\n` +
-        `<i>Tap a button or type a command:</i>`,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('📊 Positions', 'panel_positions'),
-           Markup.button.callback('📈 Stats', 'panel_stats')],
-          [Markup.button.callback('🟢 Quick Long', 'panel_long'),
-           Markup.button.callback('🔴 Quick Short', 'panel_short')],
-          [Markup.button.callback('⚙️ Onchain Settings', 'panel_oc'),
-           Markup.button.callback('🔄 Refresh', 'panel_refresh')],
-        ])
+        `📡 <b>Main Signal:</b> ${mainOn} ${mainMode} | ${mainCount} open\n` +
+        `🔗 <b>Onchain:</b> ${ocMode} | ${ocCount} open\n` +
+        `📈 <b>Swing:</b> ${stMode} | ${stCount} open\n` +
+        `🎯 <b>Demand Zone:</b> ${dzMode} | ${dzCount} open\n\n` +
+        `<i>Select a trading mode or action:</i>`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📡 Main Signal', 'panel_main'),
+         Markup.button.callback('🔗 Onchain', 'panel_onchain')],
+        [Markup.button.callback('📈 Swing Trade', 'panel_swing'),
+         Markup.button.callback('🎯 Demand Zone', 'panel_dz')],
+        [Markup.button.callback('🟢 Manual Long', 'panel_long'),
+         Markup.button.callback('🔴 Manual Short', 'panel_short')],
+        [Markup.button.callback('📊 All Positions', 'panel_positions'),
+         Markup.button.callback('📈 Stats', 'panel_stats')],
+        [Markup.button.callback('🔄 Refresh', 'panel_refresh')],
+      ]);
+
+      if (isNew) {
+        await ctx.replyWithHTML(text, keyboard);
+      } else {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      }
+    };
+
+    this.bot.action('panel_main', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const te = this.tradeExecutor;
+        if (!te) return ctx.editMessageText('⚠️ Main trade executor not ready.', { parse_mode: 'HTML' });
+        const balance = await te.getBalance();
+        const sizeDisplay = te.riskPct > 0 ? `${te.riskPct}% ($${(balance * te.riskPct / 100).toFixed(2)})` : `$${te.maxPositionSize}`;
+        await ctx.editMessageText(
+          `📡 <b>MAIN SIGNAL TRADING</b>\n\n` +
+          `Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+          `Balance: $${balance.toFixed(2)} | Size: ${sizeDisplay} | ${te.defaultLeverage}x\n` +
+          `Daily P&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit\n\n` +
+          `Use /risk for full risk panel`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+        );
+      } catch (e) {}
+    });
+
+    this.bot.action('panel_onchain', async (ctx) => {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText(
+        `🔗 <b>ONCHAIN TRADING</b>\n\nUse <code>/onchaintrade</code> for full settings panel.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+      );
+    });
+
+    this.bot.action('panel_swing', async (ctx) => {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText(
+        `📈 <b>SWING TRADING</b>\n\nUse <code>/swingtrade</code> for full settings panel.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+      );
+    });
+
+    this.bot.action('panel_dz', async (ctx) => {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText(
+        `🎯 <b>DEMAND ZONE TRADING</b>\n\nUse <code>/dzsettings</code> for full settings panel.`,
+        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
       );
     });
 
     this.bot.action('panel_positions', async (ctx) => {
       try {
         await ctx.answerCbQuery();
-        const octe = this.onchainTradeExecutor;
-        const trades = await db.getOpenTrades(octe.settingsKey);
-        if (!trades.length) return ctx.editMessageText('📭 No open positions.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
-        const { msg, totalPnl } = await formatPositions(trades, octe.exchanges);
-        const pnlEmoji = totalPnl >= 0 ? '🟩' : '🟥';
-        const closeButtons = trades.slice(0, 5).map(t => Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} Close ${t.symbol}`, `mt_close_${t.symbol}`));
+        const { rows: trades } = await db.pool.query(`SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC`);
+        if (!trades.length) return ctx.editMessageText('📭 No open positions across any mode.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+        let msg = '';
+        for (const t of trades.slice(0, 10)) {
+          const dir = t.direction === 'long' ? '🟢' : '🔴';
+          const src = t.source === 'main' ? '📡' : t.source === 'onchain' ? '🔗' : t.source === 'swing' ? '📈' : t.source === 'demandzone' ? '🎯' : '🔧';
+          msg += `${src} ${dir} <b>${t.symbol}</b> @ $${parseFloat(t.entry_price).toPrecision(6)} (${t.leverage}x)\n`;
+        }
+        const closeButtons = trades.slice(0, 5).map(t => Markup.button.callback(`Close ${t.symbol}`, `mt_close_${t.symbol}`));
         await ctx.editMessageText(
-          `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`,
+          `📊 <b>All Open Positions</b> (${trades.length})\n\n${msg}`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([closeButtons, [Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
         );
       } catch (e) {}
@@ -782,58 +856,36 @@ class TelegramBot {
 
     this.bot.action('panel_long', async (ctx) => {
       await ctx.answerCbQuery();
-      await ctx.editMessageText('🟢 <b>Quick Long</b>\n\nType: <code>/long SYMBOL</code>\nExample: <code>/long RLC</code>', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+      await ctx.editMessageText('🟢 <b>Manual Long</b>\n\nType: <code>/long SYMBOL</code> or <code>/trade SYMBOL</code>\n\nExamples:\n<code>/long RLC</code> — opens trade panel\n<code>/trade BTC</code> — full config panel', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
     });
 
     this.bot.action('panel_short', async (ctx) => {
       await ctx.answerCbQuery();
-      await ctx.editMessageText('🔴 <b>Quick Short</b>\n\nType: <code>/short SYMBOL</code>\nExample: <code>/short RLC</code>', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+      await ctx.editMessageText('🔴 <b>Manual Short</b>\n\nType: <code>/short SYMBOL</code> or <code>/trade SYMBOL</code>\n\nExamples:\n<code>/short RLC</code> — opens trade panel\n<code>/trade BTC</code> — full config panel', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
     });
 
     this.bot.action('panel_stats', async (ctx) => {
       try {
         await ctx.answerCbQuery();
-        const octe = this.onchainTradeExecutor;
-        const { rows: closedTrades } = await db.pool.query(`SELECT * FROM trades WHERE source = $1 AND status = 'closed' ORDER BY closed_at DESC LIMIT 50`, [octe.settingsKey]);
-        const wins = closedTrades.filter(t => parseFloat(t.pnl_usd) > 0).length;
-        const losses = closedTrades.filter(t => parseFloat(t.pnl_usd) <= 0).length;
-        const totalPnl = closedTrades.reduce((s, t) => s + parseFloat(t.pnl_usd || 0), 0);
-        const wr = closedTrades.length > 0 ? ((wins / closedTrades.length) * 100).toFixed(0) : 0;
+        const { rows } = await db.pool.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN pnl_usd::numeric > 0 THEN 1 ELSE 0 END) as wins, SUM(pnl_usd::numeric) as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
+        if (!rows.length) return ctx.editMessageText('📈 No closed trades yet.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+        let msg = '';
+        for (const r of rows) {
+          const src = r.source === 'main' ? '📡 Main' : r.source === 'onchain' ? '🔗 Onchain' : r.source === 'swing' ? '📈 Swing' : r.source === 'demandzone' ? '🎯 DZ' : `🔧 ${r.source}`;
+          const wr = r.total > 0 ? ((r.wins / r.total) * 100).toFixed(0) : 0;
+          msg += `${src}: ${r.total} trades | WR: ${wr}% | $${parseFloat(r.total_pnl || 0).toFixed(2)}\n`;
+        }
         await ctx.editMessageText(
-          `📈 <b>Trade Stats</b> (last ${closedTrades.length})\n\n` +
-          `✅ Wins: ${wins} | ❌ Losses: ${losses}\n` +
-          `📊 Win Rate: <b>${wr}%</b>\n` +
-          `💰 Total P&L: <b>$${totalPnl.toFixed(2)}</b>\n` +
-          `📊 Daily P&L: <b>$${(octe?.dailyPnL || 0).toFixed(2)}</b>`,
+          `📈 <b>Stats by Mode</b>\n\n${msg}`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
         );
       } catch (e) {}
     });
 
-    this.bot.action('panel_oc', async (ctx) => {
-      await ctx.answerCbQuery();
-      await ctx.editMessageText('⚙️ Type <code>/onchaintrade</code> for full settings panel.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
-    });
-
     this.bot.action('panel_refresh', async (ctx) => {
       try {
         await ctx.answerCbQuery('Refreshed');
-        const octe = this.onchainTradeExecutor;
-        const mode = octe?.mode?.toUpperCase() || 'N/A';
-        const trades = octe ? await db.getOpenTrades(octe.settingsKey) : [];
-        await ctx.editMessageText(
-          `🎛 <b>TRADE PANEL</b>\n\n` +
-          `Mode: <b>${mode}</b> | Open: <b>${trades.length}</b>\n\n` +
-          `<i>Tap a button or type a command:</i>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('📊 Positions', 'panel_positions'),
-             Markup.button.callback('📈 Stats', 'panel_stats')],
-            [Markup.button.callback('🟢 Quick Long', 'panel_long'),
-             Markup.button.callback('🔴 Quick Short', 'panel_short')],
-            [Markup.button.callback('⚙️ Onchain Settings', 'panel_oc'),
-             Markup.button.callback('🔄 Refresh', 'panel_refresh')],
-          ]).reply_markup }
-        );
+        await this.showMainPanel(ctx, false);
       } catch (e) {}
     });
 
