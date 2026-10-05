@@ -819,88 +819,102 @@ class TelegramBot {
       try {
         await ctx.answerCbQuery();
         const te = this.tradeExecutor;
-        if (!te) return ctx.editMessageText('⚠️ Main trade executor not ready.', { parse_mode: 'HTML' });
+        if (!te) return ctx.replyWithHTML('⚠️ Main trade executor not ready.');
         const balance = await te.getBalance();
         const sizeDisplay = te.riskPct > 0 ? `${te.riskPct}% ($${(balance * te.riskPct / 100).toFixed(2)})` : `$${te.maxPositionSize}`;
-        await ctx.editMessageText(
-          `📡 <b>MAIN SIGNAL TRADING</b>\n\n` +
-          `Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
-          `Balance: $${balance.toFixed(2)} | Size: ${sizeDisplay} | ${te.defaultLeverage}x\n` +
-          `Daily P&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit\n\n` +
-          `Use /risk for full risk panel`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+        ctx.replyWithHTML(
+          `📡 <b>MAIN SIGNAL TRADING</b>\n\nMode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\nBalance: $${balance.toFixed(2)} | Size: ${sizeDisplay} | ${te.defaultLeverage}x${te.dynamicLeverage ? ' dyn' : ''}\nP&L: $${te.dailyPnL.toFixed(2)} / -$${te.maxDailyLoss} limit\n\nUse /risk for full risk panel`
         );
       } catch (e) {}
     });
 
     this.bot.action('panel_onchain', async (ctx) => {
-      await ctx.answerCbQuery();
-      await ctx.editMessageText(
-        `🔗 <b>ONCHAIN TRADING</b>\n\nUse <code>/onchaintrade</code> for full settings panel.`,
-        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
-      );
+      try {
+        await ctx.answerCbQuery();
+        if (this._showOcSettings) {
+          await this._showOcSettings(ctx, true);
+        } else {
+          ctx.replyWithHTML('⚠️ Use <code>/onchaintrade</code>');
+        }
+      } catch (e) {}
     });
 
     this.bot.action('panel_swing', async (ctx) => {
-      await ctx.answerCbQuery();
-      await ctx.editMessageText(
-        `📈 <b>SWING TRADING</b>\n\nUse <code>/swingtrade</code> for full settings panel.`,
-        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
-      );
+      try {
+        await ctx.answerCbQuery();
+        const te = this.swingTradeExecutor;
+        if (!te) return ctx.replyWithHTML('⚠️ Swing executor not initialized. Use <code>/swingtrade</code>');
+        await te.recalcDailyPnL?.();
+        const openTrades = await db.getOpenTrades('swing').catch(() => []);
+        const watchlist = this.swingScanner?.getWatchlistStatus() || [];
+        ctx.replyWithHTML(
+          `🌊 <b>SWING SETTINGS</b>\n\n` +
+          `📝 Mode: <b>${te.mode.toUpperCase()}</b> | ${te.enabled ? '✅ ON' : '❌ OFF'}\n` +
+          `💵 Size: <b>$${te.maxPositionSize}</b>/trade\n` +
+          `⚡ Leverage: <b>${te.defaultLeverage}x</b>\n` +
+          `🛡️ Daily Loss: <b>$${te.maxDailyLoss}</b> | Per-Trade: <b>${te.maxLossPerTrade > 0 ? `$${te.maxLossPerTrade}` : 'Off'}</b>\n` +
+          `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
+          `⏱️ Max Hold: <b>${Math.round(te.maxTradeAge / (24 * 60 * 60 * 1000))}d</b> | Time Exit: <b>${te.timeExitMinutes > 0 ? te.timeExitMinutes + 'min' : 'Off'}</b>\n` +
+          `🎯 Profit Protect: <b>${te.profitProtectPct}%</b> | Trail: <b>${te.trailAtrMultPre}x/${te.trailAtrMultPost}x ATR</b>\n` +
+          `📈 Today P&L: <b>$${te.dailyPnL.toFixed(2)}</b>\n` +
+          `📋 Open: <b>${openTrades.length}/${te.maxConcurrentPositions}</b>\n` +
+          `👁️ Watchlist: <b>${watchlist.length}</b> symbols`
+        );
+      } catch (e) {}
     });
 
     this.bot.action('panel_dz', async (ctx) => {
-      await ctx.answerCbQuery();
-      await ctx.editMessageText(
-        `🎯 <b>DEMAND ZONE TRADING</b>\n\nUse <code>/dzsettings</code> for full settings panel.`,
-        { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
-      );
+      try {
+        await ctx.answerCbQuery();
+        if (this._showDzSettings) {
+          await this._showDzSettings(ctx, true);
+        } else {
+          ctx.replyWithHTML('⚠️ Use <code>/dzsettings</code>');
+        }
+      } catch (e) {}
     });
 
     this.bot.action('panel_positions', async (ctx) => {
       try {
         await ctx.answerCbQuery();
         const { rows: trades } = await db.query(`SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC`);
-        if (!trades.length) return ctx.editMessageText('📭 No open positions across any mode.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+        if (!trades.length) return ctx.replyWithHTML('📭 No open positions across any mode.');
         let msg = '';
         for (const t of trades.slice(0, 10)) {
           const dir = t.direction === 'long' ? '🟢' : '🔴';
           const src = t.source === 'main' ? '📡' : t.source === 'onchain' ? '🔗' : t.source === 'swing' ? '📈' : t.source === 'demandzone' ? '🎯' : '🔧';
           msg += `${src} ${dir} <b>${t.symbol}</b> @ $${parseFloat(t.entry_price).toPrecision(6)} (${t.leverage}x)\n`;
         }
-        const closeButtons = trades.slice(0, 5).map(t => Markup.button.callback(`Close ${t.symbol}`, `mt_close_${t.symbol}`));
-        await ctx.editMessageText(
-          `📊 <b>All Open Positions</b> (${trades.length})\n\n${msg}`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([closeButtons, [Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
+        const closeButtons = trades.slice(0, 5).map(t => [Markup.button.callback(`Close ${t.symbol}`, `mt_close_${t.symbol}`)]);
+        ctx.replyWithHTML(
+          `📊 <b>All Positions</b> (${trades.length})\n\n${msg}`,
+          Markup.inlineKeyboard(closeButtons)
         );
       } catch (e) {}
     });
 
     this.bot.action('panel_long', async (ctx) => {
       await ctx.answerCbQuery();
-      await ctx.editMessageText('🟢 <b>Manual Long</b>\n\nType: <code>/long SYMBOL</code> or <code>/trade SYMBOL</code>\n\nExamples:\n<code>/long RLC</code> — opens trade panel\n<code>/trade BTC</code> — full config panel', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+      ctx.replyWithHTML('🟢 <b>Manual Long</b>\n\nType: <code>/long SYMBOL</code> or <code>/trade SYMBOL</code>\n\nExamples:\n<code>/long RLC</code>\n<code>/trade BTC</code>');
     });
 
     this.bot.action('panel_short', async (ctx) => {
       await ctx.answerCbQuery();
-      await ctx.editMessageText('🔴 <b>Manual Short</b>\n\nType: <code>/short SYMBOL</code> or <code>/trade SYMBOL</code>\n\nExamples:\n<code>/short RLC</code> — opens trade panel\n<code>/trade BTC</code> — full config panel', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+      ctx.replyWithHTML('🔴 <b>Manual Short</b>\n\nType: <code>/short SYMBOL</code> or <code>/trade SYMBOL</code>\n\nExamples:\n<code>/short RLC</code>\n<code>/trade BTC</code>');
     });
 
     this.bot.action('panel_stats', async (ctx) => {
       try {
         await ctx.answerCbQuery();
         const { rows } = await db.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN pnl_usd::numeric > 0 THEN 1 ELSE 0 END) as wins, SUM(pnl_usd::numeric) as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
-        if (!rows.length) return ctx.editMessageText('📈 No closed trades yet.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
+        if (!rows.length) return ctx.replyWithHTML('📈 No closed trades yet.');
         let msg = '';
         for (const r of rows) {
           const src = r.source === 'main' ? '📡 Main' : r.source === 'onchain' ? '🔗 Onchain' : r.source === 'swing' ? '📈 Swing' : r.source === 'demandzone' ? '🎯 DZ' : `🔧 ${r.source}`;
           const wr = r.total > 0 ? ((r.wins / r.total) * 100).toFixed(0) : 0;
           msg += `${src}: ${r.total} trades | WR: ${wr}% | $${parseFloat(r.total_pnl || 0).toFixed(2)}\n`;
         }
-        await ctx.editMessageText(
-          `📈 <b>Stats by Mode</b>\n\n${msg}`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup }
-        );
+        ctx.replyWithHTML(`📈 <b>Stats by Mode</b>\n\n${msg}`);
       } catch (e) {}
     });
 
