@@ -662,7 +662,7 @@ class TelegramBot {
       return null;
     };
 
-    const calcTradeSetup = async (symbol, exchangeId, exchange, pair, direction, margin, leverage, slPct) => {
+    const calcTradeSetup = async (symbol, exchangeId, exchange, pair, direction, margin, leverage, slPct, opts = {}) => {
       const ticker = await exchange.fetchTicker(pair);
       const price = ticker.last;
       let atr;
@@ -676,22 +676,38 @@ class TelegramBot {
       const isLong = direction === 'long';
       const posSize = margin * leverage;
       let stopLoss, tp1, tp2, tp3;
-      if (slPct > 0) {
+
+      // SL: custom price > fixed % > ATR-based
+      if (opts.customSl > 0) {
+        stopLoss = opts.customSl;
+      } else if (slPct > 0) {
         stopLoss = isLong ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
-        const rr = price * slPct / 100;
+      } else {
+        stopLoss = isLong ? price - atr * 3 : price + atr * 3;
+      }
+
+      const slDist = Math.abs(price - stopLoss);
+      const rr = slDist;
+
+      // TP: custom or auto (R:R based)
+      if (opts.customTp1 > 0) {
+        const tpDist = Math.abs(opts.customTp1 - price);
+        tp1 = opts.customTp1;
+        tp2 = isLong ? price + tpDist * 2 : price - tpDist * 2;
+        tp3 = isLong ? price + tpDist * 3.5 : price - tpDist * 3.5;
+      } else {
         tp1 = isLong ? price + rr * 1.5 : price - rr * 1.5;
         tp2 = isLong ? price + rr * 3 : price - rr * 3;
         tp3 = isLong ? price + rr * 5 : price - rr * 5;
-      } else {
-        stopLoss = isLong ? price - atr * 3 : price + atr * 3;
-        tp1 = isLong ? price + atr * 3 : price - atr * 3;
-        tp2 = isLong ? price + atr * 6 : price - atr * 6;
-        tp3 = isLong ? price + atr * 10 : price - atr * 10;
       }
-      const tp4 = isLong ? price + atr * 8 : price - atr * 8;
-      const slDistPct = (Math.abs(price - stopLoss) / price * 100).toFixed(1);
-      const maxLoss = (posSize * Math.abs(price - stopLoss) / price).toFixed(2);
-      return { price, atr, posSize, stopLoss, tp1, tp2, tp3, tp4, slDistPct, maxLoss };
+      const tp4 = isLong ? price + rr * 4 : price - rr * 4;
+
+      const slDistPct = (slDist / price * 100).toFixed(1);
+      const maxLoss = (posSize * slDist / price).toFixed(2);
+      const rrRatio = rr > 0 ? (Math.abs(tp1 - price) / rr).toFixed(1) : '∞';
+      const liqPct = (100 / leverage).toFixed(0);
+      const liqPrice = isLong ? price * (1 - 1 / leverage) : price * (1 + 1 / leverage);
+      return { price, atr, posSize, stopLoss, tp1, tp2, tp3, tp4, slDistPct, maxLoss, rrRatio, liqPrice, liqPct };
     };
 
     const showTradePanel = async (ctx, isNew = false) => {
@@ -702,32 +718,38 @@ class TelegramBot {
       const s = st;
 
       try {
-        const setup = await calcTradeSetup(s.symbol, s.exchangeId, s.exchange, s.pair, s.direction, s.margin, s.leverage, s.slPct);
+        const setup = await calcTradeSetup(s.symbol, s.exchangeId, s.exchange, s.pair, s.direction, s.margin, s.leverage, s.slPct, { customSl: s.customSl, customTp1: s.customTp1 });
         s.cachedSetup = setup;
 
         const dirEmoji = s.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
-        const modeLabel = octe.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
+        const modeLabel = s.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
+        const slLabel = s.customSl > 0 ? `$${s.customSl}` : s.slPct > 0 ? `${s.slPct}%` : 'ATR';
+        const tpLabel = s.customTp1 > 0 ? `Custom` : 'Auto';
         const text =
           `🔧 <b>MANUAL TRADE — ${s.symbol}</b>\n\n` +
-          `${dirEmoji} | ${modeLabel}\n` +
-          `📊 Exchange: <b>${s.exchangeId.toUpperCase()}</b>\n` +
+          `${dirEmoji} | ${modeLabel} | ${s.exchangeId.toUpperCase()}\n` +
           `💰 Price: <b>$${setup.price.toPrecision(6)}</b>\n\n` +
-          `💵 Margin: <b>$${s.margin}</b> × ${s.leverage}x = <b>$${setup.posSize}</b> position\n\n` +
-          `🎯 TP1: $${setup.tp1.toPrecision(6)}\n` +
+          `💵 Margin: <b>$${s.margin}</b> × ${s.leverage}x = <b>$${setup.posSize}</b>\n` +
+          `📐 R:R — <b>1:${setup.rrRatio}</b>\n\n` +
+          `🎯 TP1: $${setup.tp1.toPrecision(6)} (${tpLabel})\n` +
           `🎯 TP2: $${setup.tp2.toPrecision(6)}\n` +
           `🎯 TP3: $${setup.tp3.toPrecision(6)}\n` +
-          `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss})\n\n` +
+          `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss}) [${slLabel}]\n` +
+          `💀 Liq: $${setup.liqPrice.toPrecision(6)} (-${setup.liqPct}%)\n\n` +
           `<i>Tap to configure, then confirm:</i>`;
 
         const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback(`${s.mode === 'paper' ? '📝 PAPER ✓' : '📝 PAPER'}`, 'mt_mode_paper'),
+           Markup.button.callback(`${s.mode === 'live' ? '💰 LIVE ✓' : '💰 LIVE'}`, 'mt_mode_live')],
           [Markup.button.callback(`${s.direction === 'long' ? '🟢 LONG ✓' : '🟢 LONG'}`, 'mt_dir_long'),
            Markup.button.callback(`${s.direction === 'short' ? '🔴 SHORT ✓' : '🔴 SHORT'}`, 'mt_dir_short')],
-          [Markup.button.callback(`💵 Margin: $${s.margin}`, 'mt_margin'),
-           Markup.button.callback(`⚡ Lev: ${s.leverage}x`, 'mt_lev')],
-          [Markup.button.callback(`🛑 SL: ${s.slPct > 0 ? s.slPct + '%' : 'ATR'}`, 'mt_sl'),
+          [Markup.button.callback(`💵 $${s.margin}`, 'mt_margin'),
+           Markup.button.callback(`⚡ ${s.leverage}x`, 'mt_lev'),
            Markup.button.callback(`📊 ${s.exchangeId.toUpperCase()}`, 'mt_exchange')],
+          [Markup.button.callback(`🛑 SL: ${slLabel}`, 'mt_sl'),
+           Markup.button.callback(`🎯 TP: ${tpLabel}`, 'mt_tp')],
           [Markup.button.callback(`✅ CONFIRM ${s.direction.toUpperCase()}`, 'mt_confirm')],
-          [Markup.button.callback('🔄 Refresh Price', 'mt_refresh'),
+          [Markup.button.callback('🔄 Refresh', 'mt_refresh'),
            Markup.button.callback('❌ Cancel', 'mt_cancel')],
         ]);
 
@@ -760,7 +782,7 @@ class TelegramBot {
       const stMode = ste?.mode?.toUpperCase() || 'N/A';
       const dzMode = dzte?.mode?.toUpperCase() || 'N/A';
 
-      const allTrades = await db.pool.query(`SELECT source, direction, symbol FROM trades WHERE status = 'open'`);
+      const allTrades = await db.query(`SELECT source, direction, symbol FROM trades WHERE status = 'open'`);
       const mainCount = allTrades.rows.filter(t => t.source === 'main' || !t.source).length;
       const ocCount = allTrades.rows.filter(t => t.source === octe?.settingsKey).length;
       const stCount = allTrades.rows.filter(t => t.source === ste?.settingsKey).length;
@@ -838,7 +860,7 @@ class TelegramBot {
     this.bot.action('panel_positions', async (ctx) => {
       try {
         await ctx.answerCbQuery();
-        const { rows: trades } = await db.pool.query(`SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC`);
+        const { rows: trades } = await db.query(`SELECT * FROM trades WHERE status = 'open' ORDER BY created_at DESC`);
         if (!trades.length) return ctx.editMessageText('📭 No open positions across any mode.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
         let msg = '';
         for (const t of trades.slice(0, 10)) {
@@ -867,7 +889,7 @@ class TelegramBot {
     this.bot.action('panel_stats', async (ctx) => {
       try {
         await ctx.answerCbQuery();
-        const { rows } = await db.pool.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN pnl_usd::numeric > 0 THEN 1 ELSE 0 END) as wins, SUM(pnl_usd::numeric) as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
+        const { rows } = await db.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN pnl_usd::numeric > 0 THEN 1 ELSE 0 END) as wins, SUM(pnl_usd::numeric) as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
         if (!rows.length) return ctx.editMessageText('📈 No closed trades yet.', { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'panel_refresh')]]).reply_markup });
         let msg = '';
         for (const r of rows) {
@@ -922,6 +944,10 @@ class TelegramBot {
           margin: octe.maxPositionSize || 12,
           leverage: octe.defaultLeverage || 3,
           slPct: 0,
+          customSl: 0,
+          tpMode: 'auto',
+          customTp1: 0,
+          mode: octe.mode || 'paper',
           cachedSetup: null,
         };
 
@@ -985,15 +1011,25 @@ class TelegramBot {
       });
     }
 
+    // Mode toggle (paper/live)
+    this.bot.action('mt_mode_paper', async (ctx) => {
+      try { await ctx.answerCbQuery('Paper'); this.manualTradeState[ctx.from.id].mode = 'paper'; await showTradePanel(ctx); } catch (e) {}
+    });
+    this.bot.action('mt_mode_live', async (ctx) => {
+      try { await ctx.answerCbQuery('⚠️ LIVE MODE'); this.manualTradeState[ctx.from.id].mode = 'live'; await showTradePanel(ctx); } catch (e) {}
+    });
+
     // SL selector
     this.bot.action('mt_sl', async (ctx) => {
       try {
         await ctx.answerCbQuery();
         const st = this.manualTradeState[ctx.from.id];
-        const mk = (v, label) => Markup.button.callback(`${label}${st.slPct === v ? ' ✓' : ''}`, `mt_sl_${v}`);
+        const curLabel = st.customSl > 0 ? `Custom $${st.customSl}` : st.slPct > 0 ? `${st.slPct}%` : 'ATR (auto)';
+        const mk = (v, label) => Markup.button.callback(`${label}${st.slPct === v && !st.customSl ? ' ✓' : ''}`, `mt_sl_${v}`);
         await ctx.editMessageText(
-          `🛑 <b>STOP LOSS</b>\n\nCurrent: <b>${st.slPct > 0 ? st.slPct + '%' : 'ATR-based (auto)'}</b>\n\n` +
-          `ATR = automatic based on volatility\n% = fixed percentage from entry`,
+          `🛑 <b>STOP LOSS</b>\n\nCurrent: <b>${curLabel}</b>\n\n` +
+          `ATR = automatic based on volatility\n% = fixed percentage from entry\nCustom = set exact price\n\n` +
+          `To set custom SL price:\n<code>/sl 0.0512</code>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
             [mk(0, 'ATR (auto)'), mk(3, '3%'), mk(5, '5%')],
             [mk(7, '7%'), mk(10, '10%'), mk(15, '15%')],
@@ -1005,9 +1041,65 @@ class TelegramBot {
     });
     for (const sl of [0, 3, 5, 7, 10, 15, 20, 25, 30]) {
       this.bot.action(`mt_sl_${sl}`, async (ctx) => {
-        try { await ctx.answerCbQuery(sl === 0 ? 'ATR' : `${sl}%`); this.manualTradeState[ctx.from.id].slPct = sl; await showTradePanel(ctx); } catch (e) {}
+        try {
+          await ctx.answerCbQuery(sl === 0 ? 'ATR' : `${sl}%`);
+          const st = this.manualTradeState[ctx.from.id];
+          st.slPct = sl;
+          st.customSl = 0;
+          await showTradePanel(ctx);
+        } catch (e) {}
       });
     }
+
+    // Custom SL via /sl command
+    this.bot.command('sl', async (ctx) => {
+      const st = this.manualTradeState[ctx.from?.id];
+      if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Use <code>/trade SYMBOL</code> first.');
+      const price = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!price || price <= 0) return ctx.replyWithHTML('Usage: <code>/sl 0.0512</code>');
+      st.customSl = price;
+      st.slPct = 0;
+      ctx.replyWithHTML(`🛑 Custom SL set to <b>$${price}</b>. Open your trade panel to see updated setup.`);
+    });
+
+    // Custom TP via /tp command
+    this.bot.command('tp', async (ctx) => {
+      const st = this.manualTradeState[ctx.from?.id];
+      if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Use <code>/trade SYMBOL</code> first.');
+      const price = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!price || price <= 0) return ctx.replyWithHTML('Usage: <code>/tp 0.089</code> (sets TP1, TP2/3 auto-scale)');
+      st.customTp1 = price;
+      st.tpMode = 'custom';
+      ctx.replyWithHTML(`🎯 Custom TP1 set to <b>$${price}</b>. TP2/3 auto-scale from TP1. Open your trade panel to see.`);
+    });
+
+    // TP selector
+    this.bot.action('mt_tp', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const st = this.manualTradeState[ctx.from.id];
+        const curLabel = st.customTp1 > 0 ? `Custom $${st.customTp1}` : 'Auto (R:R based)';
+        await ctx.editMessageText(
+          `🎯 <b>TAKE PROFIT</b>\n\nCurrent: <b>${curLabel}</b>\n\n` +
+          `<b>Auto:</b> TP1 = 1.5R, TP2 = 3R, TP3 = 5R\n` +
+          `<b>Custom:</b> Set TP1, TP2/3 auto-scale\n\n` +
+          `To set custom TP1 price:\n<code>/tp 0.089</code>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`Auto (R:R)${st.tpMode === 'auto' ? ' ✓' : ''}`, 'mt_tp_auto')],
+            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+    this.bot.action('mt_tp_auto', async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Auto TP');
+        const st = this.manualTradeState[ctx.from.id];
+        st.tpMode = 'auto';
+        st.customTp1 = 0;
+        await showTradePanel(ctx);
+      } catch (e) {}
+    });
 
     // Exchange selector
     this.bot.action('mt_exchange', async (ctx) => {
@@ -1072,10 +1164,10 @@ class TelegramBot {
         const octe = this.onchainTradeExecutor;
         await ctx.answerCbQuery('Executing...');
 
-        const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct);
+        const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct, { customSl: st.customSl, customTp1: st.customTp1 });
         const isLong = st.direction === 'long';
 
-        if (octe.mode === 'paper') {
+        if (st.mode === 'paper') {
           const trade = {
             signalId: null, symbol: st.symbol, exchange: st.exchangeId, direction: st.direction,
             mode: 'paper', entryPrice: setup.price, quantity: setup.posSize / setup.price,
@@ -1091,14 +1183,16 @@ class TelegramBot {
 
           await ctx.editMessageText(
             `${isLong ? '🟢' : '🔴'} <b>MANUAL ${st.direction.toUpperCase()} OPENED</b> — $${escapeHtml(st.symbol)}\n\n` +
-            `📝 ${octe.mode.toUpperCase()} | ${st.exchangeId.toUpperCase()}\n` +
+            `📝 PAPER | ${st.exchangeId.toUpperCase()}\n` +
             `💰 Entry: <b>$${setup.price.toPrecision(6)}</b>\n` +
-            `💵 Margin: <b>$${st.margin}</b> × ${st.leverage}x = $${setup.posSize}\n\n` +
+            `💵 Margin: <b>$${st.margin}</b> × ${st.leverage}x = $${setup.posSize}\n` +
+            `📐 R:R — 1:${setup.rrRatio}\n\n` +
             `🎯 TP1: $${setup.tp1.toPrecision(6)}\n` +
             `🎯 TP2: $${setup.tp2.toPrecision(6)}\n` +
             `🎯 TP3: $${setup.tp3.toPrecision(6)}\n` +
-            `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss})\n\n` +
-            `✅ <i>All features: partial exits, trailing SL, profit protection, max loss cap</i>`,
+            `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss})\n` +
+            `💀 Liq: $${setup.liqPrice.toPrecision(6)}\n\n` +
+            `✅ <i>Partial exits, trailing SL, profit protection, max loss cap</i>`,
             { parse_mode: 'HTML' }
           );
         } else {
@@ -1115,9 +1209,9 @@ class TelegramBot {
             await ctx.editMessageText(
               `${isLong ? '🟢' : '🔴'} <b>LIVE ${st.direction.toUpperCase()} OPENED</b> — $${escapeHtml(st.symbol)}\n\n` +
               `💰 ${st.exchangeId.toUpperCase()} | Entry: $${setup.price.toPrecision(6)}\n` +
-              `💵 $${st.margin} × ${st.leverage}x\n` +
+              `💵 $${st.margin} × ${st.leverage}x | R:R 1:${setup.rrRatio}\n` +
               `🎯 TP1: $${setup.tp1.toPrecision(6)} | TP2: $${setup.tp2.toPrecision(6)}\n` +
-              `🛑 SL: $${setup.stopLoss.toPrecision(6)}\n\n` +
+              `🛑 SL: $${setup.stopLoss.toPrecision(6)} | 💀 Liq: $${setup.liqPrice.toPrecision(6)}\n\n` +
               `⚠️ <i>LIVE — real money on exchange</i>`,
               { parse_mode: 'HTML' }
             );
@@ -1151,7 +1245,8 @@ class TelegramBot {
 
         this.manualTradeState[ctx.from.id] = {
           symbol, exchange: found.exchange, exchangeId: found.exchangeId, pair: found.pair,
-          direction, margin, leverage, slPct: 0, cachedSetup: null,
+          direction, margin, leverage, slPct: 0, customSl: 0, tpMode: 'auto', customTp1: 0,
+          mode: this.onchainTradeExecutor?.mode || 'paper', cachedSetup: null,
         };
         await showTradePanel(ctx, true);
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
