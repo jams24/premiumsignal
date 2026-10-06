@@ -47,8 +47,9 @@ class TelegramBot {
       'panel', 'swingsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
+      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions',
     ]);
-    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_)/;
+    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_)/;
     const PUBLIC_COMMANDS = new Set([
       'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
@@ -637,796 +638,870 @@ class TelegramBot {
       }
     });
 
-    // === MANUAL TRADE PANEL (uses main TradeExecutor with all features) ===
-    // /trade RLC — opens interactive trade panel
-    // /long RLC [size] [lev] — quick long
-    // /short RLC [size] [lev] — quick short
-    // /mclose RLC — close position
-    // /mpositions — view all open positions
+    // === MANUAL TRADE PANEL ===
+    // /trade SYMBOL [long|short] [margin] [lev] opens the panel; /long and /short open it preset.
+    // Trades are saved under the onchain executor with onchain_context.manual=true, so checkOpenTrades
+    // runs TP partials / breakeven / trailing but skips the bot's time-exit, loss-cap and expiry rules.
     this.manualTradeState = {};
-
-    const findSymbolExchange = async (symbol) => {
-      const octe = this.onchainTradeExecutor;
-      if (!octe) return null;
-      const preferred = ['binance', 'bybit', 'mexc'];
-      for (const id of preferred) {
-        const ex = octe.exchanges[id];
-        if (!ex) continue;
-        const p = `${symbol}/USDT:USDT`;
-        if (ex.markets?.[p]) return { exchange: ex, exchangeId: id, pair: p };
-      }
-      for (const [id, ex] of Object.entries(octe.exchanges)) {
-        const p = `${symbol}/USDT:USDT`;
-        if (ex.markets?.[p]) return { exchange: ex, exchangeId: id, pair: p };
-      }
-      return null;
-    };
-
-    const calcTradeSetup = async (symbol, exchangeId, exchange, pair, direction, margin, leverage, slPct, opts = {}) => {
-      const ticker = await exchange.fetchTicker(pair);
-      const price = ticker.last;
-      let atr;
-      try {
-        const ohlcv = await exchange.fetchOHLCV(pair, '1h', undefined, 20);
-        let atrSum = 0;
-        for (let i = ohlcv.length - 14; i < ohlcv.length; i++) atrSum += ohlcv[i][2] - ohlcv[i][3];
-        atr = atrSum / 14;
-      } catch (e) { atr = price * 0.02; }
-
-      const isLong = direction === 'long';
-      const posSize = margin * leverage;
-      let stopLoss, tp1, tp2, tp3;
-
-      // SL: custom price > fixed % > ATR-based
-      if (opts.customSl > 0) {
-        stopLoss = opts.customSl;
-      } else if (slPct > 0) {
-        stopLoss = isLong ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
-      } else {
-        stopLoss = isLong ? price - atr * 3 : price + atr * 3;
-      }
-
-      const slDist = Math.abs(price - stopLoss);
-      const rr = slDist;
-
-      // TP: custom or auto (R:R based)
-      if (opts.customTp1 > 0) {
-        const tpDist = Math.abs(opts.customTp1 - price);
-        tp1 = opts.customTp1;
-        tp2 = isLong ? price + tpDist * 2 : price - tpDist * 2;
-        tp3 = isLong ? price + tpDist * 3.5 : price - tpDist * 3.5;
-      } else {
-        tp1 = isLong ? price + rr * 1.5 : price - rr * 1.5;
-        tp2 = isLong ? price + rr * 3 : price - rr * 3;
-        tp3 = isLong ? price + rr * 5 : price - rr * 5;
-      }
-      const tp4 = isLong ? price + rr * 4 : price - rr * 4;
-
-      const slDistPct = (slDist / price * 100).toFixed(1);
-      const maxLoss = (posSize * slDist / price).toFixed(2);
-      const rrRatio = rr > 0 ? (Math.abs(tp1 - price) / rr).toFixed(1) : '∞';
-      const liqPct = (100 / leverage).toFixed(0);
-      const liqPrice = isLong ? price * (1 - 1 / leverage) : price * (1 + 1 / leverage);
-      return { price, atr, posSize, stopLoss, tp1, tp2, tp3, tp4, slDistPct, maxLoss, rrRatio, liqPrice, liqPct };
-    };
-
-    const showTradePanel = async (ctx, isNew = false) => {
-      const uid = ctx.from.id;
-      const st = this.manualTradeState[uid];
-      if (!st) return;
-      const octe = this.onchainTradeExecutor;
-      const s = st;
-
-      try {
-        const setup = await calcTradeSetup(s.symbol, s.exchangeId, s.exchange, s.pair, s.direction, s.margin, s.leverage, s.slPct, { customSl: s.customSl, customTp1: s.customTp1 });
-        s.cachedSetup = setup;
-
-        const dirEmoji = s.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
-        const modeLabel = s.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
-        const slLabel = s.customSl > 0 ? `$${s.customSl}` : s.slPct > 0 ? `${s.slPct}%` : 'ATR';
-        const tpLabel = s.customTp1 > 0 ? `Custom` : 'Auto';
-        const entryLabel = s.entryType === 'limit' && s.limitPrice > 0 ? `Limit $${s.limitPrice}` : 'Market';
-        const entryPrice = s.entryType === 'limit' && s.limitPrice > 0 ? s.limitPrice : setup.price;
-        const distFromMarket = s.entryType === 'limit' && s.limitPrice > 0
-          ? ` (${((s.limitPrice - setup.price) / setup.price * 100).toFixed(2)}% from market)`
-          : '';
-        const text =
-          `🔧 <b>MANUAL TRADE — ${s.symbol}</b>\n\n` +
-          `${dirEmoji} | ${modeLabel} | ${s.exchangeId.toUpperCase()}\n` +
-          `💰 Market: <b>$${setup.price.toPrecision(6)}</b>\n` +
-          `🚀 Entry: <b>${entryLabel}</b>${distFromMarket}\n\n` +
-          `💵 Margin: <b>$${s.margin}</b> × ${s.leverage}x = <b>$${setup.posSize}</b>\n` +
-          `📐 R:R — <b>1:${setup.rrRatio}</b>\n\n` +
-          `🎯 TP1: $${setup.tp1.toPrecision(6)} (${tpLabel})\n` +
-          `🎯 TP2: $${setup.tp2.toPrecision(6)}\n` +
-          `🎯 TP3: $${setup.tp3.toPrecision(6)}\n` +
-          `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss}) [${slLabel}]\n` +
-          `💀 Liq: $${setup.liqPrice.toPrecision(6)} (-${setup.liqPct}%)\n\n` +
-          `<i>Tap to configure, then confirm:</i>`;
-
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback(`${s.mode === 'paper' ? '📝 PAPER ✓' : '📝 PAPER'}`, 'mt_mode_paper'),
-           Markup.button.callback(`${s.mode === 'live' ? '💰 LIVE ✓' : '💰 LIVE'}`, 'mt_mode_live')],
-          [Markup.button.callback(`${s.direction === 'long' ? '🟢 LONG ✓' : '🟢 LONG'}`, 'mt_dir_long'),
-           Markup.button.callback(`${s.direction === 'short' ? '🔴 SHORT ✓' : '🔴 SHORT'}`, 'mt_dir_short')],
-          [Markup.button.callback(`🚀 ${entryLabel}`, 'mt_entry'),
-           Markup.button.callback(`📊 ${s.exchangeId.toUpperCase()}`, 'mt_exchange')],
-          [Markup.button.callback(`💵 $${s.margin}`, 'mt_margin'),
-           Markup.button.callback(`⚡ ${s.leverage}x`, 'mt_lev')],
-          [Markup.button.callback(`🛑 SL: ${slLabel}`, 'mt_sl'),
-           Markup.button.callback(`🎯 TP: ${tpLabel}`, 'mt_tp')],
-          [Markup.button.callback(`✅ CONFIRM ${s.direction.toUpperCase()}`, 'mt_confirm')],
-          [Markup.button.callback('🔄 Refresh', 'mt_refresh'),
-           Markup.button.callback('❌ Cancel', 'mt_cancel')],
-        ]);
-
-        if (isNew) {
-          await ctx.replyWithHTML(text, keyboard);
-        } else {
-          await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
-        }
-      } catch (e) {
-        const msg = `⚠️ ${escapeHtml(e.message)}`;
-        if (isNew) ctx.replyWithHTML(msg); else ctx.editMessageText(msg, { parse_mode: 'HTML' });
-      }
-    };
-
-    this.bot.command('trade', async (ctx) => {
-      try {
-        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-        const octe = this.onchainTradeExecutor;
-        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
-
-        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
-        if (!symbol) return ctx.replyWithHTML(
-          `🔧 <b>Manual Trade</b>\n\n` +
-          `<code>/trade SYMBOL</code> — open trade panel\n` +
-          `<code>/long SYMBOL [size] [lev]</code> — quick long\n` +
-          `<code>/short SYMBOL [size] [lev]</code> — quick short\n` +
-          `<code>/mclose SYMBOL</code> — close position\n` +
-          `<code>/mpositions</code> — view positions`
-        );
-
-        const found = await findSymbolExchange(symbol);
-        if (!found) return ctx.replyWithHTML(`⚠️ ${symbol} not found on any exchange`);
-
-        const openTrades = await db.getOpenTrades(octe.settingsKey);
-        if (openTrades.some(t => t.symbol === symbol)) {
-          return ctx.replyWithHTML(`⚠️ Already have a position in ${symbol}`);
-        }
-
-        this.manualTradeState[ctx.from.id] = {
-          symbol,
-          exchange: found.exchange,
-          exchangeId: found.exchangeId,
-          pair: found.pair,
-          direction: 'short',
-          margin: octe.maxPositionSize || 12,
-          leverage: octe.defaultLeverage || 3,
-          slPct: 0,
-          customSl: 0,
-          tpMode: 'auto',
-          customTp1: 0,
-          mode: octe.mode || 'paper',
-          entryType: 'market',
-          limitPrice: 0,
-          cachedSetup: null,
-        };
-
-        await showTradePanel(ctx, true);
-      } catch (e) {
-        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`);
-      }
-    });
-
-    // Direction buttons
-    this.bot.action('mt_dir_long', async (ctx) => {
-      try { await ctx.answerCbQuery('Long'); this.manualTradeState[ctx.from.id].direction = 'long'; await showTradePanel(ctx); } catch (e) {}
-    });
-    this.bot.action('mt_dir_short', async (ctx) => {
-      try { await ctx.answerCbQuery('Short'); this.manualTradeState[ctx.from.id].direction = 'short'; await showTradePanel(ctx); } catch (e) {}
-    });
-
-    // Margin selector
-    this.bot.action('mt_margin', async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-        const st = this.manualTradeState[ctx.from.id];
-        const mk = (v) => Markup.button.callback(`$${v}${st.margin === v ? ' ✓' : ''}`, `mt_m_${v}`);
-        await ctx.editMessageText(
-          `💵 <b>SELECT MARGIN</b>\n\nCurrent: <b>$${st.margin}</b>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [mk(5), mk(10), mk(15), mk(20)],
-            [mk(25), mk(30), mk(50), mk(100)],
-            [mk(200), mk(500), mk(1000)],
-            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
-          ]).reply_markup }
-        );
-      } catch (e) {}
-    });
-    for (const m of [5, 10, 15, 20, 25, 30, 50, 100, 200, 500, 1000]) {
-      this.bot.action(`mt_m_${m}`, async (ctx) => {
-        try { await ctx.answerCbQuery(`$${m}`); this.manualTradeState[ctx.from.id].margin = m; await showTradePanel(ctx); } catch (e) {}
-      });
-    }
-
-    // Leverage selector
-    this.bot.action('mt_lev', async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-        const st = this.manualTradeState[ctx.from.id];
-        const mk = (v) => Markup.button.callback(`${v}x${st.leverage === v ? ' ✓' : ''}`, `mt_l_${v}`);
-        await ctx.editMessageText(
-          `⚡ <b>SELECT LEVERAGE</b>\n\nCurrent: <b>${st.leverage}x</b>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [mk(1), mk(2), mk(3), mk(5)],
-            [mk(10), mk(15), mk(20), mk(25)],
-            [mk(30), mk(50), mk(75), mk(100)],
-            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
-          ]).reply_markup }
-        );
-      } catch (e) {}
-    });
-    for (const l of [1, 2, 3, 5, 10, 15, 20, 25, 30, 50, 75, 100]) {
-      this.bot.action(`mt_l_${l}`, async (ctx) => {
-        try { await ctx.answerCbQuery(`${l}x`); this.manualTradeState[ctx.from.id].leverage = l; await showTradePanel(ctx); } catch (e) {}
-      });
-    }
-
-    // Mode toggle (paper/live)
-    this.bot.action('mt_mode_paper', async (ctx) => {
-      try { await ctx.answerCbQuery('Paper'); this.manualTradeState[ctx.from.id].mode = 'paper'; await showTradePanel(ctx); } catch (e) {}
-    });
-    this.bot.action('mt_mode_live', async (ctx) => {
-      try { await ctx.answerCbQuery('⚠️ LIVE MODE'); this.manualTradeState[ctx.from.id].mode = 'live'; await showTradePanel(ctx); } catch (e) {}
-    });
-
-    // SL selector
-    this.bot.action('mt_sl', async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-        const st = this.manualTradeState[ctx.from.id];
-        const curLabel = st.customSl > 0 ? `Custom $${st.customSl}` : st.slPct > 0 ? `${st.slPct}%` : 'ATR (auto)';
-        const mk = (v, label) => Markup.button.callback(`${label}${st.slPct === v && !st.customSl ? ' ✓' : ''}`, `mt_sl_${v}`);
-        await ctx.editMessageText(
-          `🛑 <b>STOP LOSS</b>\n\nCurrent: <b>${curLabel}</b>\n\n` +
-          `ATR = automatic based on volatility\n% = fixed percentage from entry\nCustom = set exact price\n\n` +
-          `To set custom SL price:\n<code>/sl 0.0512</code>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [mk(0, 'ATR (auto)'), mk(3, '3%'), mk(5, '5%')],
-            [mk(7, '7%'), mk(10, '10%'), mk(15, '15%')],
-            [mk(20, '20%'), mk(25, '25%'), mk(30, '30%')],
-            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
-          ]).reply_markup }
-        );
-      } catch (e) {}
-    });
-    for (const sl of [0, 3, 5, 7, 10, 15, 20, 25, 30]) {
-      this.bot.action(`mt_sl_${sl}`, async (ctx) => {
-        try {
-          await ctx.answerCbQuery(sl === 0 ? 'ATR' : `${sl}%`);
-          const st = this.manualTradeState[ctx.from.id];
-          st.slPct = sl;
-          st.customSl = 0;
-          await showTradePanel(ctx);
-        } catch (e) {}
-      });
-    }
-
-    // Custom SL via /sl command
-    this.bot.command('sl', async (ctx) => {
-      const st = this.manualTradeState[ctx.from?.id];
-      if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Use <code>/trade SYMBOL</code> first.');
-      const price = parseFloat(ctx.message.text.split(' ')[1]);
-      if (!price || price <= 0) return ctx.replyWithHTML('Usage: <code>/sl 0.0512</code>');
-      st.customSl = price;
-      st.slPct = 0;
-      ctx.replyWithHTML(`🛑 Custom SL set to <b>$${price}</b>. Open your trade panel to see updated setup.`);
-    });
-
-    // Custom TP via /tp command
-    this.bot.command('tp', async (ctx) => {
-      const st = this.manualTradeState[ctx.from?.id];
-      if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Use <code>/trade SYMBOL</code> first.');
-      const price = parseFloat(ctx.message.text.split(' ')[1]);
-      if (!price || price <= 0) return ctx.replyWithHTML('Usage: <code>/tp 0.089</code> (sets TP1, TP2/3 auto-scale)');
-      st.customTp1 = price;
-      st.tpMode = 'custom';
-      ctx.replyWithHTML(`🎯 Custom TP1 set to <b>$${price}</b>. TP2/3 auto-scale from TP1. Open your trade panel to see.`);
-    });
-
-    // TP selector
-    this.bot.action('mt_tp', async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-        const st = this.manualTradeState[ctx.from.id];
-        const curLabel = st.customTp1 > 0 ? `Custom $${st.customTp1}` : 'Auto (R:R based)';
-        await ctx.editMessageText(
-          `🎯 <b>TAKE PROFIT</b>\n\nCurrent: <b>${curLabel}</b>\n\n` +
-          `<b>Auto:</b> TP1 = 1.5R, TP2 = 3R, TP3 = 5R\n` +
-          `<b>Custom:</b> Set TP1, TP2/3 auto-scale\n\n` +
-          `To set custom TP1 price:\n<code>/tp 0.089</code>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`Auto (R:R)${st.tpMode === 'auto' ? ' ✓' : ''}`, 'mt_tp_auto')],
-            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
-          ]).reply_markup }
-        );
-      } catch (e) {}
-    });
-    this.bot.action('mt_tp_auto', async (ctx) => {
-      try {
-        await ctx.answerCbQuery('Auto TP');
-        const st = this.manualTradeState[ctx.from.id];
-        st.tpMode = 'auto';
-        st.customTp1 = 0;
-        await showTradePanel(ctx);
-      } catch (e) {}
-    });
-
-    // Entry type selector (market/limit)
-    this.bot.action('mt_entry', async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-        const st = this.manualTradeState[ctx.from.id];
-        const curLabel = st.entryType === 'limit' && st.limitPrice > 0 ? `Limit $${st.limitPrice}` : 'Market (instant)';
-        await ctx.editMessageText(
-          `🚀 <b>ENTRY TYPE</b>\n\nCurrent: <b>${curLabel}</b>\n\n` +
-          `<b>Market:</b> Enter immediately at current price\n` +
-          `<b>Limit:</b> Set a price — bot waits and enters when price reaches it\n\n` +
-          `To set limit price:\n<code>/entry 0.0512</code>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback(`Market (instant)${st.entryType === 'market' ? ' ✓' : ''}`, 'mt_entry_market')],
-            [Markup.button.callback(`Limit${st.entryType === 'limit' ? ' ✓' : ''}`, 'mt_entry_limit')],
-            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
-          ]).reply_markup }
-        );
-      } catch (e) {}
-    });
-    this.bot.action('mt_entry_market', async (ctx) => {
-      try {
-        await ctx.answerCbQuery('Market');
-        const st = this.manualTradeState[ctx.from.id];
-        st.entryType = 'market';
-        st.limitPrice = 0;
-        await showTradePanel(ctx);
-      } catch (e) {}
-    });
-    this.bot.action('mt_entry_limit', async (ctx) => {
-      try {
-        await ctx.answerCbQuery('Set price with /entry');
-        const st = this.manualTradeState[ctx.from.id];
-        st.entryType = 'limit';
-        await ctx.editMessageText(
-          `📍 <b>SET LIMIT PRICE</b>\n\nType the entry price:\n<code>/entry 0.0512</code>\n\n` +
-          `Current market: $${st.cachedSetup?.price?.toPrecision(6) || '...'}`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'mt_refresh')]]).reply_markup }
-        );
-      } catch (e) {}
-    });
-
-    this.bot.command('entry', async (ctx) => {
-      const st = this.manualTradeState[ctx.from?.id];
-      if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Use <code>/trade SYMBOL</code> first.');
-      const price = parseFloat(ctx.message.text.split(' ')[1]);
-      if (!price || price <= 0) return ctx.replyWithHTML('Usage: <code>/entry 0.0512</code>');
-      st.entryType = 'limit';
-      st.limitPrice = price;
-      const mkt = st.cachedSetup?.price;
-      const distPct = mkt ? ((price - mkt) / mkt * 100).toFixed(2) : '?';
-      ctx.replyWithHTML(`📍 Limit entry set to <b>$${price}</b> (${distPct}% from market)\n\nUse /trade ${st.symbol} to see updated panel.`);
-    });
-
-    // Exchange selector
-    this.bot.action('mt_exchange', async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-        const st = this.manualTradeState[ctx.from.id];
-        const octe = this.onchainTradeExecutor;
-        const buttons = [];
-        for (const [id, ex] of Object.entries(octe.exchanges)) {
-          const p = `${st.symbol}/USDT:USDT`;
-          if (ex.markets?.[p]) {
-            buttons.push(Markup.button.callback(`${id.toUpperCase()}${st.exchangeId === id ? ' ✓' : ''}`, `mt_ex_${id}`));
-          }
-        }
-        await ctx.editMessageText(
-          `📊 <b>SELECT EXCHANGE</b>\n\n${st.symbol} available on:`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-            buttons,
-            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
-          ]).reply_markup }
-        );
-      } catch (e) {}
-    });
-    for (const exId of ['binance', 'bybit', 'mexc']) {
-      this.bot.action(`mt_ex_${exId}`, async (ctx) => {
-        try {
-          const st = this.manualTradeState[ctx.from.id];
-          const octe = this.onchainTradeExecutor;
-          const ex = octe.exchanges[exId];
-          const p = `${st.symbol}/USDT:USDT`;
-          if (ex?.markets?.[p]) {
-            st.exchangeId = exId;
-            st.exchange = ex;
-            st.pair = p;
-          }
-          await ctx.answerCbQuery(exId.toUpperCase());
-          await showTradePanel(ctx);
-        } catch (e) {}
-      });
-    }
-
-    // Refresh price
-    this.bot.action('mt_refresh', async (ctx) => {
-      try { await ctx.answerCbQuery('Refreshed'); await showTradePanel(ctx); } catch (e) {}
-    });
-
-    // Cancel
-    this.bot.action('mt_cancel', async (ctx) => {
-      try {
-        delete this.manualTradeState[ctx.from.id];
-        await ctx.answerCbQuery('Cancelled');
-        await ctx.editMessageText('❌ Trade cancelled.', { parse_mode: 'HTML' });
-      } catch (e) {}
-    });
-
-    // Pending limit orders (checked every minute)
     this.pendingLimitOrders = new Map();
 
-    // CONFIRM — execute the trade
-    this.bot.action('mt_confirm', async (ctx) => {
-      try {
-        const uid = ctx.from.id;
-        const st = this.manualTradeState[uid];
-        if (!st) return ctx.answerCbQuery('No trade to confirm');
-        const octe = this.onchainTradeExecutor;
-        const isLong = st.direction === 'long';
+    const MT_MARGINS = [5, 10, 15, 20, 25, 30, 50, 75, 100, 200, 500, 1000];
+    const MT_LEVERAGES = [1, 2, 3, 5, 7, 10, 15, 20, 25, 50, 75, 100];
+    const MT_SL_PCTS = [1, 2, 3, 5, 7, 10, 15, 20];
+    const MT_TP_PRESETS = {
+      safe: { label: 'Safe', mults: [1, 2, 3, 4] },
+      default: { label: 'Default', mults: [1.5, 3, 5, 7] },
+      runner: { label: 'Runner', mults: [2, 4, 6, 10] },
+    };
+    const MT_LIMIT_OFFSETS = [0.5, 1, 2, 3, 5];
+    const MT_ORDER_TTL_MS = 24 * 60 * 60 * 1000;
 
-        // LIMIT ORDER — queue it
-        if (st.entryType === 'limit' && st.limitPrice > 0) {
-          await ctx.answerCbQuery('Limit order placed');
-          const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct, { customSl: st.customSl, customTp1: st.customTp1 });
-          const orderId = `${st.symbol}_${uid}_${Date.now()}`;
-          this.pendingLimitOrders.set(orderId, {
-            ...st,
-            limitSetup: setup,
-            createdAt: Date.now(),
-            chatId: ctx.chat.id,
-          });
-          delete this.manualTradeState[uid];
+    const fmtP = (v) => (v == null || !isFinite(v) ? '—' : Number(v).toPrecision(6));
+    const fmtPct = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+    const fmtUsd = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+    const isAdminCtx = (ctx) => ctx.state?.user?.role === 'admin';
+    const ack = (ctx, text) => ctx.answerCbQuery(text).catch(() => {});
+    const mtExec = () => this.onchainTradeExecutor;
+    const pairOf = (symbol) => `${symbol}/USDT:USDT`;
+    const grid = (items, perRow) => {
+      const rows = [];
+      for (let i = 0; i < items.length; i += perRow) rows.push(items.slice(i, i + perRow));
+      return rows;
+    };
+    const executorForSource = (source) =>
+      [this.tradeExecutor, this.onchainTradeExecutor, this.swingTradeExecutor, this.dzTradeExecutor]
+        .find(te => te && te.settingsKey === (source || 'main'));
 
-          await ctx.editMessageText(
-            `📍 <b>LIMIT ORDER PLACED</b> — $${escapeHtml(st.symbol)}\n\n` +
-            `${isLong ? '🟢 LONG' : '🔴 SHORT'} | ${st.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'}\n` +
-            `📍 Entry: <b>$${st.limitPrice}</b> (market: $${setup.price.toPrecision(6)})\n` +
-            `💵 $${st.margin} × ${st.leverage}x = $${setup.posSize}\n\n` +
-            `🎯 TP1: $${setup.tp1.toPrecision(6)} | TP2: $${setup.tp2.toPrecision(6)}\n` +
-            `🛑 SL: $${setup.stopLoss.toPrecision(6)}\n\n` +
-            `⏳ <i>Waiting for price to reach $${st.limitPrice}...</i>\n` +
-            `<i>Expires in 24h. Cancel with /cancelorder</i>`,
-            { parse_mode: 'HTML' }
-          );
-          return;
-        }
-
-        // MARKET ORDER — execute immediately
-        await ctx.answerCbQuery('Executing...');
-        const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct, { customSl: st.customSl, customTp1: st.customTp1 });
-
-        if (st.mode === 'paper') {
-          const trade = {
-            signalId: null, symbol: st.symbol, exchange: st.exchangeId, direction: st.direction,
-            mode: 'paper', entryPrice: setup.price, quantity: setup.posSize / setup.price,
-            positionSize: setup.posSize, leverage: st.leverage,
-            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4: setup.tp4,
-            stopLoss: setup.stopLoss, originalStopLoss: setup.stopLoss, invalidation: setup.stopLoss,
-            atr: setup.atr, dcaQty2: 0, dcaQty3: 0, dcaPrice2: null, dcaPrice3: null, dcaStage: 1,
-            status: 'open', source: octe.settingsKey,
-            onchainContext: { manual: true, margin: st.margin, leverage: st.leverage },
-          };
-          await db.saveTrade(trade);
-          delete this.manualTradeState[uid];
-
-          await ctx.editMessageText(
-            `${isLong ? '🟢' : '🔴'} <b>MANUAL ${st.direction.toUpperCase()} OPENED</b> — $${escapeHtml(st.symbol)}\n\n` +
-            `📝 PAPER | ${st.exchangeId.toUpperCase()}\n` +
-            `💰 Entry: <b>$${setup.price.toPrecision(6)}</b>\n` +
-            `💵 Margin: <b>$${st.margin}</b> × ${st.leverage}x = $${setup.posSize}\n` +
-            `📐 R:R — 1:${setup.rrRatio}\n\n` +
-            `🎯 TP1: $${setup.tp1.toPrecision(6)}\n` +
-            `🎯 TP2: $${setup.tp2.toPrecision(6)}\n` +
-            `🎯 TP3: $${setup.tp3.toPrecision(6)}\n` +
-            `🛑 SL: $${setup.stopLoss.toPrecision(6)} (-${setup.slDistPct}% / -$${setup.maxLoss})\n` +
-            `💀 Liq: $${setup.liqPrice.toPrecision(6)}\n\n` +
-            `✅ <i>Partial exits, trailing SL, profit protection, max loss cap</i>`,
-            { parse_mode: 'HTML' }
-          );
-        } else {
-          const signal = {
-            id: null, type: 'MANUAL', symbol: st.symbol, exchange: st.exchangeId, pair: st.pair,
-            direction: st.direction, currentPrice: setup.price, entryPrice: setup.price,
-            tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, stopLoss: setup.stopLoss,
-            atr: setup.atr, confidence: 5, onchainScore: 100, suggestedLeverage: st.leverage,
-            onchainContext: { manual: true },
-          };
-          const trade = await octe.executeLiveTrade(signal);
-          delete this.manualTradeState[uid];
-          if (trade) {
-            await ctx.editMessageText(
-              `${isLong ? '🟢' : '🔴'} <b>LIVE ${st.direction.toUpperCase()} OPENED</b> — $${escapeHtml(st.symbol)}\n\n` +
-              `💰 ${st.exchangeId.toUpperCase()} | Entry: $${setup.price.toPrecision(6)}\n` +
-              `💵 $${st.margin} × ${st.leverage}x | R:R 1:${setup.rrRatio}\n` +
-              `🎯 TP1: $${setup.tp1.toPrecision(6)} | TP2: $${setup.tp2.toPrecision(6)}\n` +
-              `🛑 SL: $${setup.stopLoss.toPrecision(6)} | 💀 Liq: $${setup.liqPrice.toPrecision(6)}\n\n` +
-              `⚠️ <i>LIVE — real money on exchange</i>`,
-              { parse_mode: 'HTML' }
-            );
-          } else {
-            await ctx.editMessageText(`⚠️ Live execution failed for ${st.symbol}`, { parse_mode: 'HTML' });
-          }
-        }
-      } catch (e) {
-        ctx.editMessageText(`⚠️ ${escapeHtml(e.message)}`, { parse_mode: 'HTML' }).catch(() => {});
-      }
-    });
-
-    // Quick commands (still work)
-    const handleQuickTrade = async (ctx, direction) => {
-      try {
-        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-        const octe = this.onchainTradeExecutor;
-        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
-        const parts = ctx.message.text.trim().split(/\s+/);
-        const symbol = (parts[1] || '').toUpperCase();
-        if (!symbol) return ctx.replyWithHTML(`Usage: <code>/${direction} SYMBOL [size] [lev]</code>`);
-
-        const found = await findSymbolExchange(symbol);
-        if (!found) return ctx.replyWithHTML(`⚠️ ${symbol} not found`);
-
-        const openTrades = await db.getOpenTrades(octe.settingsKey);
-        if (openTrades.some(t => t.symbol === symbol)) return ctx.replyWithHTML(`⚠️ Already in ${symbol}`);
-
-        const margin = parseFloat(parts[2]) || octe.maxPositionSize || 12;
-        const leverage = parseInt(parts[3]) || octe.defaultLeverage || 3;
-
-        this.manualTradeState[ctx.from.id] = {
-          symbol, exchange: found.exchange, exchangeId: found.exchangeId, pair: found.pair,
-          direction, margin, leverage, slPct: 0, customSl: 0, tpMode: 'auto', customTp1: 0,
-          mode: this.onchainTradeExecutor?.mode || 'paper', entryType: 'market', limitPrice: 0, cachedSetup: null,
-        };
-        await showTradePanel(ctx, true);
-      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    const exchangesFor = (symbol) => {
+      const exs = mtExec()?.exchanges || {};
+      const pref = ['binance', 'bybit', 'mexc'];
+      const rank = (id) => (pref.includes(id) ? pref.indexOf(id) : pref.length);
+      return Object.keys(exs).filter(id => exs[id]?.markets?.[pairOf(symbol)]).sort((a, b) => rank(a) - rank(b));
     };
 
-    this.bot.command('long', (ctx) => handleQuickTrade(ctx, 'long'));
-    this.bot.command('short', (ctx) => handleQuickTrade(ctx, 'short'));
+    const maxLeverageFor = (st) =>
+      mtExec()?.exchanges?.[st.exchangeId]?.markets?.[pairOf(st.symbol)]?.limits?.leverage?.max || null;
 
-    // View/cancel pending limit orders
-    this.bot.command('orders', async (ctx) => {
-      if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-      if (!this.pendingLimitOrders.size) return ctx.replyWithHTML('📭 No pending limit orders.');
-      let msg = `📍 <b>PENDING LIMIT ORDERS</b> (${this.pendingLimitOrders.size})\n\n`;
-      const buttons = [];
-      for (const [id, o] of this.pendingLimitOrders) {
-        const dir = o.direction === 'long' ? '🟢' : '🔴';
-        const age = ((Date.now() - o.createdAt) / 60000).toFixed(0);
-        msg += `${dir} <b>${o.symbol}</b> @ $${o.limitPrice} | $${o.margin} × ${o.leverage}x | ${age}m ago\n`;
-        buttons.push([Markup.button.callback(`❌ Cancel ${o.symbol} @ $${o.limitPrice}`, `mt_cancelorder_${id}`)]);
+    const refreshMarket = async (st, force = false) => {
+      if (!force && st.market && Date.now() - st.market.at < 20000) return st.market;
+      const ex = mtExec().exchanges[st.exchangeId];
+      const ticker = await ex.fetchTicker(pairOf(st.symbol));
+      let atr = force || !st.market ? null : st.market.atr;
+      if (!atr) {
+        try {
+          const recent = (await ex.fetchOHLCV(pairOf(st.symbol), '1h', undefined, 20)).slice(-14);
+          if (recent.length) atr = recent.reduce((s, c) => s + (c[2] - c[3]), 0) / recent.length;
+        } catch (e) { /* fall back below */ }
+        if (!atr) atr = ticker.last * 0.02;
       }
-      ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
+      st.market = { price: ticker.last, atr, change24h: ticker.percentage, volume: ticker.quoteVolume, at: Date.now() };
+      return st.market;
+    };
+
+    const refreshLiveBalance = async (st) => {
+      try {
+        const balances = await mtExec().getAllBalances();
+        const bal = balances?.[st.exchangeId];
+        st.liveBalance = bal && !bal.error ? (bal.free || 0) : null;
+      } catch (e) { st.liveBalance = null; }
+    };
+
+    const computeSetup = (st, mkt = st.market.price) => {
+      const atr = st.market.atr;
+      const sign = st.direction === 'long' ? 1 : -1;
+      const entry = st.entryType === 'limit' && st.limitPrice > 0 ? st.limitPrice : mkt;
+      const stopLoss = st.customSl > 0 ? st.customSl
+        : st.slPct > 0 ? entry * (1 - sign * st.slPct / 100)
+        : entry - sign * atr * 3;
+      const risk = Math.abs(entry - stopLoss);
+      let tps;
+      if (st.customTp1 > 0) {
+        const d = Math.abs(st.customTp1 - entry);
+        tps = [st.customTp1, ...[2, 3, 4.5].map(m => entry + sign * d * m)];
+      } else {
+        tps = (MT_TP_PRESETS[st.tpPreset] || MT_TP_PRESETS.default).mults.map(m => entry + sign * risk * m);
+      }
+      const posSize = st.margin * st.leverage;
+      const slPct = (risk / entry) * 100;
+      return {
+        entry, market: mkt, atr, stopLoss, tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3],
+        posSize, slPct, maxLoss: (posSize * slPct) / 100,
+        rr: risk > 0 ? Math.abs(tps[0] - entry) / risk : 0,
+        liqPrice: entry * (1 - sign / st.leverage),
+        profitPct: (price) => (sign * (price - entry) / entry) * 100,
+      };
+    };
+
+    const validateSetup = (st, s) => {
+      const errors = [];
+      const warnings = [];
+      const isLong = st.direction === 'long';
+      if (isLong ? s.stopLoss >= s.entry : s.stopLoss <= s.entry) {
+        errors.push(`SL must be ${isLong ? 'below' : 'above'} entry for a ${st.direction}`);
+      } else {
+        // Approximate liquidation ignores maintenance margin, so keep SL inside 90% of that distance
+        const liqBuffer = s.entry * (1 - (isLong ? 1 : -1) * 0.9 / st.leverage);
+        if (isLong ? s.stopLoss <= liqBuffer : s.stopLoss >= liqBuffer) {
+          errors.push(`At ${st.leverage}x you'd be liquidated (~$${fmtP(s.liqPrice)}) before your SL — lower leverage or tighten the SL`);
+        }
+      }
+      if (isLong ? s.tp1 <= s.entry : s.tp1 >= s.entry) errors.push(`TP1 must be ${isLong ? 'above' : 'below'} entry`);
+      if ([s.tp1, s.tp2, s.tp3, s.tp4, s.stopLoss].some(v => !(v > 0))) errors.push('A TP/SL level is ≤ 0 — tighten the SL or set a custom TP');
+      if (st.entryType === 'limit' && !(st.limitPrice > 0)) errors.push('Limit selected but no price set — pick a preset or send /entry PRICE');
+      if (st.entryType === 'limit' && st.limitPrice > 0) {
+        const dist = (Math.abs(st.limitPrice - s.market) / s.market) * 100;
+        if (dist > 20) warnings.push(`Limit is ${dist.toFixed(1)}% away from market`);
+      }
+      if (s.rr > 0 && s.rr < 1) warnings.push(`R:R is below 1 (1:${s.rr.toFixed(2)})`);
+      if (st.mode === 'live') {
+        if (st.liveBalance != null && st.margin > st.liveBalance) {
+          warnings.push(`Margin $${st.margin} > free $${st.liveBalance.toFixed(2)} on ${st.exchangeId} — size will be scaled down`);
+        }
+        warnings.push('LIVE mode — real funds');
+      }
+      return { errors, warnings };
+    };
+
+    const buildPanel = (st) => {
+      const te = mtExec();
+      const s = computeSetup(st);
+      const { errors, warnings } = validateSetup(st, s);
+      const isLong = st.direction === 'long';
+      const isLimit = st.entryType === 'limit';
+      const m = st.market;
+      const slLabel = st.customSl > 0 ? 'Custom' : st.slPct > 0 ? `${st.slPct}%` : '3×ATR';
+      const tpLabel = st.customTp1 > 0 ? 'Custom' : (MT_TP_PRESETS[st.tpPreset] || MT_TP_PRESETS.default).label;
+
+      let entryLine = '🚀 Entry: <b>Market</b> (fills immediately)';
+      if (isLimit && st.limitPrice > 0) {
+        const below = st.limitPrice <= m.price;
+        const kind = isLong ? (below ? 'buy the dip' : 'buy the breakout') : (below ? 'short the breakdown' : 'short the bounce');
+        entryLine = `📍 Entry: <b>Limit $${fmtP(st.limitPrice)}</b> (${fmtPct(((st.limitPrice - m.price) / m.price) * 100)} · ${kind})`;
+      } else if (isLimit) {
+        entryLine = '📍 Entry: <b>Limit — price not set</b>';
+      }
+
+      const balLine = st.mode === 'live'
+        ? `💼 Free on ${st.exchangeId.toUpperCase()}: ${st.liveBalance != null ? `<b>$${st.liveBalance.toFixed(2)}</b>` : 'unavailable'}`
+        : `💼 Paper balance: <b>$${(te.paperBalance ?? 0).toFixed(2)}</b>`;
+      const tpLine = (n, emoji, price, extra = '') => {
+        const pct = s.profitPct(price);
+        return `${emoji} TP${n} $${fmtP(price)} (${fmtPct(pct)} · ${fmtUsd((s.posSize * pct) / 100)})${extra}`;
+      };
+
+      const lines = [
+        `🔧 <b>MANUAL TRADE — ${escapeHtml(st.symbol)}</b>`,
+        `${isLong ? '🟢 LONG' : '🔴 SHORT'} · ${st.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · 🏦 ${st.exchangeId.toUpperCase()}`,
+        '',
+        `💰 Market: <b>$${fmtP(m.price)}</b>${m.change24h != null ? ` (${fmtPct(m.change24h)} 24h)` : ''}${m.volume ? ` · Vol $${(m.volume / 1e6).toFixed(1)}M` : ''}`,
+        entryLine,
+        `💵 Margin <b>$${st.margin}</b> × <b>${st.leverage}x</b> = <b>$${s.posSize.toFixed(2)}</b> position`,
+        balLine,
+        '',
+        tpLine(1, '🎯', s.tp1, ` — closes ${Math.round((te.tp1ClosePct ?? 0.33) * 100)}%`),
+        tpLine(2, '🎯', s.tp2),
+        tpLine(3, '🎯', s.tp3),
+        tpLine(4, '🏁', s.tp4),
+        `🛑 SL $${fmtP(s.stopLoss)} (-${s.slPct.toFixed(2)}% · -$${s.maxLoss.toFixed(2)}) [${slLabel}]`,
+        `💀 Liq ≈ $${fmtP(s.liqPrice)} · 📐 R:R 1:${s.rr.toFixed(2)}`,
+      ];
+      if (errors.length) lines.push('', ...errors.map(e => `⛔ ${escapeHtml(e)}`));
+      if (warnings.length) lines.push('', ...warnings.map(w => `⚠️ ${escapeHtml(w)}`));
+      lines.push(
+        '',
+        `<i>Managed for you: TP partial exits, breakeven at +${te.profitProtectLevPnl ?? 25}% ROI, trailing SL. The bot's time-exit and loss cap don't apply — your SL does.</i>`,
+        '<i>Type exact values: /sl 1.23 · /sl 4% · /tp 1.5 · /entry 1.2 · /margin 40 · /lev 7</i>'
+      );
+
+      const tick = (on, label) => `${label}${on ? ' ✓' : ''}`;
+      const confirmBtn = errors.length
+        ? Markup.button.callback('⛔ Fix the issues above', 'mt_blocked')
+        : Markup.button.callback(`✅ ${isLimit ? 'PLACE LIMIT' : 'OPEN'} ${isLong ? 'LONG' : 'SHORT'} · $${s.posSize.toFixed(0)}`, 'mt_confirm');
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(tick(st.mode === 'paper', '📝 Paper'), 'mt_mode_paper'),
+         Markup.button.callback(tick(st.mode === 'live', '💰 Live'), 'mt_mode_live')],
+        [Markup.button.callback(tick(isLong, '🟢 Long'), 'mt_dir_long'),
+         Markup.button.callback(tick(!isLong, '🔴 Short'), 'mt_dir_short')],
+        [Markup.button.callback(isLimit ? `📍 Limit${st.limitPrice > 0 ? ` $${fmtP(st.limitPrice)}` : ''}` : '🚀 Market', 'mt_entry'),
+         Markup.button.callback(`🏦 ${st.exchangeId.toUpperCase()}`, 'mt_exchange')],
+        [Markup.button.callback(`💵 Margin $${st.margin}`, 'mt_margin'),
+         Markup.button.callback(`⚡ ${st.leverage}x`, 'mt_lev')],
+        [Markup.button.callback(`🛑 SL: ${slLabel}`, 'mt_sl'),
+         Markup.button.callback(`🎯 TP: ${tpLabel}`, 'mt_tp')],
+        [confirmBtn],
+        [Markup.button.callback('🔄 Refresh price', 'mt_refresh'),
+         Markup.button.callback('❌ Cancel', 'mt_cancel')],
+      ]);
+      return { text: lines.join('\n'), keyboard, setup: s, errors };
+    };
+
+    const renderPanel = async (ctx, st, { fresh = false, forceRefresh = false } = {}) => {
+      await refreshMarket(st, forceRefresh);
+      const { text, keyboard } = buildPanel(st);
+      if (fresh) {
+        // Strip buttons from the previous panel so only one live panel exists
+        if (st.panelMsg) {
+          this.bot.telegram.editMessageReplyMarkup(st.panelMsg.chatId, st.panelMsg.messageId, undefined, { inline_keyboard: [] }).catch(() => {});
+        }
+        const sent = await ctx.replyWithHTML(text, keyboard);
+        st.panelMsg = { chatId: sent.chat.id, messageId: sent.message_id };
+        return;
+      }
+      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+
+    const showMenu = (ctx, text, rows) => ctx.editMessageText(text, {
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard([...rows, [Markup.button.callback('⬅️ Back', 'mt_back')]]).reply_markup,
+    }).catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
+
+    const openPanel = async (ctx, symbol, opts = {}) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      const te = mtExec();
+      if (!te) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
+      if (!/^[A-Z0-9]{1,20}$/.test(symbol)) return ctx.replyWithHTML('⚠️ Invalid symbol.');
+      const exIds = exchangesFor(symbol);
+      if (!exIds.length) {
+        return ctx.replyWithHTML(`⚠️ ${escapeHtml(symbol)}/USDT perpetual not found on ${Object.keys(te.exchanges).join(', ')}.`);
+      }
+      const open = (await db.getOpenTrades(te.settingsKey)).find(t => t.symbol === symbol);
+      if (open) {
+        return ctx.replyWithHTML(
+          `⚠️ You already have an open <b>${open.direction.toUpperCase()}</b> on ${escapeHtml(symbol)} (${open.mode}).`,
+          Markup.inlineKeyboard([[Markup.button.callback(`❌ Close ${symbol}`, `mt_close_${open.id}`)]])
+        );
+      }
+      const prev = this.manualTradeState[ctx.from.id];
+      const st = {
+        symbol,
+        exchangeId: exIds[0],
+        direction: opts.direction || 'short',
+        mode: 'paper',
+        margin: opts.margin || te.maxPositionSize || 12,
+        leverage: opts.leverage || te.defaultLeverage || 3,
+        slPct: opts.slPct || 0,
+        customSl: 0,
+        tpPreset: 'default',
+        customTp1: 0,
+        entryType: 'market',
+        limitPrice: 0,
+        market: null,
+        liveBalance: null,
+        panelMsg: prev?.panelMsg || null,
+        busy: false,
+      };
+      const maxLev = maxLeverageFor(st);
+      if (maxLev && st.leverage > maxLev) st.leverage = maxLev;
+      this.manualTradeState[ctx.from.id] = st;
+      await renderPanel(ctx, st, { fresh: true });
+    };
+
+    // Bare /trade falls through to the auto-trading status command registered further down
+    this.bot.command('trade', async (ctx, next) => {
+      const args = ctx.message.text.trim().split(/\s+/).slice(1);
+      if (!args.length) return next();
+      try {
+        const dirArg = (args[1] || '').toLowerCase();
+        const direction = ['long', 'short'].includes(dirArg) ? dirArg : undefined;
+        const [margin, lev] = args.slice(direction ? 2 : 1).map(parseFloat);
+        await openPanel(ctx, args[0].toUpperCase(), {
+          direction,
+          margin: margin > 0 ? margin : undefined,
+          leverage: lev > 0 ? Math.round(lev) : undefined,
+        });
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+
+    const quickOpen = (direction) => async (ctx) => {
+      const args = ctx.message.text.trim().split(/\s+/).slice(1);
+      if (!args.length) {
+        return ctx.replyWithHTML(`Usage: <code>/${direction} SYMBOL [margin] [lev] [sl%]</code>\nExample: <code>/${direction} RLC 20 5 4</code>`);
+      }
+      try {
+        const [margin, lev, sl] = args.slice(1).map(parseFloat);
+        await openPanel(ctx, args[0].toUpperCase(), {
+          direction,
+          margin: margin > 0 ? margin : undefined,
+          leverage: lev > 0 ? Math.round(lev) : undefined,
+          slPct: sl > 0 && sl < 100 ? sl : undefined,
+        });
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    };
+    this.bot.command('long', quickOpen('long'));
+    this.bot.command('short', quickOpen('short'));
+
+    // Typed exact values — each re-sends the panel at the bottom of the chat
+    const typedSetter = (name, usage, apply) => {
+      this.bot.command(name, async (ctx) => {
+        if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+        const st = this.manualTradeState[ctx.from.id];
+        if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Start one with <code>/trade SYMBOL</code>.');
+        const raw = (ctx.message.text.trim().split(/\s+/)[1] || '').toLowerCase();
+        const err = raw ? apply(st, raw) : usage;
+        if (err) return ctx.replyWithHTML(err);
+        try { await renderPanel(ctx, st, { fresh: true }); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+      });
+    };
+    typedSetter('sl', 'Usage: <code>/sl 1.234</code> (price) · <code>/sl 4%</code> · <code>/sl atr</code>', (st, raw) => {
+      if (raw === 'atr') { st.customSl = 0; st.slPct = 0; return null; }
+      const v = parseFloat(raw);
+      if (!(v > 0)) return '⚠️ Invalid SL.';
+      if (raw.endsWith('%')) {
+        if (v >= 100) return '⚠️ SL % must be below 100.';
+        st.slPct = v; st.customSl = 0;
+      } else {
+        st.customSl = v; st.slPct = 0;
+      }
+      return null;
+    });
+    typedSetter('tp', 'Usage: <code>/tp 1.5</code> (TP1 price — TP2-4 scale from it) · <code>/tp auto</code>', (st, raw) => {
+      if (raw === 'auto') { st.customTp1 = 0; return null; }
+      const v = parseFloat(raw);
+      if (!(v > 0)) return '⚠️ Invalid TP.';
+      st.customTp1 = v;
+      return null;
+    });
+    typedSetter('entry', 'Usage: <code>/entry 1.2</code> (limit price) · <code>/entry market</code>', (st, raw) => {
+      if (raw === 'market') { st.entryType = 'market'; st.limitPrice = 0; return null; }
+      const v = parseFloat(raw);
+      if (!(v > 0)) return '⚠️ Invalid price.';
+      st.entryType = 'limit'; st.limitPrice = v;
+      return null;
+    });
+    typedSetter('margin', 'Usage: <code>/margin 40</code>', (st, raw) => {
+      const v = parseFloat(raw);
+      if (!(v >= 1 && v <= 100000)) return '⚠️ Margin must be between 1 and 100000.';
+      st.margin = v;
+      return null;
+    });
+    typedSetter('lev', 'Usage: <code>/lev 7</code>', (st, raw) => {
+      const v = Math.round(parseFloat(raw));
+      const max = maxLeverageFor(st) || 125;
+      if (!(v >= 1 && v <= max)) return `⚠️ Leverage must be 1–${max}x on ${st.exchangeId}.`;
+      st.leverage = v;
+      return null;
+    });
+
+    // Panel button handler: admin-only, and only for the user's current panel message
+    const mtAction = (trigger, handler) => {
+      this.bot.action(trigger, async (ctx) => {
+        if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+        const st = this.manualTradeState[ctx.from.id];
+        const msgId = ctx.callbackQuery?.message?.message_id;
+        if (!st || (st.panelMsg && msgId !== st.panelMsg.messageId)) {
+          return ctx.answerCbQuery('This panel is closed or outdated — run /trade SYMBOL again', { show_alert: true }).catch(() => {});
+        }
+        try {
+          await handler(ctx, st);
+        } catch (e) {
+          logger.error(`Manual trade panel: ${e.message}`);
+          await ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {});
+        }
+      });
+    };
+
+    mtAction('mt_back', async (ctx, st) => { await ack(ctx); await renderPanel(ctx, st); });
+    mtAction('mt_refresh', async (ctx, st) => { await ack(ctx, 'Price refreshed'); await renderPanel(ctx, st, { forceRefresh: true }); });
+    mtAction('mt_blocked', async (ctx, st) => {
+      const { errors } = validateSetup(st, computeSetup(st));
+      await ctx.answerCbQuery(errors[0] || 'Fix the issues shown in the panel', { show_alert: true }).catch(() => {});
+    });
+    mtAction('mt_cancel', async (ctx) => {
+      await ack(ctx, 'Cancelled');
+      delete this.manualTradeState[ctx.from.id];
+      await ctx.editMessageText('❌ Manual trade cancelled.').catch(() => {});
+    });
+
+    mtAction('mt_mode_paper', async (ctx, st) => { await ack(ctx, 'Paper'); st.mode = 'paper'; await renderPanel(ctx, st); });
+    mtAction('mt_mode_live', async (ctx, st) => {
+      const ex = mtExec().exchanges[st.exchangeId];
+      if (!ex?.apiKey || !ex?.secret) {
+        return ctx.answerCbQuery(`No API keys for ${st.exchangeId} — live trading unavailable there`, { show_alert: true }).catch(() => {});
+      }
+      await ack(ctx, 'LIVE — real funds');
+      st.mode = 'live';
+      await refreshLiveBalance(st);
+      await renderPanel(ctx, st);
+    });
+
+    for (const dir of ['long', 'short']) {
+      mtAction(`mt_dir_${dir}`, async (ctx, st) => {
+        await ack(ctx, dir === 'long' ? 'Long' : 'Short');
+        if (st.direction !== dir) {
+          // Custom price levels belong to the old direction — reset them
+          st.direction = dir;
+          st.customSl = 0;
+          st.customTp1 = 0;
+          if (st.entryType === 'limit') st.limitPrice = 0;
+        }
+        await renderPanel(ctx, st);
+      });
+    }
+
+    mtAction('mt_margin', async (ctx, st) => {
+      await ack(ctx);
+      const btns = MT_MARGINS.map(v => Markup.button.callback(`$${v}${st.margin === v ? ' ✓' : ''}`, `mt_m_${v}`));
+      await showMenu(ctx, `💵 <b>MARGIN</b> (your collateral)\n\nCurrent: <b>$${st.margin}</b> × ${st.leverage}x = $${(st.margin * st.leverage).toFixed(2)} position\n\nOther amount: <code>/margin 37</code>`, grid(btns, 4));
+    });
+    mtAction(/^mt_m_(\d+)$/, async (ctx, st) => {
+      st.margin = Number(ctx.match[1]);
+      await ack(ctx, `$${st.margin}`);
+      await renderPanel(ctx, st);
+    });
+
+    mtAction('mt_lev', async (ctx, st) => {
+      await ack(ctx);
+      const max = maxLeverageFor(st);
+      const options = MT_LEVERAGES.filter(v => !max || v <= max);
+      const btns = options.map(v => Markup.button.callback(`${v}x${st.leverage === v ? ' ✓' : ''}`, `mt_l_${v}`));
+      await showMenu(ctx, `⚡ <b>LEVERAGE</b>\n\nCurrent: <b>${st.leverage}x</b>${max ? ` · ${st.exchangeId} max ${max}x` : ''}\n\nOther value: <code>/lev 8</code>`, grid(btns, 4));
+    });
+    mtAction(/^mt_l_(\d+)$/, async (ctx, st) => {
+      st.leverage = Number(ctx.match[1]);
+      await ack(ctx, `${st.leverage}x`);
+      await renderPanel(ctx, st);
+    });
+
+    mtAction('mt_sl', async (ctx, st) => {
+      await ack(ctx);
+      const cur = st.customSl > 0 ? `Custom $${fmtP(st.customSl)}` : st.slPct > 0 ? `${st.slPct}% from entry` : '3×ATR (volatility-based)';
+      const btns = [
+        Markup.button.callback(`3×ATR${!st.customSl && !st.slPct ? ' ✓' : ''}`, 'mt_sl_0'),
+        ...MT_SL_PCTS.map(v => Markup.button.callback(`${v}%${!st.customSl && st.slPct === v ? ' ✓' : ''}`, `mt_sl_${v}`)),
+      ];
+      await showMenu(ctx, `🛑 <b>STOP LOSS</b>\n\nCurrent: <b>${cur}</b>\n\nExact price: <code>/sl 0.0512</code>\nCustom %: <code>/sl 4.5%</code>`, grid(btns, 3));
+    });
+    mtAction(/^mt_sl_(\d+)$/, async (ctx, st) => {
+      st.slPct = Number(ctx.match[1]);
+      st.customSl = 0;
+      await ack(ctx, st.slPct ? `${st.slPct}%` : 'ATR');
+      await renderPanel(ctx, st);
+    });
+
+    mtAction('mt_tp', async (ctx, st) => {
+      await ack(ctx);
+      const btns = Object.entries(MT_TP_PRESETS).map(([key, p]) =>
+        [Markup.button.callback(`${p.label} ${p.mults.join('/')}R${!st.customTp1 && st.tpPreset === key ? ' ✓' : ''}`, `mt_tpp_${key}`)]);
+      await showMenu(ctx,
+        `🎯 <b>TAKE PROFIT</b>\n\nTargets are multiples of your risk (R = distance to SL).\n` +
+        `Current: <b>${st.customTp1 > 0 ? `Custom TP1 $${fmtP(st.customTp1)}` : MT_TP_PRESETS[st.tpPreset].label}</b>\n\n` +
+        `Exact TP1 price: <code>/tp 0.089</code> (TP2-4 scale from it)`, btns);
+    });
+    mtAction(/^mt_tpp_(safe|default|runner)$/, async (ctx, st) => {
+      st.tpPreset = ctx.match[1];
+      st.customTp1 = 0;
+      await ack(ctx, MT_TP_PRESETS[st.tpPreset].label);
+      await renderPanel(ctx, st);
+    });
+
+    mtAction('mt_entry', async (ctx, st) => {
+      await ack(ctx);
+      await refreshMarket(st);
+      const isLong = st.direction === 'long';
+      const offsetBtns = MT_LIMIT_OFFSETS.map(off => {
+        const price = st.market.price * (1 - (isLong ? 1 : -1) * off / 100);
+        return Markup.button.callback(`${isLong ? '−' : '+'}${off}% ($${fmtP(price)})`, `mt_lim_${off}`);
+      });
+      await showMenu(ctx,
+        `🚀 <b>ENTRY</b>\n\nMarket: <b>$${fmtP(st.market.price)}</b>\n\n` +
+        `<b>Market</b> fills immediately.\n<b>Limit</b> waits for your price (checked every minute, expires in 24h).\n\n` +
+        `Quick ${isLong ? 'pullback (below market)' : 'bounce (above market)'} limits below, or any price: <code>/entry 0.0512</code>\n` +
+        `<i>A long limit above market (or short below) acts as a breakout entry.</i>`,
+        [[Markup.button.callback(`🚀 Market${st.entryType === 'market' ? ' ✓' : ''}`, 'mt_entry_market')], ...grid(offsetBtns, 2)]);
+    });
+    mtAction('mt_entry_market', async (ctx, st) => {
+      await ack(ctx, 'Market');
+      st.entryType = 'market';
+      st.limitPrice = 0;
+      await renderPanel(ctx, st);
+    });
+    mtAction(/^mt_lim_(\d+(?:\.\d+)?)$/, async (ctx, st) => {
+      const off = parseFloat(ctx.match[1]);
+      await refreshMarket(st);
+      st.entryType = 'limit';
+      st.limitPrice = Number((st.market.price * (1 - (st.direction === 'long' ? 1 : -1) * off / 100)).toPrecision(6));
+      await ack(ctx, `Limit $${fmtP(st.limitPrice)}`);
+      await renderPanel(ctx, st);
+    });
+
+    mtAction('mt_exchange', async (ctx, st) => {
+      await ack(ctx);
+      const te = mtExec();
+      const btns = exchangesFor(st.symbol).map(id => {
+        const keys = te.exchanges[id]?.apiKey ? '🔑' : '📝';
+        return Markup.button.callback(`${id.toUpperCase()} ${keys}${st.exchangeId === id ? ' ✓' : ''}`, `mt_ex_${id}`);
+      });
+      await showMenu(ctx, `🏦 <b>EXCHANGE</b>\n\n${escapeHtml(st.symbol)} perpetual is listed on:\n🔑 = API keys set (live OK) · 📝 = paper only`, grid(btns, 2));
+    });
+    mtAction(/^mt_ex_([a-z0-9]+)$/, async (ctx, st) => {
+      const id = ctx.match[1];
+      if (!exchangesFor(st.symbol).includes(id)) return ack(ctx, 'Not available');
+      const ex = mtExec().exchanges[id];
+      if (st.mode === 'live' && (!ex?.apiKey || !ex?.secret)) {
+        return ctx.answerCbQuery(`No API keys for ${id} — switch to Paper first`, { show_alert: true }).catch(() => {});
+      }
+      await ack(ctx, id.toUpperCase());
+      st.exchangeId = id;
+      st.market = null;
+      const max = maxLeverageFor(st);
+      if (max && st.leverage > max) st.leverage = max;
+      if (st.mode === 'live') await refreshLiveBalance(st);
+      await renderPanel(ctx, st);
+    });
+
+    const executeManual = async (ctx, st) => {
+      if (st.busy) return;
+      st.busy = true;
+      try {
+        const te = mtExec();
+        await refreshMarket(st, true);
+        const s = computeSetup(st);
+        if (validateSetup(st, s).errors.length) {
+          await ctx.replyWithHTML('⚠️ Price moved and the setup is no longer valid — review the panel.').catch(() => {});
+          return renderPanel(ctx, st);
+        }
+        const isLong = st.direction === 'long';
+        const dirLabel = isLong ? '🟢 LONG' : '🔴 SHORT';
+        const modeLabel = st.mode === 'live' ? '💰 LIVE' : '📝 PAPER';
+
+        if (st.entryType === 'limit') {
+          const cfg = {
+            symbol: st.symbol, exchangeId: st.exchangeId, direction: st.direction, mode: st.mode,
+            margin: st.margin, leverage: st.leverage, limitPrice: st.limitPrice,
+            trigger: st.limitPrice <= s.market ? 'below' : 'above',
+            stopLoss: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, atr: s.atr,
+            placedAt: Date.now(), expiresAt: Date.now() + MT_ORDER_TTL_MS,
+          };
+          const id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
+          this.pendingLimitOrders.set(id, { id, chatId: ctx.chat.id, ...cfg });
+          delete this.manualTradeState[ctx.from.id];
+          return ctx.editMessageText(
+            `📍 <b>LIMIT ORDER #${id} PLACED</b> — ${escapeHtml(st.symbol)}\n\n` +
+            `${dirLabel} · ${modeLabel} · ${st.exchangeId.toUpperCase()}\n` +
+            `📍 Entry: <b>$${fmtP(st.limitPrice)}</b> (market $${fmtP(s.market)})\n` +
+            `💵 $${st.margin} × ${st.leverage}x = $${s.posSize.toFixed(2)}\n` +
+            `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)} · TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
+            `🛑 SL $${fmtP(s.stopLoss)} (-$${s.maxLoss.toFixed(2)})\n\n` +
+            `⏳ <i>Fills when price ${cfg.trigger === 'below' ? 'drops to' : 'rises to'} $${fmtP(st.limitPrice)} · expires in 24h · survives restarts</i>`,
+            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback(`❌ Cancel order #${id}`, `mt_cancelorder_${id}`)]]).reply_markup }
+          );
+        }
+
+        const trade = await te.openManualTrade({
+          symbol: st.symbol, exchangeId: st.exchangeId, direction: st.direction, mode: st.mode,
+          entryPrice: s.entry, positionSize: s.posSize, leverage: st.leverage,
+          tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, stopLoss: s.stopLoss, atr: s.atr,
+          context: { margin: st.margin },
+        });
+        delete this.manualTradeState[ctx.from.id];
+        if (!trade) {
+          return ctx.editMessageText(
+            `⚠️ <b>Live order NOT placed</b> — ${escapeHtml(st.symbol)}\n\nThe executor skipped it (existing exchange position, below minimum size, low liquidity or price drift). Check the bot notification for the exact reason.`,
+            { parse_mode: 'HTML' }
+          );
+        }
+        const lev = trade.leverage || st.leverage;
+        const size = trade.positionSize || s.posSize;
+        const levNote = lev !== st.leverage ? ` (exchange allowed ${lev}x, not ${st.leverage}x)` : '';
+        await ctx.editMessageText(
+          `${isLong ? '🟢' : '🔴'} <b>MANUAL ${st.direction.toUpperCase()} OPENED</b> — ${escapeHtml(st.symbol)}\n\n` +
+          `${modeLabel} · ${st.exchangeId.toUpperCase()}\n` +
+          `💰 Entry: <b>$${fmtP(trade.entryPrice)}</b>\n` +
+          `💵 $${size.toFixed(2)} position at ${lev}x${levNote}\n\n` +
+          `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)}\n🎯 TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
+          `🛑 SL $${fmtP(s.stopLoss)} · 💀 Liq ≈ $${fmtP(s.liqPrice)}\n\n` +
+          `<i>Managing: TP partials, breakeven, trailing SL. Close any time with /mpositions.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]).reply_markup }
+        );
+      } finally {
+        st.busy = false;
+      }
+    };
+
+    mtAction('mt_confirm', async (ctx, st) => {
+      const s = computeSetup(st);
+      const { errors } = validateSetup(st, s);
+      if (errors.length) return ctx.answerCbQuery(errors[0], { show_alert: true }).catch(() => {});
+      if (st.mode !== 'live') {
+        await ack(ctx, 'Placing…');
+        return executeManual(ctx, st);
+      }
+      await ack(ctx);
+      const isLimit = st.entryType === 'limit';
+      await showMenu(ctx,
+        `⚠️ <b>CONFIRM LIVE ${isLimit ? 'LIMIT ORDER' : 'ORDER'}</b>\n\n` +
+        `${st.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} <b>${escapeHtml(st.symbol)}</b> on ${st.exchangeId.toUpperCase()}\n` +
+        `${isLimit ? `Entry: limit $${fmtP(st.limitPrice)}` : `Entry: market ~$${fmtP(s.market)}`}\n` +
+        `Margin $${st.margin} × ${st.leverage}x = <b>$${s.posSize.toFixed(2)}</b>\n` +
+        `SL $${fmtP(s.stopLoss)} → max loss <b>-$${s.maxLoss.toFixed(2)}</b>\n\n` +
+        `<b>This uses real funds.</b>`,
+        [[Markup.button.callback('✅ YES — place LIVE order', 'mt_confirm_live')]]);
+    });
+    mtAction('mt_confirm_live', async (ctx, st) => {
+      await ack(ctx, 'Placing live order…');
+      await executeManual(ctx, st);
+    });
+
+    // --- Limit orders: persisted in manual_orders, checked every minute from index.js ---
+    const notifyChat = (chatId, html) =>
+      this.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }).catch(e => logger.warn(`Notify ${chatId} failed: ${e.message}`));
+
+    const loadPendingOrders = async () => {
+      if (this._manualOrdersLoaded) return;
+      const rows = await db.getPendingManualOrders();
+      for (const r of rows) this.pendingLimitOrders.set(r.id, { id: r.id, chatId: Number(r.chat_id), ...r.config });
+      this._manualOrdersLoaded = true;
+      if (rows.length) logger.info(`Restored ${rows.length} pending manual limit order(s)`);
+    };
+
+    // Returns false if another path already resolved the order
+    const finishOrder = async (o, status) => {
+      this.pendingLimitOrders.delete(o.id);
+      return db.setManualOrderStatus(o.id, status);
+    };
+
+    const processLimitOrder = async (te, o) => {
+      const label = `${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)} (#${o.id})`;
+      if (Date.now() > o.expiresAt) {
+        if (await finishOrder(o, 'expired')) await notifyChat(o.chatId, `⏰ Limit order expired: ${label}`);
+        return;
+      }
+      const ex = te.exchanges[o.exchangeId];
+      const pair = pairOf(o.symbol);
+      if (!ex?.markets?.[pair]) return;
+
+      const price = (await ex.fetchTicker(pair)).last;
+      // Include 1m wicks since placement so a quick touch between checks still fills
+      const candles = (await ex.fetchOHLCV(pair, '1m', undefined, 2).catch(() => []))
+        .filter(c => c[0] + 60000 >= (o.placedAt || 0));
+      const low = Math.min(price, ...candles.map(c => c[3]));
+      const high = Math.max(price, ...candles.map(c => c[2]));
+      const touched = o.trigger === 'below' ? low <= o.limitPrice : high >= o.limitPrice;
+      if (!touched) return;
+
+      const isLong = o.direction === 'long';
+      if (isLong ? price <= o.stopLoss : price >= o.stopLoss) {
+        if (await finishOrder(o, 'cancelled')) {
+          await notifyChat(o.chatId, `⚠️ Limit order cancelled: ${label}\nPrice $${fmtP(price)} is already past your SL $${fmtP(o.stopLoss)}.`);
+        }
+        return;
+      }
+      if ((await db.getOpenTrades(te.settingsKey)).some(t => t.symbol === o.symbol)) {
+        if (await finishOrder(o, 'cancelled')) await notifyChat(o.chatId, `⚠️ Limit order cancelled: ${label}\nYou already have an open ${escapeHtml(o.symbol)} position.`);
+        return;
+      }
+      if (!(await finishOrder(o, 'filled'))) return;
+
+      const fillPrice = o.mode === 'paper' ? o.limitPrice : price;
+      let trade = null;
+      try {
+        trade = await te.openManualTrade({
+          symbol: o.symbol, exchangeId: o.exchangeId, direction: o.direction, mode: o.mode,
+          entryPrice: fillPrice, positionSize: o.margin * o.leverage, leverage: o.leverage,
+          tp1: o.tp1, tp2: o.tp2, tp3: o.tp3, tp4: o.tp4, stopLoss: o.stopLoss, atr: o.atr,
+          context: { margin: o.margin, limitOrderId: o.id, limitPrice: o.limitPrice },
+        });
+      } catch (e) {
+        logger.error(`Limit order #${o.id} execution failed: ${e.message}`);
+      }
+      if (!trade) {
+        await db.query("UPDATE manual_orders SET status = 'failed' WHERE id = $1", [o.id]).catch(() => {});
+        await notifyChat(o.chatId, `⚠️ Limit order triggered but NOT executed: ${label}\nCheck the bot notification for the reason.`);
+        return;
+      }
+      await notifyChat(o.chatId,
+        `📍✅ <b>LIMIT ORDER FILLED</b> — ${escapeHtml(o.symbol)} (#${o.id})\n\n` +
+        `${isLong ? '🟢 LONG' : '🔴 SHORT'} · ${o.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${o.exchangeId.toUpperCase()}\n` +
+        `💰 Entry: <b>$${fmtP(trade.entryPrice)}</b> (limit $${fmtP(o.limitPrice)})\n` +
+        `💵 $${(trade.positionSize || o.margin * o.leverage).toFixed(2)} at ${trade.leverage || o.leverage}x\n` +
+        `🎯 TP1 $${fmtP(o.tp1)} · 🛑 SL $${fmtP(o.stopLoss)}`);
+    };
+
+    this.checkPendingLimitOrders = async () => {
+      if (this._limitCheckRunning) return;
+      this._limitCheckRunning = true;
+      try {
+        await loadPendingOrders();
+        const te = mtExec();
+        if (!te) return;
+        for (const o of [...this.pendingLimitOrders.values()]) {
+          try { await processLimitOrder(te, o); } catch (e) { logger.error(`Limit order #${o.id} ${o.symbol}: ${e.message}`); }
+        }
+      } finally {
+        this._limitCheckRunning = false;
+      }
+    };
+
+    const ordersView = () => {
+      const orders = [...this.pendingLimitOrders.values()];
+      if (!orders.length) return { text: '📭 No pending limit orders.\n\nPlace one from <code>/trade SYMBOL</code> → 🚀 Entry → Limit.' };
+      let text = `📍 <b>PENDING LIMIT ORDERS</b> (${orders.length})\n\n`;
+      for (const o of orders) {
+        const hoursLeft = Math.max(0, (o.expiresAt - Date.now()) / 3600000).toFixed(1);
+        text += `#${o.id} ${o.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(o.symbol)}</b> @ $${fmtP(o.limitPrice)} · $${o.margin} × ${o.leverage}x · ${o.mode} · ${hoursLeft}h left\n`;
+      }
+      const buttons = orders.map(o => [Markup.button.callback(`❌ Cancel #${o.id} ${o.symbol}`, `mt_cancelorder_${o.id}`)]);
+      return { text, keyboard: Markup.inlineKeyboard(buttons) };
+    };
+    this._manualOrdersView = async () => { await loadPendingOrders(); return ordersView(); };
+
+    this.bot.command('orders', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      try {
+        const { text, keyboard } = await this._manualOrdersView();
+        await ctx.replyWithHTML(text, keyboard);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
 
     this.bot.command('cancelorder', async (ctx) => {
-      if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-      const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
-      if (!symbol) {
-        if (!this.pendingLimitOrders.size) return ctx.replyWithHTML('📭 No pending orders.');
-        return ctx.replyWithHTML('Usage: <code>/cancelorder SYMBOL</code> or use /orders to see all');
-      }
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      await loadPendingOrders();
+      const arg = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase().replace(/^#/, '');
+      if (!arg) return ctx.replyWithHTML('Usage: <code>/cancelorder SYMBOL</code> or <code>/cancelorder 12</code> — or use /orders');
+      const matches = [...this.pendingLimitOrders.values()].filter(o => String(o.id) === arg || o.symbol === arg);
       let cancelled = 0;
-      for (const [id, o] of this.pendingLimitOrders) {
-        if (o.symbol === symbol) { this.pendingLimitOrders.delete(id); cancelled++; }
-      }
-      ctx.replyWithHTML(cancelled > 0 ? `✅ Cancelled ${cancelled} limit order(s) for ${symbol}` : `⚠️ No pending orders for ${symbol}`);
+      for (const o of matches) if (await finishOrder(o, 'cancelled')) cancelled++;
+      ctx.replyWithHTML(cancelled ? `✅ Cancelled ${cancelled} limit order(s).` : `⚠️ No pending order matches ${escapeHtml(arg)}.`);
     });
 
-    this.bot.action(/^mt_cancelorder_(.+)$/, async (ctx) => {
-      try {
-        const id = ctx.match[1];
-        const order = this.pendingLimitOrders.get(id);
-        if (order) {
-          this.pendingLimitOrders.delete(id);
-          await ctx.answerCbQuery('Cancelled');
-          ctx.replyWithHTML(`✅ Limit order cancelled: ${order.direction.toUpperCase()} ${order.symbol} @ $${order.limitPrice}`);
-        } else {
-          await ctx.answerCbQuery('Already cancelled');
-        }
-      } catch (e) {}
+    this.bot.action(/^mt_cancelorder_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await loadPendingOrders();
+      const o = this.pendingLimitOrders.get(Number(ctx.match[1]));
+      if (!o || !(await finishOrder(o, 'cancelled'))) return ack(ctx, 'Already filled, expired or cancelled');
+      await ack(ctx, 'Cancelled');
+      await ctx.editMessageText(`❌ Limit order #${o.id} cancelled — ${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)}`).catch(() => {});
     });
 
-    // Check pending limit orders (called from index.js every minute)
-    this.checkPendingLimitOrders = async () => {
-      if (!this.pendingLimitOrders.size) return;
-      const octe = this.onchainTradeExecutor;
-      if (!octe) return;
-
-      for (const [id, o] of this.pendingLimitOrders) {
-        try {
-          // Expire after 24h
-          if (Date.now() - o.createdAt > 24 * 60 * 60 * 1000) {
-            this.pendingLimitOrders.delete(id);
-            try { await this.bot.telegram.sendMessage(o.chatId, `⏰ Limit order expired: ${o.direction.toUpperCase()} ${o.symbol} @ $${o.limitPrice}`, { parse_mode: 'HTML' }); } catch (e) {}
-            continue;
-          }
-
-          const ticker = await o.exchange.fetchTicker(o.pair);
-          const price = ticker.last;
-          const isLong = o.direction === 'long';
-          const triggered = isLong ? price <= o.limitPrice : price >= o.limitPrice;
-
-          if (triggered) {
-            this.pendingLimitOrders.delete(id);
-            const setup = await calcTradeSetup(o.symbol, o.exchangeId, o.exchange, o.pair, o.direction, o.margin, o.leverage, o.slPct, { customSl: o.customSl, customTp1: o.customTp1 });
-
-            if (o.mode === 'paper') {
-              const trade = {
-                signalId: null, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction,
-                mode: 'paper', entryPrice: o.limitPrice, quantity: setup.posSize / o.limitPrice,
-                positionSize: setup.posSize, leverage: o.leverage,
-                tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4: setup.tp4,
-                stopLoss: setup.stopLoss, originalStopLoss: setup.stopLoss, invalidation: setup.stopLoss,
-                atr: setup.atr, dcaQty2: 0, dcaQty3: 0, dcaPrice2: null, dcaPrice3: null, dcaStage: 1,
-                status: 'open', source: octe.settingsKey,
-                onchainContext: { manual: true, margin: o.margin, leverage: o.leverage, limitEntry: o.limitPrice },
-              };
-              await db.saveTrade(trade);
-              try {
-                await this.bot.telegram.sendMessage(o.chatId,
-                  `📍✅ <b>LIMIT ORDER FILLED</b> — $${o.symbol}\n\n` +
-                  `${isLong ? '🟢 LONG' : '🔴 SHORT'} | 📝 PAPER\n` +
-                  `📍 Entry: <b>$${o.limitPrice}</b> (triggered at $${price.toPrecision(6)})\n` +
-                  `💵 $${o.margin} × ${o.leverage}x = $${setup.posSize}\n` +
-                  `🎯 TP1: $${setup.tp1.toPrecision(6)} | SL: $${setup.stopLoss.toPrecision(6)}`,
-                  { parse_mode: 'HTML' }
-                );
-              } catch (e) {}
-            } else {
-              const signal = {
-                id: null, type: 'MANUAL_LIMIT', symbol: o.symbol, exchange: o.exchangeId, pair: o.pair,
-                direction: o.direction, currentPrice: price, entryPrice: o.limitPrice,
-                tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, stopLoss: setup.stopLoss,
-                atr: setup.atr, confidence: 5, onchainScore: 100, suggestedLeverage: o.leverage,
-                onchainContext: { manual: true, limitEntry: o.limitPrice },
-              };
-              const trade = await octe.executeLiveTrade(signal);
-              try {
-                await this.bot.telegram.sendMessage(o.chatId,
-                  trade
-                    ? `📍✅ <b>LIMIT FILLED LIVE</b> — ${isLong ? '🟢' : '🔴'} ${o.symbol} @ $${o.limitPrice}\n⚠️ Real money on exchange`
-                    : `⚠️ Limit triggered for ${o.symbol} but live execution failed`,
-                  { parse_mode: 'HTML' }
-                );
-              } catch (e) {}
-            }
-          }
-        } catch (e) {
-          logger.error(`Limit order check error ${o.symbol}: ${e.message}`);
-        }
-      }
+    // --- Positions & closing (any open trade, any executor) ---
+    const getOpenTradeById = async (id) => {
+      const { rows } = await db.query("SELECT * FROM trades WHERE id = $1 AND status = 'open'", [id]);
+      return rows[0] || null;
     };
 
-    this.bot.command('mclose', async (ctx) => {
-      try {
-        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-        const octe = this.onchainTradeExecutor;
-        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
-
-        const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
-        if (!symbol) {
-          const openTrades = await db.getOpenTrades(octe.settingsKey);
-          if (!openTrades.length) return ctx.replyWithHTML('📭 No open positions.');
-          const buttons = openTrades.map(t => {
-            const emoji = t.direction === 'long' ? '🟢' : '🔴';
-            return [Markup.button.callback(`${emoji} Close ${t.symbol}`, `mt_close_${t.symbol}`)];
-          });
-          return ctx.replyWithHTML(
-            `🔧 <b>Close Position</b>\n\nSelect position to close:`,
-            Markup.inlineKeyboard(buttons)
-          );
-        }
-
-        await executeManualClose(ctx, symbol, octe);
-      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
-    });
-
-    const executeManualClose = async (ctx, symbol, octe) => {
-      const openTrades = await db.getOpenTrades(octe.settingsKey);
-      const trade = openTrades.find(t => t.symbol === symbol);
-      if (!trade) return ctx.replyWithHTML(`⚠️ No open position in ${symbol}`);
-
-      let exitPrice = parseFloat(trade.entry_price);
-      try {
-        for (const [id, ex] of Object.entries(octe.exchanges)) {
-          const p = `${symbol}/USDT:USDT`;
-          if (ex.markets?.[p]) { const tk = await ex.fetchTicker(p); exitPrice = tk.last; break; }
-        }
-      } catch (e) {}
-
-      const entry = parseFloat(trade.entry_price);
-      const posSize = parseFloat(trade.position_size);
-      const isLong = trade.direction === 'long';
-      const pnlPct = isLong ? ((exitPrice - entry) / entry) * 100 : ((entry - exitPrice) / entry) * 100;
-      const pnlUsd = (pnlPct / 100) * posSize + parseFloat(trade.realized_pnl || 0);
-
-      await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'manual_close');
-      octe.dailyPnL += pnlUsd;
-
-      const emoji = pnlUsd >= 0 ? '✅' : '❌';
-      const msg = `${emoji} <b>CLOSED</b> — $${escapeHtml(symbol)}\n\n` +
-        `${isLong ? '🟢 LONG' : '🔴 SHORT'}\n` +
-        `Entry: $${entry.toPrecision(6)} → Exit: $${exitPrice.toPrecision(6)}\n` +
-        `P&L: <b>$${pnlUsd.toFixed(2)}</b> (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`;
-
-      if (ctx.callbackQuery) {
-        await ctx.editMessageText(msg, { parse_mode: 'HTML' });
-      } else {
-        ctx.replyWithHTML(msg);
-      }
+    const positionsView = async () => {
+      const trades = await db.getOpenTrades();
+      if (!trades.length) return { text: '📭 No open positions.' };
+      const { msg, totalPnl } = await formatPositions(trades, mtExec()?.exchanges || {});
+      const rows = grid(trades.slice(0, 10).map(t =>
+        Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} Close ${t.symbol}${t.onchain_context?.manual ? ' 🔧' : ''}`, `mt_close_${t.id}`)), 2);
+      rows.push([Markup.button.callback('🔄 Refresh', 'mt_pos_refresh'), Markup.button.callback('📍 Limit orders', 'mt_orders')]);
+      return {
+        text: `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}${totalPnl >= 0 ? '🟩' : '🟥'} <b>Total: $${totalPnl.toFixed(2)}</b>\n\n<i>🔧 = manual trade</i>`,
+        keyboard: Markup.inlineKeyboard(rows),
+      };
     };
-
-    // Close buttons from /mclose panel
-    this.bot.action(/^mt_close_(.+)$/, async (ctx) => {
-      try {
-        await ctx.answerCbQuery('Closing...');
-        const symbol = ctx.match[1];
-        await executeManualClose(ctx, symbol, this.onchainTradeExecutor);
-      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
-    });
 
     this.bot.command('mpositions', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
       try {
-        if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
-        const octe = this.onchainTradeExecutor;
-        if (!octe) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
-
-        const trades = await db.getOpenTrades(octe.settingsKey);
-        if (!trades.length) return ctx.replyWithHTML('📭 No open positions.');
-
-        const { msg, totalPnl } = await formatPositions(trades, octe.exchanges);
-        const pnlEmoji = totalPnl >= 0 ? '🟩' : '🟥';
-        const closeButtons = trades.slice(0, 5).map(t => {
-          const emoji = t.direction === 'long' ? '🟢' : '🔴';
-          return Markup.button.callback(`${emoji} Close ${t.symbol}`, `mt_close_${t.symbol}`);
-        });
-        const keyboard = Markup.inlineKeyboard([
-          closeButtons,
-          [Markup.button.callback('🔄 Refresh', 'mt_pos_refresh')],
-        ]);
-        ctx.replyWithHTML(
-          `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}` +
-          `${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`,
-          keyboard
-        );
+        const { text, keyboard } = await positionsView();
+        await ctx.replyWithHTML(text, keyboard);
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
 
     this.bot.action('mt_pos_refresh', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Refreshed');
       try {
-        await ctx.answerCbQuery('Refreshed');
-        const octe = this.onchainTradeExecutor;
-        const trades = await db.getOpenTrades(octe.settingsKey);
-        if (!trades.length) return ctx.editMessageText('📭 No open positions.', { parse_mode: 'HTML' });
-        const { msg, totalPnl } = await formatPositions(trades, octe.exchanges);
-        const pnlEmoji = totalPnl >= 0 ? '🟩' : '🟥';
-        const closeButtons = trades.slice(0, 5).map(t => {
-          const emoji = t.direction === 'long' ? '🟢' : '🔴';
-          return Markup.button.callback(`${emoji} Close ${t.symbol}`, `mt_close_${t.symbol}`);
+        const { text, keyboard } = await positionsView();
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard?.reply_markup }).catch((e) => {
+          if (!/not modified/i.test(e.message)) throw e;
         });
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action('mt_pos_refresh_new', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try {
+        const { text, keyboard } = await positionsView();
+        await ctx.replyWithHTML(text, keyboard);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action('mt_orders', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try {
+        const { text, keyboard } = await this._manualOrdersView();
+        await ctx.replyWithHTML(text, keyboard);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    const sendCloseConfirm = async (ctx, trade) => {
+      const ex = mtExec()?.exchanges?.[trade.exchange];
+      let price = null;
+      try { if (ex?.markets?.[pairOf(trade.symbol)]) price = (await ex.fetchTicker(pairOf(trade.symbol))).last; } catch (e) { /* show without P&L */ }
+      const entry = parseFloat(trade.entry_price);
+      const isLong = trade.direction === 'long';
+      let pnlLine = '';
+      if (price) {
+        const pct = (isLong ? price - entry : entry - price) / entry * 100;
+        const usd = (pct / 100) * parseFloat(trade.position_size || 0) + parseFloat(trade.realized_pnl || 0);
+        pnlLine = `\nNow: $${fmtP(price)} · P&L ≈ <b>${fmtUsd(usd)}</b> (${fmtPct(pct)})`;
+      }
+      await ctx.replyWithHTML(
+        `❓ <b>Close ${isLong ? '🟢 LONG' : '🔴 SHORT'} ${escapeHtml(trade.symbol)}?</b>\n\n` +
+        `${trade.mode === 'live' ? '💰 LIVE — closes on the exchange' : '📝 PAPER'} · ${trade.exchange} · ${trade.source}\n` +
+        `Entry: $${fmtP(entry)}${pnlLine}`,
+        Markup.inlineKeyboard([[
+          Markup.button.callback('✅ Yes, close', `mt_closeok_${trade.id}`),
+          Markup.button.callback('⬅️ Keep open', 'mt_closeno'),
+        ]])
+      );
+    };
+
+    this.bot.action(/^mt_close_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try {
+        const trade = await getOpenTradeById(Number(ctx.match[1]));
+        if (!trade) return ctx.replyWithHTML('⚠️ That trade is already closed.');
+        await sendCloseConfirm(ctx, trade);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action('mt_closeno', async (ctx) => {
+      await ack(ctx, 'Kept open');
+      await ctx.editMessageText('👍 Position kept open.').catch(() => {});
+    });
+
+    this.bot.action(/^mt_closeok_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Closing…');
+      try {
+        const trade = await getOpenTradeById(Number(ctx.match[1]));
+        if (!trade) return ctx.editMessageText('⚠️ That trade is already closed.').catch(() => {});
+        const executor = executorForSource(trade.source);
+        if (!executor) return ctx.editMessageText(`⚠️ No executor for source "${escapeHtml(trade.source)}" — close it manually.`).catch(() => {});
+        const r = await executor.closeTradeNow(trade, 'manual_close');
         await ctx.editMessageText(
-          `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}${pnlEmoji} <b>Total: $${totalPnl.toFixed(2)}</b>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([closeButtons, [Markup.button.callback('🔄 Refresh', 'mt_pos_refresh')]]).reply_markup }
+          `${r.pnlUsd >= 0 ? '✅' : '❌'} <b>CLOSED</b> — ${escapeHtml(trade.symbol)}\n\n` +
+          `${trade.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} · ${trade.mode === 'live' ? '💰 LIVE' : '📝 PAPER'}\n` +
+          `Entry $${fmtP(parseFloat(trade.entry_price))} → Exit $${fmtP(r.exitPrice)}\n` +
+          `P&L: <b>${fmtUsd(r.pnlUsd)}</b> (${fmtPct(r.pnlPct)} on remaining)`,
+          { parse_mode: 'HTML' }
         );
-      } catch (e) {}
+      } catch (e) {
+        logger.error(`Manual close failed: ${e.message}`);
+        ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    });
+
+    this.bot.command('mclose', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      try {
+        const symbol = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase();
+        const trades = (await db.getOpenTrades()).filter(t => !symbol || t.symbol === symbol);
+        if (!trades.length) return ctx.replyWithHTML(symbol ? `⚠️ No open position in ${escapeHtml(symbol)}.` : '📭 No open positions.');
+        if (trades.length === 1) return sendCloseConfirm(ctx, trades[0]);
+        const rows = grid(trades.slice(0, 20).map(t =>
+          Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} ${t.symbol} · ${t.source}${t.onchain_context?.manual ? ' 🔧' : ''}`, `mt_close_${t.id}`)), 2);
+        await ctx.replyWithHTML('🔧 <b>Which position do you want to close?</b>', Markup.inlineKeyboard(rows));
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
 
     const formatPositions = async (trades, exchanges) => {
@@ -1451,7 +1526,7 @@ class TelegramBot {
         const entry = parseFloat(t.entry_price);
         const posSize = parseFloat(t.position_size);
         const qty = parseFloat(t.quantity);
-        const realized = parseFloat(t.realized_pnl_usd || 0);
+        const realized = parseFloat(t.realized_pnl || 0);
         const isLong = t.direction === 'long';
         const src = t.source === 'onchain' ? '🔗' : t.source === 'manual' ? '🔧' : '📡';
         const age = Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000);
@@ -5271,7 +5346,8 @@ class TelegramBot {
         [Markup.button.callback('🟢 Manual Long', 'pnl_long'),
          Markup.button.callback('🔴 Manual Short', 'pnl_short')],
         [Markup.button.callback('📊 All Positions', 'pnl_positions'),
-         Markup.button.callback('📈 All Stats', 'pnl_stats')],
+         Markup.button.callback('📍 Limit Orders', 'mt_orders')],
+        [Markup.button.callback('📈 All Stats', 'pnl_stats')],
       ]);
       if (isNew) {
         await ctx.replyWithHTML(text, keyboard);
@@ -5290,9 +5366,11 @@ class TelegramBot {
       await ctx.answerCbQuery();
       ctx.replyWithHTML(
         `🟢 <b>Manual Long</b>\n\n` +
-        `<code>/trade SYMBOL</code> — full trade panel (configure size, leverage, SL, exchange)\n` +
-        `<code>/long SYMBOL</code> — quick long with defaults\n\n` +
-        `Example: <code>/trade RLC</code>`
+        `<code>/long SYMBOL [margin] [lev] [sl%]</code> — opens the trade panel set to LONG\n` +
+        `<code>/trade SYMBOL long</code> — same, full panel\n\n` +
+        `In the panel: Paper/Live, exchange, market or limit entry, margin, leverage, SL, TP.\n` +
+        `Exact values: /sl /tp /entry /margin /lev\n\n` +
+        `Example: <code>/long RLC 20 5</code>`
       );
     });
 
@@ -5300,9 +5378,11 @@ class TelegramBot {
       await ctx.answerCbQuery();
       ctx.replyWithHTML(
         `🔴 <b>Manual Short</b>\n\n` +
-        `<code>/trade SYMBOL</code> — full trade panel (configure size, leverage, SL, exchange)\n` +
-        `<code>/short SYMBOL</code> — quick short with defaults\n\n` +
-        `Example: <code>/trade BTC</code>`
+        `<code>/short SYMBOL [margin] [lev] [sl%]</code> — opens the trade panel set to SHORT\n` +
+        `<code>/trade SYMBOL short</code> — same, full panel\n\n` +
+        `In the panel: Paper/Live, exchange, market or limit entry, margin, leverage, SL, TP.\n` +
+        `Exact values: /sl /tp /entry /margin /lev\n\n` +
+        `Example: <code>/short RLC 20 3</code>`
       );
     });
 
@@ -5317,7 +5397,7 @@ class TelegramBot {
           const src = t.source === 'main' ? '📡' : t.source === 'onchain' ? '🔗' : t.source === 'swing' ? '📈' : t.source === 'demandzone' ? '🎯' : '🔧';
           msg += `${src} ${dir} <b>${t.symbol}</b> @ $${parseFloat(t.entry_price).toPrecision(6)} (${t.leverage}x)\n`;
         }
-        const closeButtons = trades.slice(0, 5).map(t => [Markup.button.callback(`Close ${t.symbol}`, `mt_close_${t.symbol}`)]);
+        const closeButtons = trades.slice(0, 5).map(t => [Markup.button.callback(`Close ${t.symbol}`, `mt_close_${t.id}`)]);
         ctx.replyWithHTML(
           `📊 <b>All Positions</b> (${trades.length})\n\n${msg}`,
           Markup.inlineKeyboard([...closeButtons, [Markup.button.callback('⬅️ Panel', 'panel_main')]])

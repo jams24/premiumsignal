@@ -202,6 +202,16 @@ async function init(retries = 3) {
     );
     CREATE INDEX IF NOT EXISTS idx_pump_signals_time ON pump_signals(created_at);
 
+    CREATE TABLE IF NOT EXISTS manual_orders (
+      id SERIAL PRIMARY KEY,
+      chat_id BIGINT NOT NULL,
+      symbol TEXT NOT NULL,
+      config JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      closed_at TIMESTAMPTZ
+    );
+
     CREATE TABLE IF NOT EXISTS trade_skips (
       id SERIAL PRIMARY KEY,
       symbol TEXT NOT NULL,
@@ -488,6 +498,27 @@ async function updateSpotPrice(id, hours, currentPrice, entryPrice, direction) {
      WHERE id = $3`,
     [currentPrice, parseFloat(pnl.toFixed(2)), id]
   );
+}
+
+async function saveManualOrder(chatId, symbol, cfg) {
+  const { rows } = await query(
+    'INSERT INTO manual_orders (chat_id, symbol, config) VALUES ($1, $2, $3) RETURNING id',
+    [chatId, symbol, JSON.stringify(cfg)]
+  );
+  return rows[0].id;
+}
+
+async function getPendingManualOrders() {
+  const { rows } = await query("SELECT * FROM manual_orders WHERE status = 'pending' ORDER BY created_at");
+  return rows;
+}
+
+async function setManualOrderStatus(id, status) {
+  const { rowCount } = await query(
+    "UPDATE manual_orders SET status = $1, closed_at = NOW() WHERE id = $2 AND status = 'pending'",
+    [status, id]
+  );
+  return rowCount > 0;
 }
 
 async function logPumpSignal(symbol, data) {
@@ -1109,4 +1140,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice, logPumpSignal, getUnfilledPumpSignals, updatePumpPrice };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice, logPumpSignal, getUnfilledPumpSignals, updatePumpPrice, saveManualOrder, getPendingManualOrders, setManualOrderStatus };

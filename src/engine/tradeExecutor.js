@@ -1435,11 +1435,12 @@ class TradeExecutor {
         }
       } catch (e) { logger.debug(`${signal.symbol}: Position check failed: ${e.message}`); }
 
-      const desiredLeverage = this.calcLeverage(signal);
+      const isManual = signal.manual === true;
+      const desiredLeverage = isManual ? signal.manualLeverage : this.calcLeverage(signal);
       const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
 
-      let positionSize = await this.calcPositionSize(signal);
-      positionSize = this.applyConfidenceScale(positionSize, signal);
+      let positionSize = isManual ? signal.manualPositionSize : await this.calcPositionSize(signal);
+      if (!isManual) positionSize = this.applyConfidenceScale(positionSize, signal);
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
 
@@ -1485,7 +1486,7 @@ class TradeExecutor {
 
       // DCA: enter 1/3 of position at market when enabled, otherwise full position
       const fullQty = positionSize / entryPrice;
-      let dcaQty1 = this.dcaEnabled ? fullQty / 3 : fullQty;
+      let dcaQty1 = this.dcaEnabled && !isManual ? fullQty / 3 : fullQty;
 
       // Check minimum notional
       const notionalCheck = this.calcMinNotional(exchange, pair, dcaQty1, entryPrice);
@@ -1575,9 +1576,9 @@ class TradeExecutor {
         logger.info(`DCA orders skipped — entered full position at once`);
       }
 
-      const invalidation = this.calcInvalidation(signal);
-      this.recalcTPs(signal);
-      const tp4 = this.calcTP4(signal);
+      const invalidation = isManual ? signal.stopLoss : this.calcInvalidation(signal);
+      if (!isManual) this.recalcTPs(signal);
+      const tp4 = isManual && signal.tp4 ? signal.tp4 : this.calcTP4(signal);
 
       const trade = {
         signalId: signal.id || null,
@@ -1733,6 +1734,8 @@ class TradeExecutor {
         }
 
         const isLong = trade.direction === 'long';
+        // Manual trades are governed by the user's own SL/TPs — skip the bot's auto-exit heuristics
+        const isManual = trade.onchain_context?.manual === true;
 
         // --- POSITION EXISTENCE CHECK: detect if exchange SL closed the position ---
         if (trade.mode === 'live' && exchange.apiKey) {
@@ -1799,7 +1802,7 @@ class TradeExecutor {
         const tradeAgeMs = Date.now() - new Date(trade.created_at).getTime();
 
         // --- TIME-BASED EXIT: edge decays after 30-60 min ---
-        if (this.timeExitMinutes > 0 && !action && !trade.hit_tp1 && tradeAgeMs > this.timeExitMinutes * 0.5 * 60 * 1000) {
+        if (!isManual && this.timeExitMinutes > 0 && !action && !trade.hit_tp1 && tradeAgeMs > this.timeExitMinutes * 0.5 * 60 * 1000) {
           if (pnlUsd > 0 && tradeAgeMs < this.timeExitMinutes * 60 * 1000) {
             // Half-time in profit, no TP1: trail SL to breakeven + 1%
             const beTrail = isLong ? trade.entry_price * 1.01 : trade.entry_price * 0.99;
@@ -1827,7 +1830,7 @@ class TradeExecutor {
         }
 
         // --- SMC THESIS RE-CHECK: every 15 min, re-run SMC to detect structure flip ---
-        if (!action && tradeAgeMs > 30 * 60 * 1000 && !trade.hit_tp1) {
+        if (!isManual && !action && tradeAgeMs > 30 * 60 * 1000 && !trade.hit_tp1) {
           const lastRecheck = trade._lastSmcRecheck || 0;
           if (Date.now() - lastRecheck > 15 * 60 * 1000) {
             trade._lastSmcRecheck = Date.now();
@@ -1862,7 +1865,7 @@ class TradeExecutor {
 
         // --- INVALIDATION CHECK: 4H candle close below invalidation level ---
         // Skip if trade opened less than 4h ago (previous candle is pre-breakout)
-        if (trade.invalidation && ohlcv && ohlcv.length >= 2 && tradeAgeMs > 4 * 60 * 60 * 1000) {
+        if (!isManual && trade.invalidation && ohlcv && ohlcv.length >= 2 && tradeAgeMs > 4 * 60 * 60 * 1000) {
           const prevCandle = ohlcv[ohlcv.length - 2];
           const prevClose = prevCandle[4];
           const invalidated = isLong
@@ -2004,7 +2007,7 @@ class TradeExecutor {
           }
         }
         // --- PER-TRADE LOSS CAP (with buffer to avoid overshoot) ---
-        if (!action && this.maxLossPerTrade > 0 && pnlUsd < 0) {
+        if (!isManual && !action && this.maxLossPerTrade > 0 && pnlUsd < 0) {
           const effectiveCap = this.maxLossPerTrade * (this.lossBufferPct / 100);
           if (Math.abs(pnlUsd) >= effectiveCap) {
             action = 'max_loss';
@@ -2031,7 +2034,7 @@ class TradeExecutor {
           this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
         }
         // --- AUTO-CLOSE AFTER maxTradeAge ---
-        else if (!action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
+        else if (!isManual && !action && Date.now() - new Date(trade.created_at).getTime() > this.maxTradeAge) {
           action = 'expired';
           await db.closeTrade(trade.id, exitPrice, pnlPct, pnlUsd, 'expired');
           this.dailyPnL += pnlUsd;
@@ -2622,6 +2625,73 @@ class TradeExecutor {
     const trade = trades.find(t => t.symbol.toUpperCase() === symbol.toUpperCase());
     if (!trade) return null;
     return this.closeSingleTrade(trade.id);
+  }
+
+  // Open a user-configured trade: explicit size/leverage/TP/SL, no DCA, no bot TP recalculation
+  async openManualTrade(p) {
+    const context = { ...(p.context || {}), manual: true };
+    if (p.mode === 'live') {
+      const exchange = this.exchanges[p.exchangeId];
+      if (!exchange?.apiKey || !exchange?.secret) {
+        throw new Error(`No API keys configured for ${p.exchangeId} — cannot trade live there`);
+      }
+      return this.executeLiveTrade({
+        id: null, type: 'MANUAL', symbol: p.symbol, exchange: p.exchangeId, direction: p.direction,
+        currentPrice: p.entryPrice, entryPrice: p.entryPrice,
+        tp1: p.tp1, tp2: p.tp2, tp3: p.tp3, tp4: p.tp4, stopLoss: p.stopLoss, atr: p.atr,
+        confidence: 5, manual: true, manualLeverage: p.leverage, manualPositionSize: p.positionSize,
+        onchainContext: context,
+      });
+    }
+
+    const trade = {
+      signalId: null, symbol: p.symbol, exchange: p.exchangeId, direction: p.direction, mode: 'paper',
+      entryPrice: p.entryPrice, quantity: p.positionSize / p.entryPrice, positionSize: p.positionSize,
+      leverage: p.leverage, tp1: p.tp1, tp2: p.tp2, tp3: p.tp3, tp4: p.tp4,
+      stopLoss: p.stopLoss, originalStopLoss: p.stopLoss, invalidation: p.stopLoss, atr: p.atr,
+      dcaQty2: 0, dcaQty3: 0, dcaPrice2: null, dcaPrice3: null, dcaStage: 3,
+      status: 'open', source: this.settingsKey, onchainContext: context,
+    };
+    const saved = await db.saveTrade(trade);
+    trade.id = saved?.id;
+    this.paperBalance -= p.positionSize;
+    this.saveConfig();
+    logger.info(`Manual paper ${p.direction} ${p.symbol} @ $${p.entryPrice} ($${p.positionSize} @ ${p.leverage}x)`);
+    return trade;
+  }
+
+  // Close any open trade of this executor immediately (exchange close for live), returns final P&L
+  async closeTradeNow(trade, reason = 'manual_close') {
+    const exchange = this.exchanges[trade.exchange];
+    const pair = `${trade.symbol}/USDT:USDT`;
+    let price = parseFloat(trade.entry_price);
+    try {
+      if (exchange?.markets?.[pair]) price = (await exchange.fetchTicker(pair)).last;
+    } catch (e) { logger.warn(`${trade.symbol}: price fetch failed on close: ${e.message}`); }
+
+    if (trade.mode === 'live') {
+      const fill = await this.closeExchangePosition(trade);
+      if (fill) {
+        price = fill;
+      } else if (exchange?.apiKey) {
+        const positions = await this._fetchPositions(exchange, trade.exchange, [pair]).catch(() => []);
+        if (positions.some(pos => Math.abs(parseFloat(pos.contracts || 0)) > 0)) {
+          throw new Error(`Exchange close failed — ${trade.symbol} position is STILL OPEN on ${trade.exchange}. Close it manually.`);
+        }
+      }
+    }
+
+    const entry = parseFloat(trade.entry_price);
+    const size = parseFloat(trade.position_size || 0);
+    const isLong = trade.direction === 'long';
+    const pnlPct = isLong ? ((price - entry) / entry) * 100 : ((entry - price) / entry) * 100;
+    const remainingPnl = (pnlPct / 100) * size;
+    const totalPnl = remainingPnl + parseFloat(trade.realized_pnl || 0);
+
+    await db.closeTrade(trade.id, price, pnlPct, totalPnl, reason);
+    this.dailyPnL += remainingPnl;
+    if (trade.mode === 'paper') { this.paperBalance += size + remainingPnl; this.saveConfig(); }
+    return { exitPrice: price, pnlPct, pnlUsd: totalPnl };
   }
 
   async closeAllPositions() {
