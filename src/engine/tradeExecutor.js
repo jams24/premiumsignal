@@ -1736,6 +1736,7 @@ class TradeExecutor {
         const isLong = trade.direction === 'long';
         // Manual trades are governed by the user's own SL/TPs — skip the bot's auto-exit heuristics
         const isManual = trade.onchain_context?.manual === true;
+        const xp = this.exitParams(trade);
 
         // --- POSITION EXISTENCE CHECK: detect if exchange SL closed the position ---
         if (trade.mode === 'live' && exchange.apiKey) {
@@ -1951,11 +1952,11 @@ class TradeExecutor {
           const profitDist = Math.abs(newPeak - trade.entry_price);
           let trailDist;
           if (trade.hit_tp3) {
-            trailDist = Math.min(trade.atr * this.trailAtrMultPost, profitDist * 0.25);
+            trailDist = Math.min(trade.atr * xp.atrPost, profitDist * 0.25 * xp.postScale);
           } else if (trade.hit_tp2) {
-            trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.3);
+            trailDist = Math.min(trade.atr * xp.atrPre, profitDist * 0.3 * xp.postScale);
           } else {
-            trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * 0.4);
+            trailDist = Math.min(trade.atr * xp.atrPre, profitDist * 0.4 * xp.postScale);
           }
 
           const trailSL = isLong ? newPeak - trailDist : newPeak + trailDist;
@@ -1974,7 +1975,7 @@ class TradeExecutor {
         // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
         // Trigger at 2.5% price move OR 12% leveraged ROI (whichever comes first)
         const leveragedPnl = pnlPct * (trade.leverage || 1);
-        if (!action && !trade.hit_tp1 && (pnlPct > this.profitProtectPct || leveragedPnl > this.profitProtectLevPnl)) {
+        if (xp.preTp1 && !action && !trade.hit_tp1 && (pnlPct > xp.ppPct || leveragedPnl > xp.ppLev)) {
           const currentSL = trade.stop_loss;
           const atBreakeven = isLong ? currentSL >= trade.entry_price : currentSL <= trade.entry_price;
           if (!atBreakeven) {
@@ -1986,7 +1987,7 @@ class TradeExecutor {
             logger.info(`${trade.symbol}: +${pnlPct.toFixed(1)}% — SL moved to breakeven for profit protection`);
           } else if (trade.atr) {
             const profitDist = Math.abs((trade.peak_price || currentPrice) - trade.entry_price);
-            const trailDist = Math.min(trade.atr * this.trailAtrMultPre, profitDist * this.trailGivebackPct || trade.atr * this.trailAtrMultPre);
+            const trailDist = Math.min(trade.atr * xp.atrPre, profitDist * xp.giveback || trade.atr * xp.atrPre);
             const peak = trade.peak_price || trade.entry_price;
             const newPeak = isLong ? Math.max(peak, bestPrice) : Math.min(peak, bestPrice);
             if (newPeak !== peak) {
@@ -2625,6 +2626,36 @@ class TradeExecutor {
     const trade = trades.find(t => t.symbol.toUpperCase() === symbol.toUpperCase());
     if (!trade) return null;
     return this.closeSingleTrade(trade.id);
+  }
+
+  // Profit-protection / trailing parameters. Auto trades (and manual 'tight') use the executor settings;
+  // manual trades may carry onchain_context.exitStyle = 'loose' | 'hold'.
+  exitParams(trade) {
+    const base = {
+      style: 'tight',
+      ppPct: this.profitProtectPct,
+      ppLev: this.profitProtectLevPnl,
+      giveback: this.trailGivebackPct,
+      atrPre: this.trailAtrMultPre,
+      atrPost: this.trailAtrMultPost,
+      postScale: 1,
+      preTp1: true,
+    };
+    const style = trade.onchain_context?.manual ? trade.onchain_context.exitStyle : null;
+    if (style === 'loose') {
+      return {
+        ...base,
+        style,
+        ppPct: Math.max(base.ppPct, 5),
+        ppLev: Math.max(base.ppLev, 60),
+        giveback: Math.max(base.giveback, 0.6),
+        atrPre: base.atrPre * 1.5,
+        atrPost: base.atrPost * 1.5,
+        postScale: 1.5,
+      };
+    }
+    if (style === 'hold') return { ...base, style, preTp1: false };
+    return base;
   }
 
   // Open a user-configured trade: explicit size/leverage/TP/SL, no DCA, no bot TP recalculation

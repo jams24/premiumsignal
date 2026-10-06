@@ -654,6 +654,14 @@ class TelegramBot {
       runner: { label: 'Runner', mults: [2, 4, 6, 10] },
     };
     const MT_LIMIT_OFFSETS = [0.5, 1, 2, 3, 5];
+    const MT_EXIT_STYLES = { tight: 'Tight', loose: 'Loose', hold: 'Hold to TP1' };
+    // Plain-language summary of how a style protects profit, from the executor's real parameters
+    const describeExit = (style) => {
+      const te = mtExec();
+      const xp = te.exitParams({ onchain_context: { manual: true, exitStyle: style } });
+      if (!xp.preTp1) return 'no breakeven or trailing until TP1 — only your SL before that; after TP1 SL → breakeven + trailing';
+      return `SL → breakeven at +${xp.ppPct}% price or +${xp.ppLev}% ROI, then trails giving back up to ${Math.round(xp.giveback * 100)}% of peak profit`;
+    };
     const MT_ORDER_TTL_MS = 24 * 60 * 60 * 1000;
 
     const fmtP = (v) => (v == null || !isFinite(v) ? '—' : Number(v).toPrecision(6));
@@ -807,10 +815,13 @@ class TelegramBot {
       ];
       if (errors.length) lines.push('', ...errors.map(e => `⛔ ${escapeHtml(e)}`));
       if (warnings.length) lines.push('', ...warnings.map(w => `⚠️ ${escapeHtml(w)}`));
+      if (st.notice) lines.push('', ...st.notice.split('\n').map(n => `ℹ️ ${n}`));
       lines.push(
         '',
-        `<i>Managed for you: TP partial exits, breakeven at +${te.profitProtectLevPnl ?? 25}% ROI, trailing SL. The bot's time-exit and loss cap don't apply — your SL does.</i>`,
-        '<i>Type exact values: /sl 1.23 · /sl 4% · /tp 1.5 · /entry 1.2 · /margin 40 · /lev 7</i>'
+        `🛡️ Exit (${MT_EXIT_STYLES[st.exitStyle]}): ${describeExit(st.exitStyle)}`,
+        `<i>TP partial exits always run. The bot's time-exit and loss cap don't apply to manual trades.</i>`,
+        '<i>Type exact values: /sl 1.23 · /sl 4% · /tp 1.5 · /entry 1.2 · /margin 40 · /lev 7</i>',
+        '<i>💾 Mode, exchange, direction, margin, leverage, SL %, TP preset and exit style are remembered for your next trade.</i>'
       );
 
       const tick = (on, label) => `${label}${on ? ' ✓' : ''}`;
@@ -828,6 +839,7 @@ class TelegramBot {
          Markup.button.callback(`⚡ ${st.leverage}x`, 'mt_lev')],
         [Markup.button.callback(`🛑 SL: ${slLabel}`, 'mt_sl'),
          Markup.button.callback(`🎯 TP: ${tpLabel}`, 'mt_tp')],
+        [Markup.button.callback(`🛡️ Exit: ${MT_EXIT_STYLES[st.exitStyle]}`, 'mt_exit')],
         [confirmBtn],
         [Markup.button.callback('🔄 Refresh price', 'mt_refresh'),
          Markup.button.callback('❌ Cancel', 'mt_cancel')],
@@ -857,6 +869,27 @@ class TelegramBot {
       reply_markup: Markup.inlineKeyboard([...rows, [Markup.button.callback('⬅️ Back', 'mt_back')]]).reply_markup,
     }).catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
 
+    // Remembered per user across panels and restarts; symbol-specific prices (custom SL/TP, limit) are not
+    const prefsOf = (st) => ({
+      mode: st.forcedPaper ? 'live' : st.mode,
+      exchangeId: st.preferredExchange || st.exchangeId,
+      direction: st.direction,
+      margin: st.margin,
+      leverage: st.leverage,
+      slPct: st.slPct,
+      tpPreset: st.tpPreset,
+      exitStyle: st.exitStyle,
+    });
+    const prefsKey = (st) => JSON.stringify(prefsOf(st));
+    const persistPrefs = async (uid, st) => {
+      const key = prefsKey(st);
+      if (key === st.savedPrefsKey) return;
+      try {
+        await db.saveManualPrefs(uid, prefsOf(st));
+        st.savedPrefsKey = key;
+      } catch (e) { logger.warn(`Saving manual trade prefs failed: ${e.message}`); }
+    };
+
     const openPanel = async (ctx, symbol, opts = {}) => {
       if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
       const te = mtExec();
@@ -874,27 +907,53 @@ class TelegramBot {
         );
       }
       const prev = this.manualTradeState[ctx.from.id];
+      const saved = (await db.getManualPrefs(ctx.from.id).catch(() => null)) || {};
       const st = {
         symbol,
-        exchangeId: exIds[0],
-        direction: opts.direction || 'short',
-        mode: 'paper',
-        margin: opts.margin || te.maxPositionSize || 12,
-        leverage: opts.leverage || te.defaultLeverage || 3,
-        slPct: opts.slPct || 0,
+        exchangeId: exIds.includes(saved.exchangeId) ? saved.exchangeId : exIds[0],
+        direction: opts.direction || saved.direction || 'short',
+        mode: saved.mode === 'live' ? 'live' : 'paper',
+        margin: opts.margin || saved.margin || te.maxPositionSize || 12,
+        leverage: opts.leverage || saved.leverage || te.defaultLeverage || 3,
+        slPct: opts.slPct ?? saved.slPct ?? 0,
         customSl: 0,
-        tpPreset: 'default',
+        tpPreset: MT_TP_PRESETS[saved.tpPreset] ? saved.tpPreset : 'default',
+        exitStyle: MT_EXIT_STYLES[saved.exitStyle] ? saved.exitStyle : 'tight',
         customTp1: 0,
         entryType: 'market',
         limitPrice: 0,
         market: null,
         liveBalance: null,
+        notice: null,
         panelMsg: prev?.panelMsg || null,
         busy: false,
       };
+      const notices = [];
+      if (saved.exchangeId && st.exchangeId !== saved.exchangeId) {
+        st.preferredExchange = saved.exchangeId;
+        notices.push(`${escapeHtml(symbol)} isn't listed on ${saved.exchangeId.toUpperCase()} — using ${st.exchangeId.toUpperCase()}`);
+      }
+      if (st.mode === 'live') {
+        const ex = te.exchanges[st.exchangeId];
+        if (!ex?.apiKey || !ex?.secret) {
+          st.mode = 'paper';
+          st.forcedPaper = true;
+          notices.push(`No API keys on ${st.exchangeId.toUpperCase()} — opened in Paper instead of your saved Live mode`);
+        } else {
+          await refreshLiveBalance(st);
+        }
+      }
       const maxLev = maxLeverageFor(st);
-      if (maxLev && st.leverage > maxLev) st.leverage = maxLev;
+      if (maxLev && st.leverage > maxLev) {
+        notices.push(`${st.leverage}x exceeds ${st.exchangeId.toUpperCase()} max — capped at ${maxLev}x`);
+        st.leverage = maxLev;
+      }
+      st.notice = notices.join('\n') || null;
+      // Values typed in the command (/short RLC 20 5) count as applied settings and are saved too
+      const hasArgs = opts.direction || opts.margin || opts.leverage || opts.slPct != null;
+      st.savedPrefsKey = hasArgs ? null : prefsKey(st);
       this.manualTradeState[ctx.from.id] = st;
+      await persistPrefs(ctx.from.id, st);
       await renderPanel(ctx, st, { fresh: true });
     };
 
@@ -941,6 +1000,7 @@ class TelegramBot {
         const raw = (ctx.message.text.trim().split(/\s+/)[1] || '').toLowerCase();
         const err = raw ? apply(st, raw) : usage;
         if (err) return ctx.replyWithHTML(err);
+        await persistPrefs(ctx.from.id, st);
         try { await renderPanel(ctx, st, { fresh: true }); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
       });
     };
@@ -995,6 +1055,7 @@ class TelegramBot {
         }
         try {
           await handler(ctx, st);
+          if (this.manualTradeState[ctx.from.id] === st) await persistPrefs(ctx.from.id, st);
         } catch (e) {
           logger.error(`Manual trade panel: ${e.message}`);
           await ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {});
@@ -1014,7 +1075,12 @@ class TelegramBot {
       await ctx.editMessageText('❌ Manual trade cancelled.').catch(() => {});
     });
 
-    mtAction('mt_mode_paper', async (ctx, st) => { await ack(ctx, 'Paper'); st.mode = 'paper'; await renderPanel(ctx, st); });
+    mtAction('mt_mode_paper', async (ctx, st) => {
+      await ack(ctx, 'Paper');
+      st.mode = 'paper';
+      st.forcedPaper = false;
+      await renderPanel(ctx, st);
+    });
     mtAction('mt_mode_live', async (ctx, st) => {
       const ex = mtExec().exchanges[st.exchangeId];
       if (!ex?.apiKey || !ex?.secret) {
@@ -1022,6 +1088,7 @@ class TelegramBot {
       }
       await ack(ctx, 'LIVE — real funds');
       st.mode = 'live';
+      st.forcedPaper = false;
       await refreshLiveBalance(st);
       await renderPanel(ctx, st);
     });
@@ -1089,6 +1156,21 @@ class TelegramBot {
         `Current: <b>${st.customTp1 > 0 ? `Custom TP1 $${fmtP(st.customTp1)}` : MT_TP_PRESETS[st.tpPreset].label}</b>\n\n` +
         `Exact TP1 price: <code>/tp 0.089</code> (TP2-4 scale from it)`, btns);
     });
+    mtAction('mt_exit', async (ctx, st) => {
+      await ack(ctx);
+      const btns = Object.entries(MT_EXIT_STYLES).map(([key, label]) =>
+        [Markup.button.callback(`${label}${st.exitStyle === key ? ' ✓' : ''}`, `mt_xs_${key}`)]);
+      const lines = Object.entries(MT_EXIT_STYLES).map(([key, label]) => `<b>${label}</b>: ${describeExit(key)}`);
+      await showMenu(ctx,
+        `🛡️ <b>EXIT STYLE</b> — how profit is protected before your TPs\n\n${lines.join('\n\n')}\n\n` +
+        `<i>Looser = winners run further, but more profit is given back on a reversal.</i>`, btns);
+    });
+    mtAction(/^mt_xs_(tight|loose|hold)$/, async (ctx, st) => {
+      st.exitStyle = ctx.match[1];
+      await ack(ctx, MT_EXIT_STYLES[st.exitStyle]);
+      await renderPanel(ctx, st);
+    });
+
     mtAction(/^mt_tpp_(safe|default|runner)$/, async (ctx, st) => {
       st.tpPreset = ctx.match[1];
       st.customTp1 = 0;
@@ -1144,6 +1226,7 @@ class TelegramBot {
       }
       await ack(ctx, id.toUpperCase());
       st.exchangeId = id;
+      st.preferredExchange = null;
       st.market = null;
       const max = maxLeverageFor(st);
       if (max && st.leverage > max) st.leverage = max;
@@ -1172,6 +1255,7 @@ class TelegramBot {
             margin: st.margin, leverage: st.leverage, limitPrice: st.limitPrice,
             trigger: st.limitPrice <= s.market ? 'below' : 'above',
             stopLoss: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, atr: s.atr,
+            exitStyle: st.exitStyle,
             placedAt: Date.now(), expiresAt: Date.now() + MT_ORDER_TTL_MS,
           };
           const id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
@@ -1193,7 +1277,7 @@ class TelegramBot {
           symbol: st.symbol, exchangeId: st.exchangeId, direction: st.direction, mode: st.mode,
           entryPrice: s.entry, positionSize: s.posSize, leverage: st.leverage,
           tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, stopLoss: s.stopLoss, atr: s.atr,
-          context: { margin: st.margin },
+          context: { margin: st.margin, exitStyle: st.exitStyle },
         });
         delete this.manualTradeState[ctx.from.id];
         if (!trade) {
@@ -1212,7 +1296,8 @@ class TelegramBot {
           `💵 $${size.toFixed(2)} position at ${lev}x${levNote}\n\n` +
           `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)}\n🎯 TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
           `🛑 SL $${fmtP(s.stopLoss)} · 💀 Liq ≈ $${fmtP(s.liqPrice)}\n\n` +
-          `<i>Managing: TP partials, breakeven, trailing SL. Close any time with /mpositions.</i>`,
+          `🛡️ Exit: <b>${MT_EXIT_STYLES[st.exitStyle]}</b> — ${describeExit(st.exitStyle)}\n` +
+          `<i>Close any time with /mpositions.</i>`,
           { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]).reply_markup }
         );
       } finally {
@@ -1301,7 +1386,7 @@ class TelegramBot {
           symbol: o.symbol, exchangeId: o.exchangeId, direction: o.direction, mode: o.mode,
           entryPrice: fillPrice, positionSize: o.margin * o.leverage, leverage: o.leverage,
           tp1: o.tp1, tp2: o.tp2, tp3: o.tp3, tp4: o.tp4, stopLoss: o.stopLoss, atr: o.atr,
-          context: { margin: o.margin, limitOrderId: o.id, limitPrice: o.limitPrice },
+          context: { margin: o.margin, limitOrderId: o.id, limitPrice: o.limitPrice, exitStyle: o.exitStyle || 'tight' },
         });
       } catch (e) {
         logger.error(`Limit order #${o.id} execution failed: ${e.message}`);

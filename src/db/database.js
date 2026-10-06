@@ -202,6 +202,12 @@ async function init(retries = 3) {
     );
     CREATE INDEX IF NOT EXISTS idx_pump_signals_time ON pump_signals(created_at);
 
+    CREATE TABLE IF NOT EXISTS manual_prefs (
+      telegram_id BIGINT PRIMARY KEY,
+      prefs JSONB NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS manual_orders (
       id SERIAL PRIMARY KEY,
       chat_id BIGINT NOT NULL,
@@ -497,6 +503,19 @@ async function updateSpotPrice(id, hours, currentPrice, entryPrice, direction) {
     `UPDATE spot_signals SET price_${col} = $1, pnl_${col} = $2${outcomeClause}
      WHERE id = $3`,
     [currentPrice, parseFloat(pnl.toFixed(2)), id]
+  );
+}
+
+async function getManualPrefs(telegramId) {
+  const { rows } = await query('SELECT prefs FROM manual_prefs WHERE telegram_id = $1', [telegramId]);
+  return rows[0]?.prefs || null;
+}
+
+async function saveManualPrefs(telegramId, prefs) {
+  await query(
+    `INSERT INTO manual_prefs (telegram_id, prefs, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (telegram_id) DO UPDATE SET prefs = EXCLUDED.prefs, updated_at = NOW()`,
+    [telegramId, JSON.stringify(prefs)]
   );
 }
 
@@ -1140,4 +1159,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice, logPumpSignal, getUnfilledPumpSignals, updatePumpPrice, saveManualOrder, getPendingManualOrders, setManualOrderStatus };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice, logPumpSignal, getUnfilledPumpSignals, updatePumpPrice, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs };
