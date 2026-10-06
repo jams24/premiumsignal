@@ -725,10 +725,16 @@ class TelegramBot {
         const modeLabel = s.mode === 'paper' ? '📝 PAPER' : '💰 LIVE';
         const slLabel = s.customSl > 0 ? `$${s.customSl}` : s.slPct > 0 ? `${s.slPct}%` : 'ATR';
         const tpLabel = s.customTp1 > 0 ? `Custom` : 'Auto';
+        const entryLabel = s.entryType === 'limit' && s.limitPrice > 0 ? `Limit $${s.limitPrice}` : 'Market';
+        const entryPrice = s.entryType === 'limit' && s.limitPrice > 0 ? s.limitPrice : setup.price;
+        const distFromMarket = s.entryType === 'limit' && s.limitPrice > 0
+          ? ` (${((s.limitPrice - setup.price) / setup.price * 100).toFixed(2)}% from market)`
+          : '';
         const text =
           `🔧 <b>MANUAL TRADE — ${s.symbol}</b>\n\n` +
           `${dirEmoji} | ${modeLabel} | ${s.exchangeId.toUpperCase()}\n` +
-          `💰 Price: <b>$${setup.price.toPrecision(6)}</b>\n\n` +
+          `💰 Market: <b>$${setup.price.toPrecision(6)}</b>\n` +
+          `🚀 Entry: <b>${entryLabel}</b>${distFromMarket}\n\n` +
           `💵 Margin: <b>$${s.margin}</b> × ${s.leverage}x = <b>$${setup.posSize}</b>\n` +
           `📐 R:R — <b>1:${setup.rrRatio}</b>\n\n` +
           `🎯 TP1: $${setup.tp1.toPrecision(6)} (${tpLabel})\n` +
@@ -743,9 +749,10 @@ class TelegramBot {
            Markup.button.callback(`${s.mode === 'live' ? '💰 LIVE ✓' : '💰 LIVE'}`, 'mt_mode_live')],
           [Markup.button.callback(`${s.direction === 'long' ? '🟢 LONG ✓' : '🟢 LONG'}`, 'mt_dir_long'),
            Markup.button.callback(`${s.direction === 'short' ? '🔴 SHORT ✓' : '🔴 SHORT'}`, 'mt_dir_short')],
-          [Markup.button.callback(`💵 $${s.margin}`, 'mt_margin'),
-           Markup.button.callback(`⚡ ${s.leverage}x`, 'mt_lev'),
+          [Markup.button.callback(`🚀 ${entryLabel}`, 'mt_entry'),
            Markup.button.callback(`📊 ${s.exchangeId.toUpperCase()}`, 'mt_exchange')],
+          [Markup.button.callback(`💵 $${s.margin}`, 'mt_margin'),
+           Markup.button.callback(`⚡ ${s.leverage}x`, 'mt_lev')],
           [Markup.button.callback(`🛑 SL: ${slLabel}`, 'mt_sl'),
            Markup.button.callback(`🎯 TP: ${tpLabel}`, 'mt_tp')],
           [Markup.button.callback(`✅ CONFIRM ${s.direction.toUpperCase()}`, 'mt_confirm')],
@@ -801,6 +808,8 @@ class TelegramBot {
           tpMode: 'auto',
           customTp1: 0,
           mode: octe.mode || 'paper',
+          entryType: 'market',
+          limitPrice: 0,
           cachedSetup: null,
         };
 
@@ -954,6 +963,59 @@ class TelegramBot {
       } catch (e) {}
     });
 
+    // Entry type selector (market/limit)
+    this.bot.action('mt_entry', async (ctx) => {
+      try {
+        await ctx.answerCbQuery();
+        const st = this.manualTradeState[ctx.from.id];
+        const curLabel = st.entryType === 'limit' && st.limitPrice > 0 ? `Limit $${st.limitPrice}` : 'Market (instant)';
+        await ctx.editMessageText(
+          `🚀 <b>ENTRY TYPE</b>\n\nCurrent: <b>${curLabel}</b>\n\n` +
+          `<b>Market:</b> Enter immediately at current price\n` +
+          `<b>Limit:</b> Set a price — bot waits and enters when price reaches it\n\n` +
+          `To set limit price:\n<code>/entry 0.0512</code>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(`Market (instant)${st.entryType === 'market' ? ' ✓' : ''}`, 'mt_entry_market')],
+            [Markup.button.callback(`Limit${st.entryType === 'limit' ? ' ✓' : ''}`, 'mt_entry_limit')],
+            [Markup.button.callback('⬅️ Back', 'mt_refresh')],
+          ]).reply_markup }
+        );
+      } catch (e) {}
+    });
+    this.bot.action('mt_entry_market', async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Market');
+        const st = this.manualTradeState[ctx.from.id];
+        st.entryType = 'market';
+        st.limitPrice = 0;
+        await showTradePanel(ctx);
+      } catch (e) {}
+    });
+    this.bot.action('mt_entry_limit', async (ctx) => {
+      try {
+        await ctx.answerCbQuery('Set price with /entry');
+        const st = this.manualTradeState[ctx.from.id];
+        st.entryType = 'limit';
+        await ctx.editMessageText(
+          `📍 <b>SET LIMIT PRICE</b>\n\nType the entry price:\n<code>/entry 0.0512</code>\n\n` +
+          `Current market: $${st.cachedSetup?.price?.toPrecision(6) || '...'}`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'mt_refresh')]]).reply_markup }
+        );
+      } catch (e) {}
+    });
+
+    this.bot.command('entry', async (ctx) => {
+      const st = this.manualTradeState[ctx.from?.id];
+      if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Use <code>/trade SYMBOL</code> first.');
+      const price = parseFloat(ctx.message.text.split(' ')[1]);
+      if (!price || price <= 0) return ctx.replyWithHTML('Usage: <code>/entry 0.0512</code>');
+      st.entryType = 'limit';
+      st.limitPrice = price;
+      const mkt = st.cachedSetup?.price;
+      const distPct = mkt ? ((price - mkt) / mkt * 100).toFixed(2) : '?';
+      ctx.replyWithHTML(`📍 Limit entry set to <b>$${price}</b> (${distPct}% from market)\n\nUse /trade ${st.symbol} to see updated panel.`);
+    });
+
     // Exchange selector
     this.bot.action('mt_exchange', async (ctx) => {
       try {
@@ -1008,6 +1070,9 @@ class TelegramBot {
       } catch (e) {}
     });
 
+    // Pending limit orders (checked every minute)
+    this.pendingLimitOrders = new Map();
+
     // CONFIRM — execute the trade
     this.bot.action('mt_confirm', async (ctx) => {
       try {
@@ -1015,10 +1080,38 @@ class TelegramBot {
         const st = this.manualTradeState[uid];
         if (!st) return ctx.answerCbQuery('No trade to confirm');
         const octe = this.onchainTradeExecutor;
-        await ctx.answerCbQuery('Executing...');
-
-        const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct, { customSl: st.customSl, customTp1: st.customTp1 });
         const isLong = st.direction === 'long';
+
+        // LIMIT ORDER — queue it
+        if (st.entryType === 'limit' && st.limitPrice > 0) {
+          await ctx.answerCbQuery('Limit order placed');
+          const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct, { customSl: st.customSl, customTp1: st.customTp1 });
+          const orderId = `${st.symbol}_${uid}_${Date.now()}`;
+          this.pendingLimitOrders.set(orderId, {
+            ...st,
+            limitSetup: setup,
+            createdAt: Date.now(),
+            chatId: ctx.chat.id,
+          });
+          delete this.manualTradeState[uid];
+
+          await ctx.editMessageText(
+            `📍 <b>LIMIT ORDER PLACED</b> — $${escapeHtml(st.symbol)}\n\n` +
+            `${isLong ? '🟢 LONG' : '🔴 SHORT'} | ${st.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'}\n` +
+            `📍 Entry: <b>$${st.limitPrice}</b> (market: $${setup.price.toPrecision(6)})\n` +
+            `💵 $${st.margin} × ${st.leverage}x = $${setup.posSize}\n\n` +
+            `🎯 TP1: $${setup.tp1.toPrecision(6)} | TP2: $${setup.tp2.toPrecision(6)}\n` +
+            `🛑 SL: $${setup.stopLoss.toPrecision(6)}\n\n` +
+            `⏳ <i>Waiting for price to reach $${st.limitPrice}...</i>\n` +
+            `<i>Expires in 24h. Cancel with /cancelorder</i>`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        // MARKET ORDER — execute immediately
+        await ctx.answerCbQuery('Executing...');
+        const setup = await calcTradeSetup(st.symbol, st.exchangeId, st.exchange, st.pair, st.direction, st.margin, st.leverage, st.slPct, { customSl: st.customSl, customTp1: st.customTp1 });
 
         if (st.mode === 'paper') {
           const trade = {
@@ -1099,7 +1192,7 @@ class TelegramBot {
         this.manualTradeState[ctx.from.id] = {
           symbol, exchange: found.exchange, exchangeId: found.exchangeId, pair: found.pair,
           direction, margin, leverage, slPct: 0, customSl: 0, tpMode: 'auto', customTp1: 0,
-          mode: this.onchainTradeExecutor?.mode || 'paper', cachedSetup: null,
+          mode: this.onchainTradeExecutor?.mode || 'paper', entryType: 'market', limitPrice: 0, cachedSetup: null,
         };
         await showTradePanel(ctx, true);
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
@@ -1107,6 +1200,120 @@ class TelegramBot {
 
     this.bot.command('long', (ctx) => handleQuickTrade(ctx, 'long'));
     this.bot.command('short', (ctx) => handleQuickTrade(ctx, 'short'));
+
+    // View/cancel pending limit orders
+    this.bot.command('orders', async (ctx) => {
+      if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
+      if (!this.pendingLimitOrders.size) return ctx.replyWithHTML('📭 No pending limit orders.');
+      let msg = `📍 <b>PENDING LIMIT ORDERS</b> (${this.pendingLimitOrders.size})\n\n`;
+      const buttons = [];
+      for (const [id, o] of this.pendingLimitOrders) {
+        const dir = o.direction === 'long' ? '🟢' : '🔴';
+        const age = ((Date.now() - o.createdAt) / 60000).toFixed(0);
+        msg += `${dir} <b>${o.symbol}</b> @ $${o.limitPrice} | $${o.margin} × ${o.leverage}x | ${age}m ago\n`;
+        buttons.push([Markup.button.callback(`❌ Cancel ${o.symbol} @ $${o.limitPrice}`, `mt_cancelorder_${id}`)]);
+      }
+      ctx.replyWithHTML(msg, Markup.inlineKeyboard(buttons));
+    });
+
+    this.bot.command('cancelorder', async (ctx) => {
+      if (ctx.state?.user?.role !== 'admin') return ctx.replyWithHTML('⚠️ Admin only.');
+      const symbol = (ctx.message.text.split(' ')[1] || '').toUpperCase();
+      if (!symbol) {
+        if (!this.pendingLimitOrders.size) return ctx.replyWithHTML('📭 No pending orders.');
+        return ctx.replyWithHTML('Usage: <code>/cancelorder SYMBOL</code> or use /orders to see all');
+      }
+      let cancelled = 0;
+      for (const [id, o] of this.pendingLimitOrders) {
+        if (o.symbol === symbol) { this.pendingLimitOrders.delete(id); cancelled++; }
+      }
+      ctx.replyWithHTML(cancelled > 0 ? `✅ Cancelled ${cancelled} limit order(s) for ${symbol}` : `⚠️ No pending orders for ${symbol}`);
+    });
+
+    this.bot.action(/^mt_cancelorder_(.+)$/, async (ctx) => {
+      try {
+        const id = ctx.match[1];
+        const order = this.pendingLimitOrders.get(id);
+        if (order) {
+          this.pendingLimitOrders.delete(id);
+          await ctx.answerCbQuery('Cancelled');
+          ctx.replyWithHTML(`✅ Limit order cancelled: ${order.direction.toUpperCase()} ${order.symbol} @ $${order.limitPrice}`);
+        } else {
+          await ctx.answerCbQuery('Already cancelled');
+        }
+      } catch (e) {}
+    });
+
+    // Check pending limit orders (called from index.js every minute)
+    this.checkPendingLimitOrders = async () => {
+      if (!this.pendingLimitOrders.size) return;
+      const octe = this.onchainTradeExecutor;
+      if (!octe) return;
+
+      for (const [id, o] of this.pendingLimitOrders) {
+        try {
+          // Expire after 24h
+          if (Date.now() - o.createdAt > 24 * 60 * 60 * 1000) {
+            this.pendingLimitOrders.delete(id);
+            try { await this.bot.telegram.sendMessage(o.chatId, `⏰ Limit order expired: ${o.direction.toUpperCase()} ${o.symbol} @ $${o.limitPrice}`, { parse_mode: 'HTML' }); } catch (e) {}
+            continue;
+          }
+
+          const ticker = await o.exchange.fetchTicker(o.pair);
+          const price = ticker.last;
+          const isLong = o.direction === 'long';
+          const triggered = isLong ? price <= o.limitPrice : price >= o.limitPrice;
+
+          if (triggered) {
+            this.pendingLimitOrders.delete(id);
+            const setup = await calcTradeSetup(o.symbol, o.exchangeId, o.exchange, o.pair, o.direction, o.margin, o.leverage, o.slPct, { customSl: o.customSl, customTp1: o.customTp1 });
+
+            if (o.mode === 'paper') {
+              const trade = {
+                signalId: null, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction,
+                mode: 'paper', entryPrice: o.limitPrice, quantity: setup.posSize / o.limitPrice,
+                positionSize: setup.posSize, leverage: o.leverage,
+                tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, tp4: setup.tp4,
+                stopLoss: setup.stopLoss, originalStopLoss: setup.stopLoss, invalidation: setup.stopLoss,
+                atr: setup.atr, dcaQty2: 0, dcaQty3: 0, dcaPrice2: null, dcaPrice3: null, dcaStage: 1,
+                status: 'open', source: octe.settingsKey,
+                onchainContext: { manual: true, margin: o.margin, leverage: o.leverage, limitEntry: o.limitPrice },
+              };
+              await db.saveTrade(trade);
+              try {
+                await this.bot.telegram.sendMessage(o.chatId,
+                  `📍✅ <b>LIMIT ORDER FILLED</b> — $${o.symbol}\n\n` +
+                  `${isLong ? '🟢 LONG' : '🔴 SHORT'} | 📝 PAPER\n` +
+                  `📍 Entry: <b>$${o.limitPrice}</b> (triggered at $${price.toPrecision(6)})\n` +
+                  `💵 $${o.margin} × ${o.leverage}x = $${setup.posSize}\n` +
+                  `🎯 TP1: $${setup.tp1.toPrecision(6)} | SL: $${setup.stopLoss.toPrecision(6)}`,
+                  { parse_mode: 'HTML' }
+                );
+              } catch (e) {}
+            } else {
+              const signal = {
+                id: null, type: 'MANUAL_LIMIT', symbol: o.symbol, exchange: o.exchangeId, pair: o.pair,
+                direction: o.direction, currentPrice: price, entryPrice: o.limitPrice,
+                tp1: setup.tp1, tp2: setup.tp2, tp3: setup.tp3, stopLoss: setup.stopLoss,
+                atr: setup.atr, confidence: 5, onchainScore: 100, suggestedLeverage: o.leverage,
+                onchainContext: { manual: true, limitEntry: o.limitPrice },
+              };
+              const trade = await octe.executeLiveTrade(signal);
+              try {
+                await this.bot.telegram.sendMessage(o.chatId,
+                  trade
+                    ? `📍✅ <b>LIMIT FILLED LIVE</b> — ${isLong ? '🟢' : '🔴'} ${o.symbol} @ $${o.limitPrice}\n⚠️ Real money on exchange`
+                    : `⚠️ Limit triggered for ${o.symbol} but live execution failed`,
+                  { parse_mode: 'HTML' }
+                );
+              } catch (e) {}
+            }
+          }
+        } catch (e) {
+          logger.error(`Limit order check error ${o.symbol}: ${e.message}`);
+        }
+      }
+    };
 
     this.bot.command('mclose', async (ctx) => {
       try {

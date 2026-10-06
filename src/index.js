@@ -740,6 +740,11 @@ async function main() {
     } catch (err) {
       logger.error(`User paper engine error: ${err.message}`);
     }
+    try {
+      await bot.checkPendingLimitOrders();
+    } catch (err) {
+      logger.error(`Limit order check error: ${err.message}`);
+    }
   });
 
   cron.schedule('*/15 * * * *', async () => {
