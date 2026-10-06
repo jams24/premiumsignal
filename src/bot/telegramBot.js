@@ -654,11 +654,12 @@ class TelegramBot {
       runner: { label: 'Runner', mults: [2, 4, 6, 10] },
     };
     const MT_LIMIT_OFFSETS = [0.5, 1, 2, 3, 5];
-    const MT_EXIT_STYLES = { tight: 'Tight', loose: 'Loose', hold: 'Hold to TP1' };
+    const MT_EXIT_STYLES = { tight: 'Tight', loose: 'Loose', hold: 'Hold to TP1', tponly: 'TPs only' };
     // Plain-language summary of how a style protects profit, from the executor's real parameters
     const describeExit = (style) => {
       const te = mtExec();
       const xp = te.exitParams({ onchain_context: { manual: true, exitStyle: style } });
+      if (!xp.postTrail) return 'no trailing at all — your SL until TP1, then SL → entry and stays there while it closes in steps at TP2, TP3 and TP4';
       if (!xp.preTp1) return 'no breakeven or trailing until TP1 — only your SL before that; after TP1 SL → breakeven + trailing';
       return `SL → breakeven at +${xp.ppPct}% price or +${xp.ppLev}% ROI, then trails giving back up to ${Math.round(xp.giveback * 100)}% of peak profit`;
     };
@@ -1165,7 +1166,7 @@ class TelegramBot {
         `🛡️ <b>EXIT STYLE</b> — how profit is protected before your TPs\n\n${lines.join('\n\n')}\n\n` +
         `<i>Looser = winners run further, but more profit is given back on a reversal.</i>`, btns);
     });
-    mtAction(/^mt_xs_(tight|loose|hold)$/, async (ctx, st) => {
+    mtAction(/^mt_xs_(tight|loose|hold|tponly)$/, async (ctx, st) => {
       st.exitStyle = ctx.match[1];
       await ack(ctx, MT_EXIT_STYLES[st.exitStyle]);
       await renderPanel(ctx, st);

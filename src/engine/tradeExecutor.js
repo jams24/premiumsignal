@@ -1900,10 +1900,12 @@ class TradeExecutor {
           await db.updateTradeHit(trade.id, 'hit_tp3');
           const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp3) : Math.min(exitPrice, trade.tp3)) : exitPrice;
           const partialPnl = await this.partialClosePosition(trade, 0.5, tpExit);
-          const newSL = trade.tp2;
-          await db.updateTradeStopLoss(trade.id, newSL);
-          await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP3 hit, closed 50% (+$${partialPnl.toFixed(2)}), runner remains — SL to TP2`);
+          if (xp.stepSl) {
+            const newSL = trade.tp2;
+            await db.updateTradeStopLoss(trade.id, newSL);
+            await this.updateExchangeSL(trade, newSL);
+          }
+          logger.info(`${trade.symbol}: TP3 hit, closed 50% (+$${partialPnl.toFixed(2)}), runner remains${xp.stepSl ? ' — SL to TP2' : ''}`);
         }
         // --- TP2 CHECK: close tp2ClosePct of remaining, trail SL to TP1 ---
         else if (!action && !trade.hit_tp2 && trade.tp2 && (isLong ? tpCheckPrice >= trade.tp2 : tpCheckPrice <= trade.tp2)) {
@@ -1920,10 +1922,12 @@ class TradeExecutor {
             logger.info(`${trade.symbol}: TP2 hit, closed ALL remaining (+$${partialPnl.toFixed(2)}) — trade done`);
           } else {
             const partialPnl = await this.partialClosePosition(trade, this.tp2ClosePct, tpExit);
-            const newSL = trade.tp1;
-            await db.updateTradeStopLoss(trade.id, newSL);
-            await this.updateExchangeSL(trade, newSL);
-            logger.info(`${trade.symbol}: TP2 hit, closed ${(this.tp2ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to TP1`);
+            if (xp.stepSl) {
+              const newSL = trade.tp1;
+              await db.updateTradeStopLoss(trade.id, newSL);
+              await this.updateExchangeSL(trade, newSL);
+            }
+            logger.info(`${trade.symbol}: TP2 hit, closed ${(this.tp2ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)})${xp.stepSl ? ', SL to TP1' : ''}`);
           }
         }
         // --- TP1 CHECK: close tp1ClosePct of position, trail SL to breakeven ---
@@ -1938,7 +1942,7 @@ class TradeExecutor {
           logger.info(`${trade.symbol}: TP1 hit, closed ${(this.tp1ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
         }
         // --- TRAILING STOP: after TP1, trail tightens proportionally to profit ---
-        if (!action && trade.hit_tp1 && trade.atr) {
+        if (xp.postTrail && !action && trade.hit_tp1 && trade.atr) {
           const peak = trade.peak_price || trade.entry_price;
           const newPeak = isLong
             ? Math.max(peak, bestPrice)
@@ -2629,7 +2633,7 @@ class TradeExecutor {
   }
 
   // Profit-protection / trailing parameters. Auto trades (and manual 'tight') use the executor settings;
-  // manual trades may carry onchain_context.exitStyle = 'loose' | 'hold'.
+  // manual trades may carry onchain_context.exitStyle = 'loose' | 'hold' | 'tponly'.
   exitParams(trade) {
     const base = {
       style: 'tight',
@@ -2640,6 +2644,8 @@ class TradeExecutor {
       atrPost: this.trailAtrMultPost,
       postScale: 1,
       preTp1: true,
+      postTrail: true,
+      stepSl: true,
     };
     const style = trade.onchain_context?.manual ? trade.onchain_context.exitStyle : null;
     if (style === 'loose') {
@@ -2655,6 +2661,8 @@ class TradeExecutor {
       };
     }
     if (style === 'hold') return { ...base, style, preTp1: false };
+    // TP ladder only: SL goes to entry at TP1 (TP1 handler) and stays; no trailing, no SL step-ups
+    if (style === 'tponly') return { ...base, style, preTp1: false, postTrail: false, stepSl: false };
     return base;
   }
 
