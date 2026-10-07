@@ -18,6 +18,7 @@ const SignalTracker = require('./engine/signalTracker');
 const TradeExecutor = require('./engine/tradeExecutor');
 const UserPaperEngine = require('./engine/userPaperEngine');
 const SwingScanner = require('./collectors/swingScanner');
+const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
 const TelegramBot = require('./bot/telegramBot');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -729,7 +730,7 @@ async function main() {
       }
       if (updates.length) logger.info(`Tracker: ${updates.length} signal updates`);
     } catch (err) {
-      logger.error(`Signal tracker error: ${err.message}`);
+      logger.error(`Signal outcome tracker error: ${err.message}`);
     }
   });
 
@@ -1788,61 +1789,17 @@ async function main() {
     }
   });
 
-  // Spot signal price tracker — fill in 1h/4h/12h/24h prices
+  // Signal outcome tracker — exact 1h/4h/12h/24h results, best/worst move and TP/SL first-touch from 5m candles
+  let signalOutcomeRunning = false;
   cron.schedule('*/30 * * * *', async () => {
+    if (signalOutcomeRunning) return;
+    signalOutcomeRunning = true;
     try {
-      const pending = await db.getUnfilledSpotSignals();
-      if (!pending.length) return;
-      const exchange = Object.values(listingMonitor.exchanges).find(e => e.id === 'binance') || Object.values(listingMonitor.exchanges)[0];
-      if (!exchange) return;
-      let filled = 0;
-      for (const sig of pending) {
-        try {
-          const h = parseFloat(sig.hours_ago);
-          if (h < 1) continue;
-          let ticker = null;
-          for (const ex of Object.values(listingMonitor.exchanges)) {
-            try {
-              ticker = await ex.fetchTicker(`${sig.symbol}/USDT:USDT`);
-              if (ticker?.last) break;
-            } catch (_) { /* try next exchange */ }
-          }
-          if (!ticker?.last) continue;
-          await db.updateSpotPrice(sig.id, h, ticker.last, sig.price, sig.direction);
-          filled++;
-        } catch (e) { logger.debug(`Spot price check failed ${sig.symbol}: ${e.message}`); }
-      }
-      logger.info(`Spot price tracker: checked ${pending.length} signals`);
+      await trackSignalOutcomes(listingMonitor.exchanges);
     } catch (err) {
-      logger.debug(`Spot price tracker error: ${err.message}`);
-    }
-  });
-
-  // Pump signal price tracker — fill in 1h/4h/12h/24h prices
-  cron.schedule('*/30 * * * *', async () => {
-    try {
-      const pending = await db.getUnfilledPumpSignals();
-      if (!pending.length) return;
-      let filled = 0;
-      for (const sig of pending) {
-        try {
-          const h = parseFloat(sig.hours_ago);
-          if (h < 1) continue;
-          let ticker = null;
-          for (const ex of Object.values(listingMonitor.exchanges)) {
-            try {
-              ticker = await ex.fetchTicker(`${sig.symbol}/USDT:USDT`);
-              if (ticker?.last) break;
-            } catch (_) {}
-          }
-          if (!ticker?.last) continue;
-          await db.updatePumpPrice(sig.id, h, ticker.last, sig.price, sig.direction);
-          filled++;
-        } catch (e) { logger.debug(`Pump price check failed ${sig.symbol}: ${e.message}`); }
-      }
-      if (filled) logger.info(`Pump price tracker: filled ${filled}/${pending.length} signals`);
-    } catch (err) {
-      logger.debug(`Pump price tracker error: ${err.message}`);
+      logger.error(`Signal outcome tracker error: ${err.message}`);
+    } finally {
+      signalOutcomeRunning = false;
     }
   });
 

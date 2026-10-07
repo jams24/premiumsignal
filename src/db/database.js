@@ -346,6 +346,23 @@ async function init(retries = 3) {
     try { await p.query(`ALTER TABLE trades ADD COLUMN ${col} ${type}`); } catch (e) { /* already exists */ }
   }
 
+  // Signal outcome tracking: path stats from exchange candles, not just point-in-time snapshots
+  const signalTrackingCols = [
+    ['max_gain_pct', 'DOUBLE PRECISION'],
+    ['max_gain_hours', 'DOUBLE PRECISION'],
+    ['max_drawdown_pct', 'DOUBLE PRECISION'],
+    ['drawdown_before_peak_pct', 'DOUBLE PRECISION'],
+    ['tp_sl_result', 'TEXT'],
+    ['tp_sl_hours', 'DOUBLE PRECISION'],
+    ['tracking_exchange', 'TEXT'],
+    ['tracked_at', 'TIMESTAMPTZ'],
+  ];
+  for (const table of ['spot_signals', 'pump_signals']) {
+    for (const [col, type] of signalTrackingCols) {
+      await p.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${col} ${type}`);
+    }
+  }
+
   // Add new columns to bot_users for per-user paper config
   const userCols = [
     ['paper_size', 'DOUBLE PRECISION DEFAULT 100'],
@@ -484,25 +501,32 @@ async function logSpotSignal(symbol, data) {
   );
 }
 
-async function getUnfilledSpotSignals() {
+const TRACKED_SIGNAL_TABLES = new Set(['spot_signals', 'pump_signals']);
+const SIGNAL_TRACKING_FIELDS = new Set([
+  'price_1h', 'price_4h', 'price_12h', 'price_24h', 'pnl_1h', 'pnl_4h', 'pnl_12h', 'pnl_24h', 'outcome',
+  'max_gain_pct', 'max_gain_hours', 'max_drawdown_pct', 'drawdown_before_peak_pct',
+  'tp_sl_result', 'tp_sl_hours', 'tracking_exchange', 'tracked_at',
+]);
+
+// Signals whose 24h result isn't final yet (older ones kept for backfill)
+async function getSignalsToTrack(table) {
+  if (!TRACKED_SIGNAL_TABLES.has(table)) throw new Error(`Not a tracked signal table: ${table}`);
   const { rows } = await query(
-    `SELECT id, symbol, direction, price, created_at,
-       EXTRACT(EPOCH FROM (NOW() - created_at))/3600 as hours_ago
-     FROM spot_signals WHERE price_24h IS NULL AND created_at > NOW() - INTERVAL '48 hours'`
+    `SELECT id, symbol, direction, price, tp1, tp2, stop_loss, confluence->>'exchange' AS exchange, created_at
+     FROM ${table}
+     WHERE outcome IS NULL AND created_at > NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '10 minutes'
+     ORDER BY created_at`
   );
   return rows;
 }
 
-async function updateSpotPrice(id, hours, currentPrice, entryPrice, direction) {
-  const pnl = direction === 'long'
-    ? ((currentPrice - entryPrice) / entryPrice) * 100
-    : ((entryPrice - currentPrice) / entryPrice) * 100;
-  const col = hours <= 1.5 ? '1h' : hours <= 5 ? '4h' : hours <= 14 ? '12h' : '24h';
-  const outcomeClause = col === '24h' ? `, outcome = CASE WHEN $2 > 0 THEN 'win' ELSE 'loss' END` : '';
+async function saveSignalTracking(table, id, fields) {
+  if (!TRACKED_SIGNAL_TABLES.has(table)) throw new Error(`Not a tracked signal table: ${table}`);
+  const cols = Object.keys(fields).filter(k => SIGNAL_TRACKING_FIELDS.has(k));
+  if (!cols.length) return;
   await query(
-    `UPDATE spot_signals SET price_${col} = $1, pnl_${col} = $2${outcomeClause}
-     WHERE id = $3`,
-    [currentPrice, parseFloat(pnl.toFixed(2)), id]
+    `UPDATE ${table} SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(', ')} WHERE id = $${cols.length + 1}`,
+    [...cols.map(c => fields[c]), id]
   );
 }
 
@@ -551,27 +575,6 @@ async function logPumpSignal(symbol, data) {
   );
 }
 
-async function getUnfilledPumpSignals() {
-  const { rows } = await query(
-    `SELECT id, symbol, direction, price, created_at,
-       EXTRACT(EPOCH FROM (NOW() - created_at))/3600 as hours_ago
-     FROM pump_signals WHERE price_24h IS NULL AND created_at > NOW() - INTERVAL '48 hours'`
-  );
-  return rows;
-}
-
-async function updatePumpPrice(id, hours, currentPrice, entryPrice, direction) {
-  const pnl = direction === 'long'
-    ? ((currentPrice - entryPrice) / entryPrice) * 100
-    : ((entryPrice - currentPrice) / entryPrice) * 100;
-  const col = hours <= 1.5 ? '1h' : hours <= 5 ? '4h' : hours <= 14 ? '12h' : '24h';
-  const outcomeClause = col === '24h' ? `, outcome = CASE WHEN $2 > 0 THEN 'win' ELSE 'loss' END` : '';
-  await query(
-    `UPDATE pump_signals SET price_${col} = $1, pnl_${col} = $2${outcomeClause}
-     WHERE id = $3`,
-    [currentPrice, parseFloat(pnl.toFixed(2)), id]
-  );
-}
 
 async function logAlert(alertType, symbol, data, message) {
   await query(
@@ -1159,4 +1162,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, getUnfilledSpotSignals, updateSpotPrice, logPumpSignal, getUnfilledPumpSignals, updatePumpPrice, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs };
