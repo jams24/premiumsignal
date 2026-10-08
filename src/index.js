@@ -19,7 +19,7 @@ const TradeExecutor = require('./engine/tradeExecutor');
 const UserPaperEngine = require('./engine/userPaperEngine');
 const SwingScanner = require('./collectors/swingScanner');
 const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
-const { PUMP_RULES, channelLevels, measureTop, currentCisd, entryVerdict } = require('./collectors/pumpSignalCheck');
+const { PUMP_RULES, channelLevels, measureTop, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -599,27 +599,43 @@ async function main() {
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor });
 
-  // Re-check a pump signal that said "wait": did the top hold, and is there a 1H reversal now?
-  // (In-memory timer — a restart inside the window skips the follow-up.)
-  async function sendPumpFollowUp(ex, token, signalHigh, replyToId) {
+  // Pump signals that weren't ENTER are watched every 5 min for up to 2h; the bot replies under the
+  // original channel message only when something changes. (In-memory — a restart drops active watches.)
+  const pumpWatches = new Map();
+  let pumpWatchRunning = false;
+  async function processPumpWatches() {
+    if (pumpWatchRunning || !pumpWatches.size) return;
+    pumpWatchRunning = true;
     try {
-      const pair = `${token.symbol}/USDT:USDT`;
-      const [top, cisd, ticker] = await Promise.all([
-        measureTop(ex, token.symbol), currentCisd(ex, token.symbol), ex.fetchTicker(pair),
-      ]);
-      if (!top) return;
-      const newHigh = top.high24 > signalHigh * 1.001;
-      await bot.sendPumpFollowUp(replyToId, {
-        symbol: token.symbol,
-        verdict: entryVerdict({ oi1h: 0, topAgeMin: top.topAgeMin, cisdScore: cisd.score }),
-        newHigh, highSince: top.high24, signalPrice: token.price, price: ticker.last,
-        topAgeMin: top.topAgeMin, cisdScore: cisd.score, cisdFlags: cisd.flags,
-        levels: channelLevels(ticker.last),
-      });
-    } catch (e) {
-      logger.warn(`Pump follow-up ${token.symbol} failed: ${e.message}`);
+      for (const [symbol, w] of pumpWatches) {
+        const ageMin = (Date.now() - w.startedAt) / 60000;
+        const base = { symbol, signalPrice: w.signalPrice, ageMin };
+        try {
+          if (ageMin > PUMP_RULES.followUpMaxMin) {
+            pumpWatches.delete(symbol);
+            await bot.sendPumpFollowUp(w.msgId, { ...base, kind: 'expired' });
+            continue;
+          }
+          const r = await followUpCheck(w.ex, w);
+          if (r.kind === 'enter' || r.kind === 'missed') {
+            pumpWatches.delete(symbol);
+            await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
+          } else if (r.kind === 'new_high') {
+            w.high = r.top.high24;
+            if (!w.newHighSent) {
+              w.newHighSent = true;
+              await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
+            }
+          }
+        } catch (e) {
+          logger.warn(`Pump watch ${symbol} failed: ${e.message}`);
+        }
+      }
+    } finally {
+      pumpWatchRunning = false;
     }
   }
+  cron.schedule(`*/${PUMP_RULES.followUpEveryMin} * * * *`, () => { processPumpWatches().catch(e => logger.error(`Pump watch error: ${e.message}`)); });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -1003,8 +1019,11 @@ async function main() {
               },
             }).catch(e => logger.debug(`Pump log failed: ${e.message}`));
 
-            if (msgId && ex && check.high24 && (check.verdict === 'top_fresh' || check.verdict === 'no_cisd')) {
-              setTimeout(() => sendPumpFollowUp(ex, token, check.high24, msgId), PUMP_RULES.followUpMin * 60000);
+            if (msgId && ex && check.verdict !== 'enter') {
+              pumpWatches.set(token.symbol, {
+                symbol: token.symbol, ex, msgId, verdict: check.verdict,
+                signalPrice: token.price, high: check.high24, startedAt: Date.now(), newHighSent: false,
+              });
             }
           } catch (e) { logger.debug(`Pump signal check failed: ${e.message}`); }
         }

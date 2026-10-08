@@ -8755,22 +8755,21 @@ class TelegramBot {
       else if (pumpPct >= 40 && oi4h >= 30 && oi4h < 100) grade = '🟡 STRONG';
       else if (pumpPct >= 40) grade = '🟠 PUMP ONLY';
 
+      const watching = `  → 👀 Watching every ${R.followUpEveryMin} min for up to ${R.followUpMaxMin / 60}h — I'll reply here when it's time to enter ⬇️`;
       const verdicts = {
         oi_building:
           `⛔ <b>DON'T SHORT YET — OI STILL BUILDING</b>\n` +
           `  → OI +${oi1h?.toFixed(0)}% in the last hour (over ${R.maxOi1h}%) — the pump is still being fuelled\n` +
-          `  → Recent signals like this squeezed 9–18% first or kept pumping`,
+          `  → Recent signals like this squeezed 9–18% first or kept pumping\n${watching}`,
         top_fresh:
           `⏳ <b>WAIT — TOP ${topAge == null ? 'UNKNOWN' : `ONLY ${topAge}m OLD`}</b>\n` +
-          `  → Short only after ${R.minTopAgeMin}m+ with no new high (signals fired at the top mostly squeezed first)\n` +
-          `  → Update in ${R.followUpMin} min ⬇️`,
+          `  → Short only after ${R.minTopAgeMin}m+ with no new high (signals fired at the top mostly squeezed first)\n${watching}`,
         enter:
           `✅ <b>ENTER — TOP HOLDING + 1H REVERSAL</b>\n` +
           `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags})`,
         no_cisd:
           `🟡 <b>CAUTION — TOP HOLDING, NO 1H REVERSAL YET</b>\n` +
-          `  → No new high for ${topAge}m, but CISD 0 — wait for a red 1H candle / lower high\n` +
-          `  → Update in ${R.followUpMin} min ⬇️`,
+          `  → No new high for ${topAge}m, but CISD 0 — wait for a red candle / lower high\n${watching}`,
       };
 
       let msg = `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
@@ -8798,36 +8797,41 @@ class TelegramBot {
     }
   }
 
-  // u: { symbol, verdict, newHigh, highSince, signalPrice, price, topAgeMin, cisdScore, cisdFlags, levels }
+  // Reply under a pump signal from the 5-minute watcher.
+  // u: { kind: 'enter'|'new_high'|'missed'|'expired', symbol, signalPrice, ageMin, price?, top?, cisd?, oi1h?, belowHigh?, levels? }
   async sendPumpFollowUp(replyToId, u) {
     if (!this.pumpChannelId) return;
     try {
       const p = (v) => Number(v).toPrecision(6);
       const R = PUMP_RULES;
       const sym = escapeHtml(u.symbol);
-      const move = ((u.price - u.signalPrice) / u.signalPrice) * 100;
-      const now = `Price now $${p(u.price)} (${move >= 0 ? '+' : ''}${move.toFixed(1)}% since signal)`;
+      const after = `${Math.round(u.ageMin)}m after the signal`;
+      const now = u.price != null
+        ? `Price now $${p(u.price)} (${u.price >= u.signalPrice ? '+' : ''}${(((u.price - u.signalPrice) / u.signalPrice) * 100).toFixed(1)}% since signal)`
+        : '';
       let msg;
-      if (u.newHigh) {
-        msg = `⚠️ <b>${sym} — NEW HIGH, PUMP CONTINUING</b>\n` +
-          `New high $${p(u.highSince)} after the signal · ${now}\n` +
-          `❌ Don't short this one yet — wait for the top to hold ${R.minTopAgeMin}m+ and a red 1H candle.`;
-      } else if (u.verdict === 'enter') {
-        msg = `✅ <b>${sym} — TOP HELD ${Math.round(u.topAgeMin)}m + 1H REVERSAL (CISD ${u.cisdScore}/4)</b>\n` +
-          `${now}\n\n<b>Entry now (short):</b>\n` +
+      if (u.kind === 'enter') {
+        const oi = u.oi1h != null ? `OI 1H ${u.oi1h >= 0 ? '+' : ''}${u.oi1h.toFixed(0)}%` : 'OI 1H n/a';
+        msg = `✅ <b>${sym} — ENTER NOW (short)</b>\n` +
+          `Top $${p(u.top.high24)} held ${Math.round(u.top.topAgeMin)}m · ${oi} · CISD ${u.cisd.score}/4 on ${u.cisd.tf} (${(u.cisd.flags || []).join(' + ') || 'none'})\n` +
+          `${now} · ${after}\n\n` +
           u.levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n') +
           `\n🛑 SL: $${p(u.levels.stopLoss)} (+${R.slPct}%)\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only`;
-      } else if (u.verdict === 'no_cisd') {
-        msg = `🟡 <b>${sym} — TOP HELD ${Math.round(u.topAgeMin)}m, BUT NO 1H REVERSAL YET</b>\n` +
-          `${now}\nCISD 0 — signals without it went 2/7. Wait for a red 1H candle / lower high before shorting.`;
+      } else if (u.kind === 'new_high') {
+        msg = `⚠️ <b>${sym} — NEW HIGH $${p(u.top.high24)}, PUMP CONTINUING</b>\n${now} · ${after}\n` +
+          `❌ Don't short yet — still watching for the top to hold ${R.minTopAgeMin}m+.`;
+      } else if (u.kind === 'missed') {
+        msg = `❌ <b>${sym} — NO ENTRY, ALREADY DUMPED</b>\n` +
+          `Price is ${u.belowHigh.toFixed(1)}% below the top $${p(u.top.high24)} · ${after}\n` +
+          `The move happened before the entry rules confirmed — don't chase it. Watch stopped.`;
       } else {
-        msg = `⏳ <b>${sym} — TOP STILL FRESH (${Math.round(u.topAgeMin)}m)</b>\n${now}\nStill too close to the high — wait.`;
+        msg = `⌛ <b>${sym} — NO ENTRY WITHIN ${R.followUpMaxMin / 60}H</b>\nThe entry rules never lined up. Watch stopped — skip this one.`;
       }
       await this.bot.telegram.sendMessage(this.pumpChannelId, msg, {
         parse_mode: 'HTML',
         reply_parameters: { message_id: replyToId, allow_sending_without_reply: true },
       });
-      logger.info(`Pump follow-up sent: ${u.symbol} (${u.newHigh ? 'new_high' : u.verdict})`);
+      logger.info(`Pump follow-up sent: ${u.symbol} (${u.kind})`);
     } catch (err) {
       logger.error(`Failed to send pump follow-up: ${err.message}`);
     }
