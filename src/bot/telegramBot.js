@@ -1816,8 +1816,21 @@ class TelegramBot {
 
       const result = { symbol, text: '', isExhaustion };
       if (!isExhaustion) {
-        const scannerView = setup ? `The scanner reads it as a <b>${setup.direction.toUpperCase()}</b> setup instead.` : token._rejectReason ? `Scanner: ${escapeHtml(token._rejectReason)}.` : '';
-        result.text = text + `\n❌ <b>NOT A PUMP-EXHAUSTION SHORT</b>\n${scannerView}\n\n<i>${new Date().toUTCString()}</i>`;
+        const reasons = [];
+        if (nearHigh != null && nearHigh >= maxNear) {
+          let topInfo = '';
+          try {
+            const t = await measureTop(ex, symbol);
+            if (t) topInfo = ` (topped at $${fmtP(t.high24)}, ${Math.round(t.topAgeMin)}m ago)`;
+          } catch (e) { /* top info is optional */ }
+          reasons.push(`Price is already ${nearHigh.toFixed(1)}% below the 24H high${topInfo} — the top has passed, a short here is late`);
+        }
+        if ((oi4h ?? 0) < 25) reasons.push(`OI 4H only ${fmtSigned(oi4h, 0)} — longs aren't crowded enough to unwind`);
+        if ((snap.exhaustionScore ?? 0) < minExh) reasons.push(`Exhaustion score ${snap.exhaustionScore ?? 0} is below ${minExh}`);
+        if (!reasons.length) reasons.push('The exhaustion gates are not all met');
+        const scannerNote = token._rejectReason ? `\nℹ️ <i>Scanner filter: ${escapeHtml(token._rejectReason)}</i>` : '';
+        result.text = text + `\n❌ <b>NOT A PUMP-EXHAUSTION SHORT</b>\n${reasons.map(r => `  → ${r}`).join('\n')}${scannerNote}\n` +
+          `<i>This is not a long signal either — /check only evaluates the exhaustion short.</i>\n\n<i>${new Date().toUTCString()}</i>`;
         return result;
       }
 
