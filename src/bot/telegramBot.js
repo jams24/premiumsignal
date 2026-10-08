@@ -4,6 +4,7 @@ const config = require('../utils/config');
 const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
+const { PUMP_RULES, channelLevels, measureTop, entryVerdict } = require('../collectors/pumpSignalCheck');
 
 class TelegramBot {
   constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor }) {
@@ -47,9 +48,9 @@ class TelegramBot {
       'panel', 'swingsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
-      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions',
+      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check',
     ]);
-    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_)/;
+    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_)/;
     const PUBLIC_COMMANDS = new Set([
       'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
@@ -647,7 +648,10 @@ class TelegramBot {
 
     const MT_MARGINS = [5, 10, 15, 20, 25, 30, 50, 75, 100, 200, 500, 1000];
     const MT_LEVERAGES = [1, 2, 3, 5, 7, 10, 15, 20, 25, 50, 75, 100];
-    const MT_SL_PCTS = [1, 2, 3, 5, 7, 10, 15, 20];
+    const MT_SL_PCTS = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30];
+    const MT_SL_ATR = [1, 1.5, 2, 3, 4];
+    const MT_RISK_USD = [0.5, 1, 2, 3, 5, 10, 20, 50];
+    const MT_FEE_PCT = 0.1; // ~0.05% taker each side
     const MT_TP_PRESETS = {
       safe: { label: 'Safe', mults: [1, 2, 3, 4] },
       default: { label: 'Default', mults: [1.5, 3, 5, 7] },
@@ -720,11 +724,14 @@ class TelegramBot {
       const sign = st.direction === 'long' ? 1 : -1;
       const entry = st.entryType === 'limit' && st.limitPrice > 0 ? st.limitPrice : mkt;
       const stopLoss = st.customSl > 0 ? st.customSl
+        : st.slRiskUsd > 0 ? entry * (1 - sign * st.slRiskUsd / (st.margin * st.leverage))
         : st.slPct > 0 ? entry * (1 - sign * st.slPct / 100)
-        : entry - sign * atr * 3;
+        : entry - sign * atr * (st.slAtrMult || 3);
       const risk = Math.abs(entry - stopLoss);
       let tps;
-      if (st.customTp1 > 0) {
+      if (st.tpPcts?.length) {
+        tps = st.tpPcts.map(p => entry * (1 + sign * p / 100));
+      } else if (st.customTp1 > 0) {
         const d = Math.abs(st.customTp1 - entry);
         tps = [st.customTp1, ...[2, 3, 4.5].map(m => entry + sign * d * m)];
       } else {
@@ -734,7 +741,7 @@ class TelegramBot {
       const slPct = (risk / entry) * 100;
       return {
         entry, market: mkt, atr, stopLoss, tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3],
-        posSize, slPct, maxLoss: (posSize * slPct) / 100,
+        posSize, slPct, maxLoss: (posSize * slPct) / 100, fees: (posSize * MT_FEE_PCT) / 100,
         rr: risk > 0 ? Math.abs(tps[0] - entry) / risk : 0,
         liqPrice: entry * (1 - sign / st.leverage),
         profitPct: (price) => (sign * (price - entry) / entry) * 100,
@@ -771,6 +778,20 @@ class TelegramBot {
       return { errors, warnings };
     };
 
+    // SL must stay inside ~90% of the distance to (approximate) liquidation
+    const maxSlPct = (st) => 90 / st.leverage;
+    const slLabelOf = (st) => (st.customSl > 0 ? 'Manual price'
+      : st.slRiskUsd > 0 ? `$${st.slRiskUsd} risk`
+      : st.slPct > 0 ? `${st.slPct}%`
+      : `${st.slAtrMult || 3}×ATR`);
+    const setSl = {
+      price: (st, v) => { st.customSl = v; st.slPct = 0; st.slRiskUsd = 0; },
+      pct: (st, v) => { st.slPct = v; st.customSl = 0; st.slRiskUsd = 0; },
+      risk: (st, v) => { st.slRiskUsd = v; st.customSl = 0; st.slPct = 0; },
+      atr: (st, v) => { st.slAtrMult = v; st.customSl = 0; st.slPct = 0; st.slRiskUsd = 0; },
+    };
+    const lossAt = (st, pct) => (st.margin * st.leverage * pct) / 100;
+
     const buildPanel = (st) => {
       const te = mtExec();
       const s = computeSetup(st);
@@ -778,8 +799,8 @@ class TelegramBot {
       const isLong = st.direction === 'long';
       const isLimit = st.entryType === 'limit';
       const m = st.market;
-      const slLabel = st.customSl > 0 ? 'Custom' : st.slPct > 0 ? `${st.slPct}%` : '3×ATR';
-      const tpLabel = st.customTp1 > 0 ? 'Custom' : (MT_TP_PRESETS[st.tpPreset] || MT_TP_PRESETS.default).label;
+      const slLabel = slLabelOf(st);
+      const tpLabel = st.tpPcts?.length ? `Plan ${st.tpPcts.join('/')}%` : st.customTp1 > 0 ? 'Custom' : (MT_TP_PRESETS[st.tpPreset] || MT_TP_PRESETS.default).label;
 
       let entryLine = '🚀 Entry: <b>Market</b> (fills immediately)';
       if (isLimit && st.limitPrice > 0) {
@@ -811,7 +832,8 @@ class TelegramBot {
         tpLine(2, '🎯', s.tp2),
         tpLine(3, '🎯', s.tp3),
         tpLine(4, '🏁', s.tp4),
-        `🛑 SL $${fmtP(s.stopLoss)} (-${s.slPct.toFixed(2)}% · -$${s.maxLoss.toFixed(2)}) [${slLabel}]`,
+        `🛑 SL $${fmtP(s.stopLoss)} (-${s.slPct.toFixed(2)}%) [${slLabel}]`,
+        `   ↳ you lose <b>-$${s.maxLoss.toFixed(2)}</b> = ${((s.maxLoss / st.margin) * 100).toFixed(0)}% of margin (+~$${s.fees.toFixed(2)} fees)`,
         `💀 Liq ≈ $${fmtP(s.liqPrice)} · 📐 R:R 1:${s.rr.toFixed(2)}`,
       ];
       if (errors.length) lines.push('', ...errors.map(e => `⛔ ${escapeHtml(e)}`));
@@ -821,8 +843,8 @@ class TelegramBot {
         '',
         `🛡️ Exit (${MT_EXIT_STYLES[st.exitStyle]}): ${describeExit(st.exitStyle)}`,
         `<i>TP partial exits always run. The bot's time-exit and loss cap don't apply to manual trades.</i>`,
-        '<i>Type exact values: /sl 1.23 · /sl 4% · /tp 1.5 · /entry 1.2 · /margin 40 · /lev 7</i>',
-        '<i>💾 Mode, exchange, direction, margin, leverage, SL %, TP preset and exit style are remembered for your next trade.</i>'
+        '<i>✏️ Tap any menu, then ✏️ to type an exact value.</i>',
+        '<i>💾 Mode, exchange, direction, margin, leverage, SL type, TP preset and exit style are remembered for your next trade.</i>'
       );
 
       const tick = (on, label) => `${label}${on ? ' ✓' : ''}`;
@@ -878,6 +900,8 @@ class TelegramBot {
       margin: st.margin,
       leverage: st.leverage,
       slPct: st.slPct,
+      slAtrMult: st.slAtrMult,
+      slRiskUsd: st.slRiskUsd,
       tpPreset: st.tpPreset,
       exitStyle: st.exitStyle,
     });
@@ -917,9 +941,13 @@ class TelegramBot {
         margin: opts.margin || saved.margin || te.maxPositionSize || 12,
         leverage: opts.leverage || saved.leverage || te.defaultLeverage || 3,
         slPct: opts.slPct ?? saved.slPct ?? 0,
+        slAtrMult: MT_SL_ATR.includes(saved.slAtrMult) ? saved.slAtrMult : 3,
+        slRiskUsd: opts.slPct ? 0 : (saved.slRiskUsd || 0),
+        awaiting: null,
         customSl: 0,
         tpPreset: MT_TP_PRESETS[saved.tpPreset] ? saved.tpPreset : 'default',
-        exitStyle: MT_EXIT_STYLES[saved.exitStyle] ? saved.exitStyle : 'tight',
+        exitStyle: opts.exitStyle || (MT_EXIT_STYLES[saved.exitStyle] ? saved.exitStyle : 'tight'),
+        tpPcts: opts.tpPcts || null,
         customTp1: 0,
         entryType: 'market',
         limitPrice: 0,
@@ -949,6 +977,7 @@ class TelegramBot {
         notices.push(`${st.leverage}x exceeds ${st.exchangeId.toUpperCase()} max — capped at ${maxLev}x`);
         st.leverage = maxLev;
       }
+      if (opts.notice) notices.push(opts.notice);
       st.notice = notices.join('\n') || null;
       // Values typed in the command (/short RLC 20 5) count as applied settings and are saved too
       const hasArgs = opts.direction || opts.margin || opts.leverage || opts.slPct != null;
@@ -992,57 +1021,104 @@ class TelegramBot {
     this.bot.command('long', quickOpen('long'));
     this.bot.command('short', quickOpen('short'));
 
-    // Typed exact values — each re-sends the panel at the bottom of the chat
-    const typedSetter = (name, usage, apply) => {
+    // --- Exact-value inputs: shared by the ✏️ buttons (type the value as a message) and /sl /tp /entry /margin /lev ---
+    const num = (raw) => parseFloat(String(raw).replace(/[$,%\s]/g, ''));
+    const dirWord = (st, side) => ((st.direction === 'long') === (side === 'sl') ? 'BELOW' : 'ABOVE');
+    const MT_INPUTS = {
+      slprice: {
+        prompt: (st, s) => `Type your <b>SL price</b> for ${st.direction.toUpperCase()} ${escapeHtml(st.symbol)}.\n` +
+          `Entry $${fmtP(s.entry)} → SL must be <b>${dirWord(st, 'sl')}</b> it (liquidation ≈ $${fmtP(s.liqPrice)}).\nExample: <code>${fmtP(s.entry * (1 - (st.direction === 'long' ? 1 : -1) * 0.03))}</code>`,
+        apply: (st, raw) => { const v = num(raw); if (!(v > 0)) return '⚠️ Not a valid price.'; setSl.price(st, v); return null; },
+      },
+      slpct: {
+        prompt: (st) => `Type your <b>SL distance in %</b> from entry (max ~${maxSlPct(st).toFixed(1)}% at ${st.leverage}x).\nExample: <code>3.5</code>`,
+        apply: (st, raw) => { const v = num(raw); if (!(v > 0 && v < 100)) return '⚠️ Enter a % between 0 and 100.'; setSl.pct(st, v); return null; },
+      },
+      slrisk: {
+        prompt: (st) => `Type the <b>max $ you're willing to lose</b> if the SL hits — the SL is placed to match.\n` +
+          `Position $${(st.margin * st.leverage).toFixed(2)} · up to ~$${lossAt(st, maxSlPct(st)).toFixed(2)} before liquidation.\nExample: <code>3</code>`,
+        apply: (st, raw) => { const v = num(raw); if (!(v > 0)) return '⚠️ Enter a dollar amount above 0.'; setSl.risk(st, v); return null; },
+      },
+      tp: {
+        prompt: (st, s) => `Type your <b>TP1 price</b> (TP2-4 scale from it). Must be <b>${dirWord(st, 'tp')}</b> entry $${fmtP(s.entry)}. Send <code>auto</code> for R-multiple targets.`,
+        apply: (st, raw) => { st.tpPcts = null; if (raw === 'auto') { st.customTp1 = 0; return null; } const v = num(raw); if (!(v > 0)) return '⚠️ Not a valid price.'; st.customTp1 = v; return null; },
+      },
+      entry: {
+        prompt: (st) => `Type your <b>limit entry price</b> (market $${fmtP(st.market.price)}). Send <code>market</code> to enter at market.`,
+        apply: (st, raw) => { if (raw === 'market') { st.entryType = 'market'; st.limitPrice = 0; return null; } const v = num(raw); if (!(v > 0)) return '⚠️ Not a valid price.'; st.entryType = 'limit'; st.limitPrice = v; return null; },
+      },
+      margin: {
+        prompt: () => 'Type your <b>margin in $</b> (your collateral). Example: <code>37</code>',
+        apply: (st, raw) => { const v = num(raw); if (!(v >= 1 && v <= 100000)) return '⚠️ Margin must be between 1 and 100000.'; st.margin = v; return null; },
+      },
+      lev: {
+        prompt: (st) => `Type your <b>leverage</b> (1–${maxLeverageFor(st) || 125}x on ${st.exchangeId}). Example: <code>7</code>`,
+        apply: (st, raw) => { const v = Math.round(num(raw)); const max = maxLeverageFor(st) || 125; if (!(v >= 1 && v <= max)) return `⚠️ Leverage must be 1–${max}x on ${st.exchangeId}.`; st.leverage = v; return null; },
+      },
+      sizerisk: {
+        prompt: (st, s) => `Type the <b>$ you want to lose</b> if your SL (${s.slPct.toFixed(2)}% away) hits — margin is sized to match at ${st.leverage}x.\nExample: <code>5</code>`,
+        apply: (st, raw) => {
+          const v = num(raw);
+          if (!(v > 0)) return '⚠️ Enter a dollar amount above 0.';
+          if (st.slRiskUsd > 0) return '⚠️ Your SL is set by $ risk — pick a % or price SL first.';
+          const s = computeSetup(st);
+          const margin = Math.round((v / (s.slPct / 100) / st.leverage) * 100) / 100;
+          if (!(margin >= 1)) return `⚠️ That needs only $${margin} margin — minimum is $1.`;
+          st.margin = margin;
+          return null;
+        },
+      },
+    };
+
+    const applyAndRefresh = async (ctx, st, field, raw) => {
+      const err = MT_INPUTS[field].apply(st, raw.toLowerCase());
+      if (err) return err;
+      st.awaiting = null;
+      await persistPrefs(ctx.from.id, st);
+      await renderPanel(ctx, st, { fresh: true });
+      return null;
+    };
+
+    const slashSetter = (name, field, usage, route = () => field) => {
       this.bot.command(name, async (ctx) => {
         if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
         const st = this.manualTradeState[ctx.from.id];
         if (!st) return ctx.replyWithHTML('⚠️ No trade panel open. Start one with <code>/trade SYMBOL</code>.');
         const raw = (ctx.message.text.trim().split(/\s+/)[1] || '').toLowerCase();
-        const err = raw ? apply(st, raw) : usage;
-        if (err) return ctx.replyWithHTML(err);
-        await persistPrefs(ctx.from.id, st);
-        try { await renderPanel(ctx, st, { fresh: true }); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+        if (!raw) return ctx.replyWithHTML(usage);
+        if (name === 'sl' && /^\d*\.?\d*x?atr$/.test(raw)) {
+          const m = parseFloat(raw) || 3;
+          setSl.atr(st, m);
+          await persistPrefs(ctx.from.id, st);
+          return renderPanel(ctx, st, { fresh: true }).catch(e => ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`));
+        }
+        try {
+          const err = await applyAndRefresh(ctx, st, route(raw), raw);
+          if (err) ctx.replyWithHTML(err);
+        } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
       });
     };
-    typedSetter('sl', 'Usage: <code>/sl 1.234</code> (price) · <code>/sl 4%</code> · <code>/sl atr</code>', (st, raw) => {
-      if (raw === 'atr') { st.customSl = 0; st.slPct = 0; return null; }
-      const v = parseFloat(raw);
-      if (!(v > 0)) return '⚠️ Invalid SL.';
-      if (raw.endsWith('%')) {
-        if (v >= 100) return '⚠️ SL % must be below 100.';
-        st.slPct = v; st.customSl = 0;
-      } else {
-        st.customSl = v; st.slPct = 0;
+    slashSetter('sl', 'slprice', 'Usage: <code>/sl 1.234</code> (price) · <code>/sl 4%</code> · <code>/sl $3</code> (risk) · <code>/sl 2atr</code>',
+      (raw) => (raw.endsWith('%') ? 'slpct' : raw.startsWith('$') ? 'slrisk' : 'slprice'));
+    slashSetter('tp', 'tp', 'Usage: <code>/tp 1.5</code> (TP1 price — TP2-4 scale from it) · <code>/tp auto</code>');
+    slashSetter('entry', 'entry', 'Usage: <code>/entry 1.2</code> (limit price) · <code>/entry market</code>');
+    slashSetter('margin', 'margin', 'Usage: <code>/margin 40</code>');
+    slashSetter('lev', 'lev', 'Usage: <code>/lev 7</code>');
+
+    // A typed reply after tapping ✏️ (non-command text only; everything else passes through)
+    this.bot.on('text', async (ctx, next) => {
+      const st = this.manualTradeState[ctx.from?.id];
+      const text = (ctx.message?.text || '').trim();
+      if (!st?.awaiting || text.startsWith('/') || !isAdminCtx(ctx)) return next();
+      if (Date.now() - st.awaiting.at > 10 * 60000) { st.awaiting = null; return next(); }
+      if (/^(cancel|x|back)$/i.test(text)) {
+        st.awaiting = null;
+        return renderPanel(ctx, st, { fresh: true }).catch(() => {});
       }
-      return null;
-    });
-    typedSetter('tp', 'Usage: <code>/tp 1.5</code> (TP1 price — TP2-4 scale from it) · <code>/tp auto</code>', (st, raw) => {
-      if (raw === 'auto') { st.customTp1 = 0; return null; }
-      const v = parseFloat(raw);
-      if (!(v > 0)) return '⚠️ Invalid TP.';
-      st.customTp1 = v;
-      return null;
-    });
-    typedSetter('entry', 'Usage: <code>/entry 1.2</code> (limit price) · <code>/entry market</code>', (st, raw) => {
-      if (raw === 'market') { st.entryType = 'market'; st.limitPrice = 0; return null; }
-      const v = parseFloat(raw);
-      if (!(v > 0)) return '⚠️ Invalid price.';
-      st.entryType = 'limit'; st.limitPrice = v;
-      return null;
-    });
-    typedSetter('margin', 'Usage: <code>/margin 40</code>', (st, raw) => {
-      const v = parseFloat(raw);
-      if (!(v >= 1 && v <= 100000)) return '⚠️ Margin must be between 1 and 100000.';
-      st.margin = v;
-      return null;
-    });
-    typedSetter('lev', 'Usage: <code>/lev 7</code>', (st, raw) => {
-      const v = Math.round(parseFloat(raw));
-      const max = maxLeverageFor(st) || 125;
-      if (!(v >= 1 && v <= max)) return `⚠️ Leverage must be 1–${max}x on ${st.exchangeId}.`;
-      st.leverage = v;
-      return null;
+      try {
+        const err = await applyAndRefresh(ctx, st, st.awaiting.field, text);
+        if (err) await ctx.replyWithHTML(`${err}\nTry again, or send <code>cancel</code>.`);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
     });
 
     // Panel button handler: admin-only, and only for the user's current panel message
@@ -1102,6 +1178,7 @@ class TelegramBot {
           st.direction = dir;
           st.customSl = 0;
           st.customTp1 = 0;
+          st.tpPcts = null;
           if (st.entryType === 'limit') st.limitPrice = 0;
         }
         await renderPanel(ctx, st);
@@ -1110,8 +1187,28 @@ class TelegramBot {
 
     mtAction('mt_margin', async (ctx, st) => {
       await ack(ctx);
+      await refreshMarket(st);
+      const s = computeSetup(st);
       const btns = MT_MARGINS.map(v => Markup.button.callback(`$${v}${st.margin === v ? ' ✓' : ''}`, `mt_m_${v}`));
-      await showMenu(ctx, `💵 <b>MARGIN</b> (your collateral)\n\nCurrent: <b>$${st.margin}</b> × ${st.leverage}x = $${(st.margin * st.leverage).toFixed(2)} position\n\nOther amount: <code>/margin 37</code>`, grid(btns, 4));
+      const rows = [...grid(btns, 4), [Markup.button.callback('✏️ Type amount', 'mt_in_margin')]];
+      let text = `💵 <b>MARGIN</b> (your collateral)\n\nCurrent: <b>$${st.margin}</b> × ${st.leverage}x = $${s.posSize.toFixed(2)} position\n` +
+        `At your SL (${s.slPct.toFixed(2)}%) you lose <b>-$${s.maxLoss.toFixed(2)}</b>`;
+      if (st.slRiskUsd > 0) {
+        text += `\n\n<i>Your SL is set by $ risk, so it moves with margin — the loss stays $${st.slRiskUsd}.</i>`;
+      } else {
+        // Size by risk: margin so that hitting the current SL costs exactly $X
+        const sized = MT_RISK_USD.map(u => ({ u, m: Math.round((u / (s.slPct / 100) / st.leverage) * 100) / 100 })).filter(x => x.m >= 1 && x.m <= 100000);
+        rows.push(...grid(sized.map(x => Markup.button.callback(`lose $${x.u} → $${x.m}`, `mt_mr_${x.u}`)), 3));
+        rows.push([Markup.button.callback('✏️ Size by $ to lose', 'mt_in_sizerisk')]);
+        text += `\n\n<b>Size by risk:</b> pick how much you'd lose at your SL — margin is set to match.`;
+      }
+      await showMenu(ctx, text, rows);
+    });
+    mtAction(/^mt_mr_(\d+(?:\.\d+)?)$/, async (ctx, st) => {
+      const err = MT_INPUTS.sizerisk.apply(st, ctx.match[1]);
+      if (err) return ctx.answerCbQuery(err.replace('⚠️ ', ''), { show_alert: true }).catch(() => {});
+      await ack(ctx, `Margin $${st.margin} → lose $${ctx.match[1]} at SL`);
+      await renderPanel(ctx, st);
     });
     mtAction(/^mt_m_(\d+)$/, async (ctx, st) => {
       st.margin = Number(ctx.match[1]);
@@ -1124,7 +1221,9 @@ class TelegramBot {
       const max = maxLeverageFor(st);
       const options = MT_LEVERAGES.filter(v => !max || v <= max);
       const btns = options.map(v => Markup.button.callback(`${v}x${st.leverage === v ? ' ✓' : ''}`, `mt_l_${v}`));
-      await showMenu(ctx, `⚡ <b>LEVERAGE</b>\n\nCurrent: <b>${st.leverage}x</b>${max ? ` · ${st.exchangeId} max ${max}x` : ''}\n\nOther value: <code>/lev 8</code>`, grid(btns, 4));
+      await showMenu(ctx, `⚡ <b>LEVERAGE</b>\n\nCurrent: <b>${st.leverage}x</b>${max ? ` · ${st.exchangeId} max ${max}x` : ''}\n` +
+        `<i>Higher leverage = closer liquidation: max SL ≈ ${maxSlPct(st).toFixed(1)}% at ${st.leverage}x.</i>`,
+        [...grid(btns, 4), [Markup.button.callback('✏️ Type leverage', 'mt_in_lev')]]);
     });
     mtAction(/^mt_l_(\d+)$/, async (ctx, st) => {
       st.leverage = Number(ctx.match[1]);
@@ -1132,19 +1231,81 @@ class TelegramBot {
       await renderPanel(ctx, st);
     });
 
+    // ✏️ — ask for an exact value; the next plain message is captured by the text handler above
+    mtAction(/^mt_in_(slprice|slpct|slrisk|tp|entry|margin|lev|sizerisk)$/, async (ctx, st) => {
+      await ack(ctx);
+      await refreshMarket(st);
+      const field = ctx.match[1];
+      st.awaiting = { field, at: Date.now() };
+      await ctx.replyWithHTML(`✏️ ${MT_INPUTS[field].prompt(st, computeSetup(st))}\n\n<i>Send the value as a message, or</i> <code>cancel</code>.`);
+    });
+
     mtAction('mt_sl', async (ctx, st) => {
       await ack(ctx);
-      const cur = st.customSl > 0 ? `Custom $${fmtP(st.customSl)}` : st.slPct > 0 ? `${st.slPct}% from entry` : '3×ATR (volatility-based)';
-      const btns = [
-        Markup.button.callback(`3×ATR${!st.customSl && !st.slPct ? ' ✓' : ''}`, 'mt_sl_0'),
-        ...MT_SL_PCTS.map(v => Markup.button.callback(`${v}%${!st.customSl && st.slPct === v ? ' ✓' : ''}`, `mt_sl_${v}`)),
-      ];
-      await showMenu(ctx, `🛑 <b>STOP LOSS</b>\n\nCurrent: <b>${cur}</b>\n\nExact price: <code>/sl 0.0512</code>\nCustom %: <code>/sl 4.5%</code>`, grid(btns, 3));
+      await refreshMarket(st);
+      const s = computeSetup(st);
+      const sign = st.direction === 'long' ? 1 : -1;
+      const posSize = st.margin * st.leverage;
+      const limitPct = maxSlPct(st);
+      const atrPct = (s.atr / s.entry) * 100;
+      const money = (v) => `$${v < 10 ? v.toFixed(2) : v.toFixed(1)}`;
+      const isPct = !st.customSl && !st.slRiskUsd && st.slPct > 0;
+      const isAtr = !st.customSl && !st.slRiskUsd && !st.slPct;
+
+      const pctBtns = MT_SL_PCTS.map(v => (v >= limitPct
+        ? Markup.button.callback(`⛔ ${v}%`, 'mt_sl_liq')
+        : Markup.button.callback(`${isPct && st.slPct === v ? '✓ ' : ''}${v}% −${money(lossAt(st, v))}`, `mt_slp_${v}`)));
+      const atrBtns = MT_SL_ATR.map(m => {
+        const pct = m * atrPct;
+        return pct >= limitPct
+          ? Markup.button.callback(`⛔ ${m}×ATR`, 'mt_sl_liq')
+          : Markup.button.callback(`${isAtr && (st.slAtrMult || 3) === m ? '✓ ' : ''}${m}×ATR −${money(lossAt(st, pct))}`, `mt_sla_${m}`);
+      });
+      const riskBtns = MT_RISK_USD.filter(u => (u / posSize) * 100 >= 0.1).map(u => {
+        const pct = (u / posSize) * 100;
+        return pct >= limitPct
+          ? Markup.button.callback(`⛔ $${u}`, 'mt_sl_liq')
+          : Markup.button.callback(`${st.slRiskUsd === u ? '✓ ' : ''}lose $${u} (${pct.toFixed(1)}%)`, `mt_slr_${u}`);
+      });
+
+      // Price / loss table for every % option, from the actual entry (limit price when set)
+      const rows = MT_SL_PCTS.filter(v => v < limitPct).map(v => {
+        const price = s.entry * (1 - sign * v / 100);
+        const loss = lossAt(st, v);
+        return `${(v + '%').padStart(5)}  ${fmtP(price).padStart(10)}  ${('-' + money(loss)).padStart(8)}  ${(((loss / st.margin) * 100).toFixed(0) + '%').padStart(5)}`;
+      });
+      const entryLabel = st.entryType === 'limit' && st.limitPrice > 0 ? `Limit $${fmtP(s.entry)}` : `Market $${fmtP(s.entry)}`;
+      const text =
+        `🛑 <b>STOP LOSS — ${st.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} ${escapeHtml(st.symbol)}</b>\n\n` +
+        `Entry: <b>${entryLabel}</b> · Position <b>$${posSize.toFixed(2)}</b> ($${st.margin} × ${st.leverage}x)\n` +
+        `💀 Liquidation ≈ $${fmtP(s.liqPrice)} — SL must stay under <b>${limitPct.toFixed(1)}%</b>\n` +
+        `Current: <b>${slLabelOf(st)}</b> → $${fmtP(s.stopLoss)} · lose <b>-$${s.maxLoss.toFixed(2)}</b> (${((s.maxLoss / st.margin) * 100).toFixed(0)}% of margin)\n\n` +
+        `<pre>  SL     SL price      Loss  %marg\n${rows.join('\n')}</pre>\n` +
+        `ATR (1h) ≈ ${atrPct.toFixed(2)}% · Fees ≈ $${s.fees.toFixed(2)} round trip (not included)\n\n` +
+        `<b>% from entry</b> · <b>ATR</b> = scales with volatility · <b>lose $X</b> = SL placed so a hit costs exactly that`;
+      await showMenu(ctx, text, [
+        ...grid(pctBtns, 4),
+        ...grid(atrBtns, 3),
+        ...grid(riskBtns, 4),
+        [Markup.button.callback('✏️ Price', 'mt_in_slprice'), Markup.button.callback('✏️ %', 'mt_in_slpct'), Markup.button.callback('✏️ $ to lose', 'mt_in_slrisk')],
+      ]);
     });
-    mtAction(/^mt_sl_(\d+)$/, async (ctx, st) => {
-      st.slPct = Number(ctx.match[1]);
-      st.customSl = 0;
-      await ack(ctx, st.slPct ? `${st.slPct}%` : 'ATR');
+    mtAction('mt_sl_liq', async (ctx, st) => {
+      await ctx.answerCbQuery(`At ${st.leverage}x you'd be liquidated before that SL (max ~${maxSlPct(st).toFixed(1)}%). Lower the leverage to use a wider SL.`, { show_alert: true }).catch(() => {});
+    });
+    mtAction(/^mt_slp_(\d+(?:\.\d+)?)$/, async (ctx, st) => {
+      setSl.pct(st, Number(ctx.match[1]));
+      await ack(ctx, `SL ${st.slPct}% · lose $${lossAt(st, st.slPct).toFixed(2)}`);
+      await renderPanel(ctx, st);
+    });
+    mtAction(/^mt_sla_(\d+(?:\.\d+)?)$/, async (ctx, st) => {
+      setSl.atr(st, Number(ctx.match[1]));
+      await ack(ctx, `SL ${st.slAtrMult}×ATR`);
+      await renderPanel(ctx, st);
+    });
+    mtAction(/^mt_slr_(\d+(?:\.\d+)?)$/, async (ctx, st) => {
+      setSl.risk(st, Number(ctx.match[1]));
+      await ack(ctx, `SL placed to lose $${st.slRiskUsd}`);
       await renderPanel(ctx, st);
     });
 
@@ -1155,7 +1316,8 @@ class TelegramBot {
       await showMenu(ctx,
         `🎯 <b>TAKE PROFIT</b>\n\nTargets are multiples of your risk (R = distance to SL).\n` +
         `Current: <b>${st.customTp1 > 0 ? `Custom TP1 $${fmtP(st.customTp1)}` : MT_TP_PRESETS[st.tpPreset].label}</b>\n\n` +
-        `Exact TP1 price: <code>/tp 0.089</code> (TP2-4 scale from it)`, btns);
+        `Or tap ✏️ to type an exact TP1 price (TP2-4 scale from it).`,
+        [...btns, [Markup.button.callback('✏️ Type TP1 price', 'mt_in_tp')]]);
     });
     mtAction('mt_exit', async (ctx, st) => {
       await ack(ctx);
@@ -1174,6 +1336,7 @@ class TelegramBot {
 
     mtAction(/^mt_tpp_(safe|default|runner)$/, async (ctx, st) => {
       st.tpPreset = ctx.match[1];
+      st.tpPcts = null;
       st.customTp1 = 0;
       await ack(ctx, MT_TP_PRESETS[st.tpPreset].label);
       await renderPanel(ctx, st);
@@ -1190,9 +1353,10 @@ class TelegramBot {
       await showMenu(ctx,
         `🚀 <b>ENTRY</b>\n\nMarket: <b>$${fmtP(st.market.price)}</b>\n\n` +
         `<b>Market</b> fills immediately.\n<b>Limit</b> waits for your price (checked every minute, expires in 24h).\n\n` +
-        `Quick ${isLong ? 'pullback (below market)' : 'bounce (above market)'} limits below, or any price: <code>/entry 0.0512</code>\n` +
-        `<i>A long limit above market (or short below) acts as a breakout entry.</i>`,
-        [[Markup.button.callback(`🚀 Market${st.entryType === 'market' ? ' ✓' : ''}`, 'mt_entry_market')], ...grid(offsetBtns, 2)]);
+        `Quick ${isLong ? 'pullback (below market)' : 'bounce (above market)'} limits below, or tap ✏️ to type any price.\n` +
+        `<i>A long limit above market (or short below) acts as a breakout entry. SL and risk are recalculated from the limit price.</i>`,
+        [[Markup.button.callback(`🚀 Market${st.entryType === 'market' ? ' ✓' : ''}`, 'mt_entry_market')], ...grid(offsetBtns, 2),
+         [Markup.button.callback('✏️ Type limit price', 'mt_in_entry')]]);
     });
     mtAction('mt_entry_market', async (ctx, st) => {
       await ack(ctx, 'Market');
@@ -1588,6 +1752,173 @@ class TelegramBot {
           Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} ${t.symbol} · ${t.source}${t.onchain_context?.manual ? ' 🔧' : ''}`, `mt_close_${t.id}`)), 2);
         await ctx.replyWithHTML('🔧 <b>Which position do you want to close?</b>', Markup.inlineKeyboard(rows));
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+
+    // === /check SYMBOL — run the pump-exhaustion analysis + channel entry rules on any coin on demand ===
+    const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 35];
+
+    const runExhaustionCheck = async (symbol, uid) => {
+      const te = mtExec();
+      const scanner = this.onchainScanner;
+      const exIds = exchangesFor(symbol);
+      if (!exIds.length) return { text: `⚠️ ${escapeHtml(symbol)}/USDT perpetual not found on ${Object.keys(te.exchanges).join(', ')}.` };
+      const exId = exIds[0];
+      const ex = te.exchanges[exId];
+      const pair = pairOf(symbol);
+      const ticker = await ex.fetchTicker(pair);
+
+      // Same per-symbol scoring the scanner runs (OI 1h/4h, funding, momentum, volume)
+      const token = await scanner.analyzeSymbol(ex, exId, pair, ticker);
+      if (!token) {
+        return {
+          text: `🔍 <b>CHECK — ${escapeHtml(symbol)}</b> · ${exId.toUpperCase()}\n\n💰 $${fmtP(ticker.last)} (${fmtPct(ticker.percentage || 0)} 24h)\n\n` +
+            `❌ <b>No pump activity</b> — no notable OI, funding, volume or price move. Not an exhaustion setup.`,
+          symbol,
+        };
+      }
+      token.lsData = await scanner.fetchLongShortRatio(pair).catch(() => null);
+
+      // Same setup builder as the live scan, with exhaustion detection forced on
+      const opts = {
+        volatilityFilter: te.volatilityFilter, max4hRange: te.max4hRange, minTopLS: te.minTopLS, exhaustionFilter: true,
+        minOiLong: te.minOiLong, minExhScore: te.minExhScore, minExhRsi: te.minExhRsi, maxNearHigh: te.maxNearHigh,
+        minLongRsi: te.minLongRsi, maxLongRsi: te.maxLongRsi, maxLongNearHigh: te.maxLongNearHigh,
+        maxLongPriceChange: te.maxLongPriceChange, crowdedFlip: te.crowdedFlip,
+      };
+      const setup = await scanner.buildTradeSetup(token, te.exchanges, 'ONCHAIN_SETUP', opts);
+      const snap = scanner.liquidationScanner?.generateSetupSnapshot(token, opts) || {};
+      const ctx = setup?.onchainContext || {};
+      // Judge exhaustion on the criteria themselves; the scanner's own entry filters (volatility, etc.) are reported separately
+      const crowdedFlip = !snap.exhaustion && (token.oiChange4h ?? 0) > 60 && (token.fundingRate ?? 0) > 0 && opts.crowdedFlip !== false;
+      const isExhaustion = !!(snap.exhaustion || crowdedFlip);
+      const scannerWouldSignal = !!(setup && setup.direction === 'short' && (ctx.exhaustion || ctx.crowdedFlip));
+
+      const minExh = opts.minExhScore ?? 5;
+      const maxNear = opts.maxNearHigh ?? 10;
+      const oi4h = token.oiChange4h;
+      const oi1h = token.oiChange1h;
+      const nearHigh = snap.nearHighPct ?? (ticker.high ? ((ticker.high - ticker.last) / ticker.high) * 100 : null);
+      const mark = (ok) => (ok ? '✅' : '❌');
+      const fmtSigned = (v, d = 1) => (v == null ? 'N/A' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(d)}%`);
+
+      let text = `🔍 <b>EXHAUSTION CHECK — ${escapeHtml(symbol)}</b> · ${exId.toUpperCase()}\n\n`;
+      text += `💰 Price: <b>$${fmtP(ticker.last)}</b> · 📈 24h: <b>${fmtSigned(token.priceChange)}</b>\n`;
+      text += `📊 OI 4H: <b>${fmtSigned(oi4h, 0)}</b> · OI 1H: <b>${fmtSigned(oi1h, 0)}</b>\n`;
+      text += `💵 Funding: <b>${token.fundingRate != null ? fmtSigned(token.fundingRate * 100, 3) : 'N/A'}</b> (${token.fundingBias || 'neutral'}) · 📉 RSI 5m: <b>${token.rsi5m != null ? token.rsi5m.toFixed(0) : 'N/A'}</b>\n`;
+      if (token.volRatio != null) text += `📊 Volume: <b>${token.volRatio.toFixed(1)}x</b> daily avg\n`;
+      if (token.lsData?.topTraderAcctRatio != null) text += `🐋 Top traders L/S: <b>${token.lsData.topTraderAcctRatio.toFixed(2)}</b> · retail <b>${(token.lsData.globalRatio ?? 0).toFixed(2)}</b>\n`;
+
+      text += `\n<b>Exhaustion criteria</b>\n`;
+      text += `${mark((snap.exhaustionScore ?? 0) >= minExh)} Exhaustion score <b>${snap.exhaustionScore ?? 0}</b> (need ${minExh}+: pump, near top, OI, funding, RSI)\n`;
+      text += `${mark((oi4h ?? 0) >= 25)} OI 4H ${fmtSigned(oi4h, 0)} (need +25%+ crowded)\n`;
+      text += `${mark(nearHigh != null && nearHigh < maxNear)} ${nearHigh != null ? nearHigh.toFixed(1) : '?'}% below 24H high (need &lt; ${maxNear}%)\n`;
+      if (crowdedFlip) text += `✅ OI crowded flip (OI &gt; 60% + positive funding)\n`;
+
+      const result = { symbol, text: '', isExhaustion };
+      if (!isExhaustion) {
+        const scannerView = setup ? `The scanner reads it as a <b>${setup.direction.toUpperCase()}</b> setup instead.` : token._rejectReason ? `Scanner: ${escapeHtml(token._rejectReason)}.` : '';
+        result.text = text + `\n❌ <b>NOT A PUMP-EXHAUSTION SHORT</b>\n${scannerView}\n\n<i>${new Date().toUTCString()}</i>`;
+        return result;
+      }
+
+      // Channel entry rules: OI still building / top age / CISD
+      let top = null;
+      try { top = await measureTop(ex, symbol); } catch (e) { logger.debug(`check ${symbol}: top failed: ${e.message}`); }
+      const check = { oi1h, topAgeMin: top?.topAgeMin ?? null, cisdScore: token.cisdScore || 0 };
+      const verdict = entryVerdict(check);
+      const topAge = check.topAgeMin != null ? Math.round(check.topAgeMin) : null;
+      const verdictText = {
+        oi_building: `⛔ <b>DON'T SHORT YET — OI STILL BUILDING</b>\n  → OI ${fmtSigned(oi1h, 0)} in the last hour (over ${PUMP_RULES.maxOi1h}%). All 5 past signals like this squeezed past an 8% SL.`,
+        top_fresh: `⏳ <b>WAIT — TOP ${topAge == null ? 'UNKNOWN' : `ONLY ${topAge}m OLD`}</b>\n  → Short after ${PUMP_RULES.minTopAgeMin}m+ with no new high. Tap 🔄 Re-check later.`,
+        enter: `✅ <b>ENTER — TOP HOLDING + 1H REVERSAL</b>\n  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${(token.cisdFlags || []).join(' + ') || 'none'})`,
+        no_cisd: `🟡 <b>CAUTION — TOP HOLDING, NO 1H REVERSAL YET</b>\n  → No new high for ${topAge}m, but CISD 0. Wait for a red 1H candle / lower high.`,
+      }[verdict];
+
+      text += `✅ <b>Pump exhaustion detected</b>\n`;
+      if (!scannerWouldSignal) {
+        const why = token._rejectReason ? escapeHtml(token._rejectReason) : setup ? `it scores it as a ${setup.direction.toUpperCase()}` : 'its entry filters';
+        text += `ℹ️ <i>The bot's scanner would not auto-signal this (${why}) — manual call.</i>\n`;
+      }
+      text += `\n🔝 24H High $${top ? fmtP(top.high24) : '?'} · ${topAge != null ? `${topAge}m ago` : 'age unknown'}${topAge != null && topAge >= PUMP_RULES.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
+      text += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${(token.cisdFlags || []).join(' + ') || 'none'})\n`;
+      text += `\n${verdictText}\n`;
+
+      const L = channelLevels(ticker.last);
+      text += `\n<b>Plan (short from $${fmtP(ticker.last)}):</b>\n`;
+      text += L.tps.map((tp, i) => `🎯 TP${i + 1}: $${fmtP(tp)} (−${PUMP_RULES.tpPcts[i]}%)`).join('\n');
+      text += `\n🛑 SL: $${fmtP(L.stopLoss)} (+${PUMP_RULES.slPct}%) · Exit: TPs only\n`;
+
+      // Sizing from the user's saved manual-trade settings
+      const prefs = (await db.getManualPrefs(uid).catch(() => null)) || {};
+      const margin = prefs.margin || te.maxPositionSize || 12;
+      const lev = prefs.leverage || te.defaultLeverage || 3;
+      const pos = margin * lev;
+      const loss = pos * PUMP_RULES.slPct / 100;
+      const liqPct = 90 / lev;
+      text += `\n<b>Your size</b> ($${margin} × ${lev}x = $${pos.toFixed(0)}): `;
+      if (PUMP_RULES.slPct >= liqPct) {
+        // Keep the same worst case as a liquidation (the whole margin) but with room for the full SL
+        const safeMargin = Math.round((margin / (PUMP_RULES.maxLeverage * PUMP_RULES.slPct / 100)) * 100) / 100;
+        text += `⛔ at ${lev}x you'd be liquidated (~${liqPct.toFixed(1)}%) before the ${PUMP_RULES.slPct}% SL — a squeeze costs the whole $${margin}.\n` +
+          `   Same $${margin} max loss at ${PUMP_RULES.maxLeverage}x: <b>$${safeMargin} margin</b> ($${(safeMargin * PUMP_RULES.maxLeverage).toFixed(0)} position) → SL loses $${(safeMargin * PUMP_RULES.maxLeverage * PUMP_RULES.slPct / 100).toFixed(2)} but survives squeezes.\n`;
+        result.lev = PUMP_RULES.maxLeverage;
+        result.margin = safeMargin;
+      } else {
+        text += `SL loses <b>-$${loss.toFixed(2)}</b> · TP1 makes <b>+$${(pos * PUMP_RULES.tpPcts[0] / 100).toFixed(2)}</b>\n`;
+      }
+      result.text = text + `\n<i>${new Date().toUTCString()}</i>`;
+      result.verdict = verdict;
+      return result;
+    };
+
+    const sendCheck = async (ctx, symbol) => {
+      const working = await ctx.replyWithHTML(`🔍 Checking <b>${escapeHtml(symbol)}</b>…`);
+      try {
+        const r = await runExhaustionCheck(symbol, ctx.from.id);
+        const rows = [[Markup.button.callback('🔄 Re-check', `chk_re_${symbol}`)]];
+        if (r.isExhaustion) {
+          rows.unshift([Markup.button.callback(r.verdict === 'oi_building' ? '⚠️ Open short panel anyway' : '🔧 Open short panel (plan levels)',
+            `chk_tr_${symbol}${r.lev ? `_${r.lev}_${r.margin}` : ''}`)]);
+        }
+        await ctx.telegram.editMessageText(working.chat.id, working.message_id, undefined, r.text, {
+          parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(rows).reply_markup,
+        });
+      } catch (e) {
+        logger.error(`/check ${symbol}: ${e.message}`);
+        await ctx.telegram.editMessageText(working.chat.id, working.message_id, undefined, `⚠️ Check failed for ${escapeHtml(symbol)}: ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    };
+
+    this.bot.command('check', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      const symbol = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase().replace(/USDT$/, '');
+      if (!symbol) return ctx.replyWithHTML('Usage: <code>/check SYMBOL</code> — runs the pump-exhaustion analysis and entry rules on any coin.\nExample: <code>/check OGN</code>');
+      if (!/^[A-Z0-9]{1,20}$/.test(symbol)) return ctx.replyWithHTML('⚠️ Invalid symbol.');
+      await sendCheck(ctx, symbol);
+    });
+
+    this.bot.action(/^chk_re_([A-Z0-9]{1,20})$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Re-checking…');
+      await sendCheck(ctx, ctx.match[1]);
+    });
+
+    // Opens the manual panel as a short with the plan's SL/TP (and safer leverage when needed)
+    this.bot.action(/^chk_tr_([A-Z0-9]{1,20})(?:_(\d+)_(\d+(?:\.\d+)?))?$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      const [, symbol, lev, margin] = ctx.match;
+      try {
+        await openPanel(ctx, symbol, {
+          direction: 'short',
+          slPct: PUMP_RULES.slPct,
+          tpPcts: PLAN_TP_PCTS,
+          exitStyle: 'tponly',
+          leverage: lev ? Number(lev) : undefined,
+          margin: margin ? Number(margin) : undefined,
+          notice: lev ? `Leverage set to ${lev}x and margin to $${margin} so the ${PUMP_RULES.slPct}% SL fits before liquidation (same max loss).` : null,
+        });
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
     });
 
     const formatPositions = async (trades, exchanges) => {
@@ -5433,6 +5764,7 @@ class TelegramBot {
          Markup.button.callback('🔴 Manual Short', 'pnl_short')],
         [Markup.button.callback('📊 All Positions', 'pnl_positions'),
          Markup.button.callback('📍 Limit Orders', 'mt_orders')],
+        [Markup.button.callback('🔍 Check a coin (pump exhaustion)', 'pnl_check')],
         [Markup.button.callback('📈 All Stats', 'pnl_stats')],
       ]);
       if (isNew) {
@@ -5446,6 +5778,11 @@ class TelegramBot {
     this.bot.action('panel_main', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showPanel(ctx); } catch (e) { logger.error(`panel_main error: ${e.message}`); }
+    });
+
+    this.bot.action('pnl_check', async (ctx) => {
+      await ctx.answerCbQuery();
+      ctx.replyWithHTML('🔍 <b>Check a coin</b>\n\nSend <code>/check SYMBOL</code> — e.g. <code>/check OGN</code>\n\nRuns the pump-exhaustion analysis and the channel entry rules (OI building, top age, CISD), shows the plan levels and your size, with a button to open the short panel.');
     });
 
     this.bot.action('pnl_long', async (ctx) => {
@@ -8381,66 +8718,105 @@ class TelegramBot {
     }
   }
 
-  async sendPumpSignal(token, setup) {
-    if (!this.pumpChannelId) return;
+  // check: { verdict, oi1h, topAgeMin, high24, cisdScore, cisdFlags }, levels: channelLevels(price)
+  // Returns the channel message id (for the follow-up reply), or null
+  async sendPumpSignal(token, setup, check, levels) {
+    if (!this.pumpChannelId) return null;
     try {
       const ctx = setup.onchainContext || {};
       const price = token.price;
-      const pumpPct = parseFloat(ctx.priceChange || token.priceChange || 0).toFixed(1);
-      const oiChange = parseFloat(ctx.oiChange4h || token.oiChange4h || 0).toFixed(1);
+      const p = (v) => Number(v).toPrecision(6);
+      const pumpPct = parseFloat(ctx.priceChange || token.priceChange || 0);
+      const oi4h = parseFloat(ctx.oiChange4h || token.oiChange4h || 0);
+      const oi1h = check.oi1h != null ? parseFloat(check.oi1h) : null;
       const exhScore = ctx.exhaustionScore || 0;
       const fundingBias = ctx.fundingBias || token.fundingBias || 'unknown';
-      const rsi = ctx.rsi5m || 'N/A';
-      const nearHigh = ctx.nearHighPct != null ? `${parseFloat(ctx.nearHighPct).toFixed(1)}%` : 'N/A';
+      const rsi = ctx.rsi5m != null ? Number(ctx.rsi5m).toFixed(0) : 'N/A';
+      const cisdFlags = (check.cisdFlags || []).join(' + ') || 'none';
+      const topAge = check.topAgeMin != null ? Math.round(check.topAgeMin) : null;
+      const belowHigh = check.high24 ? ((check.high24 - price) / check.high24) * 100 : null;
+      const R = PUMP_RULES;
 
       let grade = '⚪ WEAK';
-      const pump = Math.abs(parseFloat(pumpPct));
-      const oi = parseFloat(oiChange);
-      if (pump >= 40 && oi >= 30 && oi < 100 && exhScore >= 7 && fundingBias !== 'long') grade = '🟢 PERFECT';
-      else if (pump >= 40 && oi >= 30 && oi < 100) grade = '🟡 STRONG';
-      else if (pump >= 40) grade = '🟠 PUMP ONLY';
+      if (pumpPct >= 40 && oi4h >= 30 && oi4h < 100 && exhScore >= 7 && fundingBias !== 'long') grade = '🟢 PERFECT';
+      else if (pumpPct >= 40 && oi4h >= 30 && oi4h < 100) grade = '🟡 STRONG';
+      else if (pumpPct >= 40) grade = '🟠 PUMP ONLY';
 
-      const nearHighVal = ctx.nearHighPct != null ? parseFloat(ctx.nearHighPct) : null;
-      const momentumLive = nearHighVal != null && nearHighVal <= 3;
-      const rsiHot = typeof rsi === 'number' && rsi >= 80;
-      const cisdScore = ctx.cisdScore || 0;
-      const cisdFlags = (ctx.cisdFlags || []).join('+') || 'none';
-      const hasCISD = cisdScore >= 2;
-      const entryWarning = (momentumLive || rsiHot) && !hasCISD;
+      const verdicts = {
+        oi_building:
+          `⛔ <b>DON'T SHORT YET — OI STILL BUILDING</b>\n` +
+          `  → OI +${oi1h?.toFixed(0)}% in the last hour (over ${R.maxOi1h}%) — the pump is still being fuelled\n` +
+          `  → Recent signals like this squeezed 9–18% first or kept pumping`,
+        top_fresh:
+          `⏳ <b>WAIT — TOP ${topAge == null ? 'UNKNOWN' : `ONLY ${topAge}m OLD`}</b>\n` +
+          `  → Short only after ${R.minTopAgeMin}m+ with no new high (signals fired at the top mostly squeezed first)\n` +
+          `  → Update in ${R.followUpMin} min ⬇️`,
+        enter:
+          `✅ <b>ENTER — TOP HOLDING + 1H REVERSAL</b>\n` +
+          `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags})`,
+        no_cisd:
+          `🟡 <b>CAUTION — TOP HOLDING, NO 1H REVERSAL YET</b>\n` +
+          `  → No new high for ${topAge}m, but CISD 0 — wait for a red 1H candle / lower high\n` +
+          `  → Update in ${R.followUpMin} min ⬇️`,
+      };
 
-      let msg = `🔴 <b>PUMP EXHAUSTION — ${token.symbol}</b>\n`;
-      msg += `${grade}\n\n`;
-      if (entryWarning) {
-        msg += `⚠️ <b>MOMENTUM STILL LIVE — WAIT FOR PULLBACK</b>\n`;
-        if (momentumLive) msg += `  → Price within ${nearHigh} of 24H high\n`;
-        if (rsiHot) msg += `  → RSI 5m at ${rsi} (overbought)\n`;
-        msg += `  → Wait for 5-10% pullback from peak before entry\n\n`;
-      }
+      let msg = `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
+      msg += `${verdicts[check.verdict]}\n\n`;
       msg += `💰 Price: <b>$${price}</b>\n`;
-      msg += `📈 Pump: <b>+${pumpPct}%</b>\n`;
-      msg += `📊 OI Change 4H: <b>${oiChange}%</b>\n`;
-      msg += `🔥 Exhaustion Score: <b>${exhScore}/10</b>\n`;
-      msg += `💵 Funding Bias: <b>${fundingBias}</b>\n`;
-      msg += `📉 RSI 5m: <b>${rsi}</b>\n`;
-      msg += `📍 Near 24H High: <b>${nearHigh}</b>\n`;
-      msg += `\n🔄 <b>CISD (${cisdScore}/4):</b> ${cisdFlags}\n`;
-      if (hasCISD) {
-        msg += `✅ <i>1H reversal confirmed — entry zone</i>\n`;
-      } else {
-        msg += `⏳ <i>No 1H reversal yet (19% WR without CISD vs 67% with)</i>\n`;
-      }
-      if (setup.tp1) msg += `\n🎯 TP1: $${parseFloat(setup.tp1).toPrecision(6)}`;
-      if (setup.tp2) msg += `\n🎯 TP2: $${parseFloat(setup.tp2).toPrecision(6)}`;
-      if (setup.stopLoss) msg += `\n🛑 SL: $${parseFloat(setup.stopLoss).toPrecision(6)}`;
+      msg += `📈 Pump: <b>+${pumpPct.toFixed(1)}%</b>\n`;
+      msg += `📊 OI 4H: <b>${oi4h >= 0 ? '+' : ''}${oi4h.toFixed(0)}%</b> · OI 1H: <b>${oi1h == null ? 'N/A' : `${oi1h >= 0 ? '+' : ''}${oi1h.toFixed(0)}%`}</b>${oi1h != null && oi1h > R.maxOi1h ? ' ⛔' : ''}\n`;
+      if (check.high24) msg += `🔝 24H High: <b>$${p(check.high24)}</b> (${belowHigh.toFixed(1)}% above price) · ${topAge}m ago${topAge >= R.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
+      msg += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${cisdFlags})${check.cisdScore >= R.minCisd ? ' ✅' : ''}\n`;
+      msg += `🔥 Exhaustion: <b>${exhScore}/10</b> · 💵 Funding: <b>${fundingBias}</b> · 📉 RSI 5m: <b>${rsi}</b>\n`;
+      msg += `\n<b>Plan (short):</b>\n`;
+      msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n');
+      msg += `\n🛑 SL: $${p(levels.stopLoss)} (+${R.slPct}%)\n`;
+      msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${R.slPct}% SL = ${R.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b>\n`;
+      msg += `<i>Clean dumps took 10–22h to bottom — don't trail tight</i>`;
       if (token.exchange) msg += `\n\n📊 ${token.exchange.toUpperCase()}`;
-      if (!entryWarning && hasCISD) msg += `\n\n✅ <i>CISD + Pullback confirmed — ENTER</i>`;
-      else if (!entryWarning && !hasCISD) msg += `\n\n⏳ <i>Pullback OK but no CISD — wait for 1H reversal</i>`;
-      msg += `\n\n<i>${new Date().toUTCString()}</i>`;
+      msg += `\n<i>${new Date().toUTCString()}</i>`;
 
-      await this.bot.telegram.sendMessage(this.pumpChannelId, msg, { parse_mode: 'HTML' });
-      logger.info(`Pump signal sent to channel: ${token.symbol}`);
+      const sent = await this.bot.telegram.sendMessage(this.pumpChannelId, msg, { parse_mode: 'HTML' });
+      logger.info(`Pump signal sent to channel: ${token.symbol} (${check.verdict})`);
+      return sent?.message_id || null;
     } catch (err) {
       logger.error(`Failed to send pump signal: ${err.message}`);
+      return null;
+    }
+  }
+
+  // u: { symbol, verdict, newHigh, highSince, signalPrice, price, topAgeMin, cisdScore, cisdFlags, levels }
+  async sendPumpFollowUp(replyToId, u) {
+    if (!this.pumpChannelId) return;
+    try {
+      const p = (v) => Number(v).toPrecision(6);
+      const R = PUMP_RULES;
+      const sym = escapeHtml(u.symbol);
+      const move = ((u.price - u.signalPrice) / u.signalPrice) * 100;
+      const now = `Price now $${p(u.price)} (${move >= 0 ? '+' : ''}${move.toFixed(1)}% since signal)`;
+      let msg;
+      if (u.newHigh) {
+        msg = `⚠️ <b>${sym} — NEW HIGH, PUMP CONTINUING</b>\n` +
+          `New high $${p(u.highSince)} after the signal · ${now}\n` +
+          `❌ Don't short this one yet — wait for the top to hold ${R.minTopAgeMin}m+ and a red 1H candle.`;
+      } else if (u.verdict === 'enter') {
+        msg = `✅ <b>${sym} — TOP HELD ${Math.round(u.topAgeMin)}m + 1H REVERSAL (CISD ${u.cisdScore}/4)</b>\n` +
+          `${now}\n\n<b>Entry now (short):</b>\n` +
+          u.levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n') +
+          `\n🛑 SL: $${p(u.levels.stopLoss)} (+${R.slPct}%)\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only`;
+      } else if (u.verdict === 'no_cisd') {
+        msg = `🟡 <b>${sym} — TOP HELD ${Math.round(u.topAgeMin)}m, BUT NO 1H REVERSAL YET</b>\n` +
+          `${now}\nCISD 0 — signals without it went 2/7. Wait for a red 1H candle / lower high before shorting.`;
+      } else {
+        msg = `⏳ <b>${sym} — TOP STILL FRESH (${Math.round(u.topAgeMin)}m)</b>\n${now}\nStill too close to the high — wait.`;
+      }
+      await this.bot.telegram.sendMessage(this.pumpChannelId, msg, {
+        parse_mode: 'HTML',
+        reply_parameters: { message_id: replyToId, allow_sending_without_reply: true },
+      });
+      logger.info(`Pump follow-up sent: ${u.symbol} (${u.newHigh ? 'new_high' : u.verdict})`);
+    } catch (err) {
+      logger.error(`Failed to send pump follow-up: ${err.message}`);
     }
   }
 

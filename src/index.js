@@ -19,6 +19,7 @@ const TradeExecutor = require('./engine/tradeExecutor');
 const UserPaperEngine = require('./engine/userPaperEngine');
 const SwingScanner = require('./collectors/swingScanner');
 const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
+const { PUMP_RULES, channelLevels, measureTop, currentCisd, entryVerdict } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -598,6 +599,28 @@ async function main() {
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor });
 
+  // Re-check a pump signal that said "wait": did the top hold, and is there a 1H reversal now?
+  // (In-memory timer — a restart inside the window skips the follow-up.)
+  async function sendPumpFollowUp(ex, token, signalHigh, replyToId) {
+    try {
+      const pair = `${token.symbol}/USDT:USDT`;
+      const [top, cisd, ticker] = await Promise.all([
+        measureTop(ex, token.symbol), currentCisd(ex, token.symbol), ex.fetchTicker(pair),
+      ]);
+      if (!top) return;
+      const newHigh = top.high24 > signalHigh * 1.001;
+      await bot.sendPumpFollowUp(replyToId, {
+        symbol: token.symbol,
+        verdict: entryVerdict({ oi1h: 0, topAgeMin: top.topAgeMin, cisdScore: cisd.score }),
+        newHigh, highSince: top.high24, signalPrice: token.price, price: ticker.last,
+        topAgeMin: top.topAgeMin, cisdScore: cisd.score, cisdFlags: cisd.flags,
+        levels: channelLevels(ticker.last),
+      });
+    } catch (e) {
+      logger.warn(`Pump follow-up ${token.symbol} failed: ${e.message}`);
+    }
+  }
+
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
   bot.userPaperEngine = userPaperEngine;
@@ -941,7 +964,22 @@ async function main() {
               [token.symbol, today]
             );
             if (rows.length > 0) continue;
-            bot.sendPumpSignal(token, setup).catch(e => logger.debug(`Pump signal failed: ${e.message}`));
+
+            const ex = listingMonitor.exchanges[token.exchange];
+            let top = null;
+            try { if (ex) top = await measureTop(ex, token.symbol); } catch (e) { logger.debug(`${token.symbol}: top measure failed: ${e.message}`); }
+            const check = {
+              oi1h: token.oiChange1h,
+              topAgeMin: top?.topAgeMin ?? null,
+              high24: top?.high24 ?? null,
+              cisdScore: ctx.cisdScore || 0,
+              cisdFlags: ctx.cisdFlags || [],
+            };
+            check.verdict = entryVerdict(check);
+            const levels = channelLevels(token.price);
+            const msgId = await bot.sendPumpSignal(token, setup, check, levels);
+
+            // Channel levels are logged so the outcome tracker scores what subscribers were shown
             db.logPumpSignal(token.symbol, {
               direction: 'short', score: token.score,
               exhaustionScore: ctx.exhaustionScore || 0,
@@ -951,7 +989,7 @@ async function main() {
               fundingBias: ctx.fundingBias || token.fundingBias,
               rsi5m: ctx.rsi5m || null,
               price: token.price,
-              tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss,
+              tp1: levels.tps[0], tp2: levels.tps[1], stopLoss: levels.stopLoss,
               confluence: {
                 oiChange1h: token.oiChange1h, oiChange4h: token.oiChange4h,
                 fundingRate: token.fundingRate, fundingBias: token.fundingBias,
@@ -960,8 +998,14 @@ async function main() {
                 nearHighPct: ctx.nearHighPct, exhaustionScore: ctx.exhaustionScore,
                 crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
                 cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
+                verdict: check.verdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2],
+                engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
             }).catch(e => logger.debug(`Pump log failed: ${e.message}`));
+
+            if (msgId && ex && check.high24 && (check.verdict === 'top_fresh' || check.verdict === 'no_cisd')) {
+              setTimeout(() => sendPumpFollowUp(ex, token, check.high24, msgId), PUMP_RULES.followUpMin * 60000);
+            }
           } catch (e) { logger.debug(`Pump signal check failed: ${e.message}`); }
         }
 

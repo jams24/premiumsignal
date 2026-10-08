@@ -17,6 +17,27 @@ function fetchJSON(url) {
   });
 }
 
+// CISD (change in state of delivery) on 1H candles — bearish confirmation for shorts.
+// The last candle is the one still forming.
+function scoreCisd(ohlcv) {
+  let score = 0;
+  const flags = [];
+  if (ohlcv && ohlcv.length >= 3) {
+    const curr = ohlcv[ohlcv.length - 1];
+    const prev1 = ohlcv[ohlcv.length - 2];
+    const currBearish = curr[4] < curr[1];
+    const lowerHigh = curr[2] < prev1[2];
+    const prevGreen = prev1[4] > prev1[1];
+    const firstRed = currBearish && prevGreen;
+    const breakOfLow = curr[4] < prev1[3];
+    if (currBearish) { score++; flags.push('bearish'); }
+    if (lowerHigh) { score++; flags.push('lowerHigh'); }
+    if (firstRed) { score++; flags.push('firstRed'); }
+    if (breakOfLow) { score++; flags.push('BOS'); }
+  }
+  return { score, flags };
+}
+
 function isStockToken(symbol) {
   if (STOCK_TOKENS.test(symbol)) return true;
   if (/STOCK$/i.test(symbol)) return true;
@@ -1052,21 +1073,7 @@ class OnchainScanner {
       } catch (e) { logger.debug(`${token.symbol}: 5m RSI fetch failed: ${e.message}`); }
 
       // CISD score: bearish 1H confirmation for short entries
-      let cisdScore = 0;
-      const cisdFlags = [];
-      if (ohlcv.length >= 3) {
-        const curr = ohlcv[ohlcv.length - 1];
-        const prev1 = ohlcv[ohlcv.length - 2];
-        const currBearish = curr[4] < curr[1];
-        const lowerHigh = curr[2] < prev1[2];
-        const prevGreen = prev1[4] > prev1[1];
-        const firstRed = currBearish && prevGreen;
-        const breakOfLow = curr[4] < prev1[3];
-        if (currBearish) { cisdScore++; cisdFlags.push('bearish'); }
-        if (lowerHigh) { cisdScore++; cisdFlags.push('lowerHigh'); }
-        if (firstRed) { cisdScore++; cisdFlags.push('firstRed'); }
-        if (breakOfLow) { cisdScore++; cisdFlags.push('BOS'); }
-      }
+      const { score: cisdScore, flags: cisdFlags } = scoreCisd(ohlcv);
       token.cisdScore = cisdScore;
       token.cisdFlags = cisdFlags;
 
@@ -1527,3 +1534,4 @@ class OnchainScanner {
 }
 
 module.exports = OnchainScanner;
+module.exports.scoreCisd = scoreCisd;
