@@ -1022,7 +1022,7 @@ async function main() {
             if (msgId && ex && check.verdict !== 'enter') {
               pumpWatches.set(token.symbol, {
                 symbol: token.symbol, ex, msgId, verdict: check.verdict,
-                signalPrice: token.price, high: check.high24, startedAt: Date.now(), newHighSent: false,
+                signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false,
               });
             }
           } catch (e) { logger.debug(`Pump signal check failed: ${e.message}`); }

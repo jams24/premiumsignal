@@ -17,7 +17,10 @@ const PUMP_RULES = {
   maxLeverage: 5,
   followUpEveryMin: 5,
   followUpMaxMin: 120,
-  maxBelowHighPct: 10, // dumped this far from the top before entry → too late
+  // Too late to enter once price has given back this share of the pump (24h low → top). A flat 10%-off-the-top
+  // cut-off quit RLC 10-09 at -12.5% of a +114% pump, 10 min before every rule lined up and it fell another 25%.
+  maxPumpRetrace: 0.5,
+  maxBelowHighPct: 10, // fallback when the pump base is unknown
 };
 
 const H = 3600000;
@@ -30,15 +33,19 @@ function channelLevels(entry) {
   };
 }
 
-// 24h high and how long ago it printed, from 5m candles
+// 24h high (and how long ago it printed) plus the 24h low, from 5m candles
 async function measureTop(exchange, symbol, now = Date.now()) {
   const candles = await exchange.fetchOHLCV(`${symbol}/USDT:USDT`, '5m', now - 24 * H, 300);
   let high = -Infinity;
   let highAt = now;
-  for (const c of candles) if (c[2] >= high) { high = c[2]; highAt = c[0]; }
+  let low = Infinity;
+  for (const c of candles) {
+    if (c[2] >= high) { high = c[2]; highAt = c[0]; }
+    if (c[3] < low) low = c[3];
+  }
   if (!isFinite(high)) return null;
   // A 5m candle's high could be anywhere inside it; count from its close so age is never overstated
-  return { high24: high, topAgeMin: Math.max(0, (now - (highAt + 5 * 60000)) / 60000) };
+  return { high24: high, low24: low, topAgeMin: Math.max(0, (now - (highAt + 5 * 60000)) / 60000) };
 }
 
 // Best of 1H and 15m CISD (the faster timeframe confirms reversals the hour candle hasn't shown yet)
@@ -84,7 +91,13 @@ async function followUpCheck(exchange, watch, now = Date.now()) {
   const r = { price, top, cisd, oi1h, levels: channelLevels(price) };
   if (!top) return { kind: 'waiting', ...r };
   r.belowHigh = ((top.high24 - price) / top.high24) * 100;
-  if (r.belowHigh >= PUMP_RULES.maxBelowHighPct) return { kind: 'missed', ...r };
+  // watch.pumpBase = 24h low at signal time (before the pump), so a later top still measures the whole move
+  if (watch.pumpBase > 0 && top.high24 > watch.pumpBase) {
+    r.retrace = (top.high24 - price) / (top.high24 - watch.pumpBase);
+    if (r.retrace >= PUMP_RULES.maxPumpRetrace) return { kind: 'missed', ...r };
+  } else if (r.belowHigh >= PUMP_RULES.maxBelowHighPct) {
+    return { kind: 'missed', ...r };
+  }
   // OI unknown must not clear a signal that was blocked for OI
   if (oi1h == null && watch.verdict === 'oi_building') return { kind: 'waiting', ...r };
   r.verdict = entryVerdict({ oi1h, topAgeMin: top.topAgeMin, cisdScore: cisd.score });

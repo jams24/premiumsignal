@@ -8821,9 +8821,10 @@ class TelegramBot {
         msg = `⚠️ <b>${sym} — NEW HIGH $${p(u.top.high24)}, PUMP CONTINUING</b>\n${now} · ${after}\n` +
           `❌ Don't short yet — still watching for the top to hold ${R.minTopAgeMin}m+.`;
       } else if (u.kind === 'missed') {
+        const gaveBack = u.retrace != null ? ` — it has given back ${Math.round(u.retrace * 100)}% of the pump` : '';
         msg = `❌ <b>${sym} — NO ENTRY, ALREADY DUMPED</b>\n` +
-          `Price is ${u.belowHigh.toFixed(1)}% below the top $${p(u.top.high24)} · ${after}\n` +
-          `The move happened before the entry rules confirmed — don't chase it. Watch stopped.`;
+          `Price is ${u.belowHigh.toFixed(1)}% below the top $${p(u.top.high24)}${gaveBack} · ${after}\n` +
+          `Most of the move happened before the entry rules confirmed — don't chase it. Watch stopped.`;
       } else {
         msg = `⌛ <b>${sym} — NO ENTRY WITHIN ${R.followUpMaxMin / 60}H</b>\nThe entry rules never lined up. Watch stopped — skip this one.`;
       }
