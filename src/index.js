@@ -21,6 +21,7 @@ const SwingScanner = require('./collectors/swingScanner');
 const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
+const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
@@ -599,6 +600,15 @@ async function main() {
   // Init Telegram bot
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor });
 
+  // Auto-trades pump signals on ✅ ENTER (off by default; configured from /autopump)
+  const pumpAutoTrader = new PumpAutoTrader({
+    executor: onchainTradeExecutor,
+    notify: (chatId, html) => bot.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }),
+  });
+  await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
+  bot.pumpAutoTrader = pumpAutoTrader;
+  const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
+
   // Pump signals that weren't ENTER are watched every 5 min for up to 2h; the bot replies under the
   // original channel message only when something changes. Watch state lives on the pump_signals row
   // (watch_state), so a redeploy or crash resumes the watch instead of silently dropping it.
@@ -632,6 +642,9 @@ async function main() {
           const r = await followUpCheck(w.ex, w);
           if (r.kind === 'enter' || r.kind === 'missed') {
             await finishWatch(key, w, r.kind, { ...base, ...r });
+            if (r.kind === 'enter') {
+              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up' });
+            }
           } else if (r.kind === 'new_high') {
             w.high = r.top.high24;
             const firstNewHigh = !w.newHighSent;
@@ -1045,6 +1058,10 @@ async function main() {
                 engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
             }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
+
+            if (check.verdict === 'enter' && ex) {
+              await autoTradeEnter({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal' });
+            }
 
             if (msgId && ex && check.verdict !== 'enter') {
               const w = {

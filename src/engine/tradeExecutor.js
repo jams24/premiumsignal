@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const logger = require('../utils/logger');
 const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
+const { marginSaverLeverage } = require('../utils/marginSaver');
 
 class TradeExecutor {
   constructor(exchanges, config = {}) {
@@ -535,7 +536,10 @@ class TradeExecutor {
   async setLeverageWithFallback(exchange, pair, desiredLeverage) {
     const market = exchange.markets[pair];
     const maxLev = market?.limits?.leverage?.max || 125;
-    const attempts = [...new Set([Math.min(desiredLeverage, maxLev), 10, 5, 3, 2, 1])].filter(v => v >= 1).sort((a, b) => b - a);
+    // Try the requested leverage first, then step DOWN only — never above what was asked for.
+    // (Previously 10x was in the list and sorted first, so every request below 10x silently became 10x.)
+    const target = Math.min(desiredLeverage, maxLev);
+    const attempts = [...new Set([target, 10, 5, 3, 2, 1])].filter(v => v >= 1 && v <= target).sort((a, b) => b - a);
 
     // Ensure margin mode is set first
     try { await exchange.setMarginMode('isolated', pair); } catch (e) { /* may already be set */ }
@@ -1978,7 +1982,9 @@ class TradeExecutor {
 
         // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
         // Trigger at 2.5% price move OR 12% leveraged ROI (whichever comes first)
-        const leveragedPnl = pnlPct * (trade.leverage || 1);
+        // Manual trades: ROI on the leverage the user chose (the margin saver may run the exchange higher)
+        const roiLeverage = (isManual && trade.onchain_context?.chosenLeverage) || trade.leverage || 1;
+        const leveragedPnl = pnlPct * roiLeverage;
         if (xp.preTp1 && !action && !trade.hit_tp1 && (pnlPct > xp.ppPct || leveragedPnl > xp.ppLev)) {
           const currentSL = trade.stop_loss;
           const atBreakeven = isLong ? currentSL >= trade.entry_price : currentSL <= trade.entry_price;
@@ -2668,7 +2674,17 @@ class TradeExecutor {
 
   // Open a user-configured trade: explicit size/leverage/TP/SL, no DCA, no bot TP recalculation
   async openManualTrade(p) {
-    const context = { ...(p.context || {}), manual: true };
+    // Margin saver: same position size, exchange leverage raised as far as is safe for this SL,
+    // so only about the margin the trade can lose is locked. Chosen leverage is kept for exit rules.
+    const chosenLeverage = p.leverage;
+    let leverage = chosenLeverage;
+    if (p.marginSaver) {
+      const slPct = (Math.abs(p.stopLoss - p.entryPrice) / p.entryPrice) * 100;
+      const maxLev = this.exchanges[p.exchangeId]?.markets?.[`${p.symbol}/USDT:USDT`]?.limits?.leverage?.max;
+      leverage = marginSaverLeverage(slPct, { chosen: chosenLeverage, maxLev });
+    }
+    const context = { ...(p.context || {}), manual: true, chosenLeverage, marginSaver: !!p.marginSaver };
+    p = { ...p, leverage };
     if (p.mode === 'live') {
       const exchange = this.exchanges[p.exchangeId];
       if (!exchange?.apiKey || !exchange?.secret) {

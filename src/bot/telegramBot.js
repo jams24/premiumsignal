@@ -5,6 +5,8 @@ const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
+const { PLAN_TP_PCTS } = require('../engine/pumpAutoTrader');
+const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
 // 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
 function runLabel(run7d) {
@@ -58,9 +60,9 @@ class TelegramBot {
       'panel', 'swingsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
-      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check',
+      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check', 'autopump',
     ]);
-    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_)/;
+    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_|ap_)/;
     const PUBLIC_COMMANDS = new Set([
       'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
@@ -802,6 +804,15 @@ class TelegramBot {
     };
     const lossAt = (st, pct) => (st.margin * st.leverage * pct) / 100;
 
+    // What the exchange will actually lock: with the margin saver on, leverage is raised as far as this SL allows
+    const saverLine = (st, s) => {
+      const lev = st.marginSaver ? marginSaverLeverage(s.slPct, { chosen: st.leverage, maxLev: maxLeverageFor(st) }) : st.leverage;
+      const locked = (s.posSize / lev).toFixed(2);
+      return st.marginSaver && lev > st.leverage
+        ? `🏦 Margin saver: exchange runs <b>${lev}x</b> → locks only <b>$${locked}</b> (liq ≈ ${liquidationPct(lev).toFixed(1)}%, beyond your ${s.slPct.toFixed(1)}% SL)`
+        : `🏦 Exchange locks <b>$${locked}</b> at ${lev}x${st.marginSaver ? '' : ' · margin saver OFF'}`;
+    };
+
     const buildPanel = (st) => {
       const te = mtExec();
       const s = computeSetup(st);
@@ -836,6 +847,7 @@ class TelegramBot {
         `💰 Market: <b>$${fmtP(m.price)}</b>${m.change24h != null ? ` (${fmtPct(m.change24h)} 24h)` : ''}${m.volume ? ` · Vol $${(m.volume / 1e6).toFixed(1)}M` : ''}`,
         entryLine,
         `💵 Margin <b>$${st.margin}</b> × <b>${st.leverage}x</b> = <b>$${s.posSize.toFixed(2)}</b> position`,
+        saverLine(st, s),
         balLine,
         '',
         tpLine(1, '🎯', s.tp1, ` — closes ${Math.round((te.tp1ClosePct ?? 0.33) * 100)}%`),
@@ -854,7 +866,7 @@ class TelegramBot {
         `🛡️ Exit (${MT_EXIT_STYLES[st.exitStyle]}): ${describeExit(st.exitStyle)}`,
         `<i>TP partial exits always run. The bot's time-exit and loss cap don't apply to manual trades.</i>`,
         '<i>✏️ Tap any menu, then ✏️ to type an exact value.</i>',
-        '<i>💾 Mode, exchange, direction, margin, leverage, SL type, TP preset and exit style are remembered for your next trade.</i>'
+        '<i>💾 Mode, exchange, direction, margin, leverage, SL type, TP preset, exit style and margin saver are remembered for your next trade.</i>'
       );
 
       const tick = (on, label) => `${label}${on ? ' ✓' : ''}`;
@@ -872,7 +884,8 @@ class TelegramBot {
          Markup.button.callback(`⚡ ${st.leverage}x`, 'mt_lev')],
         [Markup.button.callback(`🛑 SL: ${slLabel}`, 'mt_sl'),
          Markup.button.callback(`🎯 TP: ${tpLabel}`, 'mt_tp')],
-        [Markup.button.callback(`🛡️ Exit: ${MT_EXIT_STYLES[st.exitStyle]}`, 'mt_exit')],
+        [Markup.button.callback(`🛡️ Exit: ${MT_EXIT_STYLES[st.exitStyle]}`, 'mt_exit'),
+         Markup.button.callback(`🏦 Margin saver: ${st.marginSaver ? 'ON' : 'OFF'}`, 'mt_saver')],
         [confirmBtn],
         [Markup.button.callback('🔄 Refresh price', 'mt_refresh'),
          Markup.button.callback('❌ Cancel', 'mt_cancel')],
@@ -914,6 +927,7 @@ class TelegramBot {
       slRiskUsd: st.slRiskUsd,
       tpPreset: st.tpPreset,
       exitStyle: st.exitStyle,
+      marginSaver: st.marginSaver,
     });
     const prefsKey = (st) => JSON.stringify(prefsOf(st));
     const persistPrefs = async (uid, st) => {
@@ -958,6 +972,7 @@ class TelegramBot {
         customSl: 0,
         tpPreset: MT_TP_PRESETS[saved.tpPreset] ? saved.tpPreset : 'default',
         exitStyle: opts.exitStyle || (MT_EXIT_STYLES[saved.exitStyle] ? saved.exitStyle : 'tight'),
+        marginSaver: saved.marginSaver !== false,
         tpPcts: opts.tpPcts || null,
         customTp1: 0,
         entryType: 'market',
@@ -1341,6 +1356,11 @@ class TelegramBot {
         `🛡️ <b>EXIT STYLE</b> — how profit is protected before your TPs\n\n${lines.join('\n\n')}\n\n` +
         `<i>Looser = winners run further, but more profit is given back on a reversal.</i>`, btns);
     });
+    mtAction('mt_saver', async (ctx, st) => {
+      st.marginSaver = !st.marginSaver;
+      await ack(ctx, st.marginSaver ? 'Margin saver ON — only the margin the trade can lose is locked' : 'Margin saver OFF — exchange uses your leverage');
+      await renderPanel(ctx, st);
+    });
     mtAction(/^mt_xs_(tight|loose|hold|tponly)$/, async (ctx, st) => {
       st.exitStyle = ctx.match[1];
       await ack(ctx, MT_EXIT_STYLES[st.exitStyle]);
@@ -1434,6 +1454,7 @@ class TelegramBot {
             trigger: st.limitPrice <= s.market ? 'below' : 'above',
             stopLoss: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, atr: s.atr,
             exitStyle: st.exitStyle,
+            marginSaver: st.marginSaver,
             placedAt: Date.now(), expiresAt: Date.now() + MT_ORDER_TTL_MS,
           };
           const id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
@@ -1455,6 +1476,7 @@ class TelegramBot {
           symbol: st.symbol, exchangeId: st.exchangeId, direction: st.direction, mode: st.mode,
           entryPrice: s.entry, positionSize: s.posSize, leverage: st.leverage,
           tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, stopLoss: s.stopLoss, atr: s.atr,
+          marginSaver: st.marginSaver,
           context: { margin: st.margin, exitStyle: st.exitStyle },
         });
         delete this.manualTradeState[ctx.from.id];
@@ -1466,7 +1488,9 @@ class TelegramBot {
         }
         const lev = trade.leverage || st.leverage;
         const size = trade.positionSize || s.posSize;
-        const levNote = lev !== st.leverage ? ` (exchange allowed ${lev}x, not ${st.leverage}x)` : '';
+        const levNote = lev > st.leverage && st.marginSaver
+          ? ` (🏦 margin saver: locks $${(size / lev).toFixed(2)}, liq ≈ ${liquidationPct(lev).toFixed(1)}%)`
+          : lev !== st.leverage ? ` (exchange allowed ${lev}x, not ${st.leverage}x)` : '';
         await ctx.editMessageText(
           `${isLong ? '🟢' : '🔴'} <b>MANUAL ${st.direction.toUpperCase()} OPENED</b> — ${escapeHtml(st.symbol)}\n\n` +
           `${modeLabel} · ${st.exchangeId.toUpperCase()}\n` +
@@ -1564,6 +1588,7 @@ class TelegramBot {
           symbol: o.symbol, exchangeId: o.exchangeId, direction: o.direction, mode: o.mode,
           entryPrice: fillPrice, positionSize: o.margin * o.leverage, leverage: o.leverage,
           tp1: o.tp1, tp2: o.tp2, tp3: o.tp3, tp4: o.tp4, stopLoss: o.stopLoss, atr: o.atr,
+          marginSaver: o.marginSaver !== false,
           context: { margin: o.margin, limitOrderId: o.id, limitPrice: o.limitPrice, exitStyle: o.exitStyle || 'tight' },
         });
       } catch (e) {
@@ -1768,7 +1793,6 @@ class TelegramBot {
     });
 
     // === /check SYMBOL — run the pump-exhaustion analysis + channel entry rules on any coin on demand ===
-    const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 30];
 
     const runExhaustionCheck = async (symbol, uid) => {
       const te = mtExec();
@@ -1957,6 +1981,158 @@ class TelegramBot {
           notice: lev ? `Size pre-filled from /check: $${margin} × ${lev}x (the ${PUMP_RULES.slPct}% SL fits before liquidation; half size for fresh breakouts). Not saved as your default.` : null,
         });
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    // === /autopump — auto-trade pump signals when they reach ✅ ENTER ===
+    const AP_MAX_OPEN = [1, 2, 3, 5];
+    const AP_DAILY_STOP = [30, 60, 100, 200, 0];
+    const money = (v) => `$${Number(v).toFixed(2)}`;
+
+    const autoPumpPanel = async (uid) => {
+      const ap = this.pumpAutoTrader;
+      if (!ap) return { text: '⚠️ Pump auto-trader is not ready yet.' };
+      const c = ap.config;
+      const owner = c.ownerId || uid;
+      const full = await ap.sizing(PUMP_RULES.extendedRunPct, owner);
+      const fresh = await ap.sizing(0, owner);
+      const s = await ap.stats().catch(() => null);
+      const slLoss = (sz) => money(sz.position * PUMP_RULES.slPct / 100);
+      const live = c.mode === 'live';
+
+      const lines = [
+        `🤖 <b>PUMP AUTO-TRADE</b>`,
+        `Status: <b>${c.enabled ? '✅ ON' : '⛔ OFF'}</b> · ${live ? '💰 <b>LIVE</b>' : '📝 PAPER'}`,
+        `<i>Opens the short automatically when a pump signal says ✅ ENTER — at the signal or from the follow-up watcher.</i>`,
+        '',
+        `<b>Size</b> (from your /trade panel):`,
+        `💵 ${money(full.margin)} × ${full.leverage}x = ${money(full.position)} · SL loses <b>-${slLoss(full)}</b>`,
+        c.halfOnFresh
+          ? `🟠 Fresh breakouts: half → ${money(fresh.margin)} × ${fresh.leverage}x · SL loses -${slLoss(fresh)}`
+          : `🟠 Fresh breakouts: full size (half-size is off)`,
+      ];
+      if (full.levCapped) lines.push(`⚠️ Panel leverage ${full.panelLev}x is capped at ${full.leverage}x so the ${PUMP_RULES.slPct}% SL comes before liquidation`);
+      lines.push(full.marginSaver
+        ? `🏦 Margin saver ON: exchange runs ${full.exchangeLev}x → locks only ${money(full.locked)} (${money(fresh.locked)} on fresh) · liq ≈ ${liquidationPct(full.exchangeLev).toFixed(1)}%`
+        : `🏦 Margin saver OFF: exchange locks ${money(full.locked)} at ${full.exchangeLev}x (turn it on in the /trade panel)`);
+      lines.push(
+        `📐 SL +${PUMP_RULES.slPct}% · TP ${PLAN_TP_PCTS.map(p => '−' + p + '%').join(' / ')} · Exit: TPs only · signal's exchange`,
+        '',
+        `<b>Guards</b>: max <b>${c.maxOpen}</b> open auto trades · ${c.dailyLossUsd > 0 ? `stop for the day after <b>-$${c.dailyLossUsd}</b>` : 'no daily stop'}`,
+        `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
+      );
+      if (s) {
+        lines.push('', `📊 Today: ${s.todayCount} closed · <b>${s.todayPnl >= 0 ? '+' : '-'}${money(Math.abs(s.todayPnl))}</b> · open now: ${s.open.length}`,
+          `📊 All time: ${s.allCount} closed · ${s.allWins} won · <b>${s.allPnl >= 0 ? '+' : '-'}${money(Math.abs(s.allPnl))}</b>`);
+      }
+      lines.push('', `<i>Alerts for every auto trade or skip come to ${c.ownerId ? 'the owner\'s' : 'your'} DM with this bot.</i>`);
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(c.enabled ? '⛔ Turn OFF' : '✅ Turn ON', c.enabled ? 'ap_off' : 'ap_on')],
+        [Markup.button.callback(`📝 Paper${!live ? ' ✓' : ''}`, 'ap_mode_paper'), Markup.button.callback(`💰 Live${live ? ' ✓' : ''}`, 'ap_mode_live')],
+        [Markup.button.callback(`📊 Max open: ${c.maxOpen}`, 'ap_maxopen'),
+         Markup.button.callback(`🛑 Daily stop: ${c.dailyLossUsd > 0 ? '$' + c.dailyLossUsd : 'off'}`, 'ap_daily')],
+        [Markup.button.callback(`🟠 Half size on fresh: ${c.halfOnFresh ? 'ON' : 'OFF'}`, 'ap_half')],
+        [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
+        [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
+      ]);
+      return { text: lines.join('\n'), keyboard };
+    };
+
+    const showAutoPump = async (ctx, edit = false) => {
+      const { text, keyboard } = await autoPumpPanel(ctx.from.id);
+      if (edit) {
+        return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard?.reply_markup }).catch((e) => {
+          if (!/not modified/i.test(e.message)) throw e;
+        });
+      }
+      return ctx.replyWithHTML(text, keyboard);
+    };
+    const apConfirm = (ctx, title, body, yesData) => ctx.editMessageText(`⚠️ <b>${title}</b>\n\n${body}`, {
+      parse_mode: 'HTML',
+      reply_markup: Markup.inlineKeyboard([[Markup.button.callback('✅ Yes, confirm', yesData)], [Markup.button.callback('⬅️ Back', 'ap_refresh')]]).reply_markup,
+    });
+    const hasLiveKeys = () => Object.values(mtExec()?.exchanges || {}).some(ex => ex.apiKey && ex.secret);
+    const apAction = (trigger, handler) => this.bot.action(trigger, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      if (!this.pumpAutoTrader) return ack(ctx, 'Auto-trader not ready');
+      try { await handler(ctx, this.pumpAutoTrader); } catch (e) {
+        logger.error(`autopump panel: ${e.message}`);
+        ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    });
+
+    this._showAutoPump = (ctx) => showAutoPump(ctx);
+    this.bot.command('autopump', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      try { await showAutoPump(ctx); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+    apAction('ap_refresh', async (ctx) => { await ack(ctx); await showAutoPump(ctx, true); });
+    apAction('ap_on', async (ctx, ap) => {
+      if (ap.config.mode === 'live') {
+        await ack(ctx);
+        return apConfirm(ctx, 'TURN ON LIVE AUTO-TRADING?',
+          'The bot will open <b>real</b> shorts on its own whenever a pump signal says ✅ ENTER, using your /trade panel size.', 'ap_on_yes');
+      }
+      await ap.update({ enabled: true, ownerId: ctx.from.id });
+      await ack(ctx, 'Auto-trade ON (paper)');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_on_yes', async (ctx, ap) => {
+      await ap.update({ enabled: true, ownerId: ctx.from.id });
+      await ack(ctx, 'Auto-trade ON — LIVE');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_off', async (ctx, ap) => {
+      await ap.update({ enabled: false });
+      await ack(ctx, 'Auto-trade OFF');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_mode_paper', async (ctx, ap) => {
+      await ap.update({ mode: 'paper' });
+      await ack(ctx, 'Paper');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_mode_live', async (ctx, ap) => {
+      if (ap.config.mode === 'live') return ack(ctx, 'Already LIVE');
+      if (!hasLiveKeys()) return ctx.answerCbQuery('No exchange API keys configured — live auto-trading is unavailable.', { show_alert: true }).catch(() => {});
+      await ack(ctx);
+      await apConfirm(ctx, 'SWITCH AUTO-TRADE TO LIVE?',
+        `Auto trades will use <b>real funds</b>${ap.config.enabled ? ' starting with the next ✅ ENTER' : ' once auto-trade is ON'}. ` +
+        `Exchanges without API keys are skipped (never silently traded on paper).`, 'ap_live_yes');
+    });
+    apAction('ap_live_yes', async (ctx, ap) => {
+      await ap.update({ mode: 'live' });
+      await ack(ctx, 'LIVE');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_maxopen', async (ctx, ap) => {
+      const next = AP_MAX_OPEN[(AP_MAX_OPEN.indexOf(ap.config.maxOpen) + 1) % AP_MAX_OPEN.length];
+      await ap.update({ maxOpen: next });
+      await ack(ctx, `Max open: ${next}`);
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_daily', async (ctx, ap) => {
+      const next = AP_DAILY_STOP[(AP_DAILY_STOP.indexOf(ap.config.dailyLossUsd) + 1) % AP_DAILY_STOP.length];
+      await ap.update({ dailyLossUsd: next });
+      await ack(ctx, next ? `Daily stop: -$${next}` : 'Daily stop off');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_half', async (ctx, ap) => {
+      await ap.update({ halfOnFresh: !ap.config.halfOnFresh });
+      await ack(ctx, `Half size on fresh: ${ap.config.halfOnFresh ? 'ON' : 'OFF'}`);
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_size', async (ctx) => {
+      await ctx.answerCbQuery('Auto trades use the margin and leverage saved in your /trade panel (leverage capped at 5x). Open /trade SYMBOL, change margin/leverage, then cancel — the settings are saved.', { show_alert: true }).catch(() => {});
+    });
+    apAction('ap_open', async (ctx, ap) => {
+      await ack(ctx);
+      const s = await ap.stats();
+      if (!s.open.length) return ctx.replyWithHTML('📭 No open auto trades.');
+      const trades = (await db.getOpenTrades(mtExec().settingsKey)).filter(t => t.onchain_context?.autoPump === true);
+      const { msg, totalPnl } = await formatPositions(trades, mtExec().exchanges);
+      await ctx.replyWithHTML(`🤖 <b>Open auto trades</b> (${trades.length})\n\n${msg}${totalPnl >= 0 ? '🟩' : '🟥'} <b>Total: $${totalPnl.toFixed(2)}</b>`,
+        Markup.inlineKeyboard(trades.map(t => [Markup.button.callback(`❌ Close ${t.symbol}`, `mt_close_${t.id}`)])));
     });
 
     const formatPositions = async (trades, exchanges) => {
@@ -5803,6 +5979,7 @@ class TelegramBot {
         [Markup.button.callback('📊 All Positions', 'pnl_positions'),
          Markup.button.callback('📍 Limit Orders', 'mt_orders')],
         [Markup.button.callback('🔍 Check a coin (pump exhaustion)', 'pnl_check')],
+        [Markup.button.callback('🤖 Pump auto-trade', 'pnl_autopump')],
         [Markup.button.callback('📈 All Stats', 'pnl_stats')],
       ]);
       if (isNew) {
@@ -5816,6 +5993,12 @@ class TelegramBot {
     this.bot.action('panel_main', async (ctx) => {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showPanel(ctx); } catch (e) { logger.error(`panel_main error: ${e.message}`); }
+    });
+
+    this.bot.action('pnl_autopump', async (ctx) => {
+      await ctx.answerCbQuery().catch(() => {});
+      if (!this.pumpAutoTrader) return ctx.replyWithHTML('⚠️ Pump auto-trader is not ready yet.');
+      await this._showAutoPump(ctx).catch(e => ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`));
     });
 
     this.bot.action('pnl_check', async (ctx) => {
