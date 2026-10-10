@@ -1768,7 +1768,7 @@ class TelegramBot {
     });
 
     // === /check SYMBOL — run the pump-exhaustion analysis + channel entry rules on any coin on demand ===
-    const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 35];
+    const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 30];
 
     const runExhaustionCheck = async (symbol, uid) => {
       const te = mtExec();

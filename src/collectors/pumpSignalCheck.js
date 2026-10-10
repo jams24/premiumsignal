@@ -13,7 +13,9 @@ const PUMP_RULES = {
   minTopAgeMin: 15,
   minCisd: 1,
   slPct: 8,
-  tpPcts: [10, 15, 25],
+  // TP1 at -10% was only reached by 13/25 trades; 18/25 reached -7% (several turned at 7.7–9.6%).
+  // Replay at $75 × 5x: -10/-15/-25 +$261 (16W/9L) vs -7/-12/-20 +$301 (18W/7L).
+  tpPcts: [7, 12, 20],
   maxLeverage: 5,
   followUpEveryMin: 5,
   followUpMaxMin: 120,
