@@ -1749,28 +1749,33 @@ class TradeExecutor {
             const positions = await this._fetchPositions(exchange, trade.exchange, [pair]);
             const pos = positions.find(p => Math.abs(p.contracts || 0) > 0);
             if (!pos || Math.abs(pos.contracts) === 0) {
+              // Position is gone: the resting TP4 limit, the exchange stop, or a manual close on the exchange.
+              // Use the real closing fills when we can read them, else the current price.
+              const goneExit = (await this._recentCloseFill(exchange, pair, trade).catch(() => null)) || currentPrice;
+              const byTp = !!trade.tp4 && (isLong ? goneExit >= trade.tp4 * 0.997 : goneExit <= trade.tp4 * 1.003);
+              const goneAction = byTp ? 'tp4' : 'sl';
               const slPnlPct = isLong
-                ? ((currentPrice - trade.entry_price) / trade.entry_price) * 100
-                : ((trade.entry_price - currentPrice) / trade.entry_price) * 100;
+                ? ((goneExit - trade.entry_price) / trade.entry_price) * 100
+                : ((trade.entry_price - goneExit) / trade.entry_price) * 100;
               const slPnlUsd = (slPnlPct / 100) * trade.position_size;
               const feePct = 0.0011;
               const estFees = trade.position_size * feePct;
               const netPnl = slPnlUsd - estFees;
-              logger.warn(`${trade.symbol}: position GONE on ${trade.exchange} — exchange SL likely fired. Closing in DB.`);
-              await db.closeTrade(trade.id, currentPrice, slPnlPct, netPnl, 'sl');
+              logger.warn(`${trade.symbol}: position GONE on ${trade.exchange} — ${byTp ? 'TP4 limit filled' : 'stop order or manual close'} @ ~$${goneExit}. Closing in DB.`);
+              await db.closeTrade(trade.id, goneExit, slPnlPct, netPnl, goneAction);
               this.dailyPnL += netPnl;
+              await exchange.cancelAllOrders(pair).catch(() => {});
               await this._binanceCancelAlgoOrders(exchange, exchange.market(pair).id).catch(() => {});
               const pnlEmoji = netPnl >= 0 ? '🟢' : '🔴';
               const pnlSign = netPnl >= 0 ? '+' : '';
               await this.notify(
-                `${trade.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'} 🔴 <b>EXCHANGE SL HIT</b> $${escapeHtml(trade.symbol)}\n\n` +
-                `PnL: ${pnlEmoji} ${pnlSign}$${netPnl.toFixed(2)} (${pnlSign}${slPnlPct.toFixed(2)}%)\n` +
-                `Entry: $${trade.entry_price} → ~$${currentPrice}\n\n` +
-                `Position closed by exchange stop order.\n` +
-                `<i>Note: PnL estimated from current price, not exact fill.</i>`
+                `${trade.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'} ${byTp ? '🎯 <b>TP4 FILLED ON EXCHANGE</b>' : '🔴 <b>POSITION CLOSED ON EXCHANGE</b>'} $${escapeHtml(trade.symbol)}\n\n` +
+                `PnL (last part): ${pnlEmoji} ${pnlSign}$${netPnl.toFixed(2)} (${pnlSign}${slPnlPct.toFixed(2)}%)\n` +
+                `Entry: $${trade.entry_price} → $${goneExit}\n\n` +
+                (byTp ? `The resting TP4 limit closed the rest of the position.` : `Closed by the exchange stop order or closed manually on the exchange.`)
               );
               this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
-              updates.push({ trade, action: 'sl', msg: '' });
+              updates.push({ trade, action: goneAction, msg: '' });
               continue;
             }
           } catch (e) { logger.debug(`${trade.symbol}: position check failed: ${e.message}`); }
@@ -1903,7 +1908,7 @@ class TradeExecutor {
           action = 'tp3';
           await db.updateTradeHit(trade.id, 'hit_tp3');
           const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp3) : Math.min(exitPrice, trade.tp3)) : exitPrice;
-          const partialPnl = await this.partialClosePosition(trade, 0.5, tpExit);
+          const partialPnl = await this.partialClosePosition(trade, 0.5, tpExit, 3);
           if (xp.stepSl) {
             const newSL = trade.tp2;
             await db.updateTradeStopLoss(trade.id, newSL);
@@ -1917,7 +1922,7 @@ class TradeExecutor {
           await db.updateTradeHit(trade.id, 'hit_tp2');
           const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp2) : Math.min(exitPrice, trade.tp2)) : exitPrice;
           if (this.tp2ClosePct >= 1.0) {
-            const partialPnl = await this.partialClosePosition(trade, 1.0, tpExit);
+            const partialPnl = await this.partialClosePosition(trade, 1.0, tpExit, 2);
             const tpPnlPct = isLong ? ((tpExit - trade.entry_price) / trade.entry_price) * 100 : ((trade.entry_price - tpExit) / trade.entry_price) * 100;
             const tpPnlUsd = (tpPnlPct / 100) * trade.position_size;
             await db.closeTrade(trade.id, tpExit, tpPnlPct, tpPnlUsd, 'tp2');
@@ -1925,7 +1930,7 @@ class TradeExecutor {
             if (trade.mode === 'paper') this.paperBalance += (trade.position_size || 0) + tpPnlUsd;
             logger.info(`${trade.symbol}: TP2 hit, closed ALL remaining (+$${partialPnl.toFixed(2)}) — trade done`);
           } else {
-            const partialPnl = await this.partialClosePosition(trade, this.tp2ClosePct, tpExit);
+            const partialPnl = await this.partialClosePosition(trade, this.tp2ClosePct, tpExit, 2);
             if (xp.stepSl) {
               const newSL = trade.tp1;
               await db.updateTradeStopLoss(trade.id, newSL);
@@ -1939,7 +1944,7 @@ class TradeExecutor {
           action = 'tp1';
           await db.updateTradeHit(trade.id, 'hit_tp1');
           const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp1) : Math.min(exitPrice, trade.tp1)) : exitPrice;
-          const partialPnl = await this.partialClosePosition(trade, this.tp1ClosePct, tpExit);
+          const partialPnl = await this.partialClosePosition(trade, this.tp1ClosePct, tpExit, 1);
           const newSL = trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
@@ -2198,10 +2203,11 @@ class TradeExecutor {
     }
   }
 
-  async partialClosePosition(trade, fraction) {
+  // level = which TP triggered this (1-3); used to re-place only the TP limits still ahead
+  async partialClosePosition(trade, fraction, tpExit, level = 0) {
     const closeQty = trade.quantity * fraction;
-    const remainQty = trade.quantity - closeQty;
-    const remainSize = trade.position_size * (1 - fraction);
+    let remainQty = trade.quantity - closeQty;
+    let remainSize = trade.position_size * (1 - fraction);
     const isLong = trade.direction === 'long';
 
     let fillPrice = null;
@@ -2211,33 +2217,59 @@ class TradeExecutor {
       if (exchange?.apiKey) {
         try {
           const pair = `${trade.symbol}/USDT:USDT`;
+          // Cancel the resting TP limits first so none can fill while we reconcile
           await this.cancelTPOrders(trade);
-          const side = isLong ? 'sell' : 'buy';
-          const roundedQty = exchange.amountToPrecision(pair, closeQty);
-          const order = await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
-          fillPrice = order.average || order.price || null;
-          if (order.id) {
-            try {
-              const settled = await exchange.fetchOrder(order.id, pair);
-              if (settled.average > 0) fillPrice = settled.average;
-              else if (settled.cost > 0 && settled.filled > 0) fillPrice = settled.cost / settled.filled;
-            } catch (e) {
-              try {
-                const trades = await exchange.fetchMyTrades(pair, Date.now() - 10000, 5);
-                const match = trades.find(t => t.order === order.id) || trades[trades.length - 1];
-                if (match) fillPrice = match.price;
-              } catch (e2) { /* use order price */ }
+          // The exchange TP limit usually fills before this check runs — only close what it hasn't closed already
+          let toClose = closeQty;
+          let limitFilledQty = 0;
+          try {
+            const positions = await this._fetchPositions(exchange, trade.exchange, [pair]);
+            const pos = positions.find(p => Math.abs(p.contracts || 0) > 0);
+            const actualQty = pos ? Math.abs(pos.contracts) : 0;
+            toClose = Math.min(closeQty, Math.max(0, actualQty - remainQty));
+            limitFilledQty = closeQty - toClose;
+            if (toClose < closeQty * 0.05) { toClose = 0; limitFilledQty = closeQty; }   // rounding dust
+            if (actualQty < remainQty * 0.95) {
+              // More than this share is gone (a later TP limit filled too) — track what is really left
+              remainSize = remainQty > 0 ? remainSize * (actualQty / remainQty) : 0;
+              remainQty = actualQty;
             }
+          } catch (e) { logger.warn(`${pair}: position check before partial close failed, closing the full share: ${e.message}`); }
+
+          const limitPrice = (level && trade[`tp${level}`]) || tpExit || null;
+          if (toClose > 0) {
+            const side = isLong ? 'sell' : 'buy';
+            const roundedQty = exchange.amountToPrecision(pair, toClose);
+            const order = await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
+            fillPrice = order.average || order.price || null;
+            if (order.id) {
+              try {
+                const settled = await exchange.fetchOrder(order.id, pair);
+                if (settled.average > 0) fillPrice = settled.average;
+                else if (settled.cost > 0 && settled.filled > 0) fillPrice = settled.cost / settled.filled;
+              } catch (e) {
+                try {
+                  const trades = await exchange.fetchMyTrades(pair, Date.now() - 10000, 5);
+                  const match = trades.find(t => t.order === order.id) || trades[trades.length - 1];
+                  if (match) fillPrice = match.price;
+                } catch (e2) { /* use order price */ }
+              }
+            }
+            // Part filled by the limit at the TP price, the rest at market → blended price
+            if (fillPrice && limitFilledQty > 0 && limitPrice) fillPrice = (limitFilledQty * limitPrice + toClose * fillPrice) / closeQty;
+            logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: market ${roundedQty}${limitFilledQty > 0 ? ` + ${limitFilledQty.toFixed(4)} already filled by TP limit` : ''} (fill: $${fillPrice || '?'})`);
+          } else {
+            fillPrice = limitPrice;
+            logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: already filled by the exchange TP limit @ $${limitPrice} — no market order sent`);
           }
-          logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: ${roundedQty} (fill: $${fillPrice || '?'})`);
-          if (fraction < 1.0) {
-            await this.placeTPOrders(trade);
+          if (fraction < 1.0 && remainQty > 0) {
+            await this.placeTPOrders({ ...trade, quantity: remainQty }, level);
           }
         } catch (e) { logger.error(`Partial close failed for ${trade.symbol}: ${e.message}`); }
       }
     }
 
-    const exitPrice = fillPrice || arguments[2] || trade.entry_price;
+    const exitPrice = fillPrice || tpExit || trade.entry_price;
     const partialPnlPct = isLong
       ? ((exitPrice - trade.entry_price) / trade.entry_price) * 100
       : ((trade.entry_price - exitPrice) / trade.entry_price) * 100;
@@ -2256,6 +2288,19 @@ class TradeExecutor {
     trade._partialPnl = partialPnlUsd;
     trade._partialFillPrice = fillPrice || exitPrice;
     return partialPnlUsd;
+  }
+
+  // Average price of the most recent closing fills covering what the bot still tracked as open (null if unreadable)
+  async _recentCloseFill(exchange, pair, trade) {
+    const closeSide = trade.direction === 'long' ? 'sell' : 'buy';
+    const since = Math.max(new Date(trade.created_at || Date.now()).getTime(), Date.now() - 6 * 60 * 60 * 1000);
+    const fills = (await exchange.fetchMyTrades(pair, since, 100)).filter(f => f.side === closeSide);
+    let need = trade.quantity, qty = 0, cost = 0;
+    for (let i = fills.length - 1; i >= 0 && need > 1e-12; i--) {
+      const take = Math.min(fills[i].amount, need);
+      qty += take; cost += take * fills[i].price; need -= take;
+    }
+    return qty > 0 ? cost / qty : null;
   }
 
   async closeExchangePosition(trade) {
@@ -2518,7 +2563,9 @@ class TradeExecutor {
     }
   }
 
-  async placeTPOrders(trade) {
+  // Resting reduce-only TP limits. afterLevel = TPs already hit (0 at entry); trade.quantity = what is still open.
+  // Each level closes its share of what is LEFT — the same split checkOpenTrades tracks — and TP4 takes the rest.
+  async placeTPOrders(trade, afterLevel = 0) {
     if (trade.mode !== 'live') return;
     const exchange = this.exchanges[trade.exchange];
     if (!exchange?.apiKey) return;
@@ -2527,34 +2574,38 @@ class TradeExecutor {
       const pair = `${trade.symbol}/USDT:USDT`;
       const isLong = trade.direction === 'long';
       const closeSide = isLong ? 'sell' : 'buy';
-      const totalQty = trade.quantity;
 
       const tpLevels = [
-        { price: trade.tp1, fraction: this.tp1ClosePct, label: 'TP1' },
-        { price: trade.tp2, fraction: this.tp2ClosePct, label: 'TP2' },
-        { price: trade.tp3, fraction: 0.5, label: 'TP3' },
-      ];
+        { level: 1, price: trade.tp1, fraction: this.tp1ClosePct, label: 'TP1' },
+        { level: 2, price: trade.tp2, fraction: this.tp2ClosePct, label: 'TP2' },
+        { level: 3, price: trade.tp3, fraction: 0.5, label: 'TP3' },
+        { level: 4, price: trade.tp4, fraction: 1.0, label: 'TP4' },
+      ].filter(tp => tp.level > afterLevel);
 
-      let remaining = totalQty;
+      // A limit that price has already passed would fill instantly at market — leave that level to checkOpenTrades
+      const last = await exchange.fetchTicker(pair).then(t => t.last).catch(() => null);
+
+      let remaining = trade.quantity;
       for (const tp of tpLevels) {
         if (!tp.price || remaining <= 0) continue;
-        const qty = tp.fraction >= 1.0 ? remaining : totalQty * tp.fraction;
-        const closeQty = Math.min(qty, remaining);
+        const closeQty = tp.fraction >= 1.0 ? remaining : remaining * tp.fraction;
+        // The bot treats this share as closed at this level either way (it market-closes it if no limit rests)
+        remaining -= closeQty;
 
         const check = this.calcMinNotional(exchange, pair, closeQty, tp.price);
-        if (!check.ok) {
+        if (last && (isLong ? tp.price <= last : tp.price >= last)) {
+          logger.info(`${pair}: ${tp.label} limit not placed — price $${last} is already past $${tp.price}`);
+        } else if (!check.ok) {
           logger.info(`${pair}: ${tp.label} limit order skipped — qty below min notional ($${check.currentNotional.toFixed(2)} < $${check.minNotional})`);
-          continue;
-        }
-
-        try {
-          const roundedQty = exchange.amountToPrecision(pair, closeQty);
-          const roundedPrice = exchange.priceToPrecision(pair, tp.price);
-          await exchange.createOrder(pair, 'limit', closeSide, roundedQty, roundedPrice, { reduceOnly: true });
-          logger.info(`${pair}: ${tp.label} limit order placed — ${closeSide} ${roundedQty} @ $${roundedPrice}`);
-          remaining -= closeQty;
-        } catch (e) {
-          logger.warn(`${pair}: ${tp.label} limit order failed — ${e.message}`);
+        } else {
+          try {
+            const roundedQty = exchange.amountToPrecision(pair, closeQty);
+            const roundedPrice = exchange.priceToPrecision(pair, tp.price);
+            await exchange.createOrder(pair, 'limit', closeSide, roundedQty, roundedPrice, { reduceOnly: true });
+            logger.info(`${pair}: ${tp.label} limit order placed — ${closeSide} ${roundedQty} @ $${roundedPrice}`);
+          } catch (e) {
+            logger.warn(`${pair}: ${tp.label} limit order failed — ${e.message}`);
+          }
         }
 
         if (tp.fraction >= 1.0) break;
