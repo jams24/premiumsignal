@@ -604,6 +604,7 @@ async function main() {
   const pumpAutoTrader = new PumpAutoTrader({
     executor: onchainTradeExecutor,
     notify: (chatId, html) => bot.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }),
+    adminIds: config.telegram.adminIds,
   });
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;

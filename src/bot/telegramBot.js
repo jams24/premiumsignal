@@ -1991,6 +1991,7 @@ class TelegramBot {
     const autoPumpPanel = async (uid) => {
       const ap = this.pumpAutoTrader;
       if (!ap) return { text: '⚠️ Pump auto-trader is not ready yet.' };
+      await ap.load().catch(() => {});   // show what's stored, not this process's memory
       const c = ap.config;
       const owner = c.ownerId || uid;
       const full = await ap.sizing(PUMP_RULES.extendedRunPct, owner);
@@ -2071,7 +2072,8 @@ class TelegramBot {
       if (ap.config.mode === 'live') {
         await ack(ctx);
         return apConfirm(ctx, 'TURN ON LIVE AUTO-TRADING?',
-          'The bot will open <b>real</b> shorts on its own whenever a pump signal says ✅ ENTER, using your /trade panel size.', 'ap_on_yes');
+          'The bot will open <b>real</b> shorts on its own whenever a pump signal says ✅ ENTER, using your /trade panel size.\n\n' +
+          '👉 <b>Auto-trade is still OFF until you tap ✅ Yes, confirm below.</b>', 'ap_on_yes');
       }
       await ap.update({ enabled: true, ownerId: ctx.from.id });
       await ack(ctx, 'Auto-trade ON (paper)');

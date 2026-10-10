@@ -19,9 +19,10 @@ const DEFAULTS = {
 };
 
 class PumpAutoTrader {
-  constructor({ executor, notify }) {
+  constructor({ executor, notify, adminIds = [] }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
     this.notify = notify;           // async (chatId, html) => void
+    this.adminIds = adminIds;       // told about ENTERs missed while auto-trade is off and no owner is set
     this.config = { ...DEFAULTS };
     this.busy = new Set();          // signal ids being processed
     this.dailyStopNotified = null;  // UTC date we already warned about the daily stop
@@ -33,9 +34,10 @@ class PumpAutoTrader {
     return this.config;
   }
 
+  // Merge only `changes` into the DB row, then adopt the stored result — never writes back stale keys
   async update(changes) {
-    this.config = { ...this.config, ...changes };
-    await db.savePumpAutoConfig(this.config);
+    const merged = await db.mergePumpAutoConfig(changes, DEFAULTS);
+    this.config = { ...DEFAULTS, ...(merged || { ...this.config, ...changes }) };
     return this.config;
   }
 
@@ -78,8 +80,18 @@ class PumpAutoTrader {
 
   // Called when a pump signal reaches ✅ ENTER. info: { signalId, symbol, exchangeId, price, run7d, via }
   async onEnter(info) {
+    // Always decide on the stored config, not this process's memory (another instance or a restart may have changed it)
+    await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
     const c = this.config;
-    if (!c.enabled) return { skipped: 'disabled' };
+    if (!c.enabled) {
+      logger.info(`Pump auto-trade OFF — ${info.symbol} ENTER (${info.via}) not traded`);
+      const to = c.ownerId ? [c.ownerId] : this.adminIds;
+      const html = `🤖 ⚠️ <b>${escapeHtml(info.symbol)} said ✅ ENTER — NOT auto-traded</b>\n` +
+        `Auto-trade is <b>OFF</b>. Send /autopump → ✅ Turn ON` +
+        `${c.mode === 'live' ? ' → ✅ Yes, confirm (LIVE needs the confirm tap)' : ''}.`;
+      for (const id of to) await this.notify(id, html).catch(e => logger.warn(`Auto-trade notify failed: ${e.message}`));
+      return { skipped: 'disabled' };
+    }
     const key = info.signalId ?? `${info.symbol}:${new Date().toISOString().slice(0, 10)}`;
     if (this.busy.has(key)) return { skipped: 'in progress' };
     this.busy.add(key);
