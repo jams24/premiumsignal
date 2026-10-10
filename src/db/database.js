@@ -362,6 +362,8 @@ async function init(retries = 3) {
       await p.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${col} ${type}`);
     }
   }
+  // Follow-up watcher state, so an active watch survives redeploys/restarts
+  await p.query('ALTER TABLE pump_signals ADD COLUMN IF NOT EXISTS watch_state JSONB');
 
   // Add new columns to bot_users for per-user paper config
   const userCols = [
@@ -565,14 +567,30 @@ async function setManualOrderStatus(id, status) {
 }
 
 async function logPumpSignal(symbol, data) {
-  await query(
+  const { rows } = await query(
     `INSERT INTO pump_signals (symbol, direction, score, exhaustion_score, pump_pct, oi_change, funding_rate, funding_bias, rsi_5m, price, tp1, tp2, stop_loss, confluence)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
     [symbol, data.direction || 'short', data.score, data.exhaustionScore, data.pumpPct,
      data.oiChange, data.fundingRate, data.fundingBias, data.rsi5m,
      data.price, data.tp1 || null, data.tp2 || null, data.stopLoss || null,
      JSON.stringify(data.confluence)]
   );
+  return rows[0]?.id ?? null;
+}
+
+async function savePumpWatch(id, state) {
+  await query('UPDATE pump_signals SET watch_state = $1 WHERE id = $2', [JSON.stringify(state), id]);
+}
+
+// Watches still running (status watching) for signals young enough to matter
+async function getActivePumpWatches(maxAgeMinutes) {
+  const { rows } = await query(
+    `SELECT id, symbol, created_at, watch_state FROM pump_signals
+     WHERE watch_state->>'status' = 'watching' AND created_at > NOW() - ($1 || ' minutes')::interval
+     ORDER BY created_at`,
+    [String(maxAgeMinutes)]
+  );
+  return rows;
 }
 
 
@@ -1162,4 +1180,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, savePumpWatch, getActivePumpWatches, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs };

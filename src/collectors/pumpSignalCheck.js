@@ -21,6 +21,9 @@ const PUMP_RULES = {
   // cut-off quit RLC 10-09 at -12.5% of a +114% pump, 10 min before every rule lined up and it fell another 25%.
   maxPumpRetrace: 0.5,
   maxBelowHighPct: 10, // fallback when the pump base is unknown
+  // 7-day run before the signal (Oct 5–9 review, 23 trades): every losing short was a fresh breakout under +60%
+  // (9 won / 7 lost); every short after an extended run of +60% or more won (7 / 0). Fresh = half size.
+  extendedRunPct: 60,
 };
 
 const H = 3600000;
@@ -70,6 +73,19 @@ async function currentOi1h(exchange, symbol, now = Date.now()) {
   return base[key] ? ((last[key] - base[key]) / base[key]) * 100 : null;
 }
 
+// Price change over the last 7 days from 1h candles (open 7 days ago → last close)
+async function measureRun7d(exchange, symbol, now = Date.now()) {
+  const c = await exchange.fetchOHLCV(`${symbol}/USDT:USDT`, '1h', now - 7 * 24 * H, 200);
+  if (!c?.length || !(c[0][1] > 0)) return null;
+  return ((c[c.length - 1][4] - c[0][1]) / c[0][1]) * 100;
+}
+
+// 'extended' (multi-day run, dumps more likely) | 'fresh' (first-leg breakout, grinder risk) | null
+function runType(run7d) {
+  if (run7d == null || !isFinite(run7d)) return null;
+  return run7d >= PUMP_RULES.extendedRunPct ? 'extended' : 'fresh';
+}
+
 // 'oi_building' | 'top_fresh' | 'enter' | 'no_cisd' (topAgeMin null = unknown → treated as fresh)
 function entryVerdict({ oi1h, topAgeMin, cisdScore }) {
   if ((oi1h ?? 0) > PUMP_RULES.maxOi1h) return 'oi_building';
@@ -105,4 +121,4 @@ async function followUpCheck(exchange, watch, now = Date.now()) {
   return { kind: watch.high && top.high24 > watch.high * 1.001 ? 'new_high' : 'waiting', ...r };
 }
 
-module.exports = { PUMP_RULES, channelLevels, measureTop, currentCisd, currentOi1h, entryVerdict, followUpCheck };
+module.exports = { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, currentCisd, currentOi1h, entryVerdict, followUpCheck };

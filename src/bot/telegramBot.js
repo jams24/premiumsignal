@@ -4,7 +4,17 @@ const config = require('../utils/config');
 const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
-const { PUMP_RULES, channelLevels, measureTop, entryVerdict } = require('../collectors/pumpSignalCheck');
+const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
+
+// 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
+function runLabel(run7d) {
+  const type = runType(run7d);
+  if (!type) return null;
+  const r = `7D ${run7d >= 0 ? '+' : ''}${run7d.toFixed(0)}%`;
+  return type === 'extended'
+    ? { type, line: `🟢 <b>EXTENDED RUN — ${r}</b>: multi-day pump, dumps more likely · full size`, size: 'full size' }
+    : { type, line: `🟠 <b>FRESH BREAKOUT — ${r}</b>: first-leg pump, grinder risk · <b>half size</b> (skip if there's big news)`, size: '<b>half size</b> (fresh breakout)' };
+}
 
 class TelegramBot {
   constructor({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor }) {
@@ -907,6 +917,7 @@ class TelegramBot {
     });
     const prefsKey = (st) => JSON.stringify(prefsOf(st));
     const persistPrefs = async (uid, st) => {
+      if (st.noPersist) return; // /check pre-filled panels never overwrite the user's defaults
       const key = prefsKey(st);
       if (key === st.savedPrefsKey) return;
       try {
@@ -956,6 +967,7 @@ class TelegramBot {
         notice: null,
         panelMsg: prev?.panelMsg || null,
         busy: false,
+        noPersist: !!opts.transient,
       };
       const notices = [];
       if (saved.exchangeId && st.exchangeId !== saved.exchangeId) {
@@ -980,7 +992,8 @@ class TelegramBot {
       if (opts.notice) notices.push(opts.notice);
       st.notice = notices.join('\n') || null;
       // Values typed in the command (/short RLC 20 5) count as applied settings and are saved too
-      const hasArgs = opts.direction || opts.margin || opts.leverage || opts.slPct != null;
+      // transient = pre-filled by /check: shown in the panel but not saved as the user's defaults
+      const hasArgs = !opts.transient && (opts.direction || opts.margin || opts.leverage || opts.slPct != null);
       st.savedPrefsKey = hasArgs ? null : prefsKey(st);
       this.manualTradeState[ctx.from.id] = st;
       await persistPrefs(ctx.from.id, st);
@@ -1766,6 +1779,8 @@ class TelegramBot {
       const ex = te.exchanges[exId];
       const pair = pairOf(symbol);
       const ticker = await ex.fetchTicker(pair);
+      const run7d = await measureRun7d(ex, symbol).catch(() => null);
+      const run = runLabel(run7d);
 
       // Same per-symbol scoring the scanner runs (OI 1h/4h, funding, momentum, volume)
       const token = await scanner.analyzeSymbol(ex, exId, pair, ticker);
@@ -1807,6 +1822,7 @@ class TelegramBot {
       text += `💵 Funding: <b>${token.fundingRate != null ? fmtSigned(token.fundingRate * 100, 3) : 'N/A'}</b> (${token.fundingBias || 'neutral'}) · 📉 RSI 5m: <b>${token.rsi5m != null ? token.rsi5m.toFixed(0) : 'N/A'}</b>\n`;
       if (token.volRatio != null) text += `📊 Volume: <b>${token.volRatio.toFixed(1)}x</b> daily avg\n`;
       if (token.lsData?.topTraderAcctRatio != null) text += `🐋 Top traders L/S: <b>${token.lsData.topTraderAcctRatio.toFixed(2)}</b> · retail <b>${(token.lsData.globalRatio ?? 0).toFixed(2)}</b>\n`;
+      if (run7d != null) text += `📅 7D change: <b>${fmtSigned(run7d, 0)}</b>\n`;
 
       text += `\n<b>Exhaustion criteria</b>\n`;
       text += `${mark((snap.exhaustionScore ?? 0) >= minExh)} Exhaustion score <b>${snap.exhaustionScore ?? 0}</b> (need ${minExh}+: pump, near top, OI, funding, RSI)\n`;
@@ -1855,6 +1871,7 @@ class TelegramBot {
       text += `\n🔝 24H High $${top ? fmtP(top.high24) : '?'} · ${topAge != null ? `${topAge}m ago` : 'age unknown'}${topAge != null && topAge >= PUMP_RULES.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
       text += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${(token.cisdFlags || []).join(' + ') || 'none'})\n`;
       text += `\n${verdictText}\n`;
+      if (run) text += `${run.line}\n`;
 
       const L = channelLevels(ticker.last);
       text += `\n<b>Plan (short from $${fmtP(ticker.last)}):</b>\n`;
@@ -1878,6 +1895,13 @@ class TelegramBot {
         result.margin = safeMargin;
       } else {
         text += `SL loses <b>-$${loss.toFixed(2)}</b> · TP1 makes <b>+$${(pos * PUMP_RULES.tpPcts[0] / 100).toFixed(2)}</b>\n`;
+      }
+      if (run?.type === 'fresh') {
+        const lev2 = result.lev || lev;
+        const half = Math.round(((result.margin || margin) / 2) * 100) / 100;
+        text += `🟠 Fresh breakout → <b>half size: $${half} margin</b> × ${lev2}x · SL loses $${(half * lev2 * PUMP_RULES.slPct / 100).toFixed(2)}\n`;
+        result.lev = lev2;
+        result.margin = half;
       }
       result.text = text + `\n<i>${new Date().toUTCString()}</i>`;
       result.verdict = verdict;
@@ -1929,7 +1953,8 @@ class TelegramBot {
           exitStyle: 'tponly',
           leverage: lev ? Number(lev) : undefined,
           margin: margin ? Number(margin) : undefined,
-          notice: lev ? `Leverage set to ${lev}x and margin to $${margin} so the ${PUMP_RULES.slPct}% SL fits before liquidation (same max loss).` : null,
+          transient: true,
+          notice: lev ? `Size pre-filled from /check: $${margin} × ${lev}x (the ${PUMP_RULES.slPct}% SL fits before liquidation; half size for fresh breakouts). Not saved as your default.` : null,
         });
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
     });
@@ -8773,7 +8798,10 @@ class TelegramBot {
       };
 
       let msg = `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
-      msg += `${verdicts[check.verdict]}\n\n`;
+      msg += `${verdicts[check.verdict]}\n`;
+      const run = runLabel(check.run7d);
+      if (run) msg += `${run.line}\n`;
+      msg += `\n`;
       msg += `💰 Price: <b>$${price}</b>\n`;
       msg += `📈 Pump: <b>+${pumpPct.toFixed(1)}%</b>\n`;
       msg += `📊 OI 4H: <b>${oi4h >= 0 ? '+' : ''}${oi4h.toFixed(0)}%</b> · OI 1H: <b>${oi1h == null ? 'N/A' : `${oi1h >= 0 ? '+' : ''}${oi1h.toFixed(0)}%`}</b>${oi1h != null && oi1h > R.maxOi1h ? ' ⛔' : ''}\n`;
@@ -8783,7 +8811,7 @@ class TelegramBot {
       msg += `\n<b>Plan (short):</b>\n`;
       msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n');
       msg += `\n🛑 SL: $${p(levels.stopLoss)} (+${R.slPct}%)\n`;
-      msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${R.slPct}% SL = ${R.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b>\n`;
+      msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${R.slPct}% SL = ${R.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b>${run ? ` · ${run.size}` : ''}\n`;
       msg += `<i>Clean dumps took 10–22h to bottom — don't trail tight</i>`;
       if (token.exchange) msg += `\n\n📊 ${token.exchange.toUpperCase()}`;
       msg += `\n<i>${new Date().toUTCString()}</i>`;
@@ -8816,7 +8844,7 @@ class TelegramBot {
           `Top $${p(u.top.high24)} held ${Math.round(u.top.topAgeMin)}m · ${oi} · CISD ${u.cisd.score}/4 on ${u.cisd.tf} (${(u.cisd.flags || []).join(' + ') || 'none'})\n` +
           `${now} · ${after}\n\n` +
           u.levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n') +
-          `\n🛑 SL: $${p(u.levels.stopLoss)} (+${R.slPct}%)\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only`;
+          `\n🛑 SL: $${p(u.levels.stopLoss)} (+${R.slPct}%)\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only${runLabel(u.run7d) ? ` · ${runLabel(u.run7d).size}` : ''}`;
       } else if (u.kind === 'new_high') {
         msg = `⚠️ <b>${sym} — NEW HIGH $${p(u.top.high24)}, PUMP CONTINUING</b>\n${now} · ${after}\n` +
           `❌ Don't short yet — still watching for the top to hold ${R.minTopAgeMin}m+.`;

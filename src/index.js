@@ -19,7 +19,7 @@ const TradeExecutor = require('./engine/tradeExecutor');
 const UserPaperEngine = require('./engine/userPaperEngine');
 const SwingScanner = require('./collectors/swingScanner');
 const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
-const { PUMP_RULES, channelLevels, measureTop, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
+const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -600,41 +600,65 @@ async function main() {
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor });
 
   // Pump signals that weren't ENTER are watched every 5 min for up to 2h; the bot replies under the
-  // original channel message only when something changes. (In-memory — a restart drops active watches.)
+  // original channel message only when something changes. Watch state lives on the pump_signals row
+  // (watch_state), so a redeploy or crash resumes the watch instead of silently dropping it.
   const pumpWatches = new Map();
   let pumpWatchRunning = false;
+  const watchState = (w, status, outcome = null) => ({
+    status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, signalPrice: w.signalPrice,
+    high: w.high, pumpBase: w.pumpBase, startedAt: w.startedAt, newHighSent: w.newHighSent, run7d: w.run7d ?? null,
+  });
+  const saveWatch = (w, status = 'watching', outcome) => (w.signalId
+    ? db.savePumpWatch(w.signalId, watchState(w, status, outcome)).catch(e => logger.warn(`Saving pump watch ${w.symbol} failed: ${e.message}`))
+    : Promise.resolve());
+  // Marked done before replying: a crash mid-send loses one reply rather than repeating it after restart
+  async function finishWatch(key, w, outcome, reply) {
+    pumpWatches.delete(key);
+    await saveWatch(w, 'done', outcome);
+    await bot.sendPumpFollowUp(w.msgId, reply);
+  }
   async function processPumpWatches() {
     if (pumpWatchRunning || !pumpWatches.size) return;
     pumpWatchRunning = true;
     try {
-      for (const [symbol, w] of pumpWatches) {
+      for (const [key, w] of pumpWatches) {
         const ageMin = (Date.now() - w.startedAt) / 60000;
-        const base = { symbol, signalPrice: w.signalPrice, ageMin };
+        const base = { symbol: w.symbol, signalPrice: w.signalPrice, ageMin, run7d: w.run7d ?? null };
         try {
           if (ageMin > PUMP_RULES.followUpMaxMin) {
-            pumpWatches.delete(symbol);
-            await bot.sendPumpFollowUp(w.msgId, { ...base, kind: 'expired' });
+            await finishWatch(key, w, 'expired', { ...base, kind: 'expired' });
             continue;
           }
           const r = await followUpCheck(w.ex, w);
           if (r.kind === 'enter' || r.kind === 'missed') {
-            pumpWatches.delete(symbol);
-            await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
+            await finishWatch(key, w, r.kind, { ...base, ...r });
           } else if (r.kind === 'new_high') {
             w.high = r.top.high24;
-            if (!w.newHighSent) {
-              w.newHighSent = true;
-              await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
-            }
+            const firstNewHigh = !w.newHighSent;
+            w.newHighSent = true;
+            await saveWatch(w);
+            if (firstNewHigh) await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
           }
         } catch (e) {
-          logger.warn(`Pump watch ${symbol} failed: ${e.message}`);
+          logger.warn(`Pump watch ${w.symbol} failed: ${e.message}`);
         }
       }
     } finally {
       pumpWatchRunning = false;
     }
   }
+  async function restorePumpWatches() {
+    const rows = await db.getActivePumpWatches(PUMP_RULES.followUpMaxMin + 60);
+    for (const row of rows) {
+      const w = { ...row.watch_state, signalId: row.id, symbol: row.symbol, ex: listingMonitor.exchanges[row.watch_state.exchangeId] };
+      if (!w.ex) { await saveWatch(w, 'done', 'no_exchange'); continue; }
+      pumpWatches.set(row.id, w);
+    }
+    if (pumpWatches.size) logger.info(`Restored ${pumpWatches.size} pump watch(es) after restart: ${[...pumpWatches.values()].map(w => w.symbol).join(', ')}`);
+  }
+  restorePumpWatches()
+    .then(() => processPumpWatches())
+    .catch(e => logger.error(`Restoring pump watches failed: ${e.message}`));
   cron.schedule(`*/${PUMP_RULES.followUpEveryMin} * * * *`, () => { processPumpWatches().catch(e => logger.error(`Pump watch error: ${e.message}`)); });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
@@ -984,19 +1008,22 @@ async function main() {
             const ex = listingMonitor.exchanges[token.exchange];
             let top = null;
             try { if (ex) top = await measureTop(ex, token.symbol); } catch (e) { logger.debug(`${token.symbol}: top measure failed: ${e.message}`); }
+            let run7d = null;
+            try { if (ex) run7d = await measureRun7d(ex, token.symbol); } catch (e) { logger.debug(`${token.symbol}: 7d run failed: ${e.message}`); }
             const check = {
               oi1h: token.oiChange1h,
               topAgeMin: top?.topAgeMin ?? null,
               high24: top?.high24 ?? null,
               cisdScore: ctx.cisdScore || 0,
               cisdFlags: ctx.cisdFlags || [],
+              run7d,
             };
             check.verdict = entryVerdict(check);
             const levels = channelLevels(token.price);
             const msgId = await bot.sendPumpSignal(token, setup, check, levels);
 
             // Channel levels are logged so the outcome tracker scores what subscribers were shown
-            db.logPumpSignal(token.symbol, {
+            const signalId = await db.logPumpSignal(token.symbol, {
               direction: 'short', score: token.score,
               exhaustionScore: ctx.exhaustionScore || 0,
               pumpPct: ctx.priceChange || token.priceChange,
@@ -1014,16 +1041,18 @@ async function main() {
                 nearHighPct: ctx.nearHighPct, exhaustionScore: ctx.exhaustionScore,
                 crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
                 cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
-                verdict: check.verdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2],
+                verdict: check.verdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2], run7d,
                 engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
-            }).catch(e => logger.debug(`Pump log failed: ${e.message}`));
+            }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
 
             if (msgId && ex && check.verdict !== 'enter') {
-              pumpWatches.set(token.symbol, {
-                symbol: token.symbol, ex, msgId, verdict: check.verdict,
-                signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false,
-              });
+              const w = {
+                signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, verdict: check.verdict,
+                signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false, run7d,
+              };
+              pumpWatches.set(signalId ?? token.symbol, w);
+              await saveWatch(w);
             }
           } catch (e) { logger.debug(`Pump signal check failed: ${e.message}`); }
         }
