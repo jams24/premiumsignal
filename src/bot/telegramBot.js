@@ -1694,17 +1694,174 @@ class TelegramBot {
       return rows[0] || null;
     };
 
-    const positionsView = async () => {
-      const trades = await db.getOpenTrades();
-      if (!trades.length) return { text: '📭 No open positions.' };
-      const { msg, totalPnl } = await formatPositions(trades, mtExec()?.exchanges || {});
-      const rows = grid(trades.slice(0, 10).map(t =>
-        Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} Close ${t.symbol}${t.onchain_context?.manual ? ' 🔧' : ''}`, `mt_close_${t.id}`)), 2);
-      rows.push([Markup.button.callback('🔄 Refresh', 'mt_pos_refresh'), Markup.button.callback('📍 Limit orders', 'mt_orders')]);
+    // Live positions view (/mpositions): filter · sort · pages, per-position detail, SL → breakeven.
+    // View state travels in the callback data (mt_pv_<filter>_<sort>_<page>), so every message refreshes itself.
+    const POS_PAGE = 5;
+    const POS_FILTERS = { all: '📊 All', live: '💰 Live', paper: '📝 Paper', mine: '🔧 Manual + 🤖 Auto' };
+    const POS_SORTS = { pnl: 'P&L', age: 'Newest', sl: 'Closest to SL' };
+    const posTag = (t) => (t.onchain_context?.autoPump ? '🤖' : t.onchain_context?.manual ? '🔧' : t.source === 'onchain' ? '🔗' : t.source === 'swing' ? '🌊' : t.source === 'demandzone' ? '🧱' : '📡');
+    const posAge = (t) => {
+      const m = Math.max(0, Math.round((Date.now() - new Date(t.created_at).getTime()) / 60000));
+      return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
+    };
+    const utcClock = () => new Date().toISOString().slice(11, 19);
+
+    // Current prices for a set of trades, fetched in parallel (one ticker per exchange:symbol)
+    const positionPrices = async (trades) => {
+      const exchanges = mtExec()?.exchanges || {};
+      const prices = new Map();
+      const keys = [...new Set(trades.map(t => `${t.exchange}:${t.symbol}`))];
+      await Promise.all(keys.map(async (key) => {
+        const [exId, symbol] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+        const ex = exchanges[exId];
+        const pair = [`${symbol}/USDT:USDT`, `${symbol}/USDT`].find(pr => ex?.markets?.[pr]);
+        if (!pair) return;
+        try { const tk = await ex.fetchTicker(pair); if (tk?.last > 0) prices.set(key, tk.last); } catch (e) { /* shown without P&L */ }
+      }));
+      return prices;
+    };
+
+    // Numbers for one open trade at a given price (price may be undefined)
+    const positionStats = (t, price) => {
+      const entry = parseFloat(t.entry_price), size = parseFloat(t.position_size || 0), realized = parseFloat(t.realized_pnl || 0);
+      const sl = parseFloat(t.stop_loss), isLong = t.direction === 'long';
+      const lev = parseFloat(t.onchain_context?.chosenLeverage || t.leverage || 1) || 1;
+      const move = (to) => (isLong ? to - entry : entry - to) / entry * 100;       // % in our favour at price `to`
+      const pct = price ? move(price) : null;
+      const unrealized = pct == null ? 0 : (pct / 100) * size;
+      const tps = [[1, t.tp1, t.hit_tp1], [2, t.tp2, t.hit_tp2], [3, t.tp3, t.hit_tp3], [4, t.tp4, false]]
+        .filter(x => x[1] != null && isFinite(parseFloat(x[1]))).map(([n, v, hit]) => ({ n, price: parseFloat(v), hit: !!hit }));
+      const nextTp = tps.find(x => !x.hit) || null;
+      const away = (level) => (price ? Math.abs(level - price) / price * 100 : null);
+      const slPnl = isFinite(sl) ? (move(sl) / 100) * size : null;                   // P&L on what is left if the stop fills
       return {
-        text: `📊 <b>Open Positions</b> (${trades.length})\n\n${msg}${totalPnl >= 0 ? '🟩' : '🟥'} <b>Total: $${totalPnl.toFixed(2)}</b>\n\n<i>🔧 = manual trade</i>`,
-        keyboard: Markup.inlineKeyboard(rows),
+        entry, size, realized, sl, isLong, lev, pct, unrealized, total: unrealized + realized, tps, nextTp,
+        roi: pct == null ? null : pct * lev, margin: size / lev,
+        slAway: isFinite(sl) ? away(sl) : null, tpAway: nextTp ? away(nextTp.price) : null, slPnl,
+        atBreakeven: isFinite(sl) && Math.abs(sl - entry) / entry < 0.0005,
+        slLocksProfit: isFinite(sl) && move(sl) > 0.05,
       };
+    };
+
+    const positionCard = (t, st, price) => {
+      const tpRow = st.tps.map(x => `${x.hit ? '✅' : '⬜'}${x.n}`).join(' ');
+      let card = `${st.isLong ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(t.symbol)}</b> ${posTag(t)} · ${t.mode === 'live' ? '💰 LIVE' : '📝 paper'} · ${escapeHtml(t.exchange || '?')} · ${st.lev}x\n`;
+      card += `  Entry $${fmtP(st.entry)}${price ? ` → Now <b>$${fmtP(price)}</b>` : ' · <i>price unavailable</i>'}\n`;
+      card += st.pct == null
+        ? `  P&L: —${st.realized ? ` · Banked ${fmtUsd(st.realized)}` : ''}\n`
+        : `  ${st.total >= 0 ? '🟩' : '🟥'} P&L <b>${fmtUsd(st.total)}</b> (${fmtPct(st.pct)} · ROI ${fmtPct(st.roi)})${st.realized ? ` · Banked ${fmtUsd(st.realized)}` : ''}\n`;
+      if (st.nextTp) card += `  🎯 Next TP${st.nextTp.n} $${fmtP(st.nextTp.price)}${st.tpAway != null ? ` (${st.tpAway.toFixed(1)}% away)` : ''} · ${tpRow}\n`;
+      else if (st.tps.length) card += `  🎯 ${tpRow}\n`;
+      if (isFinite(st.sl)) {
+        const note = st.atBreakeven ? ' · at breakeven' : st.slLocksProfit ? ` · locks ${fmtUsd(st.slPnl)}` : st.slPnl != null ? ` · risk ${fmtUsd(st.slPnl)}` : '';
+        card += `  🛑 SL $${fmtP(st.sl)}${st.slAway != null ? ` (${st.slAway.toFixed(1)}% away)` : ''}${note}\n`;
+      }
+      card += `  💵 $${st.size.toFixed(2)} open · margin $${st.margin.toFixed(2)} · ⏱ ${posAge(t)}\n`;
+      return card;
+    };
+
+    const positionsView = async (filter = 'all', sort = 'pnl', page = 0) => {
+      if (!POS_FILTERS[filter]) filter = 'all';
+      if (!POS_SORTS[sort]) sort = 'pnl';
+      const all = await db.getOpenTrades();
+      if (!all.length) {
+        return { text: `📭 <b>No open positions.</b>\n<i>Updated ${utcClock()} UTC</i>`, keyboard: Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'mt_pv_all_pnl_0'), Markup.button.callback('📍 Limit orders', 'mt_orders')]]) };
+      }
+      const match = { all: () => true, live: t => t.mode === 'live', paper: t => t.mode !== 'live', mine: t => t.onchain_context?.manual === true };
+      const trades = all.filter(match[filter]);
+      const prices = await positionPrices(trades);
+      const rows = trades.map(t => { const price = prices.get(`${t.exchange}:${t.symbol}`); return { t, price, st: positionStats(t, price) }; });
+      const by = {
+        pnl: (a, b) => b.st.total - a.st.total,
+        age: (a, b) => new Date(b.t.created_at) - new Date(a.t.created_at),
+        sl: (a, b) => (a.st.slAway ?? Infinity) - (b.st.slAway ?? Infinity),
+      };
+      rows.sort(by[sort]);
+      const pages = Math.max(1, Math.ceil(rows.length / POS_PAGE));
+      page = Math.min(Math.max(0, page | 0), pages - 1);
+      const shown = rows.slice(page * POS_PAGE, (page + 1) * POS_PAGE);
+
+      const sum = (f) => rows.reduce((a, r) => a + f(r), 0);
+      const unreal = sum(r => r.st.unrealized), banked = sum(r => r.st.realized), total = unreal + banked;
+      const liveN = all.filter(t => t.mode === 'live').length;
+      const riskRows = rows.filter(r => r.st.slPnl != null);
+      const ifStops = riskRows.reduce((a, r) => a + r.st.slPnl + r.st.realized, 0);
+      const noPrice = rows.filter(r => !r.price).length;
+
+      let text = `📊 <b>Open Positions</b> — ${all.length} (💰 ${liveN} live · 📝 ${all.length - liveN} paper)\n`;
+      if (filter !== 'all') text += `Showing: <b>${POS_FILTERS[filter]}</b> (${rows.length})\n`;
+      text += `\n`;
+      text += shown.length ? shown.map(r => positionCard(r.t, r.st, r.price)).join('\n') : `<i>No positions match this filter.</i>\n`;
+      if (rows.length) {
+        text += `\n${total >= 0 ? '🟩' : '🟥'} <b>Total P&L ${fmtUsd(total)}</b> · open ${fmtUsd(unreal)} · banked ${fmtUsd(banked)}\n`;
+        text += `💵 Open size $${sum(r => r.st.size).toFixed(2)} · margin $${sum(r => r.st.margin).toFixed(2)}`;
+        if (riskRows.length) text += ` · if every stop hits: <b>${fmtUsd(ifStops)}</b>`;
+        text += `\n`;
+        if (noPrice) text += `⚠️ ${noPrice} position${noPrice > 1 ? 's' : ''} without a live price — not counted in P&L\n`;
+      }
+      // Live and paper are kept apart: paper results from the other strategies would swamp the live figure
+      const closed = await db.query(
+        `SELECT (mode = 'live') AS live, COUNT(*)::int AS n, COALESCE(SUM(COALESCE(pnl_usd, 0) + COALESCE(realized_pnl, 0)), 0)::float AS pnl
+         FROM trades WHERE status = 'closed' AND closed_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+         GROUP BY 1`
+      ).then(r => r.rows).catch(() => null);
+      if (closed) {
+        const part = (live) => { const g = closed.find(x => x.live === live); return g ? `${g.n} · <b>${fmtUsd(g.pnl)}</b>` : '0'; };
+        text += `📅 Closed today (UTC): 💰 live ${part(true)} · 📝 paper ${part(false)}\n`;
+      }
+      text += `\n<i>🤖 auto-pump · 🔧 manual · 🔗 onchain · 🌊 swing · 🧱 demand zone · 📡 main\nSorted by ${POS_SORTS[sort]}${pages > 1 ? ` · page ${page + 1}/${pages}` : ''} · updated ${utcClock()} UTC</i>`;
+
+      const cb = (f, so, pg) => `mt_pv_${f}_${so}_${pg}`;
+      const kb = grid(shown.map(r => Markup.button.callback(`${r.st.isLong ? '🟢' : '🔴'} ${r.t.symbol}${r.st.pct == null ? '' : ` ${fmtUsd(r.st.total)}`} ›`, `mt_pd_${r.t.id}`)), 2);
+      if (pages > 1) {
+        kb.push([
+          Markup.button.callback(page > 0 ? '◀️ Prev' : '·', page > 0 ? cb(filter, sort, page - 1) : 'mt_noop'),
+          Markup.button.callback(`${page + 1}/${pages}`, 'mt_noop'),
+          Markup.button.callback(page < pages - 1 ? 'Next ▶️' : '·', page < pages - 1 ? cb(filter, sort, page + 1) : 'mt_noop'),
+        ]);
+      }
+      kb.push(Object.keys(POS_FILTERS).map(f => Markup.button.callback(`${f === filter ? '✓ ' : ''}${POS_FILTERS[f].split(' ').slice(0, 2).join(' ')}`, cb(f, sort, 0))));
+      const nextSort = Object.keys(POS_SORTS)[(Object.keys(POS_SORTS).indexOf(sort) + 1) % Object.keys(POS_SORTS).length];
+      kb.push([Markup.button.callback('🔄 Refresh', cb(filter, sort, page)), Markup.button.callback(`↕️ Sort: ${POS_SORTS[sort]}`, cb(filter, nextSort, 0)), Markup.button.callback('📍 Limit orders', 'mt_orders')]);
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+
+    // One position in full, with its actions
+    const positionDetail = async (id) => {
+      const t = await getOpenTradeById(id);
+      if (!t) return { text: '⚠️ That position is already closed.', keyboard: Markup.inlineKeyboard([[Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]]) };
+      const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+      const st = positionStats(t, price);
+      const c = t.onchain_context || {};
+      const opened = new Date(t.created_at).toISOString().slice(0, 16).replace('T', ' ');
+      let text = `🔎 <b>Position #${t.id}</b>\n\n${positionCard(t, st, price)}\n`;
+      text += `<b>Levels</b>\n`;
+      for (const x of st.tps) {
+        const d = price ? ` · ${(Math.abs(x.price - price) / price * 100).toFixed(1)}% away` : '';
+        text += `  ${x.hit ? '✅' : '🎯'} TP${x.n} $${fmtP(x.price)} (${fmtPct((st.isLong ? x.price - st.entry : st.entry - x.price) / st.entry * 100)})${x.hit ? ' · hit' : d}\n`;
+      }
+      if (isFinite(st.sl)) text += `  🛑 SL $${fmtP(st.sl)} (${fmtPct((st.isLong ? st.sl - st.entry : st.entry - st.sl) / st.entry * 100)} from entry)\n`;
+      const origSl = parseFloat(t.original_stop_loss);
+      if (isFinite(origSl) && Math.abs(origSl - st.sl) / st.entry > 0.0005) text += `  <i>Original SL $${fmtP(origSl)}</i>\n`;
+      text += `\n<b>Details</b>\n`;
+      text += `  Source: ${escapeHtml(t.source || '?')}${c.autoPump ? ' · pump auto-trade' : c.manual ? ' · manual' : ''}${c.exitStyle ? ` · exit: ${escapeHtml(String(c.exitStyle))}` : ''}\n`;
+      text += `  Quantity: ${parseFloat(t.quantity || 0)} · exchange leverage ${parseFloat(t.leverage || st.lev)}x${c.marginSaver ? ' (margin saver)' : ''}\n`;
+      text += `  Opened: ${opened} UTC (${posAge(t)} ago)\n`;
+      text += `\n<i>Updated ${utcClock()} UTC</i>`;
+      const canBe = price && st.pct >= 0.5 && isFinite(st.sl) && !st.atBreakeven && !st.slLocksProfit;
+      const kb = [[Markup.button.callback('🔄 Refresh', `mt_pd_${t.id}`), Markup.button.callback('❌ Close position', `mt_close_${t.id}`)]];
+      if (canBe) kb.push([Markup.button.callback('🛡 Move SL to breakeven', `mt_be_${t.id}`)]);
+      kb.push([Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]);
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+
+    const editOrReply = async (ctx, view) => {
+      try {
+        await ctx.editMessageText(view.text, { parse_mode: 'HTML', reply_markup: view.keyboard?.reply_markup });
+      } catch (e) {
+        if (/not modified/i.test(e.message)) return;
+        await ctx.replyWithHTML(view.text, view.keyboard);
+      }
     };
 
     this.bot.command('mpositions', async (ctx) => {
@@ -1715,15 +1872,74 @@ class TelegramBot {
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
 
+    // Older messages still carry this button — it opens the default view
     this.bot.action('mt_pos_refresh', async (ctx) => {
       if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
       await ack(ctx, 'Refreshed');
+      try { await editOrReply(ctx, await positionsView()); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_pv_([a-z]+)_([a-z]+)_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Updated');
+      try { await editOrReply(ctx, await positionsView(ctx.match[1], ctx.match[2], Number(ctx.match[3]))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action('mt_noop', (ctx) => ack(ctx));
+
+    this.bot.action(/^mt_pd_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try { await editOrReply(ctx, await positionDetail(Number(ctx.match[1]))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    // SL → breakeven: only offered and only applied while the position is in profit, so the stop can't fire at once
+    const breakevenCheck = async (id) => {
+      const t = await getOpenTradeById(id);
+      if (!t) return { error: 'That position is already closed.' };
+      const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+      if (!price) return { error: 'No live price right now — try again.' };
+      const st = positionStats(t, price);
+      if (st.atBreakeven || st.slLocksProfit) return { error: 'The stop is already at or beyond breakeven.' };
+      if (!(st.pct >= 0.5)) return { error: `Price must be at least 0.5% in profit (now ${fmtPct(st.pct)}) — otherwise the stop would fire immediately.` };
+      return { t, st, price };
+    };
+
+    this.bot.action(/^mt_be_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
       try {
-        const { text, keyboard } = await positionsView();
-        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard?.reply_markup }).catch((e) => {
-          if (!/not modified/i.test(e.message)) throw e;
-        });
+        const r = await breakevenCheck(Number(ctx.match[1]));
+        if (r.error) return ctx.replyWithHTML(`⚠️ ${escapeHtml(r.error)}`);
+        await ctx.replyWithHTML(
+          `❓ <b>Move ${escapeHtml(r.t.symbol)} stop to breakeven?</b>\n\n` +
+          `SL $${fmtP(r.st.sl)} → <b>$${fmtP(r.st.entry)}</b> (entry)\n` +
+          `Now $${fmtP(r.price)} · ${fmtPct(r.st.pct)} in profit · ${r.t.mode === 'live' ? '💰 LIVE — the exchange stop is replaced' : '📝 PAPER'}`,
+          Markup.inlineKeyboard([[Markup.button.callback('✅ Yes, move it', `mt_beok_${r.t.id}`), Markup.button.callback('⬅️ Leave it', 'mt_closeno')]])
+        );
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_beok_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Moving stop…');
+      try {
+        const r = await breakevenCheck(Number(ctx.match[1]));   // re-checked: price may have moved since the prompt
+        if (r.error) return ctx.editMessageText(`⚠️ ${r.error}`).catch(() => {});
+        const executor = executorForSource(r.t.source);
+        if (!executor) return ctx.editMessageText(`⚠️ No executor for source "${r.t.source}".`).catch(() => {});
+        await db.updateTradeStopLoss(r.t.id, r.st.entry);
+        await executor.updateExchangeSL(r.t, r.st.entry);
+        logger.info(`Manual SL → breakeven: ${r.t.symbol} #${r.t.id} ${r.st.sl} → ${r.st.entry}`);
+        await ctx.editMessageText(
+          `🛡 <b>${escapeHtml(r.t.symbol)} stop moved to breakeven</b>\nSL $${fmtP(r.st.sl)} → <b>$${fmtP(r.st.entry)}</b>\n` +
+          `<i>The bot enforces this stop on its 1-minute check${r.t.mode === 'live' ? '; the exchange stop was replaced too (check the bot log if the exchange rejected it)' : ''}.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🔎 Back to position', `mt_pd_${r.t.id}`), Markup.button.callback('📊 All positions', 'mt_pv_all_pnl_0')]]).reply_markup }
+        ).catch(() => {});
+      } catch (e) {
+        logger.error(`SL → breakeven failed: ${e.message}`);
+        ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
+      }
     });
 
     this.bot.action('mt_pos_refresh_new', async (ctx) => {
