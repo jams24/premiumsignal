@@ -1697,7 +1697,7 @@ class TelegramBot {
     // Live positions view (/mpositions): filter · sort · pages, per-position detail, SL → breakeven.
     // View state travels in the callback data (mt_pv_<filter>_<sort>_<page>), so every message refreshes itself.
     const POS_PAGE = 5;
-    const POS_FILTERS = { all: '📊 All', live: '💰 Live', paper: '📝 Paper', mine: '🔧 Manual + 🤖 Auto' };
+    const POS_FILTERS = { all: '📊 All', live: '💰 Live', paper: '📝 Paper', mine: '🔧 Manual + 🤖 Auto', auto: '🤖 Auto-pump' };
     const POS_SORTS = { pnl: 'P&L', age: 'Newest', sl: 'Closest to SL' };
     const posTag = (t) => (t.onchain_context?.autoPump ? '🤖' : t.onchain_context?.manual ? '🔧' : t.source === 'onchain' ? '🔗' : t.source === 'swing' ? '🌊' : t.source === 'demandzone' ? '🧱' : '📡');
     const posAge = (t) => {
@@ -1767,7 +1767,7 @@ class TelegramBot {
       if (!all.length) {
         return { text: `📭 <b>No open positions.</b>\n<i>Updated ${utcClock()} UTC</i>`, keyboard: Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'mt_pv_all_pnl_0'), Markup.button.callback('📍 Limit orders', 'mt_orders')]]) };
       }
-      const match = { all: () => true, live: t => t.mode === 'live', paper: t => t.mode !== 'live', mine: t => t.onchain_context?.manual === true };
+      const match = { all: () => true, live: t => t.mode === 'live', paper: t => t.mode !== 'live', mine: t => t.onchain_context?.manual === true, auto: t => t.onchain_context?.autoPump === true };
       const trades = all.filter(match[filter]);
       const prices = await positionPrices(trades);
       const rows = trades.map(t => { const price = prices.get(`${t.exchange}:${t.symbol}`); return { t, price, st: positionStats(t, price) }; });
@@ -2379,14 +2379,11 @@ class TelegramBot {
     apAction('ap_size', async (ctx) => {
       await ctx.answerCbQuery('Auto trades use the margin and leverage saved in your /trade panel (leverage capped at 5x). Open /trade SYMBOL, change margin/leverage, then cancel — the settings are saved.', { show_alert: true }).catch(() => {});
     });
-    apAction('ap_open', async (ctx, ap) => {
+    // Same live view as /mpositions, opened on the auto-pump filter
+    apAction('ap_open', async (ctx) => {
       await ack(ctx);
-      const s = await ap.stats();
-      if (!s.open.length) return ctx.replyWithHTML('📭 No open auto trades.');
-      const trades = (await db.getOpenTrades(mtExec().settingsKey)).filter(t => t.onchain_context?.autoPump === true);
-      const { msg, totalPnl } = await formatPositions(trades, mtExec().exchanges);
-      await ctx.replyWithHTML(`🤖 <b>Open auto trades</b> (${trades.length})\n\n${msg}${totalPnl >= 0 ? '🟩' : '🟥'} <b>Total: $${totalPnl.toFixed(2)}</b>`,
-        Markup.inlineKeyboard(trades.map(t => [Markup.button.callback(`❌ Close ${t.symbol}`, `mt_close_${t.id}`)])));
+      const { text, keyboard } = await positionsView('auto');
+      await ctx.replyWithHTML(text, keyboard);
     });
 
     const formatPositions = async (trades, exchanges) => {
