@@ -5,10 +5,35 @@ const db = require('../db/database');
 const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanResult, escapeHtml } = require('../utils/formatting');
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
+const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
 const { PLAN_TP_PCTS } = require('../engine/pumpAutoTrader');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
 // 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
+// Spot-share line for pump signals (channel-facing: no auto-trade wording). max = limit from /autopump (0 = rule off)
+function spotInfo(spot, max) {
+  const verdict = spotVerdict(spot, max);
+  const usd = (v) => (v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${Math.round(v / 1e3)}K`);
+  const limit = max > 0 ? ` · limit ${max}%` : '';
+  if (!spot) return { verdict, line: `🧪 Spot share: <b>n/a</b> (couldn't be measured)` };
+  if (!spot.hasSpot) return { verdict, line: `🧪 Spot share: <b>no spot market</b> on Binance/Bybit ✅ futures-only pump` };
+  const vols = `spot ${usd(spot.spotUsd)} vs futures ${usd(spot.perpUsd)} last hour`;
+  return {
+    verdict,
+    pct: spot.pct,
+    line: verdict === 'spot_led'
+      ? `🧪 Spot share: <b>${spot.pct.toFixed(1)}%</b> ⚠️ SPOT-LED (${vols}${limit})`
+      : `🧪 Spot share: <b>${spot.pct.toFixed(1)}%</b> ✅ futures-driven (${vols}${limit})`,
+  };
+}
+
+// Info line: median 24h move of all USDT perps — pump shorts did worse when the alt market was green
+function altMarketLine(median) {
+  if (median == null) return '';
+  const hot = median > HOT_ALT_MARKET_PCT;
+  return `🌡 Alt market 24h: <b>${median >= 0 ? '+' : ''}${median.toFixed(1)}%</b> median ${hot ? '⚠️ green market — pump shorts did worse' : '✅ calm'}\n`;
+}
+
 function runLabel(run7d) {
   const type = runType(run7d);
   if (!type) return null;
@@ -1986,6 +2011,7 @@ class TelegramBot {
     // === /autopump — auto-trade pump signals when they reach ✅ ENTER ===
     const AP_MAX_OPEN = [1, 2, 3, 5];
     const AP_DAILY_STOP = [30, 60, 100, 200, 0];
+    const AP_SPOT_SHARE = [10, 12, 13, 15, 20, 0];
     const money = (v) => `$${Number(v).toFixed(2)}`;
 
     const autoPumpPanel = async (uid) => {
@@ -2019,6 +2045,9 @@ class TelegramBot {
         `📐 SL +${PUMP_RULES.slPct}% · TP ${PLAN_TP_PCTS.map(p => '−' + p + '%').join(' / ')} · Exit: TPs only · signal's exchange`,
         '',
         `<b>Guards</b>: max <b>${c.maxOpen}</b> open auto trades · ${c.dailyLossUsd > 0 ? `stop for the day after <b>-$${c.dailyLossUsd}</b>` : 'no daily stop'}`,
+        c.maxSpotSharePct > 0
+          ? `🧪 Spot-share rule: skip pumps where spot volume is over <b>${c.maxSpotSharePct}%</b> of futures volume (spot-led pumps kept running)`
+          : `🧪 Spot-share rule: <b>off</b> — spot-led pumps are traded too`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
       if (s) {
@@ -2032,7 +2061,8 @@ class TelegramBot {
         [Markup.button.callback(`📝 Paper${!live ? ' ✓' : ''}`, 'ap_mode_paper'), Markup.button.callback(`💰 Live${live ? ' ✓' : ''}`, 'ap_mode_live')],
         [Markup.button.callback(`📊 Max open: ${c.maxOpen}`, 'ap_maxopen'),
          Markup.button.callback(`🛑 Daily stop: ${c.dailyLossUsd > 0 ? '$' + c.dailyLossUsd : 'off'}`, 'ap_daily')],
-        [Markup.button.callback(`🟠 Half size on fresh: ${c.halfOnFresh ? 'ON' : 'OFF'}`, 'ap_half')],
+        [Markup.button.callback(`🟠 Half size on fresh: ${c.halfOnFresh ? 'ON' : 'OFF'}`, 'ap_half'),
+         Markup.button.callback(`🧪 Max spot share: ${c.maxSpotSharePct > 0 ? c.maxSpotSharePct + '%' : 'off'}`, 'ap_spot')],
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
       ]);
@@ -2117,6 +2147,12 @@ class TelegramBot {
       const next = AP_DAILY_STOP[(AP_DAILY_STOP.indexOf(ap.config.dailyLossUsd) + 1) % AP_DAILY_STOP.length];
       await ap.update({ dailyLossUsd: next });
       await ack(ctx, next ? `Daily stop: -$${next}` : 'Daily stop off');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_spot', async (ctx, ap) => {
+      const next = AP_SPOT_SHARE[(AP_SPOT_SHARE.indexOf(ap.config.maxSpotSharePct) + 1) % AP_SPOT_SHARE.length];
+      await ap.update({ maxSpotSharePct: next });
+      await ack(ctx, next ? `Max spot share: ${next}%` : 'Spot-share rule off');
       await showAutoPump(ctx, true);
     });
     apAction('ap_half', async (ctx, ap) => {
@@ -8959,6 +8995,8 @@ class TelegramBot {
       const topAge = check.topAgeMin != null ? Math.round(check.topAgeMin) : null;
       const belowHigh = check.high24 ? ((check.high24 - price) / check.high24) * 100 : null;
       const R = PUMP_RULES;
+      const maxSpot = this.pumpAutoTrader?.config?.maxSpotSharePct ?? DEFAULT_MAX_SPOT_SHARE;
+      const spot = spotInfo(check.spot, maxSpot);
 
       let grade = '⚪ WEAK';
       if (pumpPct >= 40 && oi4h >= 30 && oi4h < 100 && exhScore >= 7 && fundingBias !== 'long') grade = '🟢 PERFECT';
@@ -8974,9 +9012,13 @@ class TelegramBot {
         top_fresh:
           `⏳ <b>WAIT — TOP ${topAge == null ? 'UNKNOWN' : `ONLY ${topAge}m OLD`}</b>\n` +
           `  → Short only after ${R.minTopAgeMin}m+ with no new high (signals fired at the top mostly squeezed first)\n${watching}`,
-        enter:
-          `✅ <b>ENTER — TOP HOLDING + 1H REVERSAL</b>\n` +
-          `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags})`,
+        enter: spot.verdict === 'spot_led'
+          ? `🟡 <b>ENTRY RULES MET — BUT SPOT-LED PUMP</b>\n` +
+            `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags})\n` +
+            `  → Spot buying is ${spot.pct.toFixed(1)}% of futures volume (over ${maxSpot}%): real demand, these kept pumping in the 30-day test\n` +
+            `  → Higher risk: skip it, or short with a smaller size`
+          : `✅ <b>ENTER — TOP HOLDING + 1H REVERSAL</b>\n` +
+            `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags})`,
         no_cisd:
           `🟡 <b>CAUTION — TOP HOLDING, NO 1H REVERSAL YET</b>\n` +
           `  → No new high for ${topAge}m, but CISD 0 — wait for a red candle / lower high\n${watching}`,
@@ -8993,6 +9035,8 @@ class TelegramBot {
       if (check.high24) msg += `🔝 24H High: <b>$${p(check.high24)}</b> (${belowHigh.toFixed(1)}% above price) · ${topAge}m ago${topAge >= R.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
       msg += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${cisdFlags})${check.cisdScore >= R.minCisd ? ' ✅' : ''}\n`;
       msg += `🔥 Exhaustion: <b>${exhScore}/10</b> · 💵 Funding: <b>${fundingBias}</b> · 📉 RSI 5m: <b>${rsi}</b>\n`;
+      msg += `${spot.line}\n`;
+      msg += altMarketLine(check.altMarket);
       msg += `\n<b>Plan (short):</b>\n`;
       msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n');
       msg += `\n🛑 SL: $${p(levels.stopLoss)} (+${R.slPct}%)\n`;
@@ -9025,8 +9069,15 @@ class TelegramBot {
       let msg;
       if (u.kind === 'enter') {
         const oi = u.oi1h != null ? `OI 1H ${u.oi1h >= 0 ? '+' : ''}${u.oi1h.toFixed(0)}%` : 'OI 1H n/a';
-        msg = `✅ <b>${sym} — ENTER NOW (short)</b>\n` +
+        const maxSpot = this.pumpAutoTrader?.config?.maxSpotSharePct ?? DEFAULT_MAX_SPOT_SHARE;
+        const spot = spotInfo(u.spot, maxSpot);
+        const head = spot.verdict === 'spot_led'
+          ? `🟡 <b>${sym} — ENTRY RULES MET, BUT SPOT-LED PUMP</b>\n` +
+            `<i>Real spot buying is behind this pump — these kept running in the 30-day test. Higher risk: skip it, or short with a smaller size.</i>\n`
+          : `✅ <b>${sym} — ENTER NOW (short)</b>\n`;
+        msg = head +
           `Top $${p(u.top.high24)} held ${Math.round(u.top.topAgeMin)}m · ${oi} · CISD ${u.cisd.score}/4 on ${u.cisd.tf} (${(u.cisd.flags || []).join(' + ') || 'none'})\n` +
+          `${spot.line}\n` +
           `${now} · ${after}\n\n` +
           u.levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n') +
           `\n🛑 SL: $${p(u.levels.stopLoss)} (+${R.slPct}%)\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only${runLabel(u.run7d) ? ` · ${runLabel(u.run7d).size}` : ''}`;

@@ -3,6 +3,7 @@ const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
 const { PUMP_RULES, channelLevels, runType } = require('../collectors/pumpSignalCheck');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
+const { measureSpotShare, spotVerdict, DEFAULT_MAX_SPOT_SHARE } = require('../collectors/spotShare');
 
 // Auto-trades pump-exhaustion shorts when the channel says ✅ ENTER (at signal time or from the
 // follow-up watcher). Size comes from the owner's /trade panel settings; levels and exits follow the
@@ -16,12 +17,14 @@ const DEFAULTS = {
   maxOpen: 2,
   dailyLossUsd: 60,    // stop opening new auto trades after this realised loss today (UTC); 0 = no limit
   halfOnFresh: true,
+  maxSpotSharePct: DEFAULT_MAX_SPOT_SHARE, // skip spot-led pumps (spot volume above this % of futures volume); 0 = off
 };
 
 class PumpAutoTrader {
-  constructor({ executor, notify, adminIds = [] }) {
+  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
     this.notify = notify;           // async (chatId, html) => void
+    this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
     this.adminIds = adminIds;       // told about ENTERs missed while auto-trade is off and no owner is set
     this.config = { ...DEFAULTS };
     this.busy = new Set();          // signal ids being processed
@@ -143,6 +146,14 @@ class PumpAutoTrader {
     }
     const size = await this.sizing(info.run7d);
     if (!(size.margin >= 1)) return `Margin $${size.margin} is below the $1 minimum.`;
+
+    // Spot-led pumps (real spot buying behind the move) kept running in the 30-day replay — skip them
+    if (c.maxSpotSharePct > 0) {
+      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
+      const verdict = spotVerdict(info.spot, c.maxSpotSharePct);
+      if (verdict === 'spot_led') return `Spot-led pump: spot share ${info.spot.pct.toFixed(1)}% is above your ${c.maxSpotSharePct}% limit (change it in /autopump).`;
+      if (verdict === 'unknown') return `Spot share could not be measured, so the ${c.maxSpotSharePct}% spot-share rule can't be checked — skipped to be safe.`;
+    }
     return null;
   }
 
@@ -174,6 +185,7 @@ class PumpAutoTrader {
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
       `🎯 TP1 $${p(tps[0])} · TP2 $${p(tps[1])} · TP3 $${p(tps[2])} · TP4 $${p(tps[3])}\n` +
       `🛑 SL $${p(L.stopLoss)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
+      `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Pump auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x via ${info.via}`);

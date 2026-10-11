@@ -22,6 +22,7 @@ const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
 const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
+const { measureSpotShare, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
@@ -618,6 +619,7 @@ async function main() {
   const watchState = (w, status, outcome = null) => ({
     status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, signalPrice: w.signalPrice,
     high: w.high, pumpBase: w.pumpBase, startedAt: w.startedAt, newHighSent: w.newHighSent, run7d: w.run7d ?? null,
+    enterSpot: w.enterSpot ?? null,
   });
   const saveWatch = (w, status = 'watching', outcome) => (w.signalId
     ? db.savePumpWatch(w.signalId, watchState(w, status, outcome)).catch(e => logger.warn(`Saving pump watch ${w.symbol} failed: ${e.message}`))
@@ -642,9 +644,14 @@ async function main() {
           }
           const r = await followUpCheck(w.ex, w);
           if (r.kind === 'enter' || r.kind === 'missed') {
+            // Spot share at the ENTER moment: shown on the reply and checked by the auto-trader
+            if (r.kind === 'enter') {
+              r.spot = await measureSpotShare(w.symbol).catch(() => null);
+              w.enterSpot = r.spot ? { pct: r.spot.pct, hasSpot: r.spot.hasSpot } : null;
+            }
             await finishWatch(key, w, r.kind, { ...base, ...r });
             if (r.kind === 'enter') {
-              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up' });
+              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot });
             }
           } else if (r.kind === 'new_high') {
             w.high = r.top.high24;
@@ -1032,6 +1039,9 @@ async function main() {
               cisdFlags: ctx.cisdFlags || [],
               run7d,
             };
+            const [spot, altMarket] = await Promise.all([measureSpotShare(token.symbol).catch(() => null), measureAltMarket()]);
+            check.spot = spot;
+            check.altMarket = altMarket;
             check.verdict = entryVerdict(check);
             const levels = channelLevels(token.price);
             const msgId = await bot.sendPumpSignal(token, setup, check, levels);
@@ -1056,12 +1066,13 @@ async function main() {
                 crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
                 cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
                 verdict: check.verdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2], run7d,
+                spotShare: spot ? spot.pct : null, hasSpot: spot ? spot.hasSpot : null, altMarket,
                 engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
             }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
 
             if (check.verdict === 'enter' && ex) {
-              await autoTradeEnter({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal' });
+              await autoTradeEnter({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal', spot });
             }
 
             if (msgId && ex && check.verdict !== 'enter') {
