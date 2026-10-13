@@ -10,6 +10,9 @@ const { measureSpotShare, spotVerdict, DEFAULT_MAX_SPOT_SHARE } = require('../co
 // channel plan. Off and paper by default; live must be switched on explicitly.
 
 const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 30];
+// TP1 choices for auto-trades. 219-trade replay ($150): 7% +$464 / 83 full stop-outs, 6% +$509 / 73, 5% +$500 / 62,
+// 4% +$264 (SL reaches entry too early and bounces close the rest).
+const AUTO_TP1_PCTS = [7, 6];
 const DEFAULTS = {
   enabled: false,
   mode: 'paper',
@@ -18,6 +21,7 @@ const DEFAULTS = {
   dailyLossUsd: 60,    // stop opening new auto trades after this realised loss today (UTC); 0 = no limit
   halfOnFresh: true,
   maxSpotSharePct: DEFAULT_MAX_SPOT_SHARE, // skip spot-led pumps (spot volume above this % of futures volume); 0 = off
+  tp1Pct: PLAN_TP_PCTS[0],
 };
 
 class PumpAutoTrader {
@@ -157,12 +161,19 @@ class PumpAutoTrader {
     return null;
   }
 
+  // Targets for auto-trades: the plan with the chosen TP1 (anything not on the list falls back to the plan)
+  tpPcts() {
+    const tp1 = AUTO_TP1_PCTS.includes(this.config.tp1Pct) ? this.config.tp1Pct : PLAN_TP_PCTS[0];
+    return [tp1, ...PLAN_TP_PCTS.slice(1)];
+  }
+
   async open(info) {
     const c = this.config, te = this.executor;
     const size = await this.sizing(info.run7d);
     const entry = info.price;
     const L = channelLevels(entry);
-    const tps = PLAN_TP_PCTS.map(p => entry * (1 - p / 100));
+    const tpPcts = this.tpPcts();
+    const tps = tpPcts.map(p => entry * (1 - p / 100));
     const trade = await te.openManualTrade({
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'short', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
@@ -183,7 +194,7 @@ class PumpAutoTrader {
       `💰 Entry: <b>$${p(fill)}</b>\n` +
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position${size.fresh && c.halfOnFresh ? ' · 🟠 half size (fresh breakout)' : ''}${size.levCapped ? ` · leverage capped ${size.panelLev}x → ${size.leverage}x` : ''}\n` +
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
-      `🎯 TP1 $${p(tps[0])} · TP2 $${p(tps[1])} · TP3 $${p(tps[2])} · TP4 $${p(tps[3])}\n` +
+      `🎯 TP1 $${p(tps[0])} (−${tpPcts[0]}%) · TP2 $${p(tps[1])} · TP3 $${p(tps[2])} · TP4 $${p(tps[3])}\n` +
       `🛑 SL $${p(L.stopLoss)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
       `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
@@ -198,4 +209,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS };

@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS } = require('../engine/pumpAutoTrader');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
 // 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
@@ -694,6 +694,9 @@ class TelegramBot {
       default: { label: 'Default', mults: [1.5, 3, 5, 7] },
       runner: { label: 'Runner', mults: [2, 4, 6, 10] },
     };
+    // Fixed % targets from entry (either direction). 7/12/20/30 is the pump plan; 6% TP1 banks and moves the SL
+    // to entry a little sooner (219-trade replay: same profit, ~10 fewer full stop-outs).
+    const MT_TP_PCT_PLANS = { p6: [6, 12, 20, 30], p7: PLAN_TP_PCTS };
     const MT_LIMIT_OFFSETS = [0.5, 1, 2, 3, 5];
     const MT_EXIT_STYLES = { tight: 'Tight', loose: 'Loose', hold: 'Hold to TP1', tponly: 'TPs only' };
     // Plain-language summary of how a style protects profit, from the executor's real parameters
@@ -951,6 +954,7 @@ class TelegramBot {
       slAtrMult: st.slAtrMult,
       slRiskUsd: st.slRiskUsd,
       tpPreset: st.tpPreset,
+      tpPlan: st.tpPlan || null,
       exitStyle: st.exitStyle,
       marginSaver: st.marginSaver,
     });
@@ -998,7 +1002,8 @@ class TelegramBot {
         tpPreset: MT_TP_PRESETS[saved.tpPreset] ? saved.tpPreset : 'default',
         exitStyle: opts.exitStyle || (MT_EXIT_STYLES[saved.exitStyle] ? saved.exitStyle : 'tight'),
         marginSaver: saved.marginSaver !== false,
-        tpPcts: opts.tpPcts || null,
+        tpPlan: !opts.tpPcts && MT_TP_PCT_PLANS[saved.tpPlan] ? saved.tpPlan : null,
+        tpPcts: opts.tpPcts || MT_TP_PCT_PLANS[saved.tpPlan] || null,
         customTp1: 0,
         entryType: 'market',
         limitPrice: 0,
@@ -1094,7 +1099,7 @@ class TelegramBot {
       },
       tp: {
         prompt: (st, s) => `Type your <b>TP1 price</b> (TP2-4 scale from it). Must be <b>${dirWord(st, 'tp')}</b> entry $${fmtP(s.entry)}. Send <code>auto</code> for R-multiple targets.`,
-        apply: (st, raw) => { st.tpPcts = null; if (raw === 'auto') { st.customTp1 = 0; return null; } const v = num(raw); if (!(v > 0)) return '⚠️ Not a valid price.'; st.customTp1 = v; return null; },
+        apply: (st, raw) => { st.tpPcts = null; st.tpPlan = null; if (raw === 'auto') { st.customTp1 = 0; return null; } const v = num(raw); if (!(v > 0)) return '⚠️ Not a valid price.'; st.customTp1 = v; return null; },
       },
       entry: {
         prompt: (st) => `Type your <b>limit entry price</b> (market $${fmtP(st.market.price)}). Send <code>market</code> to enter at market.`,
@@ -1231,7 +1236,8 @@ class TelegramBot {
           st.direction = dir;
           st.customSl = 0;
           st.customTp1 = 0;
-          st.tpPcts = null;
+          // % plans work in both directions; a plan pre-filled from /check does not
+          st.tpPcts = MT_TP_PCT_PLANS[st.tpPlan] || null;
           if (st.entryType === 'limit') st.limitPrice = 0;
         }
         await renderPanel(ctx, st);
@@ -1365,12 +1371,18 @@ class TelegramBot {
     mtAction('mt_tp', async (ctx, st) => {
       await ack(ctx);
       const btns = Object.entries(MT_TP_PRESETS).map(([key, p]) =>
-        [Markup.button.callback(`${p.label} ${p.mults.join('/')}R${!st.customTp1 && st.tpPreset === key ? ' ✓' : ''}`, `mt_tpp_${key}`)]);
+        [Markup.button.callback(`${p.label} ${p.mults.join('/')}R${!st.customTp1 && !st.tpPcts?.length && st.tpPreset === key ? ' ✓' : ''}`, `mt_tpp_${key}`)]);
+      const samePcts = (a) => st.tpPcts?.length === a.length && a.every((v, i) => v === st.tpPcts[i]);
+      const pctBtns = Object.entries(MT_TP_PCT_PLANS).map(([key, pcts]) =>
+        [Markup.button.callback(`${pcts.join('/')}% from entry${samePcts(pcts) ? ' ✓' : ''}`, `mt_tpc_${key}`)]);
+      const current = st.tpPcts?.length ? `${st.tpPcts.join('/')}% from entry`
+        : st.customTp1 > 0 ? `Custom TP1 $${fmtP(st.customTp1)}` : MT_TP_PRESETS[st.tpPreset].label;
       await showMenu(ctx,
-        `🎯 <b>TAKE PROFIT</b>\n\nTargets are multiples of your risk (R = distance to SL).\n` +
-        `Current: <b>${st.customTp1 > 0 ? `Custom TP1 $${fmtP(st.customTp1)}` : MT_TP_PRESETS[st.tpPreset].label}</b>\n\n` +
+        `🎯 <b>TAKE PROFIT</b>\n\n<b>R targets</b> are multiples of your risk (R = distance to SL).\n` +
+        `<b>% targets</b> are fixed distances from entry — 7/12/20/30 is the pump plan, 6/12/20/30 takes TP1 a little sooner.\n` +
+        `Current: <b>${current}</b>\n\n` +
         `Or tap ✏️ to type an exact TP1 price (TP2-4 scale from it).`,
-        [...btns, [Markup.button.callback('✏️ Type TP1 price', 'mt_in_tp')]]);
+        [...btns, ...pctBtns, [Markup.button.callback('✏️ Type TP1 price', 'mt_in_tp')]]);
     });
     mtAction('mt_exit', async (ctx, st) => {
       await ack(ctx);
@@ -1395,8 +1407,16 @@ class TelegramBot {
     mtAction(/^mt_tpp_(safe|default|runner)$/, async (ctx, st) => {
       st.tpPreset = ctx.match[1];
       st.tpPcts = null;
+      st.tpPlan = null;
       st.customTp1 = 0;
       await ack(ctx, MT_TP_PRESETS[st.tpPreset].label);
+      await renderPanel(ctx, st);
+    });
+    mtAction(/^mt_tpc_(p6|p7)$/, async (ctx, st) => {
+      st.tpPlan = ctx.match[1];
+      st.tpPcts = MT_TP_PCT_PLANS[st.tpPlan];
+      st.customTp1 = 0;
+      await ack(ctx, `TP ${st.tpPcts.join('/')}%`);
       await renderPanel(ctx, st);
     });
 
@@ -2258,7 +2278,7 @@ class TelegramBot {
         ? `🏦 Margin saver ON: exchange runs ${full.exchangeLev}x → locks only ${money(full.locked)} (${money(fresh.locked)} on fresh) · liq ≈ ${liquidationPct(full.exchangeLev).toFixed(1)}%`
         : `🏦 Margin saver OFF: exchange locks ${money(full.locked)} at ${full.exchangeLev}x (turn it on in the /trade panel)`);
       lines.push(
-        `📐 SL +${PUMP_RULES.slPct}% · TP ${PLAN_TP_PCTS.map(p => '−' + p + '%').join(' / ')} · Exit: TPs only · signal's exchange`,
+        `📐 SL +${PUMP_RULES.slPct}% · TP ${ap.tpPcts().map(p => '−' + p + '%').join(' / ')} · Exit: TPs only · signal's exchange`,
         '',
         `<b>Guards</b>: max <b>${c.maxOpen}</b> open auto trades · ${c.dailyLossUsd > 0 ? `stop for the day after <b>-$${c.dailyLossUsd}</b>` : 'no daily stop'}`,
         c.maxSpotSharePct > 0
@@ -2279,6 +2299,7 @@ class TelegramBot {
          Markup.button.callback(`🛑 Daily stop: ${c.dailyLossUsd > 0 ? '$' + c.dailyLossUsd : 'off'}`, 'ap_daily')],
         [Markup.button.callback(`🟠 Half size on fresh: ${c.halfOnFresh ? 'ON' : 'OFF'}`, 'ap_half'),
          Markup.button.callback(`🧪 Max spot share: ${c.maxSpotSharePct > 0 ? c.maxSpotSharePct + '%' : 'off'}`, 'ap_spot')],
+        [Markup.button.callback(`🎯 TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1')],
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
       ]);
@@ -2369,6 +2390,12 @@ class TelegramBot {
       const next = AP_SPOT_SHARE[(AP_SPOT_SHARE.indexOf(ap.config.maxSpotSharePct) + 1) % AP_SPOT_SHARE.length];
       await ap.update({ maxSpotSharePct: next });
       await ack(ctx, next ? `Max spot share: ${next}%` : 'Spot-share rule off');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_tp1', async (ctx, ap) => {
+      const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.tpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];
+      await ap.update({ tp1Pct: next });
+      await ack(ctx, `TP1 at −${next}% for new auto trades`);
       await showAutoPump(ctx, true);
     });
     apAction('ap_half', async (ctx, ap) => {
