@@ -3,7 +3,7 @@ const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
 const { PUMP_RULES, channelLevels, runType } = require('../collectors/pumpSignalCheck');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
-const { measureSpotShare, spotVerdict, DEFAULT_MAX_SPOT_SHARE } = require('../collectors/spotShare');
+const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE } = require('../collectors/spotShare');
 
 // Auto-trades pump-exhaustion shorts when the channel says ✅ ENTER (at signal time or from the
 // follow-up watcher). Size comes from the owner's /trade panel settings; levels and exits follow the
@@ -13,6 +13,9 @@ const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 30];
 // TP1 choices for auto-trades. 219-trade replay ($150): 7% +$464 / 83 full stop-outs, 6% +$509 / 73, 5% +$500 / 62,
 // 4% +$264 (SL reaches entry too early and bounces close the rest).
 const AUTO_TP1_PCTS = [7, 6];
+// BTC 7-day pause choices (pause when BTC's last 7 days are below −N%; 0 = off). 4.5-month replay (Jun–Oct, 961 trades,
+// $150): no pause +$468; pause at −2% +$769 on 665 trades — the idea came from Sep–Oct and held on Jun–Aug.
+const AUTO_BTC_PAUSE_PCTS = [2, 3, 5, 0];
 const DEFAULTS = {
   enabled: false,
   mode: 'paper',
@@ -22,13 +25,18 @@ const DEFAULTS = {
   halfOnFresh: true,
   maxSpotSharePct: DEFAULT_MAX_SPOT_SHARE, // skip spot-led pumps (spot volume above this % of futures volume); 0 = off
   tp1Pct: PLAN_TP_PCTS[0],
+  btcPausePct: 2,      // pause new auto trades while BTC's 7-day change is below −btcPausePct %; 0 = off
+  // Skip coins with no spot market on Binance or Bybit. 4.5-month replay: no-spot shorts −$135 on 514 (only Sep
+  // positive, −$212 when BTC 7d < −2%); spot share ≤ 13% with a spot market +$603 on 447, positive every month.
+  skipNoSpot: false,
 };
 
 class PumpAutoTrader {
-  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare }) {
+  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
     this.notify = notify;           // async (chatId, html) => void
     this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
+    this.measureBtc = measureBtc;   // async (hours) => BTC % change
     this.adminIds = adminIds;       // told about ENTERs missed while auto-trade is off and no owner is set
     this.config = { ...DEFAULTS };
     this.busy = new Set();          // signal ids being processed
@@ -151,12 +159,25 @@ class PumpAutoTrader {
     const size = await this.sizing(info.run7d);
     if (!(size.margin >= 1)) return `Margin $${size.margin} is below the $1 minimum.`;
 
+    // Falling BTC: pump shorts lost money (June crash), squeezes keep running
+    if (c.btcPausePct > 0) {
+      const btc7d = await this.measureBtc(168).catch(() => null);
+      if (btc7d == null) return `BTC 7-day change could not be measured, so the BTC pause can't be checked — skipped to be safe.`;
+      info.btc7d = btc7d;
+      if (btc7d < -c.btcPausePct) return `BTC pause: BTC is ${btc7d.toFixed(1)}% over 7 days (pause below −${c.btcPausePct}%, change it in /autopump).`;
+    }
+
     // Spot-led pumps (real spot buying behind the move) kept running in the 30-day replay — skip them
     if (c.maxSpotSharePct > 0) {
       if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
       const verdict = spotVerdict(info.spot, c.maxSpotSharePct);
       if (verdict === 'spot_led') return `Spot-led pump: spot share ${info.spot.pct.toFixed(1)}% is above your ${c.maxSpotSharePct}% limit (change it in /autopump).`;
       if (verdict === 'unknown') return `Spot share could not be measured, so the ${c.maxSpotSharePct}% spot-share rule can't be checked — skipped to be safe.`;
+    }
+    if (c.skipNoSpot) {
+      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
+      if (!info.spot) return `Spot market could not be checked, so the no-spot rule can't be applied — skipped to be safe.`;
+      if (!info.spot.hasSpot) return `No spot market on Binance or Bybit — no-spot coins are set to skip (change it in /autopump).`;
     }
     return null;
   }
@@ -197,6 +218,7 @@ class PumpAutoTrader {
       `🎯 TP1 $${p(tps[0])} (−${tpPcts[0]}%) · TP2 $${p(tps[1])} · TP3 $${p(tps[2])} · TP4 $${p(tps[3])}\n` +
       `🛑 SL $${p(L.stopLoss)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
       `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +
+      `${info.btc7d != null ? `₿ BTC 7d: ${info.btc7d >= 0 ? '+' : ''}${info.btc7d.toFixed(1)}% (pause below −${c.btcPausePct}%)\n` : ''}` +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Pump auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x via ${info.via}`);
@@ -209,4 +231,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS };

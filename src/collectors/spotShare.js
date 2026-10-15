@@ -88,4 +88,20 @@ async function measureAltMarket() {
   } catch (e) { return null; }
 }
 
-module.exports = { measureSpotShare, spotVerdict, measureAltMarket, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT };
+// BTC % change over the last `hours` (Binance USDT perp, last closed 1h candle) → number | null. Cached 5 min.
+let btcCache = null;
+async function measureBtcChange(hours = 168) {
+  if (btcCache && btcCache.hours === hours && Date.now() - btcCache.at < 5 * 60000) return btcCache.value;
+  try {
+    const k = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=${hours + 2}`);
+    if (!Array.isArray(k) || k.length < hours + 2) return null;
+    const closed = k.slice(0, -1);                      // drop the forming candle
+    const now = +closed.at(-1)[4], then = +closed.at(-1 - hours)[4];
+    if (!(now > 0 && then > 0)) return null;
+    const value = (now / then - 1) * 100;
+    btcCache = { hours, at: Date.now(), value };
+    return value;
+  } catch (e) { return null; }
+}
+
+module.exports = { measureSpotShare, spotVerdict, measureAltMarket, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT };

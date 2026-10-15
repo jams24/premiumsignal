@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS } = require('../engine/pumpAutoTrader');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
 // 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
@@ -2259,6 +2259,7 @@ class TelegramBot {
       const full = await ap.sizing(PUMP_RULES.extendedRunPct, owner);
       const fresh = await ap.sizing(0, owner);
       const s = await ap.stats().catch(() => null);
+      const btc7d = c.btcPausePct > 0 ? await ap.measureBtc(168).catch(() => null) : null;
       const slLoss = (sz) => money(sz.position * PUMP_RULES.slPct / 100);
       const live = c.mode === 'live';
 
@@ -2284,6 +2285,12 @@ class TelegramBot {
         c.maxSpotSharePct > 0
           ? `🧪 Spot-share rule: skip pumps where spot volume is over <b>${c.maxSpotSharePct}%</b> of futures volume (spot-led pumps kept running)`
           : `🧪 Spot-share rule: <b>off</b> — spot-led pumps are traded too`,
+        c.btcPausePct > 0
+          ? `₿ BTC pause: no new trades while BTC's 7-day change is below <b>−${c.btcPausePct}%</b> · now ${btc7d == null ? 'unknown' : `${btc7d >= 0 ? '+' : ''}${btc7d.toFixed(1)}%${btc7d < -c.btcPausePct ? ' → <b>⏸ PAUSED</b>' : ' → trading'}`}`
+          : `₿ BTC pause: <b>off</b> — trades in any BTC trend`,
+        c.skipNoSpot
+          ? `🚫 Coins with no spot market (Binance/Bybit): <b>not auto-traded</b>`
+          : `🚫 Coins with no spot market (Binance/Bybit): auto-traded`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
       if (s) {
@@ -2299,7 +2306,9 @@ class TelegramBot {
          Markup.button.callback(`🛑 Daily stop: ${c.dailyLossUsd > 0 ? '$' + c.dailyLossUsd : 'off'}`, 'ap_daily')],
         [Markup.button.callback(`🟠 Half size on fresh: ${c.halfOnFresh ? 'ON' : 'OFF'}`, 'ap_half'),
          Markup.button.callback(`🧪 Max spot share: ${c.maxSpotSharePct > 0 ? c.maxSpotSharePct + '%' : 'off'}`, 'ap_spot')],
-        [Markup.button.callback(`🎯 TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1')],
+        [Markup.button.callback(`🎯 TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
+         Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
+        [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
       ]);
@@ -2390,6 +2399,17 @@ class TelegramBot {
       const next = AP_SPOT_SHARE[(AP_SPOT_SHARE.indexOf(ap.config.maxSpotSharePct) + 1) % AP_SPOT_SHARE.length];
       await ap.update({ maxSpotSharePct: next });
       await ack(ctx, next ? `Max spot share: ${next}%` : 'Spot-share rule off');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_btc', async (ctx, ap) => {
+      const next = AUTO_BTC_PAUSE_PCTS[(AUTO_BTC_PAUSE_PCTS.indexOf(ap.config.btcPausePct) + 1) % AUTO_BTC_PAUSE_PCTS.length];
+      await ap.update({ btcPausePct: next });
+      await ack(ctx, next ? `Pause while BTC 7d < −${next}%` : 'BTC pause off');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_nospot', async (ctx, ap) => {
+      await ap.update({ skipNoSpot: !ap.config.skipNoSpot });
+      await ack(ctx, ap.config.skipNoSpot ? 'No-spot coins will NOT be auto-traded' : 'No-spot coins will be auto-traded');
       await showAutoPump(ctx, true);
     });
     apAction('ap_tp1', async (ctx, ap) => {
