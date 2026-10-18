@@ -2794,7 +2794,8 @@ class TradeExecutor {
     const remainingPnl = (pnlPct / 100) * size;
     const totalPnl = remainingPnl + parseFloat(trade.realized_pnl || 0);
 
-    await db.closeTrade(trade.id, price, pnlPct, totalPnl, reason);
+    // pnl_usd holds the remainder only — every report adds realized_pnl (the partials) on top
+    await db.closeTrade(trade.id, price, pnlPct, remainingPnl, reason);
     this.dailyPnL += remainingPnl;
     if (trade.mode === 'paper') { this.paperBalance += size + remainingPnl; this.saveConfig(); }
     return { exitPrice: price, pnlPct, pnlUsd: totalPnl };
@@ -2831,7 +2832,7 @@ class TradeExecutor {
         const pnlUsd = (pnlPct / 100) * trade.position_size;
 
         if (trade.mode === 'live') await this.closeExchangePosition(trade);
-        if (trade.mode === 'paper') { this.paperBalance += pnlUsd; this.saveConfig(); }
+        if (trade.mode === 'paper') { this.paperBalance += (trade.position_size || 0) + pnlUsd; this.saveConfig(); }
         this.dailyPnL += pnlUsd;
         await db.closeTrade(trade.id, currentPrice || trade.entry_price, pnlPct, pnlUsd, 'manual_close');
       } catch (err) {

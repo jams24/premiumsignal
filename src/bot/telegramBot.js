@@ -6240,47 +6240,45 @@ class TelegramBot {
       }
     });
 
+    // DZ results, paper and live kept apart (DZ ran live 14–15 Sep; mixing them hid the paper result)
+    const dzPerfLines = (label, p) => {
+      const total = parseInt(p.total) || 0;
+      if (!total) return `${label}: no trades\n`;
+      const closed = parseInt(p.closed_count) || 0, wins = parseInt(p.wins) || 0, losses = parseInt(p.losses) || 0;
+      const pnl = parseFloat(p.total_pnl) || 0;
+      return `${label}\n` +
+        `📊 ${total} trades | ${closed} closed | ${parseInt(p.open_count) || 0} open\n` +
+        `✅ ${wins}W / ${losses}L — <b>${closed ? ((wins / closed) * 100).toFixed(0) : 0}% win rate</b>\n` +
+        `💰 P&L: <b>${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}</b> (closed trades)\n` +
+        `📈 Avg: $${(parseFloat(p.avg_pnl) || 0).toFixed(2)} | Win: +${(parseFloat(p.avg_win_pct) || 0).toFixed(1)}% | Loss: ${(parseFloat(p.avg_loss_pct) || 0).toFixed(1)}%\n` +
+        `⏱ Avg hold: ${(parseFloat(p.avg_hold_hours) || 0).toFixed(1)}h · 🎯 TP1 ${parseInt(p.tp1_hits) || 0} | TP2 ${parseInt(p.tp2_hits) || 0} | TP3 ${parseInt(p.tp3_hits) || 0}\n`;
+    };
+    const dzPerfText = async (days) => {
+      const [paper, live] = await Promise.all([db.getDemandZonePerformance(days, 'paper'), db.getDemandZonePerformance(days, 'live')]);
+      return `🎯 <b>DEMAND ZONE PERFORMANCE</b> (${days}d)\n\n` +
+        dzPerfLines('📝 <b>PAPER</b>', paper) + '\n' + dzPerfLines('💰 <b>LIVE</b>', live);
+    };
+    this._dzPerfText = dzPerfText;
+
     this.bot.command('dzstats', async (ctx) => {
-      const s = await db.getTradeStatsBySource('demandzone').catch(() => ({}));
-      const msg =
-        `🎯 <b>DZ PAPER TRADE STATS</b>\n\n` +
+      const [p, l] = await Promise.all([
+        db.getTradeStatsBySource('demandzone', 'paper').catch(() => ({})),
+        db.getTradeStatsBySource('demandzone', 'live').catch(() => ({})),
+      ]);
+      const block = (label, s) =>
+        `${label}\n` +
         `Total: ${s.total || 0} | Open: ${s.open || 0}\n` +
         `Wins: ${s.wins || 0} | Losses: ${s.losses || 0}\n` +
         `P&L: <b>$${parseFloat(s.total_pnl || 0).toFixed(2)}</b>\n` +
-        `Best: $${parseFloat(s.best_trade || 0).toFixed(2)} | Worst: $${parseFloat(s.worst_trade || 0).toFixed(2)}`;
-      ctx.replyWithHTML(msg);
+        `Best: $${parseFloat(s.best_trade || 0).toFixed(2)} | Worst: $${parseFloat(s.worst_trade || 0).toFixed(2)}\n`;
+      ctx.replyWithHTML(`🎯 <b>DZ TRADE STATS</b> (all time)\n\n` + block('📝 <b>PAPER</b>', p) + '\n' + block('💰 <b>LIVE</b>', l));
     });
 
     this.bot.command('dzperf', async (ctx) => {
       try {
         const days = parseInt(ctx.message.text.split(' ')[1]) || 30;
-        const perf = await db.getDemandZonePerformance(days);
+        let msg = await dzPerfText(days);
         const openTrades = await db.getDemandZoneOpenTrades();
-
-        const total = parseInt(perf.total) || 0;
-        const closed = parseInt(perf.closed_count) || 0;
-        if (total === 0) return ctx.reply('🎯 No demand zone paper trades yet.');
-
-        const wins = parseInt(perf.wins) || 0;
-        const losses = parseInt(perf.losses) || 0;
-        const winRate = closed > 0 ? ((wins / closed) * 100).toFixed(0) : '0';
-        const totalPnl = parseFloat(perf.total_pnl) || 0;
-        const avgPnl = parseFloat(perf.avg_pnl) || 0;
-        const avgWin = parseFloat(perf.avg_win_pct) || 0;
-        const avgLoss = parseFloat(perf.avg_loss_pct) || 0;
-        const avgHold = parseFloat(perf.avg_hold_hours) || 0;
-        const tp1 = parseInt(perf.tp1_hits) || 0;
-        const tp2 = parseInt(perf.tp2_hits) || 0;
-        const tp3 = parseInt(perf.tp3_hits) || 0;
-
-        let msg = `🎯 <b>DEMAND ZONE PERFORMANCE</b> (${days}d)\n\n`;
-        msg += `📊 ${total} trades | ${closed} closed | ${parseInt(perf.open_count) || 0} open\n`;
-        msg += `✅ ${wins}W / ${losses}L — <b>${winRate}% win rate</b>\n`;
-        msg += `💰 Total P&L: <b>$${totalPnl.toFixed(2)}</b>\n`;
-        msg += `📈 Avg: $${avgPnl.toFixed(2)} | Win: +${avgWin.toFixed(1)}% | Loss: ${avgLoss.toFixed(1)}%\n`;
-        msg += `⏱ Avg hold: ${avgHold.toFixed(1)}h\n`;
-        msg += `🎯 TP hits: TP1 ${tp1} | TP2 ${tp2} | TP3 ${tp3}\n`;
-
         if (openTrades.length) {
           msg += `\n<b>OPEN POSITIONS</b>\n`;
           for (const t of openTrades) {
@@ -6290,7 +6288,6 @@ class TelegramBot {
             msg += ` | Score: ${ctx_.score || '?'}\n`;
           }
         }
-
         msg += `\n<i>Usage: /dzperf [days] — default 30</i>`;
         ctx.replyWithHTML(msg);
       } catch (e) {
@@ -6990,6 +6987,12 @@ class TelegramBot {
       const liveOpenPartials = liveTrades.reduce((s, t) => s + (parseFloat(t.realized_pnl) || 0), 0);
       const paperPnl = paperClosedPnl + paperOpenPartials;
       const livePnl = liveClosedPnl + liveOpenPartials;
+      const [paperAll, liveAll] = await Promise.all([
+        db.getTradeStatsBySource('demandzone', 'paper').catch(() => ({})),
+        db.getTradeStatsBySource('demandzone', 'live').catch(() => ({})),
+      ]);
+      const sUsd = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+      const allLine = (s) => `${sUsd(parseFloat(s.total_pnl) || 0)} (${(parseInt(s.total) || 0) - (parseInt(s.open) || 0)} closed)`;
       const cbStatus = await te.getCircuitBreakerStatus().catch(() => ({ active: false, enabled: true }));
       const cbLine = !cbStatus.enabled ? '🔓 Circuit Breaker: <b>OFF</b>'
         : cbStatus.active ? `🚨 Circuit Breaker: <b>PAUSED ${cbStatus.minsLeft}m</b> (${cbStatus.streak} losses)`
@@ -7009,8 +7012,8 @@ class TelegramBot {
         `📐 Risk-Fit: <b>${te.riskFitSizing ? 'ON' : 'OFF'}</b>${te.riskFitSizing ? ' (shrinks size to cap loss)' : ' (full size)'}\n` +
         `🎚️ Conf-Scale: <b>${te.confidenceScaling ? 'ON' : 'OFF'}</b>${te.confidenceScaling ? ' (low score = smaller size)' : ' (always full size)'}\n` +
         `📊 Max Positions: <b>${te.maxConcurrentPositions}</b>\n` +
-        `📈 Paper P&L: <b>$${paperPnl.toFixed(2)}</b> (${paperTrades.length} open)\n` +
-        `💰 Live P&L: <b>$${livePnl.toFixed(2)}</b> (${liveTrades.length} open)\n` +
+        `📈 Paper P&L today: <b>${sUsd(paperPnl)}</b> (${paperTrades.length} open) · all time <b>${allLine(paperAll)}</b>\n` +
+        `💰 Live P&L today: <b>${sUsd(livePnl)}</b> (${liveTrades.length} open) · all time <b>${allLine(liveAll)}</b>\n` +
         `🏦 Exchanges: <b>${te.disabledExchanges?.size ? `${te.disabledExchanges.size} off` : 'All ON'}</b>\n` +
         `💧 Min Live Vol: <b>$${(te.minLiveVolume / 1e6).toFixed(0)}M</b>${te.minLiveVolume > 0 ? '' : ' (OFF)'}\n` +
         `🕐 Hours: <b>${te.tradingHours?.length ? te.tradingHours.map(([s,e]) => `${String(s).padStart(2,'0')}-${String(e).padStart(2,'0')}`).join(', ') : '24/7'}</b> UTC\n` +
@@ -7745,39 +7748,7 @@ class TelegramBot {
     this.bot.action('dz_perf_btn', async (ctx) => {
       try {
         await ctx.answerCbQuery();
-        const perf = await db.getDemandZonePerformance(30);
-        const total = parseInt(perf.total) || 0;
-        if (total === 0) {
-          await ctx.editMessageText(
-            `🎯 <b>DEMAND ZONE PERFORMANCE</b>\n\nNo trades yet — data will appear after the first demand zone signal is paper-traded.`,
-            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('⬅️ Back', 'dz_settings')],
-            ]).reply_markup }
-          );
-          return;
-        }
-        const closed = parseInt(perf.closed_count) || 0;
-        const wins = parseInt(perf.wins) || 0;
-        const losses = parseInt(perf.losses) || 0;
-        const winRate = closed > 0 ? ((wins / closed) * 100).toFixed(0) : '0';
-        const totalPnl = parseFloat(perf.total_pnl) || 0;
-        const avgPnl = parseFloat(perf.avg_pnl) || 0;
-        const avgWin = parseFloat(perf.avg_win_pct) || 0;
-        const avgLoss = parseFloat(perf.avg_loss_pct) || 0;
-        const avgHold = parseFloat(perf.avg_hold_hours) || 0;
-        const tp1 = parseInt(perf.tp1_hits) || 0;
-        const tp2 = parseInt(perf.tp2_hits) || 0;
-        const tp3 = parseInt(perf.tp3_hits) || 0;
-
-        let msg = `🎯 <b>DEMAND ZONE PERFORMANCE</b> (30d)\n\n`;
-        msg += `📊 ${total} trades | ${closed} closed | ${parseInt(perf.open_count) || 0} open\n`;
-        msg += `✅ ${wins}W / ${losses}L — <b>${winRate}% win rate</b>\n`;
-        msg += `💰 Total P&L: <b>$${totalPnl.toFixed(2)}</b>\n`;
-        msg += `📈 Avg: $${avgPnl.toFixed(2)} | Win: +${avgWin.toFixed(1)}% | Loss: ${avgLoss.toFixed(1)}%\n`;
-        msg += `⏱ Avg hold: ${avgHold.toFixed(1)}h\n`;
-        msg += `🎯 TP hits: TP1 ${tp1} | TP2 ${tp2} | TP3 ${tp3}`;
-
-        await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
+        await ctx.editMessageText(await this._dzPerfText(30), { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([
           [Markup.button.callback('⬅️ Back', 'dz_settings')],
         ]).reply_markup });
       } catch (e) { logger.error(`dz_perf_btn error: ${e.message}`); }

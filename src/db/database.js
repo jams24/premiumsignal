@@ -996,7 +996,7 @@ async function getSwingFollowers() {
   return rows;
 }
 
-async function getTradeStatsBySource(source) {
+async function getTradeStatsBySource(source, mode = null) {
   const { rows } = await query(`
     SELECT
       COUNT(*) as total,
@@ -1006,8 +1006,8 @@ async function getTradeStatsBySource(source) {
       COALESCE(SUM(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed'), 0) as total_pnl,
       MAX(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) as best_trade,
       MIN(COALESCE(pnl_usd,0)+COALESCE(realized_pnl,0)) FILTER (WHERE status = 'closed') as worst_trade
-    FROM trades WHERE source = $1
-  `, [source]);
+    FROM trades WHERE source = $1 AND ($2::text IS NULL OR mode = $2)
+  `, [source, mode]);
   return rows[0] || {};
 }
 
@@ -1197,7 +1197,7 @@ async function getSwingOpenTrades() {
   return rows;
 }
 
-async function getDemandZonePerformance(days = 30) {
+async function getDemandZonePerformance(days = 30, mode = null) {
   const { rows } = await query(`
     SELECT
       count(*) as total,
@@ -1216,8 +1216,8 @@ async function getDemandZonePerformance(days = 30) {
       count(*) FILTER (WHERE hit_tp2 = true) as tp2_hits,
       count(*) FILTER (WHERE hit_tp3 = true) as tp3_hits
     FROM trades
-    WHERE source = 'demandzone' AND created_at > NOW() - ($1 || ' days')::interval
-  `, [String(days)]);
+    WHERE source = 'demandzone' AND created_at > NOW() - ($1 || ' days')::interval AND ($2::text IS NULL OR mode = $2)
+  `, [String(days), mode]);
   return rows[0] || {};
 }
 

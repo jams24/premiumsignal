@@ -1257,7 +1257,6 @@ async function main() {
       for (const token of qualified) {
         try {
           token._tradeSetup = onchainScanner.buildDemandZoneSetup(token);
-          token._liveSetup = onchainScanner.buildDemandZoneSetup(token, { requireBounce: true });
         } catch (e) { /* skip */ }
       }
 
@@ -1329,18 +1328,8 @@ async function main() {
         }
       }
 
-      // Auto-trade demand zone signals — ONLY with bounce confirmation
-      const dzMinScore = dzTradeExecutor.minOcScore || 30;
-      for (const token of qualified) {
-        if (token.score < dzMinScore || !dzTradeExecutor.enabled) continue;
-        const setup = token._liveSetup;
-        if (!setup) continue;
-        try {
-          await onchainTradeExecutor.queueSignal(setup);
-        } catch (e) {
-          logger.debug(`Demand zone auto-trade failed for ${token.symbol}: ${e.message}`);
-        }
-      }
+      // (No DZ → onchain-executor route: that executor only accepts ONCHAIN/FLOW setups, so DZ setups were always
+      // rejected there. DZ goes live only through its own executor — DZ panel Mode: LIVE.)
 
       for (const token of qualified) {
         if (token.score < 45) continue;
