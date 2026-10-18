@@ -29,11 +29,15 @@ const DEFAULTS = {
   // Skip coins with no spot market on Binance or Bybit. 4.5-month replay: no-spot shorts −$135 on 514 (only Sep
   // positive, −$212 when BTC 7d < −2%); spot share ≤ 13% with a spot market +$603 on 447, positive every month.
   skipNoSpot: false,
+  // PAPER-only long on no-spot coins already up ≥ runnerMinRun7d % in 7 days at ENTER (see engine/pumpRunnerPaper.js)
+  runnerLongs: true,
+  runnerMinRun7d: 20,
 };
 
 class PumpAutoTrader {
-  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange }) {
+  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
+    this.runner = runner;           // PumpRunnerPaper — paper longs on no-spot runners, never real orders
     this.notify = notify;           // async (chatId, html) => void
     this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
     this.measureBtc = measureBtc;   // async (hours) => BTC % change
@@ -95,6 +99,28 @@ class PumpAutoTrader {
 
   // Called when a pump signal reaches ✅ ENTER. info: { signalId, symbol, exchangeId, price, run7d, via }
   async onEnter(info) {
+    const result = await this.enterShort(info);
+    await this.runnerLong(info);
+    return result;
+  }
+
+  // Paper runner long — after the short so it never delays it, and nothing here can affect the short
+  async runnerLong(info) {
+    if (!this.runner) return null;
+    try {
+      const c = this.config;
+      if (c.runnerLongs === false || !(info.run7d >= (c.runnerMinRun7d ?? 20))) return null;
+      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
+      // Always full panel size (never "half on fresh") so every test trade is comparable
+      const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
+      return await this.runner.maybeOpen(info, c, size?.position || 150);
+    } catch (e) {
+      logger.warn(`Paper runner long ${info.symbol} failed: ${e.message}`);
+      return null;
+    }
+  }
+
+  async enterShort(info) {
     // Always decide on the stored config, not this process's memory (another instance or a restart may have changed it)
     await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
     const c = this.config;

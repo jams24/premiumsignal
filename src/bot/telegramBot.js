@@ -2260,6 +2260,7 @@ class TelegramBot {
       const fresh = await ap.sizing(0, owner);
       const s = await ap.stats().catch(() => null);
       const btc7d = c.btcPausePct > 0 ? await ap.measureBtc(168).catch(() => null) : null;
+      const rs = ap.runner ? await ap.runner.stats().catch(() => null) : null;
       const slLoss = (sz) => money(sz.position * PUMP_RULES.slPct / 100);
       const live = c.mode === 'live';
 
@@ -2293,6 +2294,12 @@ class TelegramBot {
           : `🚫 Coins with no spot market (Binance/Bybit): auto-traded`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
+      if (ap.runner) {
+        lines.push('', c.runnerLongs !== false
+          ? `🧪 <b>Paper runner longs: ON</b> — no-spot coins already up ≥ +${c.runnerMinRun7d ?? 20}% in 7 days get a PAPER long at ✅ ENTER (test only, no real orders, not in the channel)`
+          : `🧪 Paper runner longs: <b>off</b>`);
+        if (rs) lines.push(`🧪 Runner test: ${rs.closed} closed · ${rs.wins} won · <b>${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}</b> · ${rs.open} open`);
+      }
       if (s) {
         lines.push('', `📊 Today: ${s.todayCount} closed · <b>${s.todayPnl >= 0 ? '+' : '-'}${money(Math.abs(s.todayPnl))}</b> · open now: ${s.open.length}`,
           `📊 All time: ${s.allCount} closed · ${s.allWins} won · <b>${s.allPnl >= 0 ? '+' : '-'}${money(Math.abs(s.allPnl))}</b>`);
@@ -2309,6 +2316,8 @@ class TelegramBot {
         [Markup.button.callback(`🎯 TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
+        ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
+          Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
       ]);
@@ -2411,6 +2420,33 @@ class TelegramBot {
       await ap.update({ skipNoSpot: !ap.config.skipNoSpot });
       await ack(ctx, ap.config.skipNoSpot ? 'No-spot coins will NOT be auto-traded' : 'No-spot coins will be auto-traded');
       await showAutoPump(ctx, true);
+    });
+    apAction('ap_runner', async (ctx, ap) => {
+      await ap.update({ runnerLongs: ap.config.runnerLongs === false });
+      await ack(ctx, ap.config.runnerLongs !== false ? 'Paper runner longs ON' : 'Paper runner longs OFF (open ones keep being tracked)');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_runner_log', async (ctx, ap) => {
+      await ack(ctx);
+      const rows = ap.runner ? await ap.runner.recent(15) : [];
+      const s = ap.runner ? await ap.runner.stats().catch(() => null) : null;
+      const p = (v) => Number(v).toPrecision(5);
+      const why = { stop: 'stop −8%', entry: 'TP1 then entry', tp4: 'all TPs', time: '48h close' };
+      const text = [
+        `🧪 <b>PAPER RUNNER LONGS</b> — test only, no real orders`,
+        `<i>No-spot coins already up ≥ +${ap.config.runnerMinRun7d ?? 20}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +6/12/20/30% · max 48h.</i>`,
+        s ? `\n${s.closed} closed · ${s.wins} won · <b>${s.pnl >= 0 ? '+' : '-'}${money(Math.abs(s.pnl))}</b> · ${s.open} open` : '',
+        '',
+        ...(rows.length ? rows.map(r => {
+          const when = new Date(r.entry_at).toISOString().slice(5, 16).replace('T', ' ');
+          const head = `${r.status === 'open' ? '🟡' : Number(r.pnl_usd) > 0 ? '✅' : '❌'} <b>${escapeHtml(r.symbol)}</b> ${when} · $${p(r.entry_price)} · 7d +${Number(r.run7d || 0).toFixed(0)}%`;
+          return r.status === 'open'
+            ? `${head}\n   open · ${r.hit ? `TP${r.hit} hit, stop at entry` : 'no TP yet'}`
+            : `${head}\n   ${why[r.close_reason] || r.close_reason}${r.hit && r.close_reason !== 'tp4' ? ` (TP${r.hit})` : ''} · <b>${Number(r.pnl_usd) >= 0 ? '+' : '-'}${money(Math.abs(Number(r.pnl_usd)))}</b>`;
+        }) : ['No paper runner longs yet.']),
+      ].join('\n');
+      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'ap_refresh')]]).reply_markup })
+        .catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
     });
     apAction('ap_tp1', async (ctx, ap) => {
       const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.tpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];

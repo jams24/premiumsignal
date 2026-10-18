@@ -22,6 +22,7 @@ const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
 const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
+const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
 const { measureSpotShare, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -602,10 +603,16 @@ async function main() {
   const bot = new TelegramBot({ technicalScanner, socialScanner, onchainTracker, onchainScanner, flowScanner, marketIntel, tradeExecutor, onchainTradeExecutor, swingTradeExecutor, swingScanner, dzTradeExecutor });
 
   // Auto-trades pump signals on ✅ ENTER (off by default; configured from /autopump)
+  // Paper-only longs on no-spot pump runners: own table, public candles only, never real orders
+  const pumpRunnerPaper = new PumpRunnerPaper({
+    exchanges: listingMonitor.exchanges,
+    tell: (html) => pumpAutoTrader.tell(html),
+  });
   const pumpAutoTrader = new PumpAutoTrader({
     executor: onchainTradeExecutor,
     notify: (chatId, html) => bot.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }),
     adminIds: config.telegram.adminIds,
+    runner: pumpRunnerPaper,
   });
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
@@ -681,6 +688,7 @@ async function main() {
     .then(() => processPumpWatches())
     .catch(e => logger.error(`Restoring pump watches failed: ${e.message}`));
   cron.schedule(`*/${PUMP_RULES.followUpEveryMin} * * * *`, () => { processPumpWatches().catch(e => logger.error(`Pump watch error: ${e.message}`)); });
+  cron.schedule('* * * * *', () => { pumpRunnerPaper.check().catch(e => logger.error(`Paper runner check error: ${e.message}`)); });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
