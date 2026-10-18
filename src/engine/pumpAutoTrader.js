@@ -135,7 +135,11 @@ class PumpAutoTrader {
     if (c.mode === 'live' && (!ex.apiKey || !ex.secret)) return `LIVE mode but no API keys for ${info.exchangeId} — not falling back to paper.`;
 
     const open = await db.getOpenTrades(te.settingsKey);
-    if (open.some(t => t.symbol === info.symbol)) return `Already have an open ${info.symbol} position.`;
+    // Only a real conflict blocks: a live position, or an auto/manual trade on the coin. The onchain scanner's own
+    // paper trades share this executor but are separate rows with no exchange order (ERA 18 Oct was missed this way).
+    // A live entry still checks the exchange for an existing position before ordering.
+    const clash = open.find(t => t.symbol === info.symbol && (t.mode === 'live' || t.onchain_context?.manual === true));
+    if (clash) return `Already have an open ${info.symbol} ${clash.mode} position.`;
     if (info.signalId != null) {
       const { rows } = await db.query(
         `SELECT 1 FROM trades WHERE source = $1 AND onchain_context->>'pumpSignalId' = $2 LIMIT 1`,
