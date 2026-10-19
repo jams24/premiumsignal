@@ -618,7 +618,7 @@ async function main() {
   bot.pumpAutoTrader = pumpAutoTrader;
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
 
-  // Pump signals that weren't ENTER are watched every 5 min for up to 2h; the bot replies under the
+  // Every pump signal is watched every 5 min for up to 2h (one that met the rules at once as a 're-check'); the bot replies under the
   // original channel message only when something changes. Watch state lives on the pump_signals row
   // (watch_state), so a redeploy or crash resumes the watch instead of silently dropping it.
   const pumpWatches = new Map();
@@ -649,6 +649,7 @@ async function main() {
             await finishWatch(key, w, 'expired', { ...base, kind: 'expired' });
             continue;
           }
+          if (w.verdict === 'recheck' && ageMin < PUMP_RULES.recheckMinMin) continue;
           const r = await followUpCheck(w.ex, w);
           if (r.kind === 'enter' || r.kind === 'missed') {
             // Spot share at the ENTER moment: shown on the reply and checked by the auto-trader
@@ -1050,7 +1051,9 @@ async function main() {
             const [spot, altMarket] = await Promise.all([measureSpotShare(token.symbol).catch(() => null), measureAltMarket()]);
             check.spot = spot;
             check.altMarket = altMarket;
-            check.verdict = entryVerdict(check);
+            // Rules met on the first look → 'recheck': the watch confirms on its next step before the short (PUMP_RULES.recheckMinMin)
+            const signalVerdict = entryVerdict(check);
+            check.verdict = signalVerdict === 'enter' ? 'recheck' : signalVerdict;
             const levels = channelLevels(token.price);
             const msgId = await bot.sendPumpSignal(token, setup, check, levels);
 
@@ -1073,17 +1076,20 @@ async function main() {
                 nearHighPct: ctx.nearHighPct, exhaustionScore: ctx.exhaustionScore,
                 crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
                 cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
-                verdict: check.verdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2], run7d,
+                verdict: check.verdict, signalVerdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2], run7d,
                 spotShare: spot ? spot.pct : null, hasSpot: spot ? spot.hasSpot : null, altMarket,
                 engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
             }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
 
-            if (check.verdict === 'enter' && ex) {
-              await autoTradeEnter({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal', spot });
+            // The runner long doesn't wait for the re-check; the short does (the watch's ENTER opens it)
+            if (check.verdict === 'recheck' && ex) {
+              await pumpAutoTrader.runnerLongNow({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal', spot })
+                .catch(e => logger.error(`Runner long at signal failed: ${e.message}`));
             }
 
-            if (msgId && ex && check.verdict !== 'enter') {
+            // A re-check is watched even if the channel post failed, so the short still gets its ENTER
+            if (ex && (msgId || check.verdict === 'recheck')) {
               const w = {
                 signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, verdict: check.verdict,
                 signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false, run7d,

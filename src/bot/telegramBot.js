@@ -9398,6 +9398,11 @@ class TelegramBot {
         no_cisd:
           `🟡 <b>CAUTION — TOP HOLDING, NO 1H REVERSAL YET</b>\n` +
           `  → No new high for ${topAge}m, but CISD 0 — wait for a red candle / lower high\n${watching}`,
+        recheck:
+          `🔎 <b>RULES MET — CONFIRMING IN ~${R.followUpEveryMin} MIN</b>\n` +
+          `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags})\n` +
+          `  → Signals that met the rules on the first look were stopped out more often — one more check filters the ones still pushing up\n` +
+          `  → ✅ ENTER comes as a reply below if it still holds`,
       };
 
       let msg = `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
@@ -9470,7 +9475,7 @@ class TelegramBot {
       }
       await this.bot.telegram.sendMessage(this.pumpChannelId, msg, {
         parse_mode: 'HTML',
-        reply_parameters: { message_id: replyToId, allow_sending_without_reply: true },
+        ...(replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {}),
       });
       logger.info(`Pump follow-up sent: ${u.symbol} (${u.kind})`);
     } catch (err) {

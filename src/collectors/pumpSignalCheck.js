@@ -17,6 +17,12 @@ const PUMP_RULES = {
   // Replay at $75 × 5x: -10/-15/-25 +$261 (16W/9L) vs -7/-12/-20 +$301 (18W/7L).
   tpPcts: [7, 12, 20],
   maxLeverage: 5,
+  // Rules already met when the signal fires → no short yet: the watch re-checks once more, at least this many minutes
+  // later. 1 Jun–12 Oct replay ($150, 13% spot rule): those 64 signal-time entries were the weak ones (58% win, 42%
+  // stopped vs 68% / 32%); re-checking on the next 5-min step: shorts +$692 → +$854, better in both halves; none of
+  // the 5 that hit TP1 within 30 min were missed. Coins still pushing make a new high and fall back to the 15-min top wait.
+  // The runner long still enters at the signal (delays cost it ~$400 in the same replay).
+  recheckMinMin: 3,
   followUpEveryMin: 5,
   followUpMaxMin: 120,
   // Too late to enter once price has given back this share of the pump (24h low → top). A flat 10%-off-the-top
@@ -88,7 +94,8 @@ function runType(run7d) {
   return run7d >= PUMP_RULES.extendedRunPct ? 'extended' : 'fresh';
 }
 
-// 'oi_building' | 'top_fresh' | 'enter' | 'no_cisd' (topAgeMin null = unknown → treated as fresh)
+// 'oi_building' | 'top_fresh' | 'enter' | 'no_cisd' (topAgeMin null = unknown → treated as fresh).
+// At signal time an 'enter' is shown and stored as 'recheck' (see PUMP_RULES.recheckMinMin).
 function entryVerdict({ oi1h, topAgeMin, cisdScore }) {
   if ((oi1h ?? 0) > PUMP_RULES.maxOi1h) return 'oi_building';
   if (topAgeMin == null || topAgeMin < PUMP_RULES.minTopAgeMin) return 'top_fresh';

@@ -110,6 +110,14 @@ class PumpAutoTrader {
     return result;
   }
 
+  // Signal-time ENTER: the short waits for the watch's re-check, the runner long opens now. When the re-check's
+  // ENTER later reaches onEnter, the paper row (unique per signal) already exists, so no second long opens.
+  // Runner longs are no-spot coins, which the short skips while skipNoSpot is on, so the two don't compete.
+  async runnerLongNow(info) {
+    await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
+    return this.runnerLong(info);
+  }
+
   // Paper runner long — after the short so it never delays it, and nothing here can affect the short
   async runnerLong(info) {
     if (!this.runner) return null;
