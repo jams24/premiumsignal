@@ -778,7 +778,7 @@ async function main() {
               `${opp.reason}\n` +
               `Suggested: ${opp.direction.toUpperCase()}\n\n` +
               `<i>Mean reversion opportunity — DYOR</i>`;
-            await bot.sendRaw(fundMsg);
+            await bot.sendRaw(fundMsg, 'funding');
             await bot.broadcastToUsers(fundMsg);
           }
         }
@@ -816,7 +816,7 @@ async function main() {
       for (const update of updates) {
         const msg = signalTracker.formatUpdate(update);
         if (msg) {
-          await bot.sendRaw(msg);
+          await bot.sendRaw(msg, 'signalTrack');
           await bot.broadcastToUsers(msg);
         }
       }
@@ -846,7 +846,7 @@ async function main() {
       const notable = tokens.filter(t => t.sources.length > 1 || t.score > 80);
       if (notable.length > 0) {
         const msg = socialScanner.formatTrending(notable.slice(0, 10));
-        await bot.sendRaw(msg);
+        await bot.sendRaw(msg, 'trending');
       }
     } catch (err) {
       logger.error(`Social scan error: ${err.message}`);
@@ -863,7 +863,7 @@ async function main() {
       }
       const hot = movers.filter(m => m.priceChange1h > 50 && m.volume24h > 500000);
       for (const token of hot.slice(0, 3)) {
-        await bot.sendRaw(marketIntel.formatDexAlert(token));
+        await bot.sendRaw(marketIntel.formatDexAlert(token), 'dex');
         await db.logAlert('DEX_PUMP', token.symbol, token, `${token.symbol} +${token.priceChange1h.toFixed(0)}% 1h on ${token.chain}`).catch(() => {});
       }
     } catch (err) {
@@ -880,7 +880,7 @@ async function main() {
         const dir = spike.direction.toLowerCase();
         if (!shouldLogAlert('OI_SPIKE', spike.symbol, dir)) continue;
         const msg = onchainScanner.formatOISpike(spike);
-        await bot.sendRaw(msg);
+        await bot.sendRaw(msg, 'oiSpike');
         await db.logAlert('OI_SPIKE', spike.symbol, {
           price: spike.price, direction: spike.direction.toLowerCase(),
           oiChange1h: spike.oiChange1h, priceChange: spike.priceChange,
@@ -968,7 +968,7 @@ async function main() {
         });
         const msg = onchainScanner.formatAlerts(qualityTokens, 5);
         if (msg) {
-          await bot.sendRaw(msg);
+          await bot.sendRaw(msg, 'onchain');
           await bot.broadcastToUsers(msg);
         }
 
@@ -1189,7 +1189,7 @@ async function main() {
           if (!shouldLogAlert('SUPPLY_MOVE', token.symbol, flow.bias)) continue;
           const transferMsg = onchainTracker.formatLargeTransferAlert(flow, token.price);
           if (transferMsg) {
-            await bot.sendRaw(transferMsg);
+            await bot.sendRaw(transferMsg, 'transfers');
             await bot.broadcastToUsers(transferMsg);
           }
           await db.logAlert('SUPPLY_MOVE', token.symbol, {
@@ -1229,7 +1229,7 @@ async function main() {
             const chartBuf = generateSetupChart(ohlcv, chartInfo);
             if (chartBuf) {
               const cap = `📸 <b>${token.symbol}</b> Setup Snapshot — Score: ${token.score}/100`;
-              await bot.sendRawPhoto(chartBuf, cap);
+              await bot.sendRawPhoto(chartBuf, cap, 'snapshot');
               await bot.broadcastPhotoToUsers(chartBuf, cap);
             }
           } catch (e) {
@@ -1291,7 +1291,7 @@ async function main() {
       const dzOpenTrades = await db.getOpenTrades('demandzone').catch(() => []);
       const msg = onchainScanner.formatDemandZoneAlerts(qualified, 5, dzOpenTrades);
       if (msg) {
-        await bot.sendRaw(msg);
+        await bot.sendRaw(msg, 'demandzone');
         await bot.broadcastToUsers(msg);
       }
 
@@ -1387,7 +1387,7 @@ async function main() {
           }
 
           const msg = swingScanner.formatSwingAlert(setup, candidate);
-          await bot.sendRaw(msg);
+          await bot.sendRaw(msg, 'swing');
           await bot.broadcastToUsers(msg);
 
           const priorCount = setup._alertTracking?.alertCount || 0;
@@ -1438,7 +1438,7 @@ async function main() {
         const msg = `🌊 <b>SWING ENTRY ZONE</b> — $${setup.symbol}\n\n` +
           `Price entered buy zone: $${setup.currentPrice.toPrecision(4)}\n` +
           `Zone: $${setup.entryLow.toPrecision(4)} — $${setup.entryHigh.toPrecision(4)}`;
-        await bot.sendRaw(msg);
+        await bot.sendRaw(msg, 'swing');
       }
     } catch (err) {
       logger.error(`Swing watchlist error: ${err.message}`);
@@ -1512,7 +1512,7 @@ async function main() {
 
         const msg = flowScanner.formatAlerts(significant, 5);
         if (msg) {
-          await bot.sendRaw(msg);
+          await bot.sendRaw(msg, 'flow');
           await bot.broadcastToUsers(msg);
         }
 
@@ -1562,7 +1562,7 @@ async function main() {
             const chartBuf = generateSetupChart(ohlcv, chartInfo);
             if (chartBuf) {
               const cap = `📸 <b>${token.symbol}</b> Flow Snapshot — Score: ${token.flowScore}`;
-              await bot.sendRawPhoto(chartBuf, cap);
+              await bot.sendRawPhoto(chartBuf, cap, 'snapshot');
               await bot.broadcastPhotoToUsers(chartBuf, cap);
             }
           } catch (e) {
@@ -1576,7 +1576,7 @@ async function main() {
         if (tier) {
           const escMsg = flowScanner.formatEscalationAlert(r.symbol, tier);
           if (escMsg) {
-            await bot.sendRaw(escMsg);
+            await bot.sendRaw(escMsg, 'flow');
             await bot.broadcastToUsers(escMsg);
           }
         }
@@ -1736,7 +1736,7 @@ async function main() {
               `Entry: $${alertPrice.toPrecision(4)} → Now: $${currentPrice.toPrecision(4)} (${dirPnl.toFixed(1)}%)\n` +
               `Price moved against the call — consider exiting if in position.\n\n` +
               `<i>${new Date().toUTCString().slice(0, -4)}</i>`;
-            await bot.sendRaw(msg);
+            await bot.sendRaw(msg, 'invalidated');
             await bot.broadcastToUsers(msg);
 
             // Set cooldown on onchain auto-trader so it doesn't re-enter the same symbol
@@ -1772,7 +1772,7 @@ async function main() {
       }
 
       const msg = marketIntel.formatMarketBrief(overview, oiData, stablecoins, dexMovers, lsRatio);
-      await bot.sendRaw(msg);
+      await bot.sendRaw(msg, 'brief');
 
       // Save brief to DB for later analysis
       await db.saveIntelBrief({

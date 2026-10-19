@@ -9,6 +9,23 @@ const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../
 const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS } = require('../engine/pumpAutoTrader');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
+// Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
+const ALERT_TYPES = [
+  ['snapshot', '📸 Setup / flow snapshots'],
+  ['trending', '📊 Trending tokens'],
+  ['demandzone', '🎯 Demand zone scanner'],
+  ['onchain', '🔗 Onchain scanner'],
+  ['flow', '🏦 Flow alerts'],
+  ['swing', '🌊 Swing alerts'],
+  ['funding', '📉 Funding alerts'],
+  ['oiSpike', '⚡ OI spikes'],
+  ['dex', '🦄 DEX movers'],
+  ['transfers', '🐋 Large transfers'],
+  ['signalTrack', '🎯 Signal TP/SL updates'],
+  ['invalidated', '⚠️ Alert invalidated'],
+  ['brief', '🧠 4h market brief'],
+];
+
 // 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
 // Spot-share line for pump signals (channel-facing: no auto-trade wording). max = limit from /autopump (0 = rule off)
 function spotInfo(spot, max) {
@@ -54,6 +71,7 @@ class TelegramBot {
       logger.error(`Telegraf error: ${msg}`);
     });
     this.channelId = config.telegram.channelId;
+    this.alertMutes = new Set();   // muted alert types (owner DM); loaded at launch
     this.spotChannelId = config.telegram.spotChannelId;
     this.pumpChannelId = config.telegram.pumpChannelId;
     this.technicalScanner = technicalScanner;
@@ -6341,7 +6359,8 @@ class TelegramBot {
          Markup.button.callback('📍 Limit Orders', 'mt_orders')],
         [Markup.button.callback('🔍 Check a coin (pump exhaustion)', 'pnl_check')],
         [Markup.button.callback('🤖 Pump auto-trade', 'pnl_autopump')],
-        [Markup.button.callback('📈 All Stats', 'pnl_stats')],
+        [Markup.button.callback('📈 All Stats', 'pnl_stats'),
+         Markup.button.callback('🔔 Alert toggles', 'al_show')],
       ]);
       if (isNew) {
         await ctx.replyWithHTML(text, keyboard);
@@ -6355,6 +6374,62 @@ class TelegramBot {
       try { await ctx.answerCbQuery(); } catch (e) {}
       try { await showPanel(ctx); } catch (e) { logger.error(`panel_main error: ${e.message}`); }
     });
+
+    // === ALERT TOGGLES — mute info alerts in the owner's DM ===
+    const alertsPanel = () => {
+      const on = ALERT_TYPES.filter(([k]) => !this.alertMutes.has(k)).length;
+      const text = `🔔 <b>ALERT TOGGLES</b>\n\n` +
+        `${on}/${ALERT_TYPES.length} alert types ON. Tap one to turn it on or off.\n\n` +
+        `<i>Only changes what arrives in this chat. Trade alerts (opened, TP, SL, closed), pump signals and auto-trade messages always come through.</i>`;
+      const rows = [];
+      for (let i = 0; i < ALERT_TYPES.length; i += 2) {
+        rows.push(ALERT_TYPES.slice(i, i + 2).map(([k, label]) =>
+          Markup.button.callback(`${this.alertMutes.has(k) ? '🔕' : '✅'} ${label}`, `al_t_${k}`)));
+      }
+      rows.push([Markup.button.callback('✅ All ON', 'al_all_on'), Markup.button.callback('🔕 All OFF', 'al_all_off')]);
+      rows.push([Markup.button.callback('⬅️ Panel', 'panel_main')]);
+      return { text, keyboard: Markup.inlineKeyboard(rows) };
+    };
+    const showAlerts = async (ctx, edit) => {
+      await this.loadAlertMutes().catch(() => {});
+      const { text, keyboard } = alertsPanel();
+      if (!edit) return ctx.replyWithHTML(text, keyboard);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch(e => { if (!/not modified/i.test(e.message)) throw e; });
+    };
+    const saveMutes = async (muted) => { await db.saveAlertMutes([...muted]); this.alertMutes = new Set(muted); };
+    this.bot.command('alerts', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      try { await showAlerts(ctx, false); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+    this.bot.action('al_show', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Admin only').catch(() => {});
+      await ctx.answerCbQuery().catch(() => {});
+      try { await showAlerts(ctx, true); } catch (e) { logger.error(`al_show: ${e.message}`); }
+    });
+    this.bot.action(/^al_t_(\w+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Admin only').catch(() => {});
+      const k = ctx.match[1];
+      const t = ALERT_TYPES.find(([key]) => key === k);
+      if (!t) return ctx.answerCbQuery('Unknown alert').catch(() => {});
+      try {
+        await this.loadAlertMutes();
+        const muted = new Set(this.alertMutes);
+        if (muted.has(k)) muted.delete(k); else muted.add(k);
+        await saveMutes(muted);
+        await ctx.answerCbQuery(`${t[1]}: ${muted.has(k) ? 'OFF' : 'ON'}`).catch(() => {});
+        await showAlerts(ctx, true);
+      } catch (e) { logger.error(`al_t: ${e.message}`); ctx.answerCbQuery('Failed to save').catch(() => {}); }
+    });
+    for (const [action, muted] of [['al_all_on', []], ['al_all_off', ALERT_TYPES.map(([k]) => k)]]) {
+      this.bot.action(action, async (ctx) => {
+        if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Admin only').catch(() => {});
+        try {
+          await saveMutes(muted);
+          await ctx.answerCbQuery(muted.length ? 'All alert types OFF' : 'All alert types ON').catch(() => {});
+          await showAlerts(ctx, true);
+        } catch (e) { logger.error(`${action}: ${e.message}`); }
+      });
+    }
 
     this.bot.action('pnl_autopump', async (ctx) => {
       await ctx.answerCbQuery().catch(() => {});
@@ -9150,6 +9225,7 @@ class TelegramBot {
       // DM all active users
       const users = await db.getActiveUsers();
       for (const u of users) {
+        if (this.isChannelChat(u.telegram_id)) continue;   // already sent to the channel chat above
         try {
           await sendToChat(u.telegram_id);
         } catch (e) {
@@ -9208,8 +9284,11 @@ class TelegramBot {
     }
   }
 
-  async sendRaw(message) {
-    if (!this.channelId) return;
+  // Muted only where the owner reads them (the channel chat); other users' DMs are unaffected
+  alertMuted(category) { return !!category && this.alertMutes.has(category); }
+
+  async sendRaw(message, category = null) {
+    if (!this.channelId || this.alertMuted(category)) return;
     try {
       if (message.length > 4000) {
         const parts = [];
@@ -9232,8 +9311,8 @@ class TelegramBot {
     }
   }
 
-  async sendRawPhoto(photoBuf, caption) {
-    if (!this.channelId) return;
+  async sendRawPhoto(photoBuf, caption, category = null) {
+    if (!this.channelId || this.alertMuted(category)) return;
     try {
       await this.bot.telegram.sendPhoto(this.channelId, { source: photoBuf }, {
         caption: caption && caption.length <= 1024 ? caption : undefined,
@@ -9399,10 +9478,14 @@ class TelegramBot {
     }
   }
 
+  // The "channel" can be the owner's own DM — don't send them every alert twice
+  isChannelChat(chatId) { return !!this.channelId && String(chatId) === String(this.channelId); }
+
   async broadcastToUsers(message) {
     try {
       const users = await db.getActiveUsers();
       for (const u of users) {
+        if (this.isChannelChat(u.telegram_id)) continue;   // already got it via sendRaw
         try {
           await this.bot.telegram.sendMessage(u.telegram_id, message, { parse_mode: 'HTML' });
         } catch (e) {
@@ -9416,6 +9499,7 @@ class TelegramBot {
     try {
       const users = await db.getActiveUsers();
       for (const u of users) {
+        if (this.isChannelChat(u.telegram_id)) continue;   // already got it via sendRawPhoto
         try {
           await this.bot.telegram.sendPhoto(u.telegram_id, { source: photoBuf }, {
             caption: caption && caption.length <= 1024 ? caption : undefined,
@@ -9428,7 +9512,12 @@ class TelegramBot {
     } catch (e) { logger.error(`broadcastPhotoToUsers: ${e.message}`); }
   }
 
+  async loadAlertMutes() {
+    this.alertMutes = new Set(await db.getAlertMutes().catch(() => []));
+  }
+
   async launch() {
+    await this.loadAlertMutes().catch(() => {});
     // Register command menu (shows in Telegram UI)
     await this.bot.telegram.setMyCommands([
       { command: 'start', description: 'Start the bot' },
@@ -9497,6 +9586,7 @@ class TelegramBot {
       { command: 'dzstats', description: 'Demand zone quick P&L' },
       { command: 'dzclose', description: 'Close a DZ paper trade' },
       { command: 'panel', description: 'Trading control panel' },
+      { command: 'alerts', description: 'Turn alert types on or off' },
       { command: 'swingsettings', description: 'Swing trade settings' },
       { command: 'dzsettings', description: 'Demand zone settings' },
       { command: 'help', description: 'Show all commands & signal types' },
