@@ -4,6 +4,7 @@ const { escapeHtml } = require('../utils/formatting');
 const { PUMP_RULES, channelLevels, runType } = require('../collectors/pumpSignalCheck');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE } = require('../collectors/spotShare');
+const { RUNNER } = require('./pumpRunnerPaper');
 
 // Auto-trades pump-exhaustion shorts when the channel says ✅ ENTER (at signal time or from the
 // follow-up watcher). Size comes from the owner's /trade panel settings; levels and exits follow the
@@ -32,6 +33,11 @@ const DEFAULTS = {
   // PAPER-only long on no-spot coins already up ≥ runnerMinRun7d % in 7 days at ENTER (see engine/pumpRunnerPaper.js)
   runnerLongs: true,
   runnerMinRun7d: 20,
+  // Also place the runner long as a real auto trade (in the auto-trade's mode, normally LIVE). Off by default.
+  // Same plan as the paper test: stop −8%, TP +6/12/20/30, stop to entry at TP1. Stop sweep on the 4.5-month replay
+  // (271 longs, $150): 3–7% +$294–419, 8% +$532 (best second half +$160), 10–12% +$590–602 but weaker second half.
+  // Not paused by the BTC rule: longs did +$296 on 88 trades with BTC 7d < −2%.
+  runnerLive: false,
 };
 
 class PumpAutoTrader {
@@ -113,7 +119,10 @@ class PumpAutoTrader {
       if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
       // Always full panel size (never "half on fresh") so every test trade is comparable
       const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
-      return await this.runner.maybeOpen(info, c, size?.position || 150);
+      const res = await this.runner.maybeOpen(info, c, size?.position || 150);
+      // Real long only for a qualifying signal the paper test just took (once per signal)
+      if (res?.opened && c.runnerLive === true) res.live = await this.enterRunnerLong(info);
+      return res;
     } catch (e) {
       logger.warn(`Paper runner long ${info.symbol} failed: ${e.message}`);
       return null;
@@ -154,6 +163,36 @@ class PumpAutoTrader {
   }
 
   async blockReason(info) {
+    const common = await this.commonBlock(info);
+    if (common) return common;
+    const c = this.config;
+
+    // Falling BTC: pump shorts lost money (June crash), squeezes keep running
+    if (c.btcPausePct > 0) {
+      const btc7d = await this.measureBtc(168).catch(() => null);
+      if (btc7d == null) return `BTC 7-day change could not be measured, so the BTC pause can't be checked — skipped to be safe.`;
+      info.btc7d = btc7d;
+      if (btc7d < -c.btcPausePct) return `BTC pause: BTC is ${btc7d.toFixed(1)}% over 7 days (pause below −${c.btcPausePct}%, change it in /autopump).`;
+    }
+
+    // Spot-led pumps (real spot buying behind the move) kept running in the 30-day replay — skip them
+    if (c.maxSpotSharePct > 0) {
+      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
+      const verdict = spotVerdict(info.spot, c.maxSpotSharePct);
+      if (verdict === 'spot_led') return `Spot-led pump: spot share ${info.spot.pct.toFixed(1)}% is above your ${c.maxSpotSharePct}% limit (change it in /autopump).`;
+      if (verdict === 'unknown') return `Spot share could not be measured, so the ${c.maxSpotSharePct}% spot-share rule can't be checked — skipped to be safe.`;
+    }
+    if (c.skipNoSpot) {
+      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
+      if (!info.spot) return `Spot market could not be checked, so the no-spot rule can't be applied — skipped to be safe.`;
+      if (!info.spot.hasSpot) return `No spot market on Binance or Bybit — no-spot coins are set to skip (change it in /autopump).`;
+    }
+    return null;
+  }
+
+  // Guards shared by the short and the runner long: owner, market, keys, existing position, signal already traded
+  // (so a long never opens against a short on the same signal), max open, daily loss stop, minimum margin
+  async commonBlock(info) {
     const c = this.config, te = this.executor;
     if (!c.ownerId) return 'No owner set — turn auto-trade on from /autopump.';
     const ex = te.exchanges[info.exchangeId];
@@ -188,28 +227,67 @@ class PumpAutoTrader {
     }
     const size = await this.sizing(info.run7d);
     if (!(size.margin >= 1)) return `Margin $${size.margin} is below the $1 minimum.`;
-
-    // Falling BTC: pump shorts lost money (June crash), squeezes keep running
-    if (c.btcPausePct > 0) {
-      const btc7d = await this.measureBtc(168).catch(() => null);
-      if (btc7d == null) return `BTC 7-day change could not be measured, so the BTC pause can't be checked — skipped to be safe.`;
-      info.btc7d = btc7d;
-      if (btc7d < -c.btcPausePct) return `BTC pause: BTC is ${btc7d.toFixed(1)}% over 7 days (pause below −${c.btcPausePct}%, change it in /autopump).`;
-    }
-
-    // Spot-led pumps (real spot buying behind the move) kept running in the 30-day replay — skip them
-    if (c.maxSpotSharePct > 0) {
-      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
-      const verdict = spotVerdict(info.spot, c.maxSpotSharePct);
-      if (verdict === 'spot_led') return `Spot-led pump: spot share ${info.spot.pct.toFixed(1)}% is above your ${c.maxSpotSharePct}% limit (change it in /autopump).`;
-      if (verdict === 'unknown') return `Spot share could not be measured, so the ${c.maxSpotSharePct}% spot-share rule can't be checked — skipped to be safe.`;
-    }
-    if (c.skipNoSpot) {
-      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
-      if (!info.spot) return `Spot market could not be checked, so the no-spot rule can't be applied — skipped to be safe.`;
-      if (!info.spot.hasSpot) return `No spot market on Binance or Bybit — no-spot coins are set to skip (change it in /autopump).`;
-    }
     return null;
+  }
+
+  // Runner long as a real auto trade. Called only after the paper test opened it, so the signal already passed
+  // the runner filter (no spot market, 7-day run ≥ min). Uses the auto-trade's ON switch, mode and guards.
+  async enterRunnerLong(info) {
+    const c = this.config;
+    if (!c.enabled) return { skipped: 'auto-trade off' };
+    const key = `L:${info.signalId}`;
+    if (this.busy.has(key)) return { skipped: 'in progress' };
+    this.busy.add(key);
+    try {
+      const block = await this.commonBlock(info);
+      if (block) {
+        const reason = typeof block === 'string' ? block : block.reason;
+        if (!block.silent) await this.tell(`🚀 <b>Runner long not placed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}\n<i>Still tracked as a paper long.</i>`);
+        return { skipped: reason };
+      }
+      return await this.openRunnerLong(info);
+    } catch (e) {
+      logger.error(`Runner long ${info.symbol} failed: ${e.message}`);
+      await this.tell(`🚀 ⚠️ <b>Runner long failed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(e.message)}`);
+      return { error: e.message };
+    } finally {
+      this.busy.delete(key);
+    }
+  }
+
+  async openRunnerLong(info) {
+    const c = this.config, te = this.executor;
+    // Full size, like the paper test (never "half on fresh")
+    const size = await this.sizing(PUMP_RULES.extendedRunPct);
+    const entry = info.price;
+    const tps = RUNNER.tpPcts.map(p => entry * (1 + p / 100));
+    const stopLoss = entry * (1 - RUNNER.slPct / 100);
+    const trade = await te.openManualTrade({
+      symbol: info.symbol, exchangeId: info.exchangeId, direction: 'long', mode: c.mode,
+      entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
+      tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss, atr: null,
+      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, runnerLong: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via },
+    });
+    if (!trade) {
+      await this.tell(`🚀 ⚠️ <b>Runner long NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Still tracked as a paper long.`);
+      return { skipped: 'executor declined' };
+    }
+    const p = (v) => Number(v).toPrecision(6);
+    const fill = trade.entryPrice || entry;
+    const lev = trade.leverage || size.leverage;
+    const pos = trade.positionSize || size.position;
+    await this.tell(
+      `🚀 <b>AUTO-TRADE OPENED — ${escapeHtml(info.symbol)} LONG (runner)</b>\n` +
+      `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · no spot market, already +${(info.run7d ?? 0).toFixed(0)}% in 7 days\n\n` +
+      `💰 Entry: <b>$${p(fill)}</b>\n` +
+      `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position\n` +
+      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
+      `🎯 ${RUNNER.tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
+      `🛑 SL $${p(stopLoss)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
+      `🛡️ Exit: TPs only · manage or close in /mpositions`
+    );
+    logger.info(`Runner long auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x`);
+    return { opened: trade };
   }
 
   // Targets for auto-trades: the plan with the chosen TP1 (anything not on the list falls back to the plan)

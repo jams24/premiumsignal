@@ -2296,9 +2296,12 @@ class TelegramBot {
       );
       if (ap.runner) {
         lines.push('', c.runnerLongs !== false
-          ? `🧪 <b>Paper runner longs: ON</b> — no-spot coins already up ≥ +${c.runnerMinRun7d ?? 20}% in 7 days get a PAPER long at ✅ ENTER (test only, no real orders, not in the channel)`
+          ? `🧪 <b>Paper runner longs: ON</b> — no-spot coins already up ≥ +${c.runnerMinRun7d ?? 20}% in 7 days get a PAPER long at ✅ ENTER (the test score below; never posted in the channel)`
           : `🧪 Paper runner longs: <b>off</b>`);
         if (rs) lines.push(`🧪 Runner test: ${rs.closed} closed · ${rs.wins} won · <b>${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}</b> · ${rs.open} open`);
+        lines.push(c.runnerLongs !== false && c.runnerLive === true
+          ? `🚀 <b>Runner longs as real trades: ON</b> — each runner long is also opened as an auto trade (${live ? '💰 <b>LIVE</b>' : '📝 paper'}, needs auto-trade ON), ${money(full.position)} · SL −8% loses <b>-${money(full.position * 0.08)}</b> · TP +6/12/20/30% · uses the same max-open and daily stop · not paused by BTC`
+          : `🚀 Runner longs as real trades: <b>off</b> (paper test only)`);
       }
       if (s) {
         lines.push('', `📊 Today: ${s.todayCount} closed · <b>${s.todayPnl >= 0 ? '+' : '-'}${money(Math.abs(s.todayPnl))}</b> · open now: ${s.open.length}`,
@@ -2317,7 +2320,8 @@ class TelegramBot {
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
         ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
-          Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')]] : []),
+          Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
+          [Markup.button.callback(`🚀 Runner longs real trade: ${c.runnerLongs !== false && c.runnerLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_runner_live')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
       ]);
@@ -2422,8 +2426,34 @@ class TelegramBot {
       await showAutoPump(ctx, true);
     });
     apAction('ap_runner', async (ctx, ap) => {
-      await ap.update({ runnerLongs: ap.config.runnerLongs === false });
+      const on = ap.config.runnerLongs === false;
+      // Real runner longs only follow the paper test, so switching the test off switches them off too
+      await ap.update(on ? { runnerLongs: true } : { runnerLongs: false, runnerLive: false });
       await ack(ctx, ap.config.runnerLongs !== false ? 'Paper runner longs ON' : 'Paper runner longs OFF (open ones keep being tracked)');
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_runner_live', async (ctx, ap) => {
+      if (ap.config.runnerLongs !== false && ap.config.runnerLive === true) {
+        await ap.update({ runnerLive: false });
+        await ack(ctx, 'Runner longs: paper test only');
+        return showAutoPump(ctx, true);
+      }
+      await ack(ctx);
+      const full = await ap.sizing(PUMP_RULES.extendedRunPct, ap.config.ownerId || ctx.from.id);
+      const live = ap.config.mode === 'live';
+      const rs = ap.runner ? await ap.runner.stats().catch(() => null) : null;
+      return apConfirm(ctx, `OPEN RUNNER LONGS AS ${live ? 'LIVE' : 'PAPER'} AUTO TRADES?`,
+        `When a pump signal says ✅ ENTER on a coin with <b>no spot market</b> that is already <b>+${ap.config.runnerMinRun7d ?? 20}%</b> in 7 days, ` +
+        `the bot will open a <b>${live ? 'real ' : ''}LONG</b> on its own (auto-trade must be ON).\n\n` +
+        `💵 ${money(full.margin)} × ${full.leverage}x = ${money(full.position)} · 🛑 SL −8% loses about <b>-${money(full.position * 0.08)}</b>\n` +
+        `🎯 TP +6 / 12 / 20 / 30% · SL to entry at TP1 · counts toward max open and the daily stop\n\n` +
+        `⚠️ Backtest: +$532 on 271 trades ($150), but most of it was June and July lost. ` +
+        `Paper test so far: ${rs ? `${rs.closed} closed, ${rs.wins} won, ${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}` : 'no data'} — still a small sample.\n\n` +
+        `👉 <b>Nothing changes until you tap ✅ Yes, confirm.</b>`, 'ap_runner_live_yes');
+    });
+    apAction('ap_runner_live_yes', async (ctx, ap) => {
+      await ap.update({ runnerLongs: true, runnerLive: true });
+      await ack(ctx, `Runner longs ON as ${ap.config.mode === 'live' ? 'LIVE' : 'paper'} auto trades`);
       await showAutoPump(ctx, true);
     });
     apAction('ap_runner_log', async (ctx, ap) => {
