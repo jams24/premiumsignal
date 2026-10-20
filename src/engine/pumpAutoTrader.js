@@ -273,7 +273,7 @@ class PumpAutoTrader {
     const trade = await te.openManualTrade({
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'long', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
-      tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss, atr: null,
+      tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss, atr: null, rebaseOnFill: true,
       context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, runnerLong: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via },
     });
     if (!trade) {
@@ -284,6 +284,9 @@ class PumpAutoTrader {
     const fill = trade.entryPrice || entry;
     const lev = trade.leverage || size.leverage;
     const pos = trade.positionSize || size.position;
+    // Live levels follow the real fill (rebaseOnFill)
+    if (trade.stopLoss > 0) tps.splice(0, 4, ...[trade.tp1, trade.tp2, trade.tp3, trade.tp4].map((v, i) => v || tps[i]));
+    const sl = trade.stopLoss || stopLoss;
     await this.tell(
       `🚀 <b>AUTO-TRADE OPENED — ${escapeHtml(info.symbol)} LONG (runner)</b>\n` +
       `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · no spot market, already +${(info.run7d ?? 0).toFixed(0)}% in 7 days\n\n` +
@@ -291,7 +294,7 @@ class PumpAutoTrader {
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position\n` +
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
       `🎯 ${RUNNER.tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
-      `🛑 SL $${p(stopLoss)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
+      `🛑 SL $${p(sl)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Runner long auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x`);
@@ -314,7 +317,7 @@ class PumpAutoTrader {
     const trade = await te.openManualTrade({
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'short', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
-      tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss: L.stopLoss, atr: null,
+      tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
       context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via },
     });
     if (!trade) {
@@ -325,6 +328,9 @@ class PumpAutoTrader {
     const fill = trade.entryPrice || entry;
     const lev = trade.leverage || size.leverage;
     const pos = trade.positionSize || size.position;
+    // Live levels follow the real fill (rebaseOnFill)
+    if (trade.stopLoss > 0) tps.splice(0, 4, ...[trade.tp1, trade.tp2, trade.tp3, trade.tp4].map((v, i) => v || tps[i]));
+    const sl = trade.stopLoss || L.stopLoss;
     await this.tell(
       `🤖 <b>AUTO-TRADE OPENED — ${escapeHtml(info.symbol)} SHORT</b>\n` +
       `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · from ${info.via === 'follow-up' ? 'follow-up ✅ ENTER' : 'signal ✅ ENTER'}\n\n` +
@@ -332,7 +338,7 @@ class PumpAutoTrader {
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position${size.fresh && c.halfOnFresh ? ' · 🟠 half size (fresh breakout)' : ''}${size.levCapped ? ` · leverage capped ${size.panelLev}x → ${size.leverage}x` : ''}\n` +
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
       `🎯 TP1 $${p(tps[0])} (−${tpPcts[0]}%) · TP2 $${p(tps[1])} · TP3 $${p(tps[2])} · TP4 $${p(tps[3])}\n` +
-      `🛑 SL $${p(L.stopLoss)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
+      `🛑 SL $${p(sl)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
       `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +
       `${info.btc7d != null ? `₿ BTC 7d: ${info.btc7d >= 0 ? '+' : ''}${info.btc7d.toFixed(1)}% (pause below −${c.btcPausePct}%)\n` : ''}` +
       `🛡️ Exit: TPs only · manage or close in /mpositions`

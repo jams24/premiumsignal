@@ -1532,6 +1532,14 @@ class TradeExecutor {
 
       logger.info(`Live order placed: ${side} ${roundedQty} ${pair} (fill: $${entryFill})`);
 
+      // Plan trades (pump auto-trades) set every level as a % from entry: move them with the real fill, else a fill
+      // away from the checked price widens the stop (DOOD 20 Oct: filled 1.5% under the ENTER price → 9.7% stop, not 8%)
+      if (signal.rebaseOnFill && entryFill > 0 && signal.entryPrice > 0 && Math.abs(entryFill / signal.entryPrice - 1) > 0.0005) {
+        const k = entryFill / signal.entryPrice;
+        for (const f of ['tp1', 'tp2', 'tp3', 'tp4', 'stopLoss']) if (signal[f] != null) signal[f] *= k;
+        logger.info(`${pair}: levels moved with the fill ($${signal.entryPrice} → $${entryFill})`);
+      }
+
       // Place SL at the signal's structural level — derived from swing lows, OB walls,
       // liq zones in buildTradeSetup. Max loss cap enforced by checkOpenTrades every minute.
       const closeSide = signal.direction === 'long' ? 'sell' : 'buy';
@@ -2746,6 +2754,7 @@ class TradeExecutor {
         currentPrice: p.entryPrice, entryPrice: p.entryPrice,
         tp1: p.tp1, tp2: p.tp2, tp3: p.tp3, tp4: p.tp4, stopLoss: p.stopLoss, atr: p.atr,
         confidence: 5, manual: true, manualLeverage: p.leverage, manualPositionSize: p.positionSize,
+        rebaseOnFill: p.rebaseOnFill === true,
         onchainContext: context,
       });
     }
