@@ -92,16 +92,86 @@ class PumpRunnerPaper {
     return { opened: rows[0].id };
   }
 
+  // The minute check and manual actions both rewrite the same rows, so they run one at a time
+  locked(fn) {
+    const run = (this.lock || Promise.resolve()).then(fn, fn);
+    this.lock = run.catch(() => {});
+    return run;
+  }
+
   // Every minute: replay new closed 1m candles on each open paper long
   async check(now = Date.now()) {
     if (this.checking) return;
     this.checking = true;
     try {
-      const { rows } = await db.query(`SELECT * FROM pump_runner_paper WHERE status = 'open' ORDER BY id`);
-      for (const r of rows) {
-        try { await this.checkOne(r, now); } catch (e) { logger.warn(`Paper runner ${r.symbol} check failed: ${e.message}`); }
-      }
+      await this.locked(async () => {
+        const { rows } = await db.query(`SELECT * FROM pump_runner_paper WHERE status = 'open' ORDER BY id`);
+        for (const r of rows) {
+          try { await this.checkOne(r, now); } catch (e) { logger.warn(`Paper runner ${r.symbol} check failed: ${e.message}`); }
+        }
+      });
     } finally { this.checking = false; }
+  }
+
+  async get(id) {
+    const { rows } = await db.query(`SELECT * FROM pump_runner_paper WHERE id = $1`, [id]);
+    return rows[0] || null;
+  }
+
+  async price(r) {
+    const ex = this.exchanges[r.exchange] || this.exchanges.binance;
+    const tk = ex ? await ex.fetchTicker(`${r.symbol}/USDT:USDT`).catch(() => null) : null;
+    return tk?.last > 0 ? tk.last : null;
+  }
+
+  // Live numbers for one row at `price`: banked part + what is still open, in % of the position and in $
+  view(r, price) {
+    const entry = Number(r.entry_price), pos = Number(r.position_usd), rem = Number(r.rem);
+    const realizedPct = Number(r.realized_pct);
+    if (r.status !== 'open') return { entry, pos, rem: 0, realizedPct, openPct: 0, pnl: Number(r.pnl_usd || 0), movePct: null };
+    const movePct = price ? (price / entry - 1) * 100 : null;
+    const openPct = movePct == null ? 0 : rem * movePct;
+    return { entry, pos, rem, realizedPct, openPct, movePct, pnl: pnlUsd(realizedPct + openPct, pos) };
+  }
+
+  // Manual actions on an open paper long ('close' | 'half' | 'be'). Candles up to now are applied first,
+  // so a TP or stop that already happened counts before the hand action.
+  async manual(id, action) {
+    return this.locked(async () => {
+      let r = await this.get(id);
+      if (!r || r.status !== 'open') return { error: 'Already closed' };
+      await this.checkOne(r, Date.now()).catch(e => logger.warn(`Paper runner ${r.symbol} catch-up failed: ${e.message}`));
+      r = await this.get(id);
+      if (!r || r.status !== 'open') return { error: 'It closed on its own (TP or stop) just now' };
+      const price = await this.price(r);
+      if (!price) return { error: 'No live price right now — try again' };
+      const entry = Number(r.entry_price), pos = Number(r.position_usd), rem = Number(r.rem);
+      const movePct = (price / entry - 1) * 100;
+
+      if (action === 'be') {
+        if (!(movePct > 0.3)) return { error: 'Only while the long is in profit (the stop would fire at once)' };
+        if (Number(r.stop_pct) >= 0) return { error: 'Stop is already at entry' };
+        await db.query(`UPDATE pump_runner_paper SET stop_pct = 0 WHERE id = $1`, [id]);
+        return { done: 'Stop moved to entry', price };
+      }
+      if (action === 'half') {
+        const q = rem / 2;
+        await db.query(`UPDATE pump_runner_paper SET rem = $2, realized_pct = $3 WHERE id = $1`, [id, rem - q, Number(r.realized_pct) + q * movePct]);
+        return { done: `Closed half at $${Number(price).toPrecision(6)} (${movePct >= 0 ? '+' : ''}${movePct.toFixed(2)}%)`, price };
+      }
+      if (action === 'close') {
+        const realizedPct = Number(r.realized_pct) + rem * movePct;
+        const pnl = pnlUsd(realizedPct, pos);
+        await db.query(
+          `UPDATE pump_runner_paper SET status = 'closed', rem = 0, realized_pct = $2, close_reason = 'manual', exit_price = $3,
+             pnl_usd = $4, closed_at = NOW() WHERE id = $1`,
+          [id, realizedPct, price, pnl]
+        );
+        logger.info(`Paper runner long closed by hand: ${r.symbol} ${pnl.toFixed(2)}`);
+        return { done: `Closed at $${Number(price).toPrecision(6)} · ${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`, price };
+      }
+      return { error: 'Unknown action' };
+    });
   }
 
   async checkOne(r, now) {
@@ -162,8 +232,10 @@ class PumpRunnerPaper {
     };
   }
 
-  async recent(limit = 15) {
-    const { rows } = await db.query(`SELECT * FROM pump_runner_paper ORDER BY id DESC LIMIT $1`, [limit]);
+  async recent(limit = 15, status = null) {
+    const { rows } = status
+      ? await db.query(`SELECT * FROM pump_runner_paper WHERE status = $2 ORDER BY id DESC LIMIT $1`, [limit, status])
+      : await db.query(`SELECT * FROM pump_runner_paper ORDER BY id DESC LIMIT $1`, [limit]);
     return rows;
   }
 }

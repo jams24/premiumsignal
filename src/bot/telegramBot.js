@@ -7,6 +7,7 @@ const { generateSignalChart, generateSetupChart } = require('../utils/chartGener
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
 const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS } = require('../engine/pumpAutoTrader');
+const { RUNNER } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
@@ -2474,27 +2475,93 @@ class TelegramBot {
       await ack(ctx, `Runner longs ON as ${ap.config.mode === 'live' ? 'LIVE' : 'paper'} auto trades`);
       await showAutoPump(ctx, true);
     });
-    apAction('ap_runner_log', async (ctx, ap) => {
-      await ack(ctx);
-      const rows = ap.runner ? await ap.runner.recent(15) : [];
-      const s = ap.runner ? await ap.runner.stats().catch(() => null) : null;
-      const p = (v) => Number(v).toPrecision(5);
-      const why = { stop: 'stop −8%', entry: 'TP1 then entry', tp4: 'all TPs', time: '48h close' };
-      const text = [
-        `🧪 <b>PAPER RUNNER LONGS</b> — test only, no real orders`,
-        `<i>No-spot coins already up ≥ +${ap.config.runnerMinRun7d ?? 20}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +6/12/20/30% · max 48h.</i>`,
-        s ? `\n${s.closed} closed · ${s.wins} won · <b>${s.pnl >= 0 ? '+' : '-'}${money(Math.abs(s.pnl))}</b> · ${s.open} open` : '',
-        '',
-        ...(rows.length ? rows.map(r => {
+    // Paper runner lab: open longs with live price and P&L (🔄 refreshes), each one manageable like a live position
+    const RUNNER_MIN_RUNS = [10, 20, 30, 50];
+    const runnerWhy = { stop: 'stop −8%', entry: 'TP1 then entry', tp4: 'all TPs', time: '48h close', manual: 'closed by hand' };
+    const runnerCard = (runner, r, price) => {
+      const v = runner.view(r, price);
+      const tpRow = RUNNER.tpPcts.map((t, i) => `${i < r.hit ? '✅' : '⬜'}+${t}%`).join(' ');
+      const next = r.hit < RUNNER.tpPcts.length ? v.entry * (1 + RUNNER.tpPcts[r.hit] / 100) : null;
+      const stop = v.entry * (1 + Number(r.stop_pct) / 100);
+      const away = (lvl) => (price ? ` (${(Math.abs(lvl - price) / price * 100).toFixed(1)}% away)` : '');
+      const ageMin = Math.round((Date.now() - new Date(r.entry_at).getTime()) / 60000);
+      return `🟢 <b>${escapeHtml(r.symbol)}</b> 🧪 paper long · ${escapeHtml(r.exchange)} · 7d +${Number(r.run7d || 0).toFixed(0)}%\n` +
+        `  Entry $${fmtP(v.entry)}${price ? ` → Now <b>$${fmtP(price)}</b>` : ' · <i>price unavailable</i>'}\n` +
+        `  ${v.pnl >= 0 ? '🟩' : '🟥'} P&L <b>${fmtUsd(v.pnl)}</b>${v.movePct != null ? ` (${fmtPct(v.movePct)})` : ''}` +
+        `${v.realizedPct ? ` · banked ${fmtUsd(v.realizedPct / 100 * v.pos)}` : ''} · ${Math.round(v.rem * 100)}% still open\n` +
+        `  🎯 ${next ? `Next $${fmtP(next)}${away(next)} · ` : ''}${tpRow}\n` +
+        `  🛑 Stop $${fmtP(stop)}${away(stop)}${Number(r.stop_pct) >= 0 ? ' · at entry' : ` · risk ${fmtUsd(v.rem * Number(r.stop_pct) / 100 * v.pos)}`}\n` +
+        `  💵 $${v.pos.toFixed(0)} paper · ⏱ ${ageMin < 60 ? `${ageMin}m` : `${Math.floor(ageMin / 60)}h ${ageMin % 60}m`} · closes at 48h\n`;
+    };
+    const runnerLab = async (ap) => {
+      const runner = ap.runner;
+      const [open, closed, s] = await Promise.all([runner.recent(20, 'open'), runner.recent(10, 'closed'), runner.stats().catch(() => null)]);
+      const prices = await Promise.all(open.map(r => runner.price(r)));
+      const openPnl = open.reduce((a, r, i) => a + runner.view(r, prices[i]).pnl, 0);
+      const minRun = ap.config.runnerMinRun7d ?? 20;
+      let text = `🧪 <b>PAPER RUNNER LONG LAB</b> — test only, no real orders\n` +
+        `<i>No-spot coins already up ≥ +${minRun}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +6/12/20/30% · max 48h.</i>\n`;
+      if (s) text += `\n📊 ${s.closed} closed · ${s.wins} won · <b>${fmtUsd(s.pnl)}</b>${open.length ? ` · open now <b>${fmtUsd(openPnl)}</b>` : ''}\n`;
+      text += `\n<b>Open (${open.length})</b>\n`;
+      text += open.length ? open.map((r, i) => runnerCard(runner, r, prices[i])).join('\n') : '<i>None open.</i>\n';
+      if (closed.length) {
+        text += `\n<b>Last closed</b>\n` + closed.map(r => {
           const when = new Date(r.entry_at).toISOString().slice(5, 16).replace('T', ' ');
-          const head = `${r.status === 'open' ? '🟡' : Number(r.pnl_usd) > 0 ? '✅' : '❌'} <b>${escapeHtml(r.symbol)}</b> ${when} · $${p(r.entry_price)} · 7d +${Number(r.run7d || 0).toFixed(0)}%`;
-          return r.status === 'open'
-            ? `${head}\n   open · ${r.hit ? `TP${r.hit} hit, stop at entry` : 'no TP yet'}`
-            : `${head}\n   ${why[r.close_reason] || r.close_reason}${r.hit && r.close_reason !== 'tp4' ? ` (TP${r.hit})` : ''} · <b>${Number(r.pnl_usd) >= 0 ? '+' : '-'}${money(Math.abs(Number(r.pnl_usd)))}</b>`;
-        }) : ['No paper runner longs yet.']),
-      ].join('\n');
-      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', 'ap_refresh')]]).reply_markup })
-        .catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
+          return `${Number(r.pnl_usd) > 0 ? '✅' : '❌'} <b>${escapeHtml(r.symbol)}</b> ${when} · ${runnerWhy[r.close_reason] || escapeHtml(r.close_reason || '')}` +
+            `${r.hit && r.close_reason !== 'tp4' ? ` (TP${r.hit})` : ''} · <b>${fmtUsd(Number(r.pnl_usd))}</b>`;
+        }).join('\n') + '\n';
+      }
+      text += `\n<i>Updated ${utcClock()} UTC</i>`;
+      const kb = grid(open.map((r, i) => Markup.button.callback(`🟢 ${r.symbol} ${fmtUsd(runner.view(r, prices[i]).pnl)} ›`, `ap_rl_${r.id}`)), 2);
+      kb.push([Markup.button.callback('🔄 Refresh', 'ap_runner_log'), Markup.button.callback(`📈 Min 7d run: +${minRun}%`, 'ap_rl_minrun')]);
+      kb.push([Markup.button.callback('⬅️ Back', 'ap_refresh')]);
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+    const runnerDetail = async (ap, id, notice = '') => {
+      const runner = ap.runner;
+      const r = await runner.get(id);
+      if (!r) return { text: '⚠️ Paper long not found.', keyboard: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Lab', 'ap_runner_log')]]) };
+      if (r.status !== 'open') {
+        return {
+          text: `${notice ? `${notice}\n\n` : ''}🧪 <b>${escapeHtml(r.symbol)}</b> paper long closed — ${runnerWhy[r.close_reason] || escapeHtml(r.close_reason || '')} · <b>${fmtUsd(Number(r.pnl_usd))}</b>`,
+          keyboard: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Lab', 'ap_runner_log')]]),
+        };
+      }
+      const price = await runner.price(r);
+      const v = runner.view(r, price);
+      const text = `${notice ? `${notice}\n\n` : ''}🔎 <b>Paper long #${r.id}</b>\n\n${runnerCard(runner, r, price)}\n` +
+        `<i>Paper only: closing here changes the test score, no exchange order. Updated ${utcClock()} UTC</i>`;
+      const kb = [[Markup.button.callback('🔄 Refresh', `ap_rl_${r.id}`), Markup.button.callback('❌ Close all', `ap_rlx_close_${r.id}`)]];
+      const row = [];
+      if (v.rem > 0.05) row.push(Markup.button.callback('✂️ Close half', `ap_rlx_half_${r.id}`));
+      if (Number(r.stop_pct) < 0 && v.movePct > 0.3) row.push(Markup.button.callback('🛡 Stop → entry', `ap_rlx_be_${r.id}`));
+      if (row.length) kb.push(row);
+      kb.push([Markup.button.callback('⬅️ Lab', 'ap_runner_log')]);
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+    const showRunner = async (ctx, view) => ctx.editMessageText(view.text, { parse_mode: 'HTML', reply_markup: view.keyboard.reply_markup })
+      .catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
+
+    apAction('ap_runner_log', async (ctx, ap) => {
+      if (!ap.runner) return ack(ctx, 'Runner lab not ready');
+      await ack(ctx, 'Updated');
+      await showRunner(ctx, await runnerLab(ap));
+    });
+    apAction('ap_rl_minrun', async (ctx, ap) => {
+      const cur = ap.config.runnerMinRun7d ?? 20;
+      const next = RUNNER_MIN_RUNS[(RUNNER_MIN_RUNS.indexOf(cur) + 1) % RUNNER_MIN_RUNS.length];
+      await ap.update({ runnerMinRun7d: next });
+      await ack(ctx, `Runner longs from +${next}% 7-day run (backtest used +20%)`);
+      await showRunner(ctx, await runnerLab(ap));
+    });
+    apAction(/^ap_rl_(\d+)$/, async (ctx, ap) => {
+      await ack(ctx, 'Updated');
+      await showRunner(ctx, await runnerDetail(ap, Number(ctx.match[1])));
+    });
+    apAction(/^ap_rlx_(close|half|be)_(\d+)$/, async (ctx, ap) => {
+      const res = await ap.runner.manual(Number(ctx.match[2]), ctx.match[1]);
+      await ack(ctx, res.error || res.done);
+      await showRunner(ctx, await runnerDetail(ap, Number(ctx.match[2]), res.error ? `⚠️ ${escapeHtml(res.error)}` : `✅ ${escapeHtml(res.done)}`));
     });
     apAction('ap_tp1', async (ctx, ap) => {
       const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.tpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];
