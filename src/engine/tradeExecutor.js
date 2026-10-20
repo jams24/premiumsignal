@@ -1953,10 +1953,12 @@ class TradeExecutor {
           await db.updateTradeHit(trade.id, 'hit_tp1');
           const tpExit = trade.mode === 'paper' ? (isLong ? Math.max(exitPrice, trade.tp1) : Math.min(exitPrice, trade.tp1)) : exitPrice;
           const partialPnl = await this.partialClosePosition(trade, this.tp1ClosePct, tpExit, 1);
-          const newSL = trade.entry_price;
+          // Stop → entry, unless it was already moved past entry (e.g. by hand) — never loosen it
+          const curSL = parseFloat(trade.stop_loss);
+          const newSL = isFinite(curSL) && (isLong ? curSL > trade.entry_price : curSL < trade.entry_price) ? curSL : trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
           await this.updateExchangeSL(trade, newSL);
-          logger.info(`${trade.symbol}: TP1 hit, closed ${(this.tp1ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to breakeven`);
+          logger.info(`${trade.symbol}: TP1 hit, closed ${(this.tp1ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to ${newSL === trade.entry_price ? 'breakeven' : `$${newSL} (kept, past entry)`}`);
         }
         // --- TRAILING STOP: after TP1, trail tightens proportionally to profit ---
         if (xp.postTrail && !action && trade.hit_tp1 && trade.atr) {
@@ -2436,6 +2438,7 @@ class TradeExecutor {
     }
   }
 
+  // Returns true once the new stop is on the exchange, false if it was rejected (old stop kept), undefined for paper
   async updateExchangeSL(trade, newSLPrice) {
     const exchange = this.exchanges[trade.exchange];
     if (!exchange || !exchange.apiKey || trade.mode !== 'live') return;
@@ -2453,7 +2456,7 @@ class TradeExecutor {
         logger.info(`Placed new SL for ${pair} at $${newSLPrice}`);
       } catch (e) {
         logger.warn(`New SL rejected for ${pair} at $${newSLPrice}: ${e.message} — keeping old SL`);
-        return;
+        return false;
       }
 
       // New stop confirmed — now cancel old stop orders
@@ -2485,8 +2488,10 @@ class TradeExecutor {
           }
         }
       } catch (e) { logger.warn(`Failed to cancel old SL: ${e.message}`); }
+      return true;
     } catch (err) {
       logger.error(`Failed to update SL for ${trade.symbol}: ${err.message}`);
+      return false;
     }
   }
 

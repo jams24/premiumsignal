@@ -1889,7 +1889,8 @@ class TelegramBot {
       text += `\n<i>Updated ${utcClock()} UTC</i>`;
       const canBe = price && st.pct >= 0.5 && isFinite(st.sl) && !st.atBreakeven && !st.slLocksProfit;
       const kb = [[Markup.button.callback('🔄 Refresh', `mt_pd_${t.id}`), Markup.button.callback('❌ Close position', `mt_close_${t.id}`)]];
-      if (canBe) kb.push([Markup.button.callback('🛡 Move SL to breakeven', `mt_be_${t.id}`)]);
+      kb.push(canBe ? [Markup.button.callback('🛡 Move SL to breakeven', `mt_be_${t.id}`), Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]
+        : [Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]);
       kb.push([Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]);
       return { text, keyboard: Markup.inlineKeyboard(kb) };
     };
@@ -1977,6 +1978,155 @@ class TelegramBot {
         ).catch(() => {});
       } catch (e) {
         logger.error(`SL → breakeven failed: ${e.message}`);
+        ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    });
+
+    // Edit stop loss: presets (distance from entry), a 1% nudge either way, or a typed price → confirm → exchange first, then DB.
+    // A live stop is only saved once the exchange accepts it; it must sit ≥ 0.3% from price and inside the liquidation price.
+    this.slTarget = new Map();     // trade id → price waiting for confirmation
+    this.slTyping = new Map();     // telegram user id → { id, at } while waiting for a typed price
+    const SL_PRESETS = [3, 5, 8, 10, 12];
+    const slLiquidation = async (t) => {
+      if (t.mode !== 'live') return null;
+      const te = executorForSource(t.source), ex = te?.exchanges?.[t.exchange];
+      if (!ex?.apiKey) return null;
+      try {
+        const pos = (await te._fetchPositions(ex, t.exchange, [pairOf(t.symbol)])).find(x => Math.abs(parseFloat(x.contracts || 0)) > 0);
+        const liq = parseFloat(pos?.liquidationPrice); return liq > 0 ? liq : null;
+      } catch (e) { return null; }
+    };
+    // Is `sl` a usable stop for this trade right now? Returns { error } or the numbers for the confirm screen
+    const slCheck = async (id, sl) => {
+      const t = await getOpenTradeById(id);
+      if (!t) return { error: 'That position is already closed.' };
+      const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+      if (!price) return { error: 'No live price right now — try again.' };
+      const st = positionStats(t, price);
+      if (!(sl > 0) || !isFinite(sl)) return { error: 'That is not a valid price.' };
+      const gap = st.isLong ? (price - sl) / price * 100 : (sl - price) / price * 100;
+      if (gap < 0.3) return { error: `The stop must be at least 0.3% ${st.isLong ? 'below' : 'above'} the price ($${fmtP(price)}) — otherwise it fires at once.` };
+      const liq = await slLiquidation(t);
+      if (liq && (st.isLong ? sl <= liq * 1.003 : sl >= liq * 0.997)) return { error: `$${fmtP(sl)} is past the liquidation price ($${fmtP(liq)}) — the position would be liquidated before the stop fires.` };
+      const fromEntry = (st.isLong ? sl - st.entry : st.entry - sl) / st.entry * 100;   // + = locks profit, − = loss
+      return { t, st, price, sl, gap, liq, fromEntry, pnl: fromEntry / 100 * st.size + st.realized };
+    };
+    const slMenu = async (id) => {
+      const t = await getOpenTradeById(id);
+      if (!t) return { text: '⚠️ That position is already closed.', keyboard: Markup.inlineKeyboard([[Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]]) };
+      const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+      const st = positionStats(t, price);
+      const liq = await slLiquidation(t);
+      const at = (pct) => st.isLong ? st.entry * (1 - pct / 100) : st.entry * (1 + pct / 100);   // stop `pct`% against the entry
+      const cur = isFinite(st.sl) ? (st.isLong ? st.entry - st.sl : st.sl - st.entry) / st.entry * 100 : null;
+      let text = `✏️ <b>Edit stop loss — ${st.isLong ? '🟢 LONG' : '🔴 SHORT'} $${escapeHtml(t.symbol)}</b> #${t.id}\n\n`;
+      text += `Entry $${fmtP(st.entry)}${price ? ` · Now <b>$${fmtP(price)}</b> (${fmtPct(st.pct)})` : ''}\n`;
+      text += `Stop now: <b>$${fmtP(st.sl)}</b>${cur != null ? ` (${cur >= 0 ? cur.toFixed(1) + '% against entry' : (-cur).toFixed(1) + '% in profit'}${st.slPnl != null ? ` · ${fmtUsd(st.slPnl + st.realized)} if hit` : ''})` : ''}\n`;
+      if (liq) text += `Liquidation: $${fmtP(liq)} (${(Math.abs(liq - st.entry) / st.entry * 100).toFixed(1)}% from entry)\n`;
+      text += `\nPick a new stop (distance from entry, $ = result if it fills):\n`;
+      const kb = [];
+      const presetBtns = SL_PRESETS.map(p => {
+        const lvl = at(p);
+        if (price && (st.isLong ? lvl >= price * 0.997 : lvl <= price * 1.003)) return null;   // already past the price
+        if (liq && (st.isLong ? lvl <= liq * 1.003 : lvl >= liq * 0.997)) return null;        // beyond liquidation
+        return Markup.button.callback(`${p}% · ${fmtUsd(-p / 100 * st.size + st.realized)}`, `mt_slp_${t.id}_${p * 100}`);
+      }).filter(Boolean);
+      kb.push(...grid(presetBtns, 3));
+      if (cur != null) kb.push([Markup.button.callback('➖ Tighter by 1%', `mt_sln_${t.id}_t`), Markup.button.callback('➕ Wider by 1%', `mt_sln_${t.id}_w`)]);
+      kb.push([Markup.button.callback('⌨️ Type a price', `mt_slty_${t.id}`), Markup.button.callback('🔄 Refresh', `mt_sl_${t.id}`)]);
+      kb.push([Markup.button.callback('⬅️ Back to position', `mt_pd_${t.id}`)]);
+      text += `<i>Tighter = smaller loss but stopped out more often. In the backtest an 8% stop beat 3–7% stops on these pump shorts.</i>`;
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+    const slConfirm = async (ctx, id, sl) => {
+      const r = await slCheck(id, sl);
+      if (r.error) return ctx.replyWithHTML(`⚠️ ${escapeHtml(r.error)}`, Markup.inlineKeyboard([[Markup.button.callback('✏️ Back to stop menu', `mt_sl_${id}`)]]));
+      this.slTarget.set(r.t.id, r.sl);
+      const what = r.fromEntry >= 0 ? `locks ${r.fromEntry.toFixed(2)}% profit` : `${(-r.fromEntry).toFixed(2)}% against entry`;
+      await ctx.replyWithHTML(
+        `❓ <b>Move ${escapeHtml(r.t.symbol)} stop?</b>\n\n` +
+        `SL $${fmtP(r.st.sl)} → <b>$${fmtP(r.sl)}</b> (${what})\n` +
+        `If it fills: <b>${fmtUsd(r.pnl)}</b> · ${r.gap.toFixed(1)}% from now ($${fmtP(r.price)})` +
+        `${r.liq ? `\nLiquidation $${fmtP(r.liq)}` : ''}\n` +
+        `${r.t.mode === 'live' ? '💰 LIVE — the exchange stop is replaced' : '📝 PAPER'}`,
+        Markup.inlineKeyboard([[Markup.button.callback('✅ Yes, move it', `mt_slok_${r.t.id}`), Markup.button.callback('⬅️ Leave it', `mt_sl_${r.t.id}`)]])
+      );
+    };
+
+    this.bot.action(/^mt_sl_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try { await editOrReply(ctx, await slMenu(Number(ctx.match[1]))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_slp_(\d+)_(\d+)$/, async (ctx) => {   // preset: N/100 % against the entry
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try {
+        const t = await getOpenTradeById(Number(ctx.match[1]));
+        if (!t) return ctx.replyWithHTML('⚠️ That position is already closed.');
+        const pct = Number(ctx.match[2]) / 100, entry = parseFloat(t.entry_price);
+        await slConfirm(ctx, t.id, t.direction === 'long' ? entry * (1 - pct / 100) : entry * (1 + pct / 100));
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_sln_(\d+)_([tw])$/, async (ctx) => {   // nudge the current stop 1% of entry tighter / wider
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try {
+        const t = await getOpenTradeById(Number(ctx.match[1]));
+        if (!t) return ctx.replyWithHTML('⚠️ That position is already closed.');
+        const entry = parseFloat(t.entry_price), sl = parseFloat(t.stop_loss), step = entry * 0.01;
+        const away = (t.direction === 'long') === (ctx.match[2] === 'w');   // long+wider or short+tighter → lower price
+        await slConfirm(ctx, t.id, away ? sl - step : sl + step);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_slty_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      const t = await getOpenTradeById(Number(ctx.match[1])).catch(() => null);
+      if (!t) return ctx.replyWithHTML('⚠️ That position is already closed.');
+      const mst = this.manualTradeState?.[ctx.from.id]; if (mst) mst.awaiting = null;   // one typed-input prompt at a time
+      this.slTyping.set(ctx.from.id, { id: t.id, at: Date.now() });
+      await ctx.replyWithHTML(`⌨️ Send the new stop price for <b>${escapeHtml(t.symbol)}</b> (now $${fmtP(parseFloat(t.stop_loss))}), e.g. <code>${fmtP(parseFloat(t.stop_loss))}</code>\nOr send <code>cancel</code>.`);
+    });
+
+    this.bot.on('text', async (ctx, next) => {
+      const w = this.slTyping.get(ctx.from?.id);
+      const text = (ctx.message?.text || '').trim();
+      if (!w || text.startsWith('/') || !isAdminCtx(ctx)) return next();
+      this.slTyping.delete(ctx.from.id);
+      if (Date.now() - w.at > 10 * 60000) return next();
+      if (/^(cancel|x|back)$/i.test(text)) return ctx.replyWithHTML('Stop left as it is.', Markup.inlineKeyboard([[Markup.button.callback('🔎 Back to position', `mt_pd_${w.id}`)]]));
+      try { await slConfirm(ctx, w.id, parseFloat(text.replace(/[$,\s]/g, ''))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_slok_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Moving stop…');
+      const id = Number(ctx.match[1]), back = Markup.inlineKeyboard([[Markup.button.callback('🔎 Back to position', `mt_pd_${id}`), Markup.button.callback('✏️ Stop menu', `mt_sl_${id}`)]]).reply_markup;
+      try {
+        const target = this.slTarget.get(id);
+        if (target == null) return ctx.editMessageText('⚠️ This confirmation expired — pick the stop again.', { reply_markup: back }).catch(() => {});
+        const r = await slCheck(id, target);   // re-checked: price may have moved since the prompt
+        if (r.error) return ctx.editMessageText(`⚠️ ${r.error}`, { reply_markup: back }).catch(() => {});
+        const executor = executorForSource(r.t.source);
+        if (!executor) return ctx.editMessageText(`⚠️ No executor for source "${r.t.source}".`).catch(() => {});
+        if (r.t.mode === 'live') {
+          const ok = await executor.updateExchangeSL(r.t, r.sl);
+          if (ok !== true) return ctx.editMessageText(`🚨 The exchange rejected the new stop — the old stop $${fmtP(r.st.sl)} is still in place. Nothing changed.`, { reply_markup: back }).catch(() => {});
+        }
+        await db.updateTradeStopLoss(r.t.id, r.sl);
+        this.slTarget.delete(id);
+        logger.info(`Manual SL edit: ${r.t.symbol} #${r.t.id} ${r.st.sl} → ${r.sl} (${r.t.mode})`);
+        await ctx.editMessageText(
+          `✅ <b>${escapeHtml(r.t.symbol)} stop moved</b>\nSL $${fmtP(r.st.sl)} → <b>$${fmtP(r.sl)}</b> · ${fmtUsd(r.pnl)} if it fills\n` +
+          `<i>${r.t.mode === 'live' ? 'Placed on the exchange and enforced by the bot every minute.' : 'Paper — enforced by the bot every minute.'} The plan's own moves (e.g. stop → entry at TP1) still apply.</i>`,
+          { parse_mode: 'HTML', reply_markup: back }
+        ).catch(() => {});
+      } catch (e) {
+        logger.error(`SL edit failed: ${e.message}`);
         ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
       }
     });
