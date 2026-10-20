@@ -3,3 +3,6 @@ node_modules
 *.db
 dist
 signals.log
+
+# local backtest data (large)
+backtest/data/
