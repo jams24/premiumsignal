@@ -1,0 +1,34 @@
+// Does a spot share that counts every venue (incl. Korea) pick shorts better than the live Binance+Bybit share?
+process.chdir(require('path').join(__dirname, process.env.BT_DATA || 'data'));
+const fs = require('fs'), K = require('./evalkit');
+const B = JSON.parse(fs.readFileSync('base_trades.json')), E = JSON.parse(fs.readFileSync('ext_feats.json'));
+for (const x of B) Object.assign(x.F, E[x.key] || {});
+const ok = B.filter(x => x.short && x.b7 >= -2 && E[x.key]).sort((a, b) => a.t - b.t);
+const mid = ok[ok.length >> 1].t;
+const row = (name, sel) => { const s = sel.reduce((a, x) => a + x.short.pnl, 0), h1 = sel.filter(x => x.t < mid).reduce((a, x) => a + x.short.pnl, 0);
+  const mo = ['06', '07', '08', '09', '10'].map(m => K.$(sel.filter(x => new Date(x.t).toISOString().slice(5, 7) === m).reduce((a, x) => a + x.short.pnl, 0)).padStart(5)).join(' ');
+  console.log(name.padEnd(46), String(sel.length).padStart(4), (sel.filter(x => x.short.pnl > 0).length / sel.length * 100).toFixed(0).padStart(3) + '%', K.$(s).padStart(6), ('$' + (s / sel.length).toFixed(2)).padStart(6), '| halves', K.$(h1).padStart(5), K.$(s - h1).padStart(5), '|', mo); };
+console.log(`All shorts with BTC 7d ≥ -2% (${ok.length}, every group incl. no-spot coins). Split date ${new Date(mid).toISOString().slice(0, 10)}.\n`);
+console.log('— rule as live today: has Binance/Bybit spot and share ≤ 13% —');
+row('LIVE rule', ok.filter(x => x.hasSpot && x.sp != null && x.sp <= 13));
+console.log('\n— short if ALL-venue spot share (1h) ≤ X, any coin —');
+for (const th of [3, 5, 8, 10, 13, 16, 20]) row(`all-venue share ≤ ${th}%`, ok.filter(x => x.F['spot.shareAll.1h'] <= th));
+console.log('\n— short if ALL-venue spot share (3h) ≤ X —');
+for (const th of [5, 8, 10, 13, 16]) row(`all-venue share 3h ≤ ${th}%`, ok.filter(x => x.F['spot.shareAll.3h'] <= th));
+console.log('\n— live-rule trades split by Korean spot share (Upbit+Bithumb vs perps, 1h) —');
+const live = ok.filter(x => x.group === 'live');
+for (const [a, b] of [[0, 0.0001], [0.0001, 1], [1, 3], [3, 8], [8, 1e9]]) row(`live, Korea share ${a}-${b > 1e8 ? 'max' : b}%`, live.filter(x => x.F['spot.korea.1h'] >= a && x.F['spot.korea.1h'] < b));
+console.log('\n— live-rule trades split by ALL-venue share —');
+for (const [a, b] of [[0, 5], [5, 10], [10, 15], [15, 25], [25, 1e9]]) row(`live, all-venue share ${a}-${b > 1e8 ? 'max' : b}%`, live.filter(x => x.F['spot.shareAll.1h'] >= a && x.F['spot.shareAll.1h'] < b));
+console.log('\n— skipped spot-heavy shorts (share > 13%) by Korea share —');
+const hs = ok.filter(x => x.group === 'highshare');
+for (const [a, b] of [[0, 0.0001], [0.0001, 3], [3, 10], [10, 1e9]]) row(`highshare, Korea share ${a}-${b > 1e8 ? 'max' : b}%`, hs.filter(x => x.F['spot.korea.1h'] >= a && x.F['spot.korea.1h'] < b));
+console.log('\n— no Binance/Bybit spot coins: do they have spot elsewhere? —');
+const ns = ok.filter(x => !x.hasSpot);
+row('no BN/BY spot, no spot anywhere (all-venue 0)', ns.filter(x => x.F['spot.shareAll.1h'] < 0.01));
+row('no BN/BY spot, spot elsewhere ≤ 5%', ns.filter(x => x.F['spot.shareAll.1h'] >= 0.01 && x.F['spot.shareAll.1h'] <= 5));
+row('no BN/BY spot, spot elsewhere > 5%', ns.filter(x => x.F['spot.shareAll.1h'] > 5));
+for (const g of ['runner', 'nospot_low']) { console.log(`  ${g}:`); const gs = ns.filter(x => x.group === g);
+  row(`   ${g} short, no spot anywhere`, gs.filter(x => x.F['spot.shareAll.1h'] < 0.01)); row(`   ${g} short, spot elsewhere`, gs.filter(x => x.F['spot.shareAll.1h'] >= 0.01));
+  if (g === 'runner') { const L = (n, s) => { const p = s.reduce((a, x) => a + x.long.pnl, 0); console.log(n.padEnd(46), String(s.length).padStart(4), '     ', K.$(p).padStart(6), ('$' + (p / s.length).toFixed(2)).padStart(6), '(LONG)'); };
+    L('   runner LONG, no spot anywhere', gs.filter(x => x.F['spot.shareAll.1h'] < 0.01)); L('   runner LONG, spot elsewhere', gs.filter(x => x.F['spot.shareAll.1h'] >= 0.01)); } }

@@ -1,6 +1,6 @@
 // Long-period detector: same rules as stage1, but open interest comes from Bybit (Binance OI history only covers 30 days).
 // Bybit OI is in coins → USD with the Binance 5m close at the same time. Coins without a Bybit perp are skipped.
-process.chdir(require('path').join(__dirname, 'data')); // all JSON lives in backtest/data
+process.chdir(require('path').join(__dirname, process.env.BT_DATA || 'data')); // all JSON lives in backtest/data
 const fs = require('fs'); const { getJ, pool } = require('./lib');
 const F = 'https://fapi.binance.com', M = 60000, H = 60 * M, D = 24 * H;
 const START = Date.parse(process.argv[2] || '2026-06-01'), END = Date.parse(process.argv[3] || '2026-10-12T23:59Z');

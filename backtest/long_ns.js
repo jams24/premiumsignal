@@ -1,5 +1,5 @@
 // LONG the no-spot coins at the ENTER moment (mirror plan: stop -8%, TP +6/12/20/30, stop to entry at TP1), $150, fees in
-process.chdir(require('path').join(__dirname, 'data')); // all JSON lives in backtest/data
+process.chdir(require('path').join(__dirname, process.env.BT_DATA || 'data')); // all JSON lives in backtest/data
 const fs = require('fs'); const { R, firstEntry } = require('./rules');
 const rows = JSON.parse(fs.readFileSync('replay_L.json')), paths = JSON.parse(fs.readFileSync('paths_L.json')), H1 = JSON.parse(fs.readFileSync('h1L.json'));
 const POS = 150, M = 60000, Hr = 3600000;

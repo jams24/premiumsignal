@@ -6,3 +6,5 @@ signals.log
 
 # local backtest data (large)
 backtest/data/
+backtest/data_early/
+backtest/data_dz/

@@ -1,6 +1,6 @@
 // Long-period replay: every 5 min for 2h after each signal run the bot's real followUpCheck (Bybit OI in USD),
 // record spot share, then keep the 1m path (72h) after the signal for exit simulation.
-process.chdir(require('path').join(__dirname, 'data')); // all JSON lives in backtest/data
+process.chdir(require('path').join(__dirname, process.env.BT_DATA || 'data')); // all JSON lives in backtest/data
 const fs = require('fs'); const { getJ, pool } = require('./lib'); const { bybitOI } = require('./lt1');
 const { followUpCheck, measureTop } = require('/Users/jams/Desktop/MY PROJECT/cryptosignal/src/collectors/pumpSignalCheck');
 const F = 'https://fapi.binance.com', M = 60000, H = 60 * M;

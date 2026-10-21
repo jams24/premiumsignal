@@ -1,5 +1,5 @@
 // Runner long entry methods: market at ENTER vs pullback limits vs delays vs breakout confirmation. $150, fees in, stop -8, TP 6/12/20/30, stop->entry at TP1
-process.chdir(require('path').join(__dirname, 'data')); // all JSON lives in backtest/data
+process.chdir(require('path').join(__dirname, process.env.BT_DATA || 'data')); // all JSON lives in backtest/data
 const fs = require('fs'); const { R, firstEntry } = require('./rules');
 const rows = JSON.parse(fs.readFileSync('replay_L.json')), paths = JSON.parse(fs.readFileSync('paths_L.json')), H1 = JSON.parse(fs.readFileSync('h1L.json'));
 const M = 60000, Hr = 3600000, POS = 150;

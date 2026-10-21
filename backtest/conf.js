@@ -1,6 +1,6 @@
 // More confirmation before the short? Every variant on the same signals the live short takes
 // (spot market, share ≤ 13% at entry, BTC 7d ≥ -2%), $150, stop 8%, TP 6/12/20/30 (.25/.5/.5/all), stop→entry at TP1, 48h, fees in.
-process.chdir(require('path').join(__dirname, 'data')); // all JSON lives in backtest/data
+process.chdir(require('path').join(__dirname, process.env.BT_DATA || 'data')); // all JSON lives in backtest/data
 const fs = require('fs');
 const rows = JSON.parse(fs.readFileSync('replay_L.json')), paths = JSON.parse(fs.readFileSync('paths_L.json')), H1 = JSON.parse(fs.readFileSync('h1L.json'));
 const POS = 150, M = 60000, Hr = 3600000;
