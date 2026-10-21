@@ -3,8 +3,17 @@ const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
 const { PUMP_RULES, channelLevels, runType } = require('../collectors/pumpSignalCheck');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
-const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE } = require('../collectors/spotShare');
+const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, KOREA_GROUP_PCT } = require('../collectors/spotShare');
 const { RUNNER } = require('./pumpRunnerPaper');
+
+// Owner-DM line for the Korean share at entry (info only — size and filters never use it)
+function koreaNote(k) {
+  if (k === undefined) return '';
+  if (!k) return `🇰🇷 Korean volume: n/a\n`;
+  if (!k.listed) return `🇰🇷 Korean volume: not listed on Upbit/Bithumb\n`;
+  return `🇰🇷 Korean volume: ${k.pct.toFixed(1)}% of futures (${k.pct >= KOREA_GROUP_PCT ? '≥' : '&lt;'} ${KOREA_GROUP_PCT}% group · tracking only, size unchanged)\n`;
+}
+const koreaPct = (k) => (k ? +k.pct.toFixed(2) : null);
 
 // Auto-trades pump-exhaustion shorts when the channel says ✅ ENTER (at signal time or from the
 // follow-up watcher). Size comes from the owner's /trade panel settings; levels and exits follow the
@@ -41,9 +50,10 @@ const DEFAULTS = {
 };
 
 class PumpAutoTrader {
-  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null }) {
+  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null, signalLab = null }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
     this.runner = runner;           // PumpRunnerPaper — paper longs on no-spot runners, never real orders
+    this.signalLab = signalLab;     // PumpRunnerPaper('signal') — the same long bought at the signal, paper only
     this.notify = notify;           // async (chatId, html) => void
     this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
     this.measureBtc = measureBtc;   // async (hours) => BTC % change
@@ -116,6 +126,22 @@ class PumpAutoTrader {
   async runnerLongNow(info) {
     await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
     return this.runnerLong(info);
+  }
+
+  // At-signal lab: every runner signal (any verdict) gets a paper long at the live price right away.
+  // Paper only and separate from runnerLong, so it never opens or blocks a real trade.
+  async runnerAtSignal(info) {
+    if (!this.signalLab) return null;
+    try {
+      await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
+      const c = this.config;
+      if (c.runnerLongs === false || !(info.run7d >= (c.runnerMinRun7d ?? 20))) return null;
+      const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
+      return await this.signalLab.maybeOpen(info, c, size?.position || 150);
+    } catch (e) {
+      logger.warn(`At-signal lab ${info.symbol} failed: ${e.message}`);
+      return null;
+    }
   }
 
   // Paper runner long — after the short so it never delays it, and nothing here can affect the short
@@ -274,7 +300,7 @@ class PumpAutoTrader {
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'long', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
       tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss, atr: null, rebaseOnFill: true,
-      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, runnerLong: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via },
+      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, runnerLong: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea) },
     });
     if (!trade) {
       await this.tell(`🚀 ⚠️ <b>Runner long NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Still tracked as a paper long.`);
@@ -295,6 +321,7 @@ class PumpAutoTrader {
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
       `🎯 ${RUNNER.tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
       `🛑 SL $${p(sl)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
+      koreaNote(info.korea) +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Runner long auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x`);
@@ -318,7 +345,7 @@ class PumpAutoTrader {
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'short', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
       tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
-      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via },
+      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea) },
     });
     if (!trade) {
       await this.tell(`🤖 ⚠️ <b>Auto-trade NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Check the bot notification for the reason.`);
@@ -341,6 +368,7 @@ class PumpAutoTrader {
       `🛑 SL $${p(sl)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
       `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +
       `${info.btc7d != null ? `₿ BTC 7d: ${info.btc7d >= 0 ? '+' : ''}${info.btc7d.toFixed(1)}% (pause below −${c.btcPausePct}%)\n` : ''}` +
+      koreaNote(info.korea) +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Pump auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x via ${info.via}`);

@@ -45,6 +45,14 @@ function spotInfo(spot, max) {
   };
 }
 
+// Info line: Upbit + Bithumb volume vs futures volume (see measureKoreaShare) — recorded for review, no verdict
+function koreaLine(k) {
+  const usd = (v) => (v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${Math.round(v / 1e3)}K`);
+  if (!k) return `🇰🇷 Korean volume: <b>n/a</b> (couldn't be measured)`;
+  if (!k.listed) return `🇰🇷 Korean volume: <b>not listed</b> on Upbit/Bithumb`;
+  return `🇰🇷 Korean volume: <b>${k.pct.toFixed(1)}%</b> of futures (Upbit + Bithumb ${usd(k.krUsd)} vs futures ${usd(k.perpUsd)} last hour)`;
+}
+
 // Info line: median 24h move of all USDT perps — pump shorts did worse when the alt market was green
 function altMarketLine(median) {
   if (median == null) return '';
@@ -2430,6 +2438,7 @@ class TelegramBot {
       const s = await ap.stats().catch(() => null);
       const btc7d = c.btcPausePct > 0 ? await ap.measureBtc(168).catch(() => null) : null;
       const rs = ap.runner ? await ap.runner.stats().catch(() => null) : null;
+      const ls = ap.signalLab ? await ap.signalLab.stats().catch(() => null) : null;
       const slLoss = (sz) => money(sz.position * PUMP_RULES.slPct / 100);
       const live = c.mode === 'live';
 
@@ -2468,6 +2477,7 @@ class TelegramBot {
           ? `🧪 <b>Paper runner longs: ON</b> — no-spot coins already up ≥ +${c.runnerMinRun7d ?? 20}% in 7 days get a PAPER long at ✅ ENTER (the test score below; never posted in the channel)`
           : `🧪 Paper runner longs: <b>off</b>`);
         if (rs) lines.push(`🧪 Runner test: ${rs.closed} closed · ${rs.wins} won · <b>${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}</b> · ${rs.open} open`);
+        if (ls) lines.push(`⚡ At-signal lab (same long, bought at the signal): ${ls.closed} closed · ${ls.wins} won · <b>${ls.pnl >= 0 ? '+' : '-'}${money(Math.abs(ls.pnl))}</b> · ${ls.open} open`);
         lines.push(c.runnerLongs !== false && c.runnerLive === true
           ? `🚀 <b>Runner longs as real trades: ON</b> — each runner long is also opened as an auto trade (${live ? '💰 <b>LIVE</b>' : '📝 paper'}, needs auto-trade ON), ${money(full.position)} · SL −8% loses <b>-${money(full.position * 0.08)}</b> · TP +6/12/20/30% · uses the same max-open and daily stop · not paused by BTC`
           : `🚀 Runner longs as real trades: <b>off</b> (paper test only)`);
@@ -2490,6 +2500,7 @@ class TelegramBot {
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
         ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
           Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
+          ...(ap.signalLab ? [[Markup.button.callback(`⚡ At-signal lab${ls ? ` (${ls.closed + ls.open})` : ''}`, 'ap_rsig_log')]] : []),
           [Markup.button.callback(`🚀 Runner longs real trade: ${c.runnerLongs !== false && c.runnerLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_runner_live')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
@@ -2643,15 +2654,26 @@ class TelegramBot {
         `  🛑 Stop $${fmtP(stop)}${away(stop)}${Number(r.stop_pct) >= 0 ? ' · at entry' : ` · risk ${fmtUsd(v.rem * Number(r.stop_pct) / 100 * v.pos)}`}\n` +
         `  💵 $${v.pos.toFixed(0)} paper · ⏱ ${ageMin < 60 ? `${ageMin}m` : `${Math.floor(ageMin / 60)}h ${ageMin % 60}m`} · closes at 48h\n`;
     };
-    const runnerLab = async (ap) => {
-      const runner = ap.runner;
+    // kind 'enter' = the ✅ ENTER runner test (manageable), 'signal' = the at-signal lab (view only, so its score stays clean)
+    const runnerLab = async (ap, kind = 'enter') => {
+      const atSignal = kind === 'signal';
+      const runner = atSignal ? ap.signalLab : ap.runner;
       const [open, closed, s] = await Promise.all([runner.recent(20, 'open'), runner.recent(10, 'closed'), runner.stats().catch(() => null)]);
       const prices = await Promise.all(open.map(r => runner.price(r)));
       const openPnl = open.reduce((a, r, i) => a + runner.view(r, prices[i]).pnl, 0);
       const minRun = ap.config.runnerMinRun7d ?? 20;
-      let text = `🧪 <b>PAPER RUNNER LONG LAB</b> — test only, no real orders\n` +
-        `<i>No-spot coins already up ≥ +${minRun}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +6/12/20/30% · max 48h.</i>\n`;
+      let text = atSignal
+        ? `⚡ <b>AT-SIGNAL RUNNER LAB</b> — test only, no real orders\n` +
+          `<i>Same coins and plan as the runner test (no spot, ≥ +${minRun}% in 7 days), but bought at the live price the moment the signal goes out instead of waiting for ✅ ENTER. ` +
+          `Backtest: better if bought within 1–2 min, gone by +5 min — this lab measures what a real at-signal buy gets.</i>\n`
+        : `🧪 <b>PAPER RUNNER LONG LAB</b> — test only, no real orders\n` +
+          `<i>No-spot coins already up ≥ +${minRun}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +6/12/20/30% · max 48h.</i>\n`;
       if (s) text += `\n📊 ${s.closed} closed · ${s.wins} won · <b>${fmtUsd(s.pnl)}</b>${open.length ? ` · open now <b>${fmtUsd(openPnl)}</b>` : ''}\n`;
+      if (atSignal) {
+        const [h, d] = await Promise.all([runner.headToHead(ap.runner).catch(() => null), runner.entryDrift().catch(() => null)]);
+        if (h?.n) text += `⚖️ Same ${h.n} signal${h.n === 1 ? '' : 's'}, both closed: at signal <b>${fmtUsd(h.mine)}</b> vs at ENTER <b>${fmtUsd(h.other)}</b>\n`;
+        if (d) text += `⏱ Bought on average ${fmtPct(d.avg)} vs the signal price (${d.n} long${d.n === 1 ? '' : 's'})\n`;
+      }
       text += `\n<b>Open (${open.length})</b>\n`;
       text += open.length ? open.map((r, i) => runnerCard(runner, r, prices[i])).join('\n') : '<i>None open.</i>\n';
       if (closed.length) {
@@ -2662,6 +2684,9 @@ class TelegramBot {
         }).join('\n') + '\n';
       }
       text += `\n<i>Updated ${utcClock()} UTC</i>`;
+      if (atSignal) {
+        return { text, keyboard: Markup.inlineKeyboard([[Markup.button.callback('🔄 Refresh', 'ap_rsig_log'), Markup.button.callback('⬅️ Back', 'ap_refresh')]]) };
+      }
       const kb = grid(open.map((r, i) => Markup.button.callback(`🟢 ${r.symbol} ${fmtUsd(runner.view(r, prices[i]).pnl)} ›`, `ap_rl_${r.id}`)), 2);
       kb.push([Markup.button.callback('🔄 Refresh', 'ap_runner_log'), Markup.button.callback(`📈 Min 7d run: +${minRun}%`, 'ap_rl_minrun')]);
       kb.push([Markup.button.callback('⬅️ Back', 'ap_refresh')]);
@@ -2696,6 +2721,11 @@ class TelegramBot {
       if (!ap.runner) return ack(ctx, 'Runner lab not ready');
       await ack(ctx, 'Updated');
       await showRunner(ctx, await runnerLab(ap));
+    });
+    apAction('ap_rsig_log', async (ctx, ap) => {
+      if (!ap.signalLab || !ap.runner) return ack(ctx, 'At-signal lab not ready');
+      await ack(ctx, 'Updated');
+      await showRunner(ctx, await runnerLab(ap, 'signal'));
     });
     apAction('ap_rl_minrun', async (ctx, ap) => {
       const cur = ap.config.runnerMinRun7d ?? 20;
@@ -9634,6 +9664,7 @@ class TelegramBot {
       msg += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${cisdFlags})${check.cisdScore >= R.minCisd ? ' ✅' : ''}\n`;
       msg += `🔥 Exhaustion: <b>${exhScore}/10</b> · 💵 Funding: <b>${fundingBias}</b> · 📉 RSI 5m: <b>${rsi}</b>\n`;
       msg += `${spot.line}\n`;
+      msg += `${koreaLine(check.korea)}\n`;
       msg += altMarketLine(check.altMarket);
       msg += `\n<b>Plan (short):</b>\n`;
       msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n');
@@ -9676,6 +9707,7 @@ class TelegramBot {
         msg = head +
           `Top $${p(u.top.high24)} held ${Math.round(u.top.topAgeMin)}m · ${oi} · CISD ${u.cisd.score}/4 on ${u.cisd.tf} (${(u.cisd.flags || []).join(' + ') || 'none'})\n` +
           `${spot.line}\n` +
+          `${koreaLine(u.korea)}\n` +
           `${now} · ${after}\n\n` +
           u.levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n') +
           `\n🛑 SL: $${p(u.levels.stopLoss)} (+${R.slPct}%)\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only${runLabel(u.run7d) ? ` · ${runLabel(u.run7d).size}` : ''}`;

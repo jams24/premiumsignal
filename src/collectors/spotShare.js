@@ -70,6 +70,62 @@ async function measureSpotShare(symbol, now = Date.now()) {
   return { hasSpot: true, pct: (spotUsd / perpUsd) * 100, spotUsd, perpUsd };
 }
 
+// Korean share of a pump: Upbit + Bithumb spot volume (KRW → USD at Upbit's KRW-USDT price) as a % of USDT-perp
+// volume on Binance + Bybit + OKX over the last hour. Backtest of the live-rule shorts ($150): Korean share ≥ 8% at
+// entry earned $4.38/trade vs $1.51 (Jun–Oct 2026) and $4.62 vs $0.68 on unseen Dec 2025 – May 2026, but 1–21 Oct
+// 2026 went the other way. Info only: shown on signals and recorded with each signal/trade for review, never traded on.
+const KOREA_GROUP_PCT = 8;
+
+// Upbit / Bithumb 5m candles (newest first) → [[openTime, krwVolume, price]] | 'none' (not listed) | null (couldn't tell)
+async function koreaVolume(host, market) {
+  try {
+    const j = await getJson(`https://${host}/v1/candles/minutes/5?market=${encodeURIComponent(market)}&count=${CANDLES + 2}`);
+    if (Array.isArray(j)) return j.map(c => [Date.parse(`${c.candle_date_time_utc}Z`), +c.candle_acc_trade_price, +c.trade_price]);
+    return String(j?.error?.name) === '404' ? 'none' : null;
+  } catch (e) { return null; }
+}
+
+async function okxSwapVolume(base) {
+  try {
+    const j = await getJson(`https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(base)}-USDT-SWAP&bar=5m&limit=${CANDLES + 2}`);
+    if (j?.code === '0') return j.data?.length ? j.data.map(c => [+c[0], +c[7]]) : 'none';
+    return j?.code === '51001' ? 'none' : null;   // 51001 = instrument doesn't exist
+  } catch (e) { return null; }
+}
+
+// Sum of the last hour's closed 5m candles by time, for venues that skip candles with no trades
+const hourByTime = (series, now) => {
+  const open = Math.floor(now / M5) * M5;   // the forming candle
+  return series.filter(c => c[0] >= open - CANDLES * M5 && c[0] < open).reduce((sum, c) => sum + c[1], 0);
+};
+
+// → { listed, pct, krUsd, perpUsd } — listed false with pct 0 when neither Upbit nor Bithumb has a KRW market.
+// → null when any venue couldn't be read (a missing perp venue would overstate the share).
+async function measureKoreaShare(symbol, now = Date.now()) {
+  const id = `${symbol}USDT`;
+  const base = symbol.replace(/^(1000000|10000|1000|1M)(?=[A-Z])/, '');
+  const [bnPerp, byPerp, okxPerp, upbit, bithumb, usdt] = await Promise.all([
+    binanceVolume('https://fapi.binance.com/fapi/v1/klines', id),
+    bybitVolume('linear', id),
+    okxSwapVolume(base),
+    koreaVolume('api.upbit.com', `KRW-${base}`),
+    koreaVolume('api.bithumb.com', `KRW-${base}`),
+    koreaVolume('api.upbit.com', 'KRW-USDT'),
+  ]);
+  const venues = [bnPerp, byPerp, okxPerp, upbit, bithumb];
+  if (venues.includes(null)) {
+    logger.warn(`Korean share ${symbol}: a venue couldn't be read`);
+    return null;
+  }
+  const perpUsd = [bnPerp, byPerp, okxPerp].filter(Array.isArray).reduce((sum, s) => sum + hourByTime(s, now), 0);
+  if (!(perpUsd > 0)) return null;
+  if (upbit === 'none' && bithumb === 'none') return { listed: false, pct: 0, krUsd: 0, perpUsd };
+  const rate = Array.isArray(usdt) ? usdt[0]?.[2] : null;
+  if (!(rate > 0)) return null;
+  const krUsd = [upbit, bithumb].filter(Array.isArray).reduce((sum, s) => sum + hourByTime(s, now), 0) / rate;
+  return { listed: true, pct: (krUsd / perpUsd) * 100, krUsd, perpUsd };
+}
+
 // 'ok' | 'spot_led' | 'unknown' against a max share (0 = rule off)
 function spotVerdict(spot, maxPct = DEFAULT_MAX_SPOT_SHARE) {
   if (!(maxPct > 0)) return 'ok';
@@ -104,4 +160,4 @@ async function measureBtcChange(hours = 168) {
   } catch (e) { return null; }
 }
 
-module.exports = { measureSpotShare, spotVerdict, measureAltMarket, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT };
+module.exports = { measureSpotShare, measureKoreaShare, spotVerdict, measureAltMarket, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT, KOREA_GROUP_PCT };

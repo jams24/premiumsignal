@@ -231,6 +231,31 @@ async function init(retries = 3) {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- Paper-only lab: the same runner long, bought at market the moment the signal goes out instead of at ✅ ENTER.
+    -- signal_price = price the scanner saw; entry_price = live price when the paper long opened (measures the delay).
+    CREATE TABLE IF NOT EXISTS pump_runner_signal (
+      id SERIAL PRIMARY KEY,
+      signal_id INTEGER UNIQUE NOT NULL,
+      symbol TEXT NOT NULL,
+      exchange TEXT NOT NULL,
+      entry_price DOUBLE PRECISION NOT NULL,
+      entry_at TIMESTAMPTZ NOT NULL,
+      position_usd DOUBLE PRECISION NOT NULL,
+      run7d DOUBLE PRECISION,
+      signal_price DOUBLE PRECISION,
+      status TEXT NOT NULL DEFAULT 'open',
+      hit INTEGER NOT NULL DEFAULT 0,
+      rem DOUBLE PRECISION NOT NULL DEFAULT 1,
+      realized_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+      stop_pct DOUBLE PRECISION NOT NULL DEFAULT -8,
+      last_candle BIGINT,
+      close_reason TEXT,
+      exit_price DOUBLE PRECISION,
+      pnl_usd DOUBLE PRECISION,
+      closed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS manual_prefs (
       telegram_id BIGINT PRIMARY KEY,
       prefs JSONB NOT NULL,

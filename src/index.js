@@ -23,7 +23,7 @@ const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, follo
 const TelegramBot = require('./bot/telegramBot');
 const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
 const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
-const { measureSpotShare, measureAltMarket } = require('./collectors/spotShare');
+const { measureSpotShare, measureKoreaShare, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
@@ -608,11 +608,18 @@ async function main() {
     exchanges: listingMonitor.exchanges,
     tell: (html) => pumpAutoTrader.tell(html),
   });
+  // Paper lab: the same runner long bought the moment the signal goes out (compared with the ✅ ENTER test above)
+  const pumpRunnerSignal = new PumpRunnerPaper({
+    exchanges: listingMonitor.exchanges,
+    tell: (html) => pumpAutoTrader.tell(html),
+    lab: 'signal',
+  });
   const pumpAutoTrader = new PumpAutoTrader({
     executor: onchainTradeExecutor,
     notify: (chatId, html) => bot.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }),
     adminIds: config.telegram.adminIds,
     runner: pumpRunnerPaper,
+    signalLab: pumpRunnerSignal,
   });
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
@@ -626,7 +633,7 @@ async function main() {
   const watchState = (w, status, outcome = null) => ({
     status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, signalPrice: w.signalPrice,
     high: w.high, pumpBase: w.pumpBase, startedAt: w.startedAt, newHighSent: w.newHighSent, run7d: w.run7d ?? null,
-    enterSpot: w.enterSpot ?? null,
+    enterSpot: w.enterSpot ?? null, enterKorea: w.enterKorea ?? null,
   });
   const saveWatch = (w, status = 'watching', outcome) => (w.signalId
     ? db.savePumpWatch(w.signalId, watchState(w, status, outcome)).catch(e => logger.warn(`Saving pump watch ${w.symbol} failed: ${e.message}`))
@@ -652,14 +659,19 @@ async function main() {
           if (w.verdict === 'recheck' && ageMin < PUMP_RULES.recheckMinMin) continue;
           const r = await followUpCheck(w.ex, w);
           if (r.kind === 'enter' || r.kind === 'missed') {
-            // Spot share at the ENTER moment: shown on the reply and checked by the auto-trader
+            // Spot share at the ENTER moment: shown on the reply and checked by the auto-trader.
+            // Korean share too, info only: shown and recorded, never checked.
             if (r.kind === 'enter') {
-              r.spot = await measureSpotShare(w.symbol).catch(() => null);
+              [r.spot, r.korea] = await Promise.all([
+                measureSpotShare(w.symbol).catch(() => null),
+                measureKoreaShare(w.symbol).catch(() => null),
+              ]);
               w.enterSpot = r.spot ? { pct: r.spot.pct, hasSpot: r.spot.hasSpot } : null;
+              w.enterKorea = r.korea ? { pct: r.korea.pct, listed: r.korea.listed, krUsd: r.korea.krUsd, perpUsd: r.korea.perpUsd } : null;
             }
             await finishWatch(key, w, r.kind, { ...base, ...r });
             if (r.kind === 'enter') {
-              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot });
+              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot, korea: r.korea });
             }
           } else if (r.kind === 'new_high') {
             w.high = r.top.high24;
@@ -689,7 +701,10 @@ async function main() {
     .then(() => processPumpWatches())
     .catch(e => logger.error(`Restoring pump watches failed: ${e.message}`));
   cron.schedule(`*/${PUMP_RULES.followUpEveryMin} * * * *`, () => { processPumpWatches().catch(e => logger.error(`Pump watch error: ${e.message}`)); });
-  cron.schedule('* * * * *', () => { pumpRunnerPaper.check().catch(e => logger.error(`Paper runner check error: ${e.message}`)); });
+  cron.schedule('* * * * *', () => {
+    pumpRunnerPaper.check().catch(e => logger.error(`Paper runner check error: ${e.message}`));
+    pumpRunnerSignal.check().catch(e => logger.error(`At-signal lab check error: ${e.message}`));
+  });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
   const userPaperEngine = new UserPaperEngine(listingMonitor.exchanges, bot.bot);
@@ -1048,9 +1063,14 @@ async function main() {
               cisdFlags: ctx.cisdFlags || [],
               run7d,
             };
-            const [spot, altMarket] = await Promise.all([measureSpotShare(token.symbol).catch(() => null), measureAltMarket()]);
+            const [spot, altMarket, korea] = await Promise.all([
+              measureSpotShare(token.symbol).catch(() => null),
+              measureAltMarket(),
+              measureKoreaShare(token.symbol).catch(() => null),
+            ]);
             check.spot = spot;
             check.altMarket = altMarket;
+            check.korea = korea;
             // Rules met on the first look → 'recheck': the watch confirms on its next step before the short (PUMP_RULES.recheckMinMin)
             const signalVerdict = entryVerdict(check);
             check.verdict = signalVerdict === 'enter' ? 'recheck' : signalVerdict;
@@ -1078,13 +1098,22 @@ async function main() {
                 cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
                 verdict: check.verdict, signalVerdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2], run7d,
                 spotShare: spot ? spot.pct : null, hasSpot: spot ? spot.hasSpot : null, altMarket,
+                koreaShare: korea ? korea.pct : null, koreaListed: korea ? korea.listed : null,
+                koreaUsd: korea ? korea.krUsd : null, koreaPerpUsd: korea ? korea.perpUsd : null,
                 engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
             }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
 
+            // At-signal lab (paper): runner coins get a long at the live price now, whatever the verdict. Not awaited,
+            // so it never delays the watch or the runner long below.
+            if (signalId != null && ex && spot && spot.hasSpot === false) {
+              pumpAutoTrader.runnerAtSignal({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, spot })
+                .catch(e => logger.warn(`At-signal lab failed: ${e.message}`));
+            }
+
             // The runner long doesn't wait for the re-check; the short does (the watch's ENTER opens it)
             if (check.verdict === 'recheck' && ex) {
-              await pumpAutoTrader.runnerLongNow({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal', spot })
+              await pumpAutoTrader.runnerLongNow({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal', spot, korea })
                 .catch(e => logger.error(`Runner long at signal failed: ${e.message}`));
             }
 
