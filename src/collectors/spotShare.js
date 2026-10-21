@@ -126,6 +126,42 @@ async function measureKoreaShare(symbol, now = Date.now()) {
   return { listed: true, pct: (krUsd / perpUsd) * 100, krUsd, perpUsd };
 }
 
+// "Buyers still in control" at ENTER, Binance futures only. Winners vs full stop-outs of the live-rule shorts over 189
+// entry-time measures: three leaned the same way in Jun–Oct 2026 and Dec 2025 – May 2026 — taker buy/sell ratio (5m),
+// perp premium (1h average) and funding at the signal. All three above their Jun–Oct medians: 69 shorts 48% win −$82 and
+// 49 shorts 55% win −$31 (all live shorts +$869 / +$911). Measures were picked on both periods and real Oct 2026 shorts
+// didn't confirm (3 trades +$15), so info only: shown to the owner and recorded, never traded on.
+const BUYER_CUTS = { taker: 0.98, premiumPct: -0.037, fundingPct: 0.0046 };
+
+// → { listed, signs, taker, premiumPct, fundingPct } — listed false when there's no Binance perp; null when it couldn't be read
+async function measureBuyerSigns(symbol, signalAt = Date.now(), now = Date.now()) {
+  const id = encodeURIComponent(`${symbol}USDT`), F = 'https://fapi.binance.com';
+  try {
+    const [tk, pk, fr] = await Promise.all([
+      getJson(`${F}/futures/data/takerlongshortRatio?symbol=${id}&period=5m&limit=3`),
+      getJson(`${F}/fapi/v1/premiumIndexKlines?symbol=${id}&interval=5m&limit=${CANDLES + 2}`),
+      getJson(`${F}/fapi/v1/fundingRate?symbol=${id}&startTime=${Math.floor(signalAt - 24 * 3600000)}&endTime=${Math.floor(signalAt)}&limit=100`),
+    ]);
+    if (pk?.code === -1121) return { listed: false };   // -1121 = invalid symbol
+    if (!Array.isArray(tk) || !Array.isArray(pk) || !Array.isArray(fr)) return null;
+    const taker = tk.filter(r => +r.timestamp <= now).pop();
+    const prem = pk.filter(k => k[0] + M5 <= now).slice(-CANDLES);   // closed 5m candles of the last hour
+    const fund = fr[fr.length - 1];   // last settled funding before the signal
+    if (!taker || !prem.length || !fund) return null;
+    const out = {
+      listed: true,
+      taker: +taker.buySellRatio,
+      premiumPct: (prem.reduce((sum, k) => sum + +k[4], 0) / prem.length) * 100,
+      fundingPct: +fund.fundingRate * 100,
+    };
+    out.signs = [out.taker > BUYER_CUTS.taker, out.premiumPct > BUYER_CUTS.premiumPct, out.fundingPct > BUYER_CUTS.fundingPct].filter(Boolean).length;
+    return out;
+  } catch (e) {
+    logger.warn(`Buyer signs ${symbol}: ${e.message}`);
+    return null;
+  }
+}
+
 // 'ok' | 'spot_led' | 'unknown' against a max share (0 = rule off)
 function spotVerdict(spot, maxPct = DEFAULT_MAX_SPOT_SHARE) {
   if (!(maxPct > 0)) return 'ok';
@@ -160,4 +196,4 @@ async function measureBtcChange(hours = 168) {
   } catch (e) { return null; }
 }
 
-module.exports = { measureSpotShare, measureKoreaShare, spotVerdict, measureAltMarket, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT, KOREA_GROUP_PCT };
+module.exports = { measureSpotShare, measureKoreaShare, measureBuyerSigns, spotVerdict, measureAltMarket, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT, KOREA_GROUP_PCT };

@@ -23,7 +23,7 @@ const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, follo
 const TelegramBot = require('./bot/telegramBot');
 const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
 const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
-const { measureSpotShare, measureKoreaShare, measureAltMarket } = require('./collectors/spotShare');
+const { measureSpotShare, measureKoreaShare, measureBuyerSigns, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
 let dbReady = false;
@@ -633,7 +633,7 @@ async function main() {
   const watchState = (w, status, outcome = null) => ({
     status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, signalPrice: w.signalPrice,
     high: w.high, pumpBase: w.pumpBase, startedAt: w.startedAt, newHighSent: w.newHighSent, run7d: w.run7d ?? null,
-    enterSpot: w.enterSpot ?? null, enterKorea: w.enterKorea ?? null,
+    enterSpot: w.enterSpot ?? null, enterKorea: w.enterKorea ?? null, enterBuyers: w.enterBuyers ?? null,
   });
   const saveWatch = (w, status = 'watching', outcome) => (w.signalId
     ? db.savePumpWatch(w.signalId, watchState(w, status, outcome)).catch(e => logger.warn(`Saving pump watch ${w.symbol} failed: ${e.message}`))
@@ -660,18 +660,20 @@ async function main() {
           const r = await followUpCheck(w.ex, w);
           if (r.kind === 'enter' || r.kind === 'missed') {
             // Spot share at the ENTER moment: shown on the reply and checked by the auto-trader.
-            // Korean share too, info only: shown and recorded, never checked.
+            // Korean share and buyer signs too, info only: recorded (buyer signs in the owner DM), never checked.
             if (r.kind === 'enter') {
-              [r.spot, r.korea] = await Promise.all([
+              [r.spot, r.korea, r.buyers] = await Promise.all([
                 measureSpotShare(w.symbol).catch(() => null),
                 measureKoreaShare(w.symbol).catch(() => null),
+                measureBuyerSigns(w.symbol, w.startedAt).catch(() => null),
               ]);
               w.enterSpot = r.spot ? { pct: r.spot.pct, hasSpot: r.spot.hasSpot } : null;
               w.enterKorea = r.korea ? { pct: r.korea.pct, listed: r.korea.listed, krUsd: r.korea.krUsd, perpUsd: r.korea.perpUsd } : null;
+              w.enterBuyers = r.buyers;
             }
             await finishWatch(key, w, r.kind, { ...base, ...r });
             if (r.kind === 'enter') {
-              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot, korea: r.korea });
+              await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot, korea: r.korea, buyers: r.buyers });
             }
           } else if (r.kind === 'new_high') {
             w.high = r.top.high24;

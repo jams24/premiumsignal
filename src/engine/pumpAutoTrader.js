@@ -15,14 +15,27 @@ function koreaNote(k) {
 }
 const koreaPct = (k) => (k ? +k.pct.toFixed(2) : null);
 
+// Owner-DM line for the "buyers still in control" signs at entry (info only — see measureBuyerSigns)
+function buyersNote(b) {
+  if (b === undefined) return '';
+  if (!b) return `🐂 Buyers in control: n/a\n`;
+  if (!b.listed) return `🐂 Buyers in control: n/a (not on Binance futures)\n`;
+  const sign = (v) => (v >= 0 ? '+' : '−') + Math.abs(v);
+  return `🐂 Buyers in control: <b>${b.signs}/3</b> (buy/sell ${b.taker.toFixed(2)} · premium ${sign(+b.premiumPct.toFixed(3))}% · funding ${sign(+b.fundingPct.toFixed(4))}%` +
+    `${b.signs === 3 ? ' · 3/3 lost in both backtests' : ''} · tracking only, size unchanged)\n`;
+}
+const buyersData = (b) => (b?.listed ? { signs: b.signs, taker: +b.taker.toFixed(4), premiumPct: +b.premiumPct.toFixed(4), fundingPct: +b.fundingPct.toFixed(5) } : null);
+
 // Auto-trades pump-exhaustion shorts when the channel says ✅ ENTER (at signal time or from the
 // follow-up watcher). Size comes from the owner's /trade panel settings; levels and exits follow the
 // channel plan. Off and paper by default; live must be switched on explicitly.
 
 const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 30];
 // TP1 choices for auto-trades. 219-trade replay ($150): 7% +$464 / 83 full stop-outs, 6% +$509 / 73, 5% +$500 / 62,
-// 4% +$264 (SL reaches entry too early and bounces close the rest).
-const AUTO_TP1_PCTS = [7, 6];
+// 4% +$264 (SL reaches entry too early and bounces close the rest). Live-rule shorts, 21 Oct 2026: 6% +$869 / 106 stops /
+// worst drop $129 (Jun–Oct) and +$911 / 134 / $253 (Dec–May); 5% +$777 / 95 / $104 and +$887 / 113 / $160 — less profit,
+// smoother ride. Shorts only: the runner long keeps +6% (5% lost $94–117 in both periods).
+const AUTO_TP1_PCTS = [7, 6, 5];
 // BTC 7-day pause choices (pause when BTC's last 7 days are below −N%; 0 = off). 4.5-month replay (Jun–Oct, 961 trades,
 // $150): no pause +$468; pause at −2% +$769 on 665 trades — the idea came from Sep–Oct and held on Jun–Aug.
 const AUTO_BTC_PAUSE_PCTS = [2, 3, 5, 0];
@@ -345,7 +358,7 @@ class PumpAutoTrader {
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'short', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
       tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
-      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea) },
+      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea), buyers: buyersData(info.buyers) },
     });
     if (!trade) {
       await this.tell(`🤖 ⚠️ <b>Auto-trade NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Check the bot notification for the reason.`);
@@ -369,6 +382,7 @@ class PumpAutoTrader {
       `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +
       `${info.btc7d != null ? `₿ BTC 7d: ${info.btc7d >= 0 ? '+' : ''}${info.btc7d.toFixed(1)}% (pause below −${c.btcPausePct}%)\n` : ''}` +
       koreaNote(info.korea) +
+      buyersNote(info.buyers) +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Pump auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x via ${info.via}`);
