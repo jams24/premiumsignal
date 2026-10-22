@@ -418,6 +418,10 @@ async function init(retries = 3) {
   }
   // Follow-up watcher state, so an active watch survives redeploys/restarts
   await p.query('ALTER TABLE pump_signals ADD COLUMN IF NOT EXISTS watch_state JSONB');
+  // TP1 each paper runner long opened with (the long's TP1 choice in /autopump); null = the plan's +6%
+  for (const table of ['pump_runner_paper', 'pump_runner_signal']) {
+    await p.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS tp1_pct DOUBLE PRECISION`);
+  }
 
   // Add new columns to bot_users for per-user paper config
   const userCols = [

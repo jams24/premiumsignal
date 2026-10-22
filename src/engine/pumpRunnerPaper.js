@@ -6,7 +6,8 @@ const { escapeHtml } = require('../utils/formatting');
 // 4.5-month replay (Jun–Oct, $150): long +$532 on 271 (65% win) where the short lost −$369, but $487 of it came
 // from June; Jul −$124, Aug–Oct ≈ +$170. Live 14–18 Oct: 7 cases, long +$40 vs short −$38. Not proven → paper only.
 // Kept in its own table, never through a TradeExecutor: no exchange orders, no effect on scanner slots,
-// daily P&L, paper balance or the signal channel. Plan mirrors the short: stop −8%, TP +6/12/20/30, stop to entry at TP1.
+// daily P&L, paper balance or the signal channel. Plan mirrors the short: stop −8%, TP +6/12/20/30 (TP1 choosable in
+// /autopump), stop to entry at TP1.
 
 const RUNNER = {
   tpPcts: [6, 12, 20, 30],
@@ -16,6 +17,8 @@ const RUNNER = {
   feePct: 0.1,                      // entry + exit taker fees, % of position
 };
 const M = 60000;
+// TP1 is chosen for new longs in /autopump; each row keeps the TP1 it opened with (tp1_pct, null = the plan's +6%)
+const rowTpPcts = (r) => [Number(r?.tp1_pct) > 0 ? Number(r.tp1_pct) : RUNNER.tpPcts[0], ...RUNNER.tpPcts.slice(1)];
 
 // Apply closed 1m candles [ts, o, h, l, c] to a paper long. Stop is checked before targets inside a candle
 // (same pessimistic order as the replay). Returns the new state and what happened.
@@ -77,9 +80,10 @@ class PumpRunnerPaper {
     this.table = this.L.table;    // fixed table name from LABS, never user input
   }
 
-  // info: { signalId, symbol, exchangeId, price, run7d, spot }, cfg: auto-trade config, position: $ size.
-  // The 'signal' lab buys at the live price now (info.price = the scanner's signal price, kept as signal_price).
-  async maybeOpen(info, cfg, position) {
+  // info: { signalId, symbol, exchangeId, price, run7d, spot }, cfg: auto-trade config, position: $ size,
+  // tpPcts: targets with the owner's long TP1. The 'signal' lab buys at the live price now (info.price = the
+  // scanner's signal price, kept as signal_price).
+  async maybeOpen(info, cfg, position, tpPcts = RUNNER.tpPcts) {
     if (cfg.runnerLongs === false) return { skipped: 'off' };
     if (info.signalId == null) return { skipped: 'no signal id' };
     const minRun = cfg.runnerMinRun7d ?? 20;
@@ -92,13 +96,13 @@ class PumpRunnerPaper {
     if (!(E > 0)) return { skipped: 'no live price' };
     const { rows } = atSignal
       ? await db.query(
-        `INSERT INTO ${this.table} (signal_id, symbol, exchange, entry_price, entry_at, position_usd, run7d, stop_pct, signal_price)
-         VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8) ON CONFLICT (signal_id) DO NOTHING RETURNING id`,
-        [info.signalId, info.symbol, info.exchangeId, E, position, info.run7d, -RUNNER.slPct, info.price])
+        `INSERT INTO ${this.table} (signal_id, symbol, exchange, entry_price, entry_at, position_usd, run7d, stop_pct, tp1_pct, signal_price)
+         VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9) ON CONFLICT (signal_id) DO NOTHING RETURNING id`,
+        [info.signalId, info.symbol, info.exchangeId, E, position, info.run7d, -RUNNER.slPct, tpPcts[0], info.price])
       : await db.query(
-        `INSERT INTO ${this.table} (signal_id, symbol, exchange, entry_price, entry_at, position_usd, run7d, stop_pct)
-         VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7) ON CONFLICT (signal_id) DO NOTHING RETURNING id`,
-        [info.signalId, info.symbol, info.exchangeId, E, position, info.run7d, -RUNNER.slPct]);
+        `INSERT INTO ${this.table} (signal_id, symbol, exchange, entry_price, entry_at, position_usd, run7d, stop_pct, tp1_pct)
+         VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8) ON CONFLICT (signal_id) DO NOTHING RETURNING id`,
+        [info.signalId, info.symbol, info.exchangeId, E, position, info.run7d, -RUNNER.slPct, tpPcts[0]]);
     if (!rows.length) return { skipped: 'already opened for this signal' };
     const p = (v) => Number(v).toPrecision(6);
     const drift = (E / info.price - 1) * 100;
@@ -109,7 +113,7 @@ class PumpRunnerPaper {
           `Signal price $${p(info.price)} → bought $${p(E)} (${drift >= 0 ? '+' : ''}${drift.toFixed(2)}%) · $${position.toFixed(0)} paper · 7d +${info.run7d.toFixed(0)}%\n`
         : `<i>Test only, no real order. No spot market and already +${info.run7d.toFixed(0)}% in 7 days, so the short is risky — tracking a long instead.</i>\n\n` +
           `Entry $${p(E)} · $${position.toFixed(0)} paper\n`) +
-      `🎯 ${RUNNER.tpPcts.map(t => `+${t}% $${p(E * (1 + t / 100))}`).join(' · ')}\n` +
+      `🎯 ${tpPcts.map(t => `+${t}% $${p(E * (1 + t / 100))}`).join(' · ')}\n` +
       `🛑 −${RUNNER.slPct}% $${p(E * (1 - RUNNER.slPct / 100))} → entry after TP1 · closes after 48h`
     ).catch(() => {});
     logger.info(`${this.L.name} opened: ${info.symbol} @ ${E} (signal ${info.signalId} @ ${info.price}, 7d +${info.run7d.toFixed(0)}%)`);
@@ -216,7 +220,7 @@ class PumpRunnerPaper {
     if (!candles.length) return;
 
     const before = { entry: Number(r.entry_price), entryAt, hit: r.hit, rem: Number(r.rem), realizedPct: Number(r.realized_pct), stopPct: Number(r.stop_pct), lastCandle: r.last_candle };
-    const { state, events, closed } = stepRunner(before, candles);
+    const { state, events, closed } = stepRunner(before, candles, { ...RUNNER, tpPcts: rowTpPcts(r) });
     const pos = Number(r.position_usd);
     if (closed) {
       const pnl = pnlUsd(state.realizedPct, pos);
@@ -281,4 +285,4 @@ class PumpRunnerPaper {
   }
 }
 
-module.exports = { PumpRunnerPaper, stepRunner, pnlUsd, RUNNER, LABS };
+module.exports = { PumpRunnerPaper, stepRunner, pnlUsd, rowTpPcts, RUNNER, LABS };

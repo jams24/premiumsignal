@@ -7,7 +7,7 @@ const { generateSignalChart, generateSetupChart } = require('../utils/chartGener
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
 const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS } = require('../engine/pumpAutoTrader');
-const { RUNNER } = require('../engine/pumpRunnerPaper');
+const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
@@ -2479,8 +2479,9 @@ class TelegramBot {
         if (rs) lines.push(`🧪 Runner test: ${rs.closed} closed · ${rs.wins} won · <b>${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}</b> · ${rs.open} open`);
         if (ls) lines.push(`⚡ At-signal lab (same long, bought at the signal): ${ls.closed} closed · ${ls.wins} won · <b>${ls.pnl >= 0 ? '+' : '-'}${money(Math.abs(ls.pnl))}</b> · ${ls.open} open`);
         lines.push(c.runnerLongs !== false && c.runnerLive === true
-          ? `🚀 <b>Runner longs as real trades: ON</b> — each runner long is also opened as an auto trade (${live ? '💰 <b>LIVE</b>' : '📝 paper'}, needs auto-trade ON), ${money(full.position)} · SL −8% loses <b>-${money(full.position * 0.08)}</b> · TP +6/12/20/30% · uses the same max-open and daily stop · not paused by BTC`
+          ? `🚀 <b>Runner longs as real trades: ON</b> — each runner long is also opened as an auto trade (${live ? '💰 <b>LIVE</b>' : '📝 paper'}, needs auto-trade ON), ${money(full.position)} · SL −8% loses <b>-${money(full.position * 0.08)}</b> · TP +${ap.runnerTpPcts().join('/')}% · uses the same max-open and daily stop · not paused by BTC`
           : `🚀 Runner longs as real trades: <b>off</b> (paper test only)`);
+        lines.push(`🎯 Long TP1: <b>+${ap.runnerTpPcts()[0]}%</b> (closes 25%, stop to entry) — real and paper runner longs; the short's TP1 is separate`);
       }
       if (s) {
         lines.push('', `📊 Today: ${s.todayCount} closed · <b>${s.todayPnl >= 0 ? '+' : '-'}${money(Math.abs(s.todayPnl))}</b> · open now: ${s.open.length}`,
@@ -2495,13 +2496,14 @@ class TelegramBot {
          Markup.button.callback(`🛑 Daily stop: ${c.dailyLossUsd > 0 ? '$' + c.dailyLossUsd : 'off'}`, 'ap_daily')],
         [Markup.button.callback(`🟠 Half size on fresh: ${c.halfOnFresh ? 'ON' : 'OFF'}`, 'ap_half'),
          Markup.button.callback(`🧪 Max spot share: ${c.maxSpotSharePct > 0 ? c.maxSpotSharePct + '%' : 'off'}`, 'ap_spot')],
-        [Markup.button.callback(`🎯 TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
+        [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
         ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
           Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
           ...(ap.signalLab ? [[Markup.button.callback(`⚡ At-signal lab${ls ? ` (${ls.closed + ls.open})` : ''}`, 'ap_rsig_log')]] : []),
-          [Markup.button.callback(`🚀 Runner longs real trade: ${c.runnerLongs !== false && c.runnerLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_runner_live')]] : []),
+          [Markup.button.callback(`🚀 Runner longs real trade: ${c.runnerLongs !== false && c.runnerLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_runner_live')],
+          [Markup.button.callback(`🎯 Long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
       ]);
@@ -2641,8 +2643,9 @@ class TelegramBot {
     const runnerWhy = { stop: 'stop −8%', entry: 'TP1 then entry', tp4: 'all TPs', time: '48h close', manual: 'closed by hand' };
     const runnerCard = (runner, r, price) => {
       const v = runner.view(r, price);
-      const tpRow = RUNNER.tpPcts.map((t, i) => `${i < r.hit ? '✅' : '⬜'}+${t}%`).join(' ');
-      const next = r.hit < RUNNER.tpPcts.length ? v.entry * (1 + RUNNER.tpPcts[r.hit] / 100) : null;
+      const tpPcts = rowTpPcts(r);
+      const tpRow = tpPcts.map((t, i) => `${i < r.hit ? '✅' : '⬜'}+${t}%`).join(' ');
+      const next = r.hit < tpPcts.length ? v.entry * (1 + tpPcts[r.hit] / 100) : null;
       const stop = v.entry * (1 + Number(r.stop_pct) / 100);
       const away = (lvl) => (price ? ` (${(Math.abs(lvl - price) / price * 100).toFixed(1)}% away)` : '');
       const ageMin = Math.round((Date.now() - new Date(r.entry_at).getTime()) / 60000);
@@ -2667,7 +2670,7 @@ class TelegramBot {
           `<i>Same coins and plan as the runner test (no spot, ≥ +${minRun}% in 7 days), but bought at the live price the moment the signal goes out instead of waiting for ✅ ENTER. ` +
           `Backtest: better if bought within 1–2 min, gone by +5 min — this lab measures what a real at-signal buy gets.</i>\n`
         : `🧪 <b>PAPER RUNNER LONG LAB</b> — test only, no real orders\n` +
-          `<i>No-spot coins already up ≥ +${minRun}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +6/12/20/30% · max 48h.</i>\n`;
+          `<i>No-spot coins already up ≥ +${minRun}% in 7 days, long at the pump signal's ✅ ENTER. Stop −8% → entry after TP1 · TP +${ap.runnerTpPcts().join('/')}% for new longs · max 48h.</i>\n`;
       if (s) text += `\n📊 ${s.closed} closed · ${s.wins} won · <b>${fmtUsd(s.pnl)}</b>${open.length ? ` · open now <b>${fmtUsd(openPnl)}</b>` : ''}\n`;
       if (atSignal) {
         const [h, d] = await Promise.all([runner.headToHead(ap.runner).catch(() => null), runner.entryDrift().catch(() => null)]);
@@ -2746,7 +2749,13 @@ class TelegramBot {
     apAction('ap_tp1', async (ctx, ap) => {
       const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.tpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];
       await ap.update({ tp1Pct: next });
-      await ack(ctx, `TP1 at −${next}% for new auto trades`);
+      await ack(ctx, `Short TP1 at −${next}% for new auto shorts`);
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_rtp1', async (ctx, ap) => {
+      const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.runnerTpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];
+      await ap.update({ runnerTp1Pct: next });
+      await ack(ctx, `Long TP1 at +${next}% for new runner longs`);
       await showAutoPump(ctx, true);
     });
     apAction('ap_half', async (ctx, ap) => {

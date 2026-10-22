@@ -34,7 +34,8 @@ const PLAN_TP_PCTS = [...PUMP_RULES.tpPcts, 30];
 // TP1 choices for auto-trades. 219-trade replay ($150): 7% +$464 / 83 full stop-outs, 6% +$509 / 73, 5% +$500 / 62,
 // 4% +$264 (SL reaches entry too early and bounces close the rest). Live-rule shorts, 21 Oct 2026: 6% +$869 / 106 stops /
 // worst drop $129 (Jun–Oct) and +$911 / 134 / $253 (Dec–May); 5% +$777 / 95 / $104 and +$887 / 113 / $160 — less profit,
-// smoother ride. Shorts only: the runner long keeps +6% (5% lost $94–117 in both periods).
+// smoother ride. The runner long has its own choice from the same list (runnerTp1Pct): 5% made $94–117 less than 6%
+// in both periods (Jun–Oct +$426 vs +$543, Dec–May +$119 vs +$213); the owner chose to have it anyway.
 const AUTO_TP1_PCTS = [7, 6, 5];
 // BTC 7-day pause choices (pause when BTC's last 7 days are below −N%; 0 = off). 4.5-month replay (Jun–Oct, 961 trades,
 // $150): no pause +$468; pause at −2% +$769 on 665 trades — the idea came from Sep–Oct and held on Jun–Aug.
@@ -56,10 +57,12 @@ const DEFAULTS = {
   runnerLongs: true,
   runnerMinRun7d: 20,
   // Also place the runner long as a real auto trade (in the auto-trade's mode, normally LIVE). Off by default.
-  // Same plan as the paper test: stop −8%, TP +6/12/20/30, stop to entry at TP1. Stop sweep on the 4.5-month replay
+  // Same plan as the paper test: stop −8%, TP +6/12/20/30 (TP1 = runnerTp1Pct), stop to entry at TP1. Stop sweep on the 4.5-month replay
   // (271 longs, $150): 3–7% +$294–419, 8% +$532 (best second half +$160), 10–12% +$590–602 but weaker second half.
   // Not paused by the BTC rule: longs did +$296 on 88 trades with BTC 7d < −2%.
   runnerLive: false,
+  // TP1 of new runner longs (real and both paper labs), one of AUTO_TP1_PCTS; TP2–TP4 stay +12/20/30
+  runnerTp1Pct: RUNNER.tpPcts[0],
 };
 
 class PumpAutoTrader {
@@ -150,7 +153,7 @@ class PumpAutoTrader {
       const c = this.config;
       if (c.runnerLongs === false || !(info.run7d >= (c.runnerMinRun7d ?? 20))) return null;
       const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
-      return await this.signalLab.maybeOpen(info, c, size?.position || 150);
+      return await this.signalLab.maybeOpen(info, c, size?.position || 150, this.runnerTpPcts());
     } catch (e) {
       logger.warn(`At-signal lab ${info.symbol} failed: ${e.message}`);
       return null;
@@ -166,7 +169,7 @@ class PumpAutoTrader {
       if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
       // Always full panel size (never "half on fresh") so every test trade is comparable
       const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
-      const res = await this.runner.maybeOpen(info, c, size?.position || 150);
+      const res = await this.runner.maybeOpen(info, c, size?.position || 150, this.runnerTpPcts());
       // Real long only for a qualifying signal the paper test just took (once per signal)
       if (res?.opened && c.runnerLive === true) res.live = await this.enterRunnerLong(info);
       return res;
@@ -307,7 +310,8 @@ class PumpAutoTrader {
     // Full size, like the paper test (never "half on fresh")
     const size = await this.sizing(PUMP_RULES.extendedRunPct);
     const entry = info.price;
-    const tps = RUNNER.tpPcts.map(p => entry * (1 + p / 100));
+    const tpPcts = this.runnerTpPcts();
+    const tps = tpPcts.map(p => entry * (1 + p / 100));
     const stopLoss = entry * (1 - RUNNER.slPct / 100);
     const trade = await te.openManualTrade({
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'long', mode: c.mode,
@@ -332,7 +336,7 @@ class PumpAutoTrader {
       `💰 Entry: <b>$${p(fill)}</b>\n` +
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position\n` +
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
-      `🎯 ${RUNNER.tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
+      `🎯 ${tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
       `🛑 SL $${p(sl)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
       koreaNote(info.korea) +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
@@ -345,6 +349,12 @@ class PumpAutoTrader {
   tpPcts() {
     const tp1 = AUTO_TP1_PCTS.includes(this.config.tp1Pct) ? this.config.tp1Pct : PLAN_TP_PCTS[0];
     return [tp1, ...PLAN_TP_PCTS.slice(1)];
+  }
+
+  // Targets for runner longs: the runner plan with the long's own TP1 choice
+  runnerTpPcts() {
+    const tp1 = AUTO_TP1_PCTS.includes(this.config.runnerTp1Pct) ? this.config.runnerTp1Pct : RUNNER.tpPcts[0];
+    return [tp1, ...RUNNER.tpPcts.slice(1)];
   }
 
   async open(info) {
