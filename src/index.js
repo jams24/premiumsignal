@@ -631,7 +631,7 @@ async function main() {
   const pumpWatches = new Map();
   let pumpWatchRunning = false;
   const watchState = (w, status, outcome = null) => ({
-    status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, signalPrice: w.signalPrice,
+    status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, side: w.side || 'short', signalPrice: w.signalPrice,
     high: w.high, pumpBase: w.pumpBase, startedAt: w.startedAt, newHighSent: w.newHighSent, run7d: w.run7d ?? null,
     enterSpot: w.enterSpot ?? null, enterKorea: w.enterKorea ?? null, enterBuyers: w.enterBuyers ?? null,
   });
@@ -650,7 +650,8 @@ async function main() {
     try {
       for (const [key, w] of pumpWatches) {
         const ageMin = (Date.now() - w.startedAt) / 60000;
-        const base = { symbol: w.symbol, signalPrice: w.signalPrice, ageMin, run7d: w.run7d ?? null };
+        const long = w.side === 'long';
+        const base = { symbol: w.symbol, signalPrice: w.signalPrice, ageMin, run7d: w.run7d ?? null, side: long ? 'long' : 'short' };
         try {
           if (ageMin > PUMP_RULES.followUpMaxMin) {
             await finishWatch(key, w, 'expired', { ...base, kind: 'expired' });
@@ -670,9 +671,15 @@ async function main() {
               w.enterSpot = r.spot ? { pct: r.spot.pct, hasSpot: r.spot.hasSpot } : null;
               w.enterKorea = r.korea ? { pct: r.korea.pct, listed: r.korea.listed, krUsd: r.korea.krUsd, perpUsd: r.korea.perpUsd } : null;
               w.enterBuyers = r.buyers;
+              if (long) r.levels = pumpAutoTrader.runnerLevels(r.price);
             }
             await finishWatch(key, w, r.kind, { ...base, ...r });
-            if (r.kind === 'enter') {
+            if (r.kind === 'enter' && long) {
+              // Long-only: the channel said BUY. The coin had no spot market at the signal, so an ENTER-time
+              // measurement that failed doesn't stop the long the channel just posted.
+              await pumpAutoTrader.runnerLongNow({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot || { hasSpot: false }, korea: r.korea })
+                .catch(e => logger.error(`Runner long at ENTER failed: ${e.message}`));
+            } else if (r.kind === 'enter') {
               await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot, korea: r.korea, buyers: r.buyers });
             }
           } else if (r.kind === 'new_high') {
@@ -706,6 +713,7 @@ async function main() {
   cron.schedule('* * * * *', () => {
     pumpRunnerPaper.check().catch(e => logger.error(`Paper runner check error: ${e.message}`));
     pumpRunnerSignal.check().catch(e => logger.error(`At-signal lab check error: ${e.message}`));
+    pumpAutoTrader.checkBreakeven().catch(e => logger.error(`Stop→entry check error: ${e.message}`));
   });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
@@ -1076,12 +1084,16 @@ async function main() {
             // Rules met on the first look → 'recheck': the watch confirms on its next step before the short (PUMP_RULES.recheckMinMin)
             const signalVerdict = entryVerdict(check);
             check.verdict = signalVerdict === 'enter' ? 'recheck' : signalVerdict;
-            const levels = channelLevels(token.price);
+            // Runner coins (no spot market, already up 20%+ in 7 days) go out as a LONG: the bot longs them and never
+            // shorts them (skipNoSpot), so the channel shows the trade the bot takes
+            await pumpAutoTrader.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
+            check.side = pumpAutoTrader.isRunnerSignal({ run7d, spot }) ? 'long' : 'short';
+            const levels = check.side === 'long' ? pumpAutoTrader.runnerLevels(token.price) : channelLevels(token.price);
             const msgId = await bot.sendPumpSignal(token, setup, check, levels);
 
             // Channel levels are logged so the outcome tracker scores what subscribers were shown
             const signalId = await db.logPumpSignal(token.symbol, {
-              direction: 'short', score: token.score,
+              direction: check.side, score: token.score,
               exhaustionScore: ctx.exhaustionScore || 0,
               pumpPct: ctx.priceChange || token.priceChange,
               oiChange: ctx.oiChange4h || token.oiChange4h,
@@ -1119,10 +1131,12 @@ async function main() {
                 .catch(e => logger.error(`Runner long at signal failed: ${e.message}`));
             }
 
-            // A re-check is watched even if the channel post failed, so the short still gets its ENTER
-            if (ex && (msgId || check.verdict === 'recheck')) {
+            // A re-check is watched even if the channel post failed, so the short still gets its ENTER.
+            // A long whose rules were met at the signal was bought above and posted as BUY NOW: nothing left to watch.
+            const longBoughtNow = check.side === 'long' && check.verdict === 'recheck';
+            if (ex && !longBoughtNow && (msgId || check.verdict === 'recheck')) {
               const w = {
-                signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, verdict: check.verdict,
+                signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, verdict: check.verdict, side: check.side,
                 signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false, run7d,
               };
               pumpWatches.set(signalId ?? token.symbol, w);

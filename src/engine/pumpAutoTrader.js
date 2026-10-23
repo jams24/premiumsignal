@@ -64,7 +64,12 @@ const DEFAULTS = {
   runnerLive: false,
   // TP1 of new runner longs (real and both paper labs), one of AUTO_TP1_PCTS; TP2–TP4 stay +12/20/30
   runnerTp1Pct: RUNNER.tpPcts[0],
+  // Stop → entry once an auto trade has been this % in profit before TP1 (nothing is closed); 0 = off.
+  // Backtest at +4% ($1000, TP1 5%): full stops −15–36%, but total −$966 on Dec–May, −$296 on October, +$217 on Jun–Oct —
+  // 65–70% of trades that touch +2–4% and fall back to entry still reach TP1 later. A safety option, off by default.
+  beAtPct: 0,
 };
+const BE_AT_PCT = 4;
 
 class PumpAutoTrader {
   constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null, signalLab = null }) {
@@ -137,9 +142,89 @@ class PumpAutoTrader {
     return result;
   }
 
+  // Every minute: open auto trades (short or runner long) whose best move since entry reached beAtPct before TP1 get
+  // their stop moved to the entry price. Only the stop moves — nothing closes, TPs stay. Live: the new stop is placed
+  // on the exchange before the old one is cancelled (updateExchangeSL), and the DB follows only if the exchange took it.
+  async checkBreakeven() {
+    if (this.beRunning) return;
+    this.beRunning = true;
+    try {
+      await this.load().catch(() => {});
+      const at = this.config.beAtPct;
+      if (!(at > 0)) return;
+      const open = (await db.getOpenTrades(this.executor.settingsKey)).filter(t => t.onchain_context?.autoPump === true);
+      for (const t of open) {
+        try { await this.breakevenOne(t, at); } catch (e) { logger.warn(`Stop→entry check ${t.symbol} #${t.id} failed: ${e.message}`); }
+      }
+    } finally {
+      this.beRunning = false;
+    }
+  }
+
+  async breakevenOne(t, at) {
+    const entry = Number(t.entry_price), sl = Number(t.stop_loss), long = t.direction === 'long';
+    if (!(entry > 0) || !(sl > 0)) return;
+    if (long ? sl >= entry : sl <= entry) return; // already at or past entry (TP1 hit, or moved by hand)
+    const ex = this.executor.exchanges[t.exchange];
+    if (!ex) return;
+    const pair = `${t.symbol}/USDT:USDT`;
+    // Best move since entry from 1m candles that start after the entry (so no pre-entry wick counts); kept per trade
+    this.bePeak = this.bePeak || new Map();
+    const seen = this.bePeak.get(t.id) || { best: -Infinity, next: Math.ceil(new Date(t.created_at).getTime() / 60000) * 60000 };
+    for (let page = 0; page < 5 && seen.next < Date.now(); page++) {
+      const candles = await ex.fetchOHLCV(pair, '1m', seen.next, 1000);
+      if (!candles?.length) break;
+      for (const c of candles) {
+        if (c[0] < seen.next) continue;
+        seen.best = Math.max(seen.best, long ? (c[2] / entry - 1) * 100 : (1 - c[3] / entry) * 100);
+      }
+      // The last candle is still forming: read it again next minute
+      seen.next = candles[candles.length - 1][0];
+      if (candles.length < 1000) break;
+      seen.next += 60000;
+    }
+    this.bePeak.set(t.id, seen);
+    if (seen.best < at) return;
+    // Price must still be on the profit side, or a stop at entry would fill straight away; the plan stop stays until then
+    const price = (await ex.fetchTicker(pair)).last;
+    const room = long ? (price / entry - 1) * 100 : (1 - price / entry) * 100;
+    if (!(room >= 0.3)) return;
+    if (t.mode === 'live') {
+      const ok = await this.executor.updateExchangeSL(t, entry);
+      if (ok !== true) {
+        if (!seen.rejected) await this.tell(`🛡️ ⚠️ <b>${escapeHtml(t.symbol)}: stop → entry rejected by the exchange</b>\nThe old stop $${Number(sl).toPrecision(6)} is still in place. I'll try again next minute.`);
+        seen.rejected = true;
+        return;
+      }
+    }
+    await db.updateTradeStopLoss(t.id, entry);
+    this.bePeak.delete(t.id);
+    logger.info(`Stop→entry: ${t.symbol} #${t.id} ${t.direction} best +${seen.best.toFixed(2)}% → SL ${sl} → ${entry} (${t.mode})`);
+    const p = (v) => Number(v).toPrecision(6);
+    await this.tell(
+      `🛡️ <b>${escapeHtml(t.symbol)} ${t.direction.toUpperCase()} — stop moved to entry</b>\n` +
+      `It was +${seen.best.toFixed(1)}% in profit before TP1 → SL $${p(sl)} → <b>$${p(entry)}</b> (entry).\n` +
+      `<i>Nothing closed and the TPs are unchanged. If price comes back, it exits at entry (≈ fees only) instead of −${PUMP_RULES.slPct}%.</i>`
+    );
+  }
+
+  // Runner coin (no spot market, 7-day run ≥ runnerMinRun7d): the channel posts a LONG for it instead of the short.
+  // Same test the runner long applies (runnerLong → maybeOpen); the short skips these coins while skipNoSpot is on.
+  isRunnerSignal({ run7d, spot }) {
+    const c = this.config;
+    return c.runnerLongs !== false && run7d >= (c.runnerMinRun7d ?? 20) && spot?.hasSpot === false;
+  }
+
+  // Channel levels for a runner long from an entry price (the plan the real and paper longs use)
+  runnerLevels(entry) {
+    const tpPcts = this.runnerTpPcts();
+    return { side: 'long', tpPcts, slPct: RUNNER.slPct, tps: tpPcts.map(p => entry * (1 + p / 100)), stopLoss: entry * (1 - RUNNER.slPct / 100) };
+  }
+
   // Signal-time ENTER: the short waits for the watch's re-check, the runner long opens now. When the re-check's
   // ENTER later reaches onEnter, the paper row (unique per signal) already exists, so no second long opens.
   // Runner longs are no-spot coins, which the short skips while skipNoSpot is on, so the two don't compete.
+  // Also the ✅ ENTER of a signal the channel posted as a long: long only, the short isn't tried.
   async runnerLongNow(info) {
     await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
     return this.runnerLong(info);
@@ -408,4 +493,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCT };

@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCT } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
@@ -2470,6 +2470,9 @@ class TelegramBot {
         c.skipNoSpot
           ? `🚫 Coins with no spot market (Binance/Bybit): <b>not auto-traded</b>`
           : `🚫 Coins with no spot market (Binance/Bybit): auto-traded`,
+        c.beAtPct > 0
+          ? `🛡️ Stop → entry: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to the entry price (nothing is closed)`
+          : `🛡️ Stop → entry at +${BE_AT_PCT}%: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
       if (ap.runner) {
@@ -2499,6 +2502,7 @@ class TelegramBot {
         [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
+        [Markup.button.callback(`🛡️ Stop → entry at +${BE_AT_PCT}%: ${c.beAtPct > 0 ? '✅ ON' : '⛔ OFF'}`, 'ap_be')],
         ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
           Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
           ...(ap.signalLab ? [[Markup.button.callback(`⚡ At-signal lab${ls ? ` (${ls.closed + ls.open})` : ''}`, 'ap_rsig_log')]] : []),
@@ -2756,6 +2760,11 @@ class TelegramBot {
       const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.runnerTpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];
       await ap.update({ runnerTp1Pct: next });
       await ack(ctx, `Long TP1 at +${next}% for new runner longs`);
+      await showAutoPump(ctx, true);
+    });
+    apAction('ap_be', async (ctx, ap) => {
+      await ap.update({ beAtPct: ap.config.beAtPct > 0 ? 0 : BE_AT_PCT });
+      await ack(ctx, ap.config.beAtPct > 0 ? `Stop → entry ON: at +${BE_AT_PCT}% before TP1 the stop moves to entry (open trades too)` : 'Stop → entry OFF: the stop stays at −8% until TP1');
       await showAutoPump(ctx, true);
     });
     apAction('ap_half', async (ctx, ap) => {
@@ -9661,9 +9670,30 @@ class TelegramBot {
           `  → ✅ ENTER comes as a reply below if it still holds`,
       };
 
-      let msg = `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
-      msg += `${verdicts[check.verdict]}\n`;
-      const run = runLabel(check.run7d);
+      // Runner coin (check.side 'long', levels from pumpAutoTrader.runnerLevels): the post is a long, with the same
+      // entry rules — the bot buys at the moment the short would have entered
+      const long = check.side === 'long';
+      const watchingLong = `  → 👀 Watching every ${R.followUpEveryMin} min for up to ${R.followUpMaxMin / 60}h — I'll reply here when it's time to buy ⬇️`;
+      const longVerdicts = {
+        oi_building:
+          `⏳ <b>WAIT — OI STILL BUILDING</b>\n` +
+          `  → OI +${oi1h?.toFixed(0)}% in the last hour (over ${R.maxOi1h}%)\n${watchingLong}`,
+        top_fresh:
+          `⏳ <b>WAIT — TOP ${topAge == null ? 'UNKNOWN' : `ONLY ${topAge}m OLD`}</b>\n` +
+          `  → The tested entry is after ${R.minTopAgeMin}m+ with no new high and a 1H reversal\n${watchingLong}`,
+        no_cisd:
+          `⏳ <b>WAIT — TOP HOLDING, NO 1H REVERSAL YET</b>\n` +
+          `  → No new high for ${topAge}m, but CISD 0\n${watchingLong}`,
+        recheck:
+          `✅ <b>BUY NOW — LONG</b>\n` +
+          `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags}) — the tested entry is now`,
+      };
+
+      let msg = long
+        ? `🟢 <b>PUMP RUNNER — ${escapeHtml(token.symbol)} (LONG)</b>\n🚀 No spot market · already <b>+${Number(check.run7d).toFixed(0)}%</b> in 7 days\n\n`
+        : `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
+      msg += `${(long ? longVerdicts : verdicts)[check.verdict]}\n`;
+      const run = long ? null : runLabel(check.run7d);
       if (run) msg += `${run.line}\n`;
       msg += `\n`;
       msg += `💰 Price: <b>$${price}</b>\n`;
@@ -9671,20 +9701,29 @@ class TelegramBot {
       msg += `📊 OI 4H: <b>${oi4h >= 0 ? '+' : ''}${oi4h.toFixed(0)}%</b> · OI 1H: <b>${oi1h == null ? 'N/A' : `${oi1h >= 0 ? '+' : ''}${oi1h.toFixed(0)}%`}</b>${oi1h != null && oi1h > R.maxOi1h ? ' ⛔' : ''}\n`;
       if (check.high24) msg += `🔝 24H High: <b>$${p(check.high24)}</b> (${belowHigh.toFixed(1)}% above price) · ${topAge}m ago${topAge >= R.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
       msg += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${cisdFlags})${check.cisdScore >= R.minCisd ? ' ✅' : ''}\n`;
-      msg += `🔥 Exhaustion: <b>${exhScore}/10</b> · 💵 Funding: <b>${fundingBias}</b> · 📉 RSI 5m: <b>${rsi}</b>\n`;
+      if (!long) msg += `🔥 Exhaustion: <b>${exhScore}/10</b> · 💵 Funding: <b>${fundingBias}</b> · 📉 RSI 5m: <b>${rsi}</b>\n`;
       msg += `${spot.line}\n`;
       msg += `${koreaLine(check.korea)}\n`;
-      msg += altMarketLine(check.altMarket);
-      msg += `\n<b>Plan (short):</b>\n`;
-      msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n');
-      msg += `\n🛑 SL: $${p(levels.stopLoss)} (+${R.slPct}%)\n`;
-      msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${R.slPct}% SL = ${R.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b>${run ? ` · ${run.size}` : ''}\n`;
-      msg += `<i>Clean dumps took 10–22h to bottom — don't trail tight</i>`;
+      if (long) {
+        const minRun = this.pumpAutoTrader?.config?.runnerMinRun7d ?? 20;
+        msg += `\n<b>Plan (long):</b>\n`;
+        msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (+${levels.tpPcts[i]}%)`).join('\n');
+        msg += `\n🛑 SL: $${p(levels.stopLoss)} (−${levels.slPct}%) · moves to entry at TP1\n`;
+        msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${levels.slPct}% SL = ${levels.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b> · full size\n`;
+        msg += `<i>Futures-only pumps already up ${minRun}%+ this week paid more as longs than as shorts in our tests</i>`;
+      } else {
+        msg += altMarketLine(check.altMarket);
+        msg += `\n<b>Plan (short):</b>\n`;
+        msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (−${R.tpPcts[i]}%)`).join('\n');
+        msg += `\n🛑 SL: $${p(levels.stopLoss)} (+${R.slPct}%)\n`;
+        msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${R.slPct}% SL = ${R.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b>${run ? ` · ${run.size}` : ''}\n`;
+        msg += `<i>Clean dumps took 10–22h to bottom — don't trail tight</i>`;
+      }
       if (token.exchange) msg += `\n\n📊 ${token.exchange.toUpperCase()}`;
       msg += `\n<i>${new Date().toUTCString()}</i>`;
 
       const sent = await this.bot.telegram.sendMessage(this.pumpChannelId, msg, { parse_mode: 'HTML' });
-      logger.info(`Pump signal sent to channel: ${token.symbol} (${check.verdict})`);
+      logger.info(`Pump signal sent to channel: ${token.symbol} ${long ? 'LONG' : 'short'} (${check.verdict})`);
       return sent?.message_id || null;
     } catch (err) {
       logger.error(`Failed to send pump signal: ${err.message}`);
@@ -9704,8 +9743,27 @@ class TelegramBot {
       const now = u.price != null
         ? `Price now $${p(u.price)} (${u.price >= u.signalPrice ? '+' : ''}${(((u.price - u.signalPrice) / u.signalPrice) * 100).toFixed(1)}% since signal)`
         : '';
+      const long = u.side === 'long';
       let msg;
-      if (u.kind === 'enter') {
+      if (u.kind === 'enter' && long) {
+        // u.levels from pumpAutoTrader.runnerLevels
+        const oi = u.oi1h != null ? `OI 1H ${u.oi1h >= 0 ? '+' : ''}${u.oi1h.toFixed(0)}%` : 'OI 1H n/a';
+        msg = `✅ <b>${sym} — BUY NOW (long)</b>\n` +
+          `Top $${p(u.top.high24)} held ${Math.round(u.top.topAgeMin)}m · ${oi} · CISD ${u.cisd.score}/4 on ${u.cisd.tf} (${(u.cisd.flags || []).join(' + ') || 'none'})\n` +
+          `${spotInfo(u.spot, 0).line}\n` +
+          `${koreaLine(u.korea)}\n` +
+          `${now} · ${after}\n\n` +
+          u.levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (+${u.levels.tpPcts[i]}%)`).join('\n') +
+          `\n🛑 SL: $${p(u.levels.stopLoss)} (−${u.levels.slPct}%) · moves to entry at TP1\n⚙️ Max ${R.maxLeverage}x · Exit: TPs only · full size`;
+      } else if (u.kind === 'new_high' && long) {
+        msg = `⚠️ <b>${sym} — NEW HIGH $${p(u.top.high24)}, PUMP CONTINUING</b>\n${now} · ${after}\n` +
+          `⏳ Not yet — the long still waits for the top to hold ${R.minTopAgeMin}m+.`;
+      } else if (u.kind === 'missed' && long) {
+        const gaveBack = u.retrace != null ? ` — it has given back ${Math.round(u.retrace * 100)}% of the pump` : '';
+        msg = `❌ <b>${sym} — NO ENTRY, PUMP FADED</b>\n` +
+          `Price is ${u.belowHigh.toFixed(1)}% below the top $${p(u.top.high24)}${gaveBack} · ${after}\n` +
+          `Too much of the pump is gone before the entry confirmed — skip it. Watch stopped.`;
+      } else if (u.kind === 'enter') {
         const oi = u.oi1h != null ? `OI 1H ${u.oi1h >= 0 ? '+' : ''}${u.oi1h.toFixed(0)}%` : 'OI 1H n/a';
         const maxSpot = this.pumpAutoTrader?.config?.maxSpotSharePct ?? DEFAULT_MAX_SPOT_SHARE;
         const spot = spotInfo(u.spot, maxSpot);
@@ -9735,7 +9793,7 @@ class TelegramBot {
         parse_mode: 'HTML',
         ...(replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {}),
       });
-      logger.info(`Pump follow-up sent: ${u.symbol} (${u.kind})`);
+      logger.info(`Pump follow-up sent: ${u.symbol} ${long ? 'LONG ' : ''}(${u.kind})`);
     } catch (err) {
       logger.error(`Failed to send pump follow-up: ${err.message}`);
     }
