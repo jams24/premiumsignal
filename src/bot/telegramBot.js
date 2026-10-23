@@ -6895,7 +6895,7 @@ class TelegramBot {
     this.bot.action('pnl_stats', async (ctx) => {
       try {
         await ctx.answerCbQuery();
-        const { rows } = await db.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN pnl_usd::numeric > 0 THEN 1 ELSE 0 END) as wins, SUM(pnl_usd::numeric) as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
+        const { rows } = await db.query(`SELECT source, COUNT(*) as total, SUM(CASE WHEN COALESCE(pnl_usd,0) + COALESCE(realized_pnl,0) > 0 THEN 1 ELSE 0 END) as wins, SUM(COALESCE(pnl_usd,0) + COALESCE(realized_pnl,0))::numeric as total_pnl FROM trades WHERE status = 'closed' GROUP BY source`);
         if (!rows.length) return ctx.replyWithHTML('📈 No closed trades yet.');
         let msg = '';
         for (const r of rows) {

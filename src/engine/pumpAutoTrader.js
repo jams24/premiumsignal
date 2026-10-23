@@ -137,13 +137,15 @@ class PumpAutoTrader {
     const today = new Date().toISOString().slice(0, 10);
     const closed = rows.filter(r => r.status === 'closed');
     const closedToday = closed.filter(r => r.closed_at && new Date(r.closed_at).toISOString().slice(0, 10) === today);
-    const pnl = (list) => list.reduce((s, r) => s + parseFloat(r.pnl_usd || 0), 0);
+    // A trade's result = last close (pnl_usd) + TP partial closes already taken (realized_pnl), as everywhere else
+    const tradePnl = (r) => parseFloat(r.pnl_usd || 0) + parseFloat(r.realized_pnl || 0);
+    const pnl = (list) => list.reduce((s, r) => s + tradePnl(r), 0);
     return {
       open: rows.filter(r => r.status === 'open'),
       todayCount: closedToday.length,
       todayPnl: pnl(closedToday),
       allCount: closed.length,
-      allWins: closed.filter(r => parseFloat(r.pnl_usd || 0) > 0).length,
+      allWins: closed.filter(r => tradePnl(r) > 0).length,
       allPnl: pnl(closed),
     };
   }
