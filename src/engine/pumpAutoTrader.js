@@ -3,6 +3,7 @@ const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
 const { PUMP_RULES, channelLevels, runType } = require('../collectors/pumpSignalCheck');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
+const { isTradFiMarket } = require('../utils/tradfi');
 const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, KOREA_GROUP_PCT } = require('../collectors/spotShare');
 const { RUNNER } = require('./pumpRunnerPaper');
 
@@ -247,6 +248,8 @@ class PumpAutoTrader {
     if (!c.ownerId) return 'No owner set — turn auto-trade on from /autopump.';
     const ex = te.exchanges[info.exchangeId];
     if (!ex?.markets?.[`${info.symbol}/USDT:USDT`]) return `${info.exchangeId} has no ${info.symbol}/USDT perpetual.`;
+    // The scanner already leaves these out; this also covers signals logged before that, or another exchange's label
+    if (isTradFiMarket(ex.markets[`${info.symbol}/USDT:USDT`])) return `${info.symbol} is a stock/ETF/commodity/FX perp on ${info.exchangeId}, not a coin — the pump rules were only tested on crypto.`;
     if (c.mode === 'live' && (!ex.apiKey || !ex.secret)) return `LIVE mode but no API keys for ${info.exchangeId} — not falling back to paper.`;
 
     const open = await db.getOpenTrades(te.settingsKey);

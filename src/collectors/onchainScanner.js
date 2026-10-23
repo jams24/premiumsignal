@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const { EMA, ATR, RSI } = require('technicalindicators');
 const https = require('https');
 const { STOCK_TOKENS } = require('./technicalScanner');
+const { isTradFiMarket } = require('../utils/tradfi');
 
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
@@ -90,7 +91,7 @@ class OnchainScanner {
 
       try {
         const perpMarkets = Object.values(exchange.markets)
-          .filter(m => m.swap && m.quote === 'USDT' && m.active);
+          .filter(m => m.swap && m.quote === 'USDT' && m.active && !isTradFiMarket(m));  // no stock/ETF/commodity/FX perps
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const filtered = Object.entries(tickers)
@@ -405,7 +406,7 @@ class OnchainScanner {
       if (!exchange.has.fetchOpenInterestHistory) continue;
       try {
         const perpMarkets = Object.values(exchange.markets)
-          .filter(m => m.swap && m.quote === 'USDT' && m.active);
+          .filter(m => m.swap && m.quote === 'USDT' && m.active && !isTradFiMarket(m));  // no stock/ETF/commodity/FX perps
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
 
         const top = Object.entries(tickers)
@@ -502,7 +503,7 @@ class OnchainScanner {
     for (const [exchangeId, exchange] of Object.entries(this.exchanges)) {
       try {
         const perpMarkets = Object.values(exchange.markets)
-          .filter(m => m.swap && m.quote === 'USDT' && m.active);
+          .filter(m => m.swap && m.quote === 'USDT' && m.active && !isTradFiMarket(m));  // no stock/ETF/commodity/FX perps
         const tickers = await exchange.fetchTickers(perpMarkets.map(m => m.symbol));
         const filtered = Object.entries(tickers)
           .filter(([, t]) => t.quoteVolume > 2000000)
