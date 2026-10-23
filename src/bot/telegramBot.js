@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
@@ -61,8 +61,11 @@ function altMarketLine(median) {
 }
 
 // /autopump tighter stop: where the stop goes once the trigger is hit (beStopPct % from entry, 0 = entry)
+function beTrigger(c) {
+  return Number(c.beAtPct) > 0 ? Number(c.beAtPct) : Number(c.beLastAtPct) > 0 ? Number(c.beLastAtPct) : BE_DEFAULT.at;
+}
 function beStopLabel(c) {
-  const s = Number(c.beStopPct ?? BE_STOP_PCTS[0]);
+  const s = Number(c.beStopPct ?? BE_DEFAULT.stop);
   return s > 0 ? `−${s}%` : 'entry';
 }
 
@@ -2453,13 +2456,13 @@ class TelegramBot {
         `Status: <b>${c.enabled ? '✅ ON' : '⛔ OFF'}</b> · ${live ? '💰 <b>LIVE</b>' : '📝 PAPER'}`,
         `<i>Opens the short automatically when a pump signal says ✅ ENTER — at the signal or from the follow-up watcher.</i>`,
         '',
-        `<b>Size</b> (from your /trade panel):`,
+        `<b>Size</b> (${full.ownMargin && full.ownLev ? 'auto-trade\'s own' : full.ownMargin || full.ownLev ? `margin ${full.ownMargin ? 'own' : 'from /trade'} · leverage ${full.ownLev ? 'own' : 'from /trade'}` : 'from your /trade panel'}):`,
         `💵 ${money(full.margin)} × ${full.leverage}x = ${money(full.position)} · SL loses <b>-${slLoss(full)}</b>`,
         c.halfOnFresh
           ? `🟠 Fresh breakouts: half → ${money(fresh.margin)} × ${fresh.leverage}x · SL loses -${slLoss(fresh)}`
           : `🟠 Fresh breakouts: full size (half-size is off)`,
       ];
-      if (full.levCapped) lines.push(`⚠️ Panel leverage ${full.panelLev}x is capped at ${full.leverage}x so the ${PUMP_RULES.slPct}% SL comes before liquidation`);
+      if (full.levCapped) lines.push(`⚠️ Leverage ${full.panelLev}x is capped at ${full.leverage}x so the ${PUMP_RULES.slPct}% SL comes before liquidation`);
       lines.push(full.marginSaver
         ? `🏦 Margin saver ON: exchange runs ${full.exchangeLev}x → locks only ${money(full.locked)} (${money(fresh.locked)} on fresh) · liq ≈ ${liquidationPct(full.exchangeLev).toFixed(1)}%`
         : `🏦 Margin saver OFF: exchange locks ${money(full.locked)} at ${full.exchangeLev}x (turn it on in the /trade panel)`);
@@ -2478,8 +2481,7 @@ class TelegramBot {
           : `🚫 Coins with no spot market (Binance/Bybit): auto-traded`,
         c.beAtPct > 0
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
-          : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${c.beLastAtPct || BE_AT_PCTS[0]}% → ${beStopLabel(c)})`,
-        `<i>   Any values: /tightstop 4.5 5 (trigger %, new stop %; "entry" for 0) · /tightstop off</i>`,
+          : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
       if (ap.runner) {
@@ -2509,15 +2511,14 @@ class TelegramBot {
         [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
-        [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ at +${c.beAtPct}%` : '⛔ OFF'}`, 'ap_be'),
-         Markup.button.callback(`📏 New stop: ${beStopLabel(c)}`, 'ap_be_stop')],
+        [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
         ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
           Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
           ...(ap.signalLab ? [[Markup.button.callback(`⚡ At-signal lab${ls ? ` (${ls.closed + ls.open})` : ''}`, 'ap_rsig_log')]] : []),
           [Markup.button.callback(`🚀 Runner longs real trade: ${c.runnerLongs !== false && c.runnerLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_runner_live')],
           [Markup.button.callback(`🎯 Long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
-        [Markup.button.callback('💵 Change size → /trade panel', 'ap_size')],
+        [Markup.button.callback(`💵 Auto size: ${money(full.margin)} × ${full.leverage}x ⚙️`, 'ap_size')],
       ]);
       return { text: lines.join('\n'), keyboard };
     };
@@ -2770,13 +2771,64 @@ class TelegramBot {
       await ack(ctx, `Long TP1 at +${next}% for new runner longs`);
       await showAutoPump(ctx, true);
     });
-    // Tighter stop trigger: OFF → +4.5% → +4% → +3.5% → +3% → OFF
-    apAction('ap_be', async (ctx, ap) => {
-      const cycle = [0, ...BE_AT_PCTS];
-      const next = cycle[(cycle.indexOf(Number(ap.config.beAtPct) || 0) + 1) % cycle.length];
-      await ap.update(next > 0 ? { beAtPct: next, beLastAtPct: next } : { beAtPct: 0 });
-      await ack(ctx, next > 0 ? `Tighter stop ON: at +${next}% before TP1 the stop moves to ${beStopLabel(ap.config)} (open trades too)` : `Tighter stop OFF: the stop stays at −${PUMP_RULES.slPct}% until TP1`);
-      await showAutoPump(ctx, true);
+    // Tighter-stop menu: ON/OFF, trigger buttons (profit before TP1) and new-stop buttons
+    const showBeMenu = async (ctx, ap) => {
+      const c = ap.config, sl = PUMP_RULES.slPct, on = Number(c.beAtPct) > 0;
+      const at = beTrigger(c), stop = Number(c.beStopPct ?? BE_DEFAULT.stop);
+      const tp1 = Math.min(ap.tpPcts()[0], ap.runnerTpPcts()[0]);
+      const text = [
+        `🛡️ <b>Tighter stop before TP1</b> — ${on ? '<b>✅ ON</b>' : '<b>⛔ OFF</b>'}`,
+        '',
+        `Once an auto trade is <b>+${at}%</b> in profit and TP1 (+${tp1}%) is not hit yet, its stop moves from −${sl}% to <b>${beStopLabel(c)}</b>.`,
+        `Nothing is closed and the TPs stay. Applies to open auto trades too.`,
+        '',
+        `<b>1️⃣ Trigger</b> (profit before TP1) · <b>2️⃣ New stop</b> (from entry)`,
+        `⭐ = best in the backtest (+${BE_DEFAULT.at}% → −${BE_DEFAULT.stop}%). +3% triggers and stop → entry lost money in the backtest.`,
+        `<i>Other values: /tightstop 4.2 5.5</i>`,
+      ].join('\n');
+      const star = (v, d) => (v === d ? '⭐' : '');
+      const atBtns = BE_AT_PCTS.filter(v => v < tp1).map(v => Markup.button.callback(`${v === at ? '✅ ' : ''}+${v}%${star(v, BE_DEFAULT.at)}`, `ap_beat_${v}`));
+      const stBtns = BE_STOP_PCTS.filter(v => v < sl).map(v => Markup.button.callback(`${v === stop ? '✅ ' : ''}${v > 0 ? '−' + v + '%' : 'entry'}${star(v, BE_DEFAULT.stop)}`, `ap_best_${v}`));
+      const rows = (btns, n) => Array.from({ length: Math.ceil(btns.length / n) }, (_, i) => btns.slice(i * n, i * n + n));
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(on ? '⛔ Turn OFF' : `✅ Turn ON (+${at}% → ${beStopLabel(c)})`, 'ap_be_tog')],
+        [Markup.button.callback('1️⃣ Trigger — profit before TP1:', 'ap_be')],
+        ...rows(atBtns, 4),
+        [Markup.button.callback('2️⃣ New stop — from entry:', 'ap_be')],
+        ...rows(stBtns, 4),
+        [Markup.button.callback(`⭐ Use best: +${BE_DEFAULT.at}% → −${BE_DEFAULT.stop}%`, 'ap_be_best')],
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_be', async (ctx, ap) => { await ack(ctx); await showBeMenu(ctx, ap); });
+    apAction('ap_be_tog', async (ctx, ap) => {
+      const on = Number(ap.config.beAtPct) > 0, at = beTrigger(ap.config);
+      await ap.update(on ? { beAtPct: 0, beLastAtPct: at } : { beAtPct: at, beLastAtPct: at, beStopPct: Number(ap.config.beStopPct ?? BE_DEFAULT.stop) });
+      await ack(ctx, on ? `Tighter stop OFF: the stop stays at −${PUMP_RULES.slPct}% until TP1` : `Tighter stop ON: +${at}% → ${beStopLabel(ap.config)} (open trades too)`);
+      await showBeMenu(ctx, ap);
+    });
+    apAction(/^ap_beat_(\d+(?:\.\d+)?)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!BE_AT_PCTS.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update(Number(ap.config.beAtPct) > 0 ? { beAtPct: v, beLastAtPct: v } : { beLastAtPct: v });
+      await ack(ctx, `Trigger +${v}%${Number(ap.config.beAtPct) > 0 ? '' : ' (still OFF — tap Turn ON)'}`);
+      await showBeMenu(ctx, ap);
+    });
+    apAction(/^ap_best_(\d+(?:\.\d+)?)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!BE_STOP_PCTS.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update({ beStopPct: v });
+      await ack(ctx, `New stop ${beStopLabel(ap.config)}${Number(ap.config.beAtPct) > 0 ? '' : ' (still OFF — tap Turn ON)'}`);
+      await showBeMenu(ctx, ap);
+    });
+    apAction('ap_be_best', async (ctx, ap) => {
+      const on = Number(ap.config.beAtPct) > 0;
+      await ap.update({ ...(on ? { beAtPct: BE_DEFAULT.at } : {}), beLastAtPct: BE_DEFAULT.at, beStopPct: BE_DEFAULT.stop });
+      await ack(ctx, `Set +${BE_DEFAULT.at}% → −${BE_DEFAULT.stop}%${on ? '' : ' (still OFF — tap Turn ON)'}`);
+      await showBeMenu(ctx, ap);
     });
     // /tightstop <trigger %> <new stop % | entry>  ·  /tightstop off  ·  /tightstop → show
     this.bot.command('tightstop', async (ctx) => {
@@ -2793,15 +2845,15 @@ class TelegramBot {
           `Trigger: 0.5% up to below TP1 (+${tp1}%). New stop: entry (0) up to ${sl - 0.5}%.`;
         if (!args.length) {
           const c = ap.config;
-          const now = c.beAtPct > 0 ? `<b>ON — +${c.beAtPct}% → ${beStopLabel(c)}</b>` : `<b>off</b> (set: +${c.beLastAtPct || BE_AT_PCTS[0]}% → ${beStopLabel(c)})`;
+          const now = c.beAtPct > 0 ? `<b>ON — +${c.beAtPct}% → ${beStopLabel(c)}</b>` : `<b>off</b> (set: +${beTrigger(c)}% → ${beStopLabel(c)})`;
           return ctx.replyWithHTML(`🛡️ Tighter stop: ${now}\n\n${usage}`);
         }
         if (args[0] === 'off' || args[0] === '0') {
-          await ap.update({ beAtPct: 0 });
+          await ap.update({ beAtPct: 0, beLastAtPct: beTrigger(ap.config) });
           return ctx.replyWithHTML(`🛡️ Tighter stop <b>OFF</b> — the stop stays at −${sl}% until TP1.`);
         }
         const at = Number(args[0]);
-        const stop = args[1] == null ? Number(ap.config.beStopPct ?? BE_STOP_PCTS[0]) : args[1] === 'entry' || args[1] === 'be' ? 0 : Number(args[1]);
+        const stop = args[1] == null ? Number(ap.config.beStopPct ?? BE_DEFAULT.stop) : args[1] === 'entry' || args[1] === 'be' ? 0 : Number(args[1]);
         if (!Number.isFinite(at) || at < 0.5 || at >= tp1) return ctx.replyWithHTML(`⚠️ Trigger must be from 0.5% to below TP1 (+${tp1}%).\n\n${usage}`);
         if (!Number.isFinite(stop) || stop < 0 || stop > sl - 0.5) return ctx.replyWithHTML(`⚠️ New stop must be from entry (0) to ${sl - 0.5}%.\n\n${usage}`);
         const r1 = v => Math.round(v * 10) / 10;
@@ -2810,20 +2862,60 @@ class TelegramBot {
           `<i>Nothing is closed and the TPs stay. Open auto trades are included. Backtest best: +4.5% → −5%.</i>`);
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
-    apAction('ap_be_stop', async (ctx, ap) => {
-      const cur = Number(ap.config.beStopPct ?? BE_STOP_PCTS[0]);
-      const next = BE_STOP_PCTS[(BE_STOP_PCTS.indexOf(cur) + 1) % BE_STOP_PCTS.length];
-      await ap.update({ beStopPct: next });
-      await ack(ctx, `New stop after the trigger: ${beStopLabel(ap.config)}${ap.config.beAtPct > 0 ? '' : ' (tighter stop is OFF)'}`);
-      await showAutoPump(ctx, true);
-    });
     apAction('ap_half', async (ctx, ap) => {
       await ap.update({ halfOnFresh: !ap.config.halfOnFresh });
       await ack(ctx, `Half size on fresh: ${ap.config.halfOnFresh ? 'ON' : 'OFF'}`);
       await showAutoPump(ctx, true);
     });
-    apAction('ap_size', async (ctx) => {
-      await ctx.answerCbQuery('Auto trades use the margin and leverage saved in your /trade panel (leverage capped at 5x). Open /trade SYMBOL, change margin/leverage, then cancel — the settings are saved.', { show_alert: true }).catch(() => {});
+    // Auto-trade size menu: its own margin / leverage, or "from /trade" (0). The margin saver (a /trade setting) still applies.
+    const showSizeMenu = async (ctx, ap) => {
+      const c = ap.config, sl = PUMP_RULES.slPct;
+      const full = await ap.sizing(PUMP_RULES.extendedRunPct, c.ownerId || ctx.from.id);
+      const prefs = (await db.getManualPrefs(c.ownerId || ctx.from.id).catch(() => null)) || {};
+      const m = Number(c.autoMargin) || 0, l = Number(c.autoLeverage) || 0;
+      const tp1 = ap.tpPcts()[0];
+      const text = [
+        `💵 <b>Auto-trade size</b>`,
+        '',
+        `Now: <b>${money(full.margin)} × ${full.leverage}x = ${money(full.position)}</b> position`,
+        `   margin ${full.ownMargin ? '<b>own</b>' : `from /trade (${money(prefs.margin || full.panelMargin)})`} · leverage ${full.ownLev ? '<b>own</b>' : `from /trade (${prefs.leverage || full.panelLev}x)`}`,
+        full.levCapped ? `⚠️ ${full.panelLev}x is capped at ${full.leverage}x for auto trades` : null,
+        `🛑 SL −${sl}% loses <b>-${money(full.position * sl / 100)}</b> · TP1 (25% at ${tp1}%) +${money(full.position * 0.25 * tp1 / 100)}`,
+        full.marginSaver
+          ? `🏦 Margin saver ON: exchange runs <b>${full.exchangeLev}x</b> → locks <b>${money(full.locked)}</b> · liq ≈ −${liquidationPct(full.exchangeLev).toFixed(1)}%`
+          : `🏦 Margin saver OFF: exchange runs ${full.exchangeLev}x → locks ${money(full.locked)} · liq ≈ −${liquidationPct(full.exchangeLev).toFixed(1)}%`,
+        c.dailyLossUsd > 0 ? `🛑 Daily stop -$${c.dailyLossUsd} = about ${Math.max(1, Math.floor(c.dailyLossUsd / (full.position * sl / 100) + 1e-9))} full SL(s)` : null,
+        '',
+        `<i>"from /trade" = use the manual /trade panel's value. Manual trades are not affected by these buttons. Max ${AUTO_MAX_LEVERAGE}x.</i>`,
+      ].filter(x => x != null).join('\n');
+      const mBtns = AUTO_MARGINS.map(v => Markup.button.callback(`${v === m ? '✅ ' : ''}${v > 0 ? '$' + v : 'from /trade'}`, `ap_szm_${v}`));
+      const lBtns = AUTO_LEVERAGES.map(v => Markup.button.callback(`${v === l ? '✅ ' : ''}${v > 0 ? v + 'x' : 'from /trade'}`, `ap_szl_${v}`));
+      const rows = (btns, n) => Array.from({ length: Math.ceil(btns.length / n) }, (_, i) => btns.slice(i * n, i * n + n));
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('1️⃣ Margin:', 'ap_size')],
+        ...rows(mBtns, 4),
+        [Markup.button.callback('2️⃣ Leverage:', 'ap_size')],
+        ...rows(lBtns, 5),
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_size', async (ctx, ap) => { await ack(ctx); await showSizeMenu(ctx, ap); });
+    apAction(/^ap_szm_(\d+)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!AUTO_MARGINS.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update({ autoMargin: v });
+      await ack(ctx, v > 0 ? `Auto margin $${v} (new auto trades)` : 'Auto margin from /trade');
+      await showSizeMenu(ctx, ap);
+    });
+    apAction(/^ap_szl_(\d+)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!AUTO_LEVERAGES.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update({ autoLeverage: v });
+      await ack(ctx, v > 0 ? `Auto leverage ${v}x (new auto trades)` : 'Auto leverage from /trade');
+      await showSizeMenu(ctx, ap);
     });
     // Same live view as /mpositions, opened on the auto-pump filter
     apAction('ap_open', async (ctx) => {

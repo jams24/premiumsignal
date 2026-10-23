@@ -71,9 +71,16 @@ const DEFAULTS = {
   // A +3% trigger lost on Dec–May at every stop (−5/−6%: −$314/−$620). A safety option, off by default.
   beAtPct: 0,
   beStopPct: 5,
+  // Auto-trade's own size; 0 = use the /trade panel's margin / leverage (as before). The margin saver still applies.
+  autoMargin: 0,
+  autoLeverage: 0,
 };
-const BE_AT_PCTS = [4.5, 4, 3.5, 3];  // trigger choices (0 = off is the toggle)
-const BE_STOP_PCTS = [5, 4, 6, 3, 0]; // new stop choices, % from entry (0 = entry)
+const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
+const AUTO_MARGINS = [0, 10, 20, 30, 50, 75, 100]; // /autopump margin buttons (0 = from /trade)
+const AUTO_LEVERAGES = [0, 3, 5, 7, 10];           // /autopump leverage buttons (0 = from /trade)
+const BE_AT_PCTS = [2, 2.5, 3, 3.5, 4, 4.5, 4.8]; // trigger buttons in /autopump (only those below TP1 are shown)
+const BE_STOP_PCTS = [0, 2, 3, 4, 5, 6, 7];       // new stop buttons, % from entry (0 = entry)
+const BE_DEFAULT = { at: 4.5, stop: 5 };          // best in the backtest
 
 class PumpAutoTrader {
   constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null, signalLab = null }) {
@@ -102,20 +109,22 @@ class PumpAutoTrader {
     return this.config;
   }
 
-  // Size the owner would trade: panel margin × leverage, leverage capped so the plan SL fits before liquidation
+  // Size the owner would trade: auto-trade's own margin / leverage when set, else the /trade panel's; leverage capped at
+  // AUTO_MAX_LEVERAGE so the plan SL fits before liquidation
   async sizing(run7d, ownerId = this.config.ownerId) {
     const prefs = (ownerId && await db.getManualPrefs(ownerId).catch(() => null)) || {};
-    const te = this.executor;
-    const panelMargin = prefs.margin || te.maxPositionSize || 12;
-    const panelLev = prefs.leverage || te.defaultLeverage || 3;
-    const leverage = Math.min(panelLev, PUMP_RULES.maxLeverage);
+    const te = this.executor, c = this.config;
+    const ownMargin = Number(c.autoMargin) > 0, ownLev = Number(c.autoLeverage) > 0;
+    const panelMargin = ownMargin ? Number(c.autoMargin) : prefs.margin || te.maxPositionSize || 12;
+    const panelLev = ownLev ? Number(c.autoLeverage) : prefs.leverage || te.defaultLeverage || 3;
+    const leverage = Math.min(panelLev, AUTO_MAX_LEVERAGE);
     const fresh = runType(run7d) === 'fresh';
     const margin = this.config.halfOnFresh && fresh ? Math.round((panelMargin / 2) * 100) / 100 : panelMargin;
     // Margin saver (panel setting, default on): same position, exchange leverage raised as far as the plan SL allows
     const marginSaver = prefs.marginSaver !== false;
     const exchangeLev = marginSaver ? marginSaverLeverage(PUMP_RULES.slPct, { chosen: leverage }) : leverage;
     const position = margin * leverage;
-    return { panelMargin, panelLev, margin, leverage, position, fresh, levCapped: leverage < panelLev, marginSaver, exchangeLev, locked: position / exchangeLev };
+    return { panelMargin, panelLev, margin, leverage, position, fresh, levCapped: leverage < panelLev, marginSaver, exchangeLev, locked: position / exchangeLev, ownMargin, ownLev };
   }
 
   async stats() {
@@ -500,4 +509,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES };
