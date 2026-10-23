@@ -64,12 +64,16 @@ const DEFAULTS = {
   runnerLive: false,
   // TP1 of new runner longs (real and both paper labs), one of AUTO_TP1_PCTS; TP2–TP4 stay +12/20/30
   runnerTp1Pct: RUNNER.tpPcts[0],
-  // Stop → entry once an auto trade has been this % in profit before TP1 (nothing is closed); 0 = off.
-  // Backtest at +4% ($1000, TP1 5%): full stops −15–36%, but total −$966 on Dec–May, −$296 on October, +$217 on Jun–Oct —
-  // 65–70% of trades that touch +2–4% and fall back to entry still reach TP1 later. A safety option, off by default.
+  // Tighter stop once an auto trade has been beAtPct % in profit before TP1: the stop moves from −8% to −beStopPct %
+  // (0 = entry). Nothing is closed. beAtPct 0 = off. Backtest ($1000, TP1 5%) vs never moving:
+  // +4.5% → −5%: Jun–Oct +$372, Dec–May +$357, October −$153, the 47 live auto trades −$62 (the best tested).
+  // +4% → entry: +$217, −$966, −$296 — 65–70% of trades that touch +2–4% and fall back to entry still reach TP1.
+  // A +3% trigger lost on Dec–May at every stop (−5/−6%: −$314/−$620). A safety option, off by default.
   beAtPct: 0,
+  beStopPct: 5,
 };
-const BE_AT_PCT = 4;
+const BE_AT_PCTS = [4.5, 4, 3.5, 3];  // trigger choices (0 = off is the toggle)
+const BE_STOP_PCTS = [5, 4, 6, 3, 0]; // new stop choices, % from entry (0 = entry)
 
 class PumpAutoTrader {
   constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null, signalLab = null }) {
@@ -143,8 +147,8 @@ class PumpAutoTrader {
   }
 
   // Every minute: open auto trades (short or runner long) whose best move since entry reached beAtPct before TP1 get
-  // their stop moved to the entry price. Only the stop moves — nothing closes, TPs stay. Live: the new stop is placed
-  // on the exchange before the old one is cancelled (updateExchangeSL), and the DB follows only if the exchange took it.
+  // their stop tightened to −beStopPct % (0 = entry). Only the stop moves — nothing closes, TPs stay. Live: the new stop
+  // is placed on the exchange before the old one is cancelled (updateExchangeSL), and the DB follows only if the exchange took it.
   async checkBreakeven() {
     if (this.beRunning) return;
     this.beRunning = true;
@@ -152,19 +156,21 @@ class PumpAutoTrader {
       await this.load().catch(() => {});
       const at = this.config.beAtPct;
       if (!(at > 0)) return;
+      const stopPct = Math.max(0, Number(this.config.beStopPct ?? 5));
       const open = (await db.getOpenTrades(this.executor.settingsKey)).filter(t => t.onchain_context?.autoPump === true);
       for (const t of open) {
-        try { await this.breakevenOne(t, at); } catch (e) { logger.warn(`Stop→entry check ${t.symbol} #${t.id} failed: ${e.message}`); }
+        try { await this.breakevenOne(t, at, stopPct); } catch (e) { logger.warn(`Tighter-stop check ${t.symbol} #${t.id} failed: ${e.message}`); }
       }
     } finally {
       this.beRunning = false;
     }
   }
 
-  async breakevenOne(t, at) {
+  async breakevenOne(t, at, stopPct = 0) {
     const entry = Number(t.entry_price), sl = Number(t.stop_loss), long = t.direction === 'long';
-    if (!(entry > 0) || !(sl > 0)) return;
-    if (long ? sl >= entry : sl <= entry) return; // already at or past entry (TP1 hit, or moved by hand)
+    if (!(entry > 0) || !(sl > 0) || t.hit_tp1) return;
+    const target = long ? entry * (1 - stopPct / 100) : entry * (1 + stopPct / 100);
+    if (long ? sl >= target : sl <= target) return; // already at or tighter than the new stop (moved by hand, etc.)
     const ex = this.executor.exchanges[t.exchange];
     if (!ex) return;
     const pair = `${t.symbol}/USDT:USDT`;
@@ -185,26 +191,27 @@ class PumpAutoTrader {
     }
     this.bePeak.set(t.id, seen);
     if (seen.best < at) return;
-    // Price must still be on the profit side, or a stop at entry would fill straight away; the plan stop stays until then
+    // Price must still be clear of the new stop, or it would fill straight away; the plan stop stays until then
     const price = (await ex.fetchTicker(pair)).last;
-    const room = long ? (price / entry - 1) * 100 : (1 - price / entry) * 100;
+    const room = long ? (price / target - 1) * 100 : (1 - price / target) * 100;
     if (!(room >= 0.3)) return;
+    const label = stopPct > 0 ? `−${stopPct}%` : 'entry';
     if (t.mode === 'live') {
-      const ok = await this.executor.updateExchangeSL(t, entry);
+      const ok = await this.executor.updateExchangeSL(t, target);
       if (ok !== true) {
-        if (!seen.rejected) await this.tell(`🛡️ ⚠️ <b>${escapeHtml(t.symbol)}: stop → entry rejected by the exchange</b>\nThe old stop $${Number(sl).toPrecision(6)} is still in place. I'll try again next minute.`);
+        if (!seen.rejected) await this.tell(`🛡️ ⚠️ <b>${escapeHtml(t.symbol)}: stop → ${label} rejected by the exchange</b>\nThe old stop $${Number(sl).toPrecision(6)} is still in place. I'll try again next minute.`);
         seen.rejected = true;
         return;
       }
     }
-    await db.updateTradeStopLoss(t.id, entry);
+    await db.updateTradeStopLoss(t.id, target);
     this.bePeak.delete(t.id);
-    logger.info(`Stop→entry: ${t.symbol} #${t.id} ${t.direction} best +${seen.best.toFixed(2)}% → SL ${sl} → ${entry} (${t.mode})`);
+    logger.info(`Tighter stop: ${t.symbol} #${t.id} ${t.direction} best +${seen.best.toFixed(2)}% → SL ${sl} → ${target} (${label}, ${t.mode})`);
     const p = (v) => Number(v).toPrecision(6);
     await this.tell(
-      `🛡️ <b>${escapeHtml(t.symbol)} ${t.direction.toUpperCase()} — stop moved to entry</b>\n` +
-      `It was +${seen.best.toFixed(1)}% in profit before TP1 → SL $${p(sl)} → <b>$${p(entry)}</b> (entry).\n` +
-      `<i>Nothing closed and the TPs are unchanged. If price comes back, it exits at entry (≈ fees only) instead of −${PUMP_RULES.slPct}%.</i>`
+      `🛡️ <b>${escapeHtml(t.symbol)} ${t.direction.toUpperCase()} — stop moved to ${label}</b>\n` +
+      `It was +${seen.best.toFixed(1)}% in profit before TP1 → SL $${p(sl)} → <b>$${p(target)}</b> (${stopPct > 0 ? label + ' from entry' : 'entry'}).\n` +
+      `<i>Nothing closed and the TPs are unchanged. If price comes back, it exits at ${stopPct > 0 ? label : 'entry (≈ fees only)'} instead of −${PUMP_RULES.slPct}%.</i>`
     );
   }
 
@@ -493,4 +500,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCT };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS };

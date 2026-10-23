@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCT } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
@@ -58,6 +58,12 @@ function altMarketLine(median) {
   if (median == null) return '';
   const hot = median > HOT_ALT_MARKET_PCT;
   return `🌡 Alt market 24h: <b>${median >= 0 ? '+' : ''}${median.toFixed(1)}%</b> median ${hot ? '⚠️ green market — pump shorts did worse' : '✅ calm'}\n`;
+}
+
+// /autopump tighter stop: where the stop goes once the trigger is hit (beStopPct % from entry, 0 = entry)
+function beStopLabel(c) {
+  const s = Number(c.beStopPct ?? BE_STOP_PCTS[0]);
+  return s > 0 ? `−${s}%` : 'entry';
 }
 
 function runLabel(run7d) {
@@ -112,7 +118,7 @@ class TelegramBot {
       'panel', 'swingsettings',
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
-      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check', 'autopump',
+      'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check', 'autopump', 'tightstop',
     ]);
     const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_|ap_)/;
     const PUBLIC_COMMANDS = new Set([
@@ -2471,8 +2477,9 @@ class TelegramBot {
           ? `🚫 Coins with no spot market (Binance/Bybit): <b>not auto-traded</b>`
           : `🚫 Coins with no spot market (Binance/Bybit): auto-traded`,
         c.beAtPct > 0
-          ? `🛡️ Stop → entry: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to the entry price (nothing is closed)`
-          : `🛡️ Stop → entry at +${BE_AT_PCT}%: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1`,
+          ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
+          : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${c.beLastAtPct || BE_AT_PCTS[0]}% → ${beStopLabel(c)})`,
+        `<i>   Any values: /tightstop 4.5 5 (trigger %, new stop %; "entry" for 0) · /tightstop off</i>`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
       if (ap.runner) {
@@ -2502,7 +2509,8 @@ class TelegramBot {
         [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
-        [Markup.button.callback(`🛡️ Stop → entry at +${BE_AT_PCT}%: ${c.beAtPct > 0 ? '✅ ON' : '⛔ OFF'}`, 'ap_be')],
+        [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ at +${c.beAtPct}%` : '⛔ OFF'}`, 'ap_be'),
+         Markup.button.callback(`📏 New stop: ${beStopLabel(c)}`, 'ap_be_stop')],
         ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
           Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
           ...(ap.signalLab ? [[Markup.button.callback(`⚡ At-signal lab${ls ? ` (${ls.closed + ls.open})` : ''}`, 'ap_rsig_log')]] : []),
@@ -2762,9 +2770,51 @@ class TelegramBot {
       await ack(ctx, `Long TP1 at +${next}% for new runner longs`);
       await showAutoPump(ctx, true);
     });
+    // Tighter stop trigger: OFF → +4.5% → +4% → +3.5% → +3% → OFF
     apAction('ap_be', async (ctx, ap) => {
-      await ap.update({ beAtPct: ap.config.beAtPct > 0 ? 0 : BE_AT_PCT });
-      await ack(ctx, ap.config.beAtPct > 0 ? `Stop → entry ON: at +${BE_AT_PCT}% before TP1 the stop moves to entry (open trades too)` : 'Stop → entry OFF: the stop stays at −8% until TP1');
+      const cycle = [0, ...BE_AT_PCTS];
+      const next = cycle[(cycle.indexOf(Number(ap.config.beAtPct) || 0) + 1) % cycle.length];
+      await ap.update(next > 0 ? { beAtPct: next, beLastAtPct: next } : { beAtPct: 0 });
+      await ack(ctx, next > 0 ? `Tighter stop ON: at +${next}% before TP1 the stop moves to ${beStopLabel(ap.config)} (open trades too)` : `Tighter stop OFF: the stop stays at −${PUMP_RULES.slPct}% until TP1`);
+      await showAutoPump(ctx, true);
+    });
+    // /tightstop <trigger %> <new stop % | entry>  ·  /tightstop off  ·  /tightstop → show
+    this.bot.command('tightstop', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      const ap = this.pumpAutoTrader;
+      if (!ap) return ctx.replyWithHTML('⚠️ Auto-trader not ready.');
+      try {
+        await ap.load();
+        const args = ctx.message.text.trim().split(/\s+/).slice(1).map(a => a.toLowerCase().replace(/[%+]/g, '').replace(/^[−-]/, ''));
+        const sl = PUMP_RULES.slPct;
+        const tp1 = Math.min(ap.tpPcts()[0], ap.runnerTpPcts()[0]);
+        const usage = `Usage: <code>/tightstop 4.5 5</code> → once a trade is +4.5% before TP1, the stop moves from −${sl}% to −5%.\n` +
+          `<code>/tightstop 4 entry</code> → stop to entry · <code>/tightstop off</code>\n` +
+          `Trigger: 0.5% up to below TP1 (+${tp1}%). New stop: entry (0) up to ${sl - 0.5}%.`;
+        if (!args.length) {
+          const c = ap.config;
+          const now = c.beAtPct > 0 ? `<b>ON — +${c.beAtPct}% → ${beStopLabel(c)}</b>` : `<b>off</b> (set: +${c.beLastAtPct || BE_AT_PCTS[0]}% → ${beStopLabel(c)})`;
+          return ctx.replyWithHTML(`🛡️ Tighter stop: ${now}\n\n${usage}`);
+        }
+        if (args[0] === 'off' || args[0] === '0') {
+          await ap.update({ beAtPct: 0 });
+          return ctx.replyWithHTML(`🛡️ Tighter stop <b>OFF</b> — the stop stays at −${sl}% until TP1.`);
+        }
+        const at = Number(args[0]);
+        const stop = args[1] == null ? Number(ap.config.beStopPct ?? BE_STOP_PCTS[0]) : args[1] === 'entry' || args[1] === 'be' ? 0 : Number(args[1]);
+        if (!Number.isFinite(at) || at < 0.5 || at >= tp1) return ctx.replyWithHTML(`⚠️ Trigger must be from 0.5% to below TP1 (+${tp1}%).\n\n${usage}`);
+        if (!Number.isFinite(stop) || stop < 0 || stop > sl - 0.5) return ctx.replyWithHTML(`⚠️ New stop must be from entry (0) to ${sl - 0.5}%.\n\n${usage}`);
+        const r1 = v => Math.round(v * 10) / 10;
+        await ap.update({ beAtPct: r1(at), beLastAtPct: r1(at), beStopPct: r1(stop) });
+        await ctx.replyWithHTML(`🛡️ Tighter stop <b>ON</b> — once an auto trade is <b>+${r1(at)}%</b> in profit before TP1, its stop moves from −${sl}% to <b>${beStopLabel(ap.config)}</b>.\n` +
+          `<i>Nothing is closed and the TPs stay. Open auto trades are included. Backtest best: +4.5% → −5%.</i>`);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+    apAction('ap_be_stop', async (ctx, ap) => {
+      const cur = Number(ap.config.beStopPct ?? BE_STOP_PCTS[0]);
+      const next = BE_STOP_PCTS[(BE_STOP_PCTS.indexOf(cur) + 1) % BE_STOP_PCTS.length];
+      await ap.update({ beStopPct: next });
+      await ack(ctx, `New stop after the trigger: ${beStopLabel(ap.config)}${ap.config.beAtPct > 0 ? '' : ' (tighter stop is OFF)'}`);
       await showAutoPump(ctx, true);
     });
     apAction('ap_half', async (ctx, ap) => {
