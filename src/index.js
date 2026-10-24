@@ -735,9 +735,11 @@ async function main() {
     await bot.sendRaw(`🌊 <b>[SWING]</b> ${msg}`);
   });
 
-  // Wire demand zone executor notifications
+  // Wire demand zone executor notifications. Paper-mode DZ messages (entry queued, zone sweep skips, opens, closes)
+  // can be muted from /alerts; live-mode DZ and safety messages always come through.
   dzTradeExecutor.onTradeUpdate(async (msg) => {
-    await bot.sendRaw(`🎯 <b>[DZ]</b> ${msg}`);
+    const critical = dzTradeExecutor.mode === 'live' || /CRITICAL|FAILED|UNPROTECTED/.test(msg);
+    await bot.sendRaw(`🎯 <b>[DZ]</b> ${msg}`, critical ? null : 'dzTrades');
   });
 
   // Wire up listing alerts
