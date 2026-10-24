@@ -16,6 +16,7 @@ const ALERT_TYPES = [
   ['trending', '📊 Trending tokens'],
   ['demandzone', '🎯 Demand zone scanner'],
   ['dzTrades', '🧱 [DZ] paper trade msgs'],
+  ['swingTrades', '🌊 [SWING] paper trade msgs'],
   ['onchain', '🔗 Onchain scanner'],
   ['flow', '🏦 Flow alerts'],
   ['swing', '🌊 Swing alerts'],
@@ -6788,7 +6789,7 @@ class TelegramBot {
       const on = ALERT_TYPES.filter(([k]) => !this.alertMutes.has(k)).length;
       const text = `🔔 <b>ALERT TOGGLES</b>\n\n` +
         `${on}/${ALERT_TYPES.length} alert types ON. Tap one to turn it on or off.\n\n` +
-        `<i>Only changes what arrives in this chat. Trade alerts (opened, TP, SL, closed), pump signals and auto/manual pump trade messages always come through. The [DZ] toggle only mutes demand-zone paper trades (entry queued, zone sweep skips, opens, closes).</i>`;
+        `<i>Only changes what arrives in this chat. Trade alerts (opened, TP, SL, closed), pump signals and auto/manual pump trade messages always come through. The [DZ] and [SWING] toggles only mute those paper trades (entry queued, pullback entry, zone sweep skips, opens, closes).</i>`;
       const rows = [];
       for (let i = 0; i < ALERT_TYPES.length; i += 2) {
         rows.push(ALERT_TYPES.slice(i, i + 2).map(([k, label]) =>

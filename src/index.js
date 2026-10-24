@@ -731,8 +731,10 @@ async function main() {
   });
 
   // Wire swing trade executor notifications
+  // Paper-mode swing messages (entry queued, pullback entry, opens, TPs, closes) can be muted from /alerts like [DZ]
   swingTradeExecutor.onTradeUpdate(async (msg) => {
-    await bot.sendRaw(`🌊 <b>[SWING]</b> ${msg}`);
+    const critical = swingTradeExecutor.mode === 'live' || /CRITICAL|FAILED|UNPROTECTED/.test(msg);
+    await bot.sendRaw(`🌊 <b>[SWING]</b> ${msg}`, critical ? null : 'swingTrades');
   });
 
   // Wire demand zone executor notifications. Paper-mode DZ messages (entry queued, zone sweep skips, opens, closes)
