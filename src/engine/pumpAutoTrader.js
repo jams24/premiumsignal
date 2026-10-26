@@ -16,6 +16,13 @@ function koreaNote(k) {
 }
 const koreaPct = (k) => (k ? +k.pct.toFixed(2) : null);
 
+// Owner-DM note when the executor lowered the exchange leverage so liquidation stays past the SL
+function liqGuardNote(trade) {
+  const g = trade?.onchainContext?.liqGuard;
+  if (!g) return '';
+  return ` (🛡️ liq guard: ${g.from}x → ${g.to}x, coin maintenance ${g.mmrPct}%${g.mmrKnown ? '' : ' assumed'} → liq ≈ ${liquidationPct(g.to, g.mmrPct).toFixed(1)}%, same position)`;
+}
+
 // Owner-DM line for the "buyers still in control" signs at entry (info only — see measureBuyerSigns)
 function buyersNote(b) {
   if (b === undefined) return '';
@@ -441,7 +448,7 @@ class PumpAutoTrader {
       `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · no spot market, already +${(info.run7d ?? 0).toFixed(0)}% in 7 days\n\n` +
       `💰 Entry: <b>$${p(fill)}</b>\n` +
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position\n` +
-      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
+      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}${liqGuardNote(trade)}\n` +
       `🎯 ${tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
       `🛑 SL $${p(sl)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
       koreaNote(info.korea) +
@@ -492,7 +499,7 @@ class PumpAutoTrader {
       `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · from ${info.via === 'follow-up' ? 'follow-up ✅ ENTER' : 'signal ✅ ENTER'}\n\n` +
       `💰 Entry: <b>$${p(fill)}</b>\n` +
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position${size.fresh && c.halfOnFresh ? ' · 🟠 half size (fresh breakout)' : ''}${size.levCapped ? ` · leverage capped ${size.panelLev}x → ${size.leverage}x` : ''}\n` +
-      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}\n` +
+      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}${liqGuardNote(trade)}\n` +
       `🎯 TP1 $${p(tps[0])} (−${tpPcts[0]}%) · TP2 $${p(tps[1])} · TP3 $${p(tps[2])} · TP4 $${p(tps[3])}\n` +
       `🛑 SL $${p(sl)} (+${PUMP_RULES.slPct}%) → max loss ≈ -$${(pos * PUMP_RULES.slPct / 100).toFixed(2)}\n` +
       `${c.maxSpotSharePct > 0 && info.spot ? `🧪 Spot share: ${info.spot.hasSpot ? `${info.spot.pct.toFixed(1)}%` : 'no spot market'} (limit ${c.maxSpotSharePct}%)\n` : ''}` +

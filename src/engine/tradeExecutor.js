@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const logger = require('../utils/logger');
 const db = require('../db/database');
 const { escapeHtml } = require('../utils/formatting');
-const { marginSaverLeverage } = require('../utils/marginSaver');
+const { marginSaverLeverage, safeLeverage, liquidationPct } = require('../utils/marginSaver');
 
 class TradeExecutor {
   constructor(exchanges, config = {}) {
@@ -568,6 +568,32 @@ class TradeExecutor {
     }
     logger.warn(`${pair}: all leverage attempts failed, using exchange default (assuming ${desiredLeverage}x)`);
     return desiredLeverage;
+  }
+
+  // The coin's maintenance margin rate (%) for a position of `notional` USDT (first risk bracket that holds it).
+  // Cached 6h per exchange+pair. Returns null when the exchange won't say.
+  async maintMarginPct(exchange, exchangeId, pair, notional) {
+    this._mmrCache = this._mmrCache || new Map();
+    const key = `${exchangeId}:${pair}`;
+    let tiers = this._mmrCache.get(key);
+    if (!tiers || Date.now() - tiers.at > 6 * 3600e3) {
+      const id = exchange.markets?.[pair]?.id;
+      if (!id) return null;
+      let list = [];
+      if (exchangeId === 'binance') {
+        const res = await exchange.fapiPrivateGetLeverageBracket({ symbol: id });
+        const row = Array.isArray(res) ? res.find(r => r.symbol === id) || res[0] : res;
+        list = (row?.brackets || []).map(b => ({ cap: parseFloat(b.notionalCap), mmr: parseFloat(b.maintMarginRatio) * 100 }));
+      } else if (exchangeId === 'bybit') {
+        const res = await exchange.publicGetV5MarketRiskLimit({ category: 'linear', symbol: id });
+        list = (res?.result?.list || []).map(t => ({ cap: parseFloat(t.riskLimitValue), mmr: parseFloat(t.maintenanceMargin) * 100 }));
+      }
+      list = list.filter(t => t.cap > 0 && t.mmr >= 0).sort((a, b) => a.cap - b.cap);
+      if (!list.length) return null;
+      tiers = { at: Date.now(), list };
+      this._mmrCache.set(key, tiers);
+    }
+    return (tiers.list.find(t => t.cap >= notional) || tiers.list[tiers.list.length - 1]).mmr;
   }
 
   // Check if notional meets exchange minimum, adjust if needed
@@ -1441,12 +1467,33 @@ class TradeExecutor {
 
       const isManual = signal.manual === true;
       const desiredLeverage = isManual ? signal.manualLeverage : this.calcLeverage(signal);
-      const leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
+      let leverage = await this.setLeverageWithFallback(exchange, pair, desiredLeverage);
 
       let positionSize = isManual ? signal.manualPositionSize : await this.calcPositionSize(signal);
       if (!isManual) positionSize = this.applyConfidenceScale(positionSize, signal);
       const ticker = await exchange.fetchTicker(pair);
       const entryPrice = ticker.last;
+
+      // Liquidation guard: same position, lower leverage when the coin's real maintenance margin would put
+      // liquidation inside the SL (small caps run 4–5% on Binance → 10x liquidates at ~−5%, before a −8% stop).
+      const slRef = parseFloat(signal.entryPrice || signal.currentPrice) || entryPrice;
+      const slPct = signal.stopLoss ? (Math.abs(signal.stopLoss - slRef) / slRef) * 100 : 0;
+      if (slPct > 0) {
+        let mmrPct = null;
+        try { mmrPct = await this.maintMarginPct(exchange, signal.exchange, pair, positionSize); } catch (e) {
+          logger.warn(`${pair}: maintenance margin lookup failed: ${e.message.slice(0, 100)}`);
+        }
+        const mmrUsed = mmrPct != null ? mmrPct : 5; // unknown → assume the small-cap worst case
+        const safe = safeLeverage(slPct, mmrUsed);
+        if (safe && leverage > safe) {
+          const before = leverage;
+          leverage = await this.setLeverageWithFallback(exchange, pair, safe);
+          const ctx = signal.onchainContext = { ...(signal.onchainContext || {}) };
+          if (ctx.chosenLeverage == null) ctx.chosenLeverage = desiredLeverage; // exit rules keep the chosen leverage
+          ctx.liqGuard = { mmrPct: mmrUsed, mmrKnown: mmrPct != null, from: before, to: leverage, slPct: +slPct.toFixed(2) };
+          logger.info(`${pair}: liquidation guard ${before}x → ${leverage}x (mmr ${mmrUsed}%${mmrPct == null ? ' assumed' : ''}, SL ${slPct.toFixed(1)}%, liq ≈ ${liquidationPct(leverage, mmrUsed).toFixed(1)}%)`);
+        }
+      }
 
       // Check margin: scale down position if balance can't cover it
       try {
@@ -1998,7 +2045,8 @@ class TradeExecutor {
         // --- PROFIT PROTECTION + PRE-TP1 TRAIL: lock in gains before TP1 ---
         // Trigger at 2.5% price move OR 12% leveraged ROI (whichever comes first)
         // Manual trades: ROI on the leverage the user chose (the margin saver may run the exchange higher)
-        const roiLeverage = (isManual && trade.onchain_context?.chosenLeverage) || trade.leverage || 1;
+        // (the liquidation guard also records chosenLeverage when it lowers a bot trade's exchange leverage)
+        const roiLeverage = ((isManual || trade.onchain_context?.liqGuard) && trade.onchain_context?.chosenLeverage) || trade.leverage || 1;
         const leveragedPnl = pnlPct * roiLeverage;
         if (xp.preTp1 && !action && !trade.hit_tp1 && (pnlPct > xp.ppPct || leveragedPnl > xp.ppLev)) {
           const currentSL = trade.stop_loss;
