@@ -1,12 +1,27 @@
 #!/usr/bin/env node
 /**
- * Dry-run backtester — replays all closed trades from DB through current engine logic.
- * Compares old actual results vs simulated new results.
- * Run: node src/tests/dryrun.js
+ * Dry-run backtester — replays the closed technical-signal trades (sources 'main' and 'onchain', not the pump
+ * auto/manual trades) through a simple exit model, once with the BASELINE settings and once with the CURRENT ones,
+ * and compares the two. A regression = a trade the current settings make worse than the baseline settings.
+ *
+ *   node src/tests/dryrun.js            compare (exit 0 pass / 1 fail)
+ *   node src/tests/dryrun.js --update   save the current settings as the new baseline
+ *
+ * Current settings come from the code and the DB, not from constants kept by hand:
+ *   - TP1/TP2 close %, profit protect %, max loss per trade: TradeExecutor defaults + bot_settings (id 1 main, 2 onchain)
+ *   - dead hours: parsed from technicalScanner.js
+ * TP/SL prices come from each stored trade. The model is rough (exit price + hit flags, no candles); it shows the
+ * direction of a settings change, not exact P&L. Pump trades are checked by src/tests/pumpcheck.js.
  */
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
-const { RSI, EMA, BollingerBands, MACD, ATR } = require('technicalindicators');
+const TradeExecutor = require('../engine/tradeExecutor');
+
+const BASELINE = path.join(__dirname, 'dryrun.baseline.json');
+const SOURCES = { main: 1, onchain: 2 };
+const update = process.argv.includes('--update');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -14,31 +29,43 @@ const pool = new Pool({
     ? { rejectUnauthorized: false } : false,
 });
 
-// Current engine parameters (keep in sync with technicalScanner.js + tradeExecutor.js)
-const ENGINE = {
-  tp1Mult: 2.5,
-  tp2Mult: 4.5,
-  tp3Mult: 7,
-  slMult: 3,
-  profitProtectPct: 3.0,
-  partialTP1: 0.33,
-  partialTP2: 0.50,
-  partialTP3: 0.50,
-  maxLossPerTrade: 6,
-  deadHoursStart: 4,
-  deadHoursEnd: 5,
-  minQuoteVolume: 1500000,
-};
+// Dead hours as written in technicalScanner.js (`currentHourUTC >= 4 && currentHourUTC <= 5`)
+function deadHours() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'collectors', 'technicalScanner.js'), 'utf8');
+  const m = src.match(/currentHourUTC >= (\d+) && currentHourUTC <= (\d+)/);
+  return m ? { deadHoursStart: +m[1], deadHoursEnd: +m[2] } : { deadHoursStart: null, deadHoursEnd: null };
+}
+
+async function currentParams() {
+  const out = {};
+  for (const [key, id] of Object.entries(SOURCES)) {
+    const te = new TradeExecutor({}, { settingsKey: key });
+    const { rows } = await pool.query('SELECT config FROM bot_settings WHERE id = $1', [id]);
+    if (rows[0]?.config) te.applyConfig(rows[0].config);
+    out[key] = {
+      partialTP1: te.tp1ClosePct, partialTP2: te.tp2ClosePct, partialTP3: 0.5,
+      profitProtectPct: te.profitProtectPct, maxLossPerTrade: te.maxLossPerTrade, ...deadHours(),
+    };
+  }
+  return out;
+}
 
 async function loadTrades() {
   const { rows } = await pool.query(`
     SELECT *, created_at AT TIME ZONE 'UTC' as created_utc, closed_at AT TIME ZONE 'UTC' as closed_utc
-    FROM trades WHERE status = 'closed' ORDER BY closed_at
-  `);
+    FROM trades
+    WHERE status = 'closed' AND source = ANY($1)
+      AND COALESCE(onchain_context->>'autoPump', 'false') <> 'true'
+      AND COALESCE(onchain_context->>'manual', 'false') <> 'true'
+    ORDER BY closed_at
+  `, [Object.keys(SOURCES)]);
   return rows;
 }
 
-function simulateTrade(trade) {
+// Recorded result: remainder P&L + TP partials
+const recordedPnl = (t) => (parseFloat(t.pnl_usd) || 0) + (parseFloat(t.realized_pnl) || 0);
+
+function simulateTrade(trade, P) {
   const isLong = trade.direction === 'long';
   const entry = parseFloat(trade.entry_price);
   const exit = parseFloat(trade.exit_price);
@@ -46,197 +73,113 @@ function simulateTrade(trade) {
   const tp1 = parseFloat(trade.tp1);
   const tp2 = parseFloat(trade.tp2);
   const tp3 = parseFloat(trade.tp3);
-  const sl = parseFloat(trade.original_stop_loss || trade.stop_loss);
+  const result = { pnl: 0, reason: trade.close_reason, changes: [] };
 
-  const result = {
-    symbol: trade.symbol,
-    mode: trade.mode,
-    direction: trade.direction,
-    oldPnl: (parseFloat(trade.pnl_usd) || 0) / (trade.leverage || 1),
-    oldReason: trade.close_reason,
-    newPnl: 0,
-    newReason: trade.close_reason,
-    changes: [],
-  };
-
-  // --- FILTER CHECKS ---
   const entryHour = trade.created_utc ? new Date(trade.created_utc).getUTCHours() : null;
-  if (entryHour !== null && entryHour >= ENGINE.deadHoursStart && entryHour <= ENGINE.deadHoursEnd) {
-    result.newPnl = 0;
-    result.newReason = 'blocked_dead_hours';
+  if (entryHour !== null && P.deadHoursStart != null && entryHour >= P.deadHoursStart && entryHour <= P.deadHoursEnd) {
+    result.reason = 'blocked_dead_hours';
     result.changes.push(`Blocked: entered during dead hours (${entryHour} UTC)`);
     return result;
   }
 
-  // --- SIMULATE PRICE PATH ---
-  // We approximate: did price reach TP1/TP2/TP3 before hitting SL?
-  // Using the actual exit price + close_reason as ground truth for what happened
-
+  // Did price reach TP1/TP2/TP3? Hit flags, or the exit price itself
   const priceReachedTP1 = trade.hit_tp1 || (isLong ? exit >= tp1 : exit <= tp1);
   const priceReachedTP2 = trade.hit_tp2 || (isLong ? exit >= tp2 : exit <= tp2);
   const priceReachedTP3 = trade.hit_tp3 || (isLong ? exit >= tp3 : exit <= tp3);
-
-  // For trades that hit SL/max_loss but price may have touched TP1 before reversing
-  // We check: was the TP1 between entry and SL direction? If price moved past TP1 then reversed
-  // The hit_tp1 flag tells us if the bot detected it
-  const tp1Pct = isLong
-    ? ((tp1 - entry) / entry) * 100
-    : ((entry - tp1) / entry) * 100;
+  const movePct = (px) => (isLong ? (px - entry) / entry : (entry - px) / entry) * 100;
 
   let remainingSize = size;
-  let realizedPnl = 0;
-
-  // Profit protection check: if price moved >5% in our favor at any point
+  let pnl = 0;
   const maxFavorableMove = isLong
     ? ((Math.max(exit, tp1, entry) - entry) / entry) * 100
     : ((entry - Math.min(exit, tp1, entry)) / entry) * 100;
   let slMovedToBreakeven = false;
 
-  // Partial exit simulation
-  if (priceReachedTP1) {
-    const closeSize = remainingSize * ENGINE.partialTP1;
-    const tp1PnlPct = isLong
-      ? ((tp1 - entry) / entry) * 100
-      : ((entry - tp1) / entry) * 100;
-    realizedPnl += (tp1PnlPct / 100) * closeSize;
+  for (const [hit, px, frac, label] of [[priceReachedTP1, tp1, P.partialTP1, 'TP1'], [priceReachedTP2, tp2, P.partialTP2, 'TP2'], [priceReachedTP3, tp3, P.partialTP3, 'TP3']]) {
+    if (!hit) continue;
+    const closeSize = remainingSize * frac;
+    pnl += (movePct(px) / 100) * closeSize;
     remainingSize -= closeSize;
-    slMovedToBreakeven = true;
-    result.changes.push(`TP1: closed ${(ENGINE.partialTP1 * 100).toFixed(0)}% (+$${((tp1PnlPct / 100) * closeSize).toFixed(2)})`);
+    if (label === 'TP1') slMovedToBreakeven = true;
+    result.changes.push(`${label}: closed ${(frac * 100).toFixed(0)}% (+$${((movePct(px) / 100) * closeSize).toFixed(2)})`);
   }
 
-  if (priceReachedTP2) {
-    const closeSize = remainingSize * ENGINE.partialTP2;
-    const tp2PnlPct = isLong
-      ? ((tp2 - entry) / entry) * 100
-      : ((entry - tp2) / entry) * 100;
-    realizedPnl += (tp2PnlPct / 100) * closeSize;
-    remainingSize -= closeSize;
-    result.changes.push(`TP2: closed ${(ENGINE.partialTP2 * 100).toFixed(0)}% (+$${((tp2PnlPct / 100) * closeSize).toFixed(2)})`);
-  }
-
-  if (priceReachedTP3) {
-    const closeSize = remainingSize * ENGINE.partialTP3;
-    const tp3PnlPct = isLong
-      ? ((tp3 - entry) / entry) * 100
-      : ((entry - tp3) / entry) * 100;
-    realizedPnl += (tp3PnlPct / 100) * closeSize;
-    remainingSize -= closeSize;
-    result.changes.push(`TP3: closed ${(ENGINE.partialTP3 * 100).toFixed(0)}% (+$${((tp3PnlPct / 100) * closeSize).toFixed(2)})`);
-  }
-
-  // Profit protection: if up >5% and no TP hit, SL moves to breakeven
-  if (!priceReachedTP1 && maxFavorableMove > ENGINE.profitProtectPct) {
+  if (!priceReachedTP1 && maxFavorableMove > P.profitProtectPct) {
     slMovedToBreakeven = true;
     result.changes.push(`Profit protection: +${maxFavorableMove.toFixed(1)}% → SL to breakeven`);
   }
 
-  // Remaining position closes at actual exit or breakeven
   if (remainingSize > 0) {
-    let remainExitPnlPct;
     if (slMovedToBreakeven && ['sl', 'max_loss'].includes(trade.close_reason)) {
-      // SL was at breakeven, so remaining closes at ~$0
-      remainExitPnlPct = 0;
-      result.newReason = 'sl_breakeven';
+      result.reason = 'sl_breakeven';
       result.changes.push(`Remaining ${(remainingSize / size * 100).toFixed(0)}% closed at breakeven`);
     } else {
-      // Same exit as original
-      remainExitPnlPct = isLong
-        ? ((exit - entry) / entry) * 100
-        : ((entry - exit) / entry) * 100;
+      pnl += (movePct(exit) / 100) * remainingSize;
     }
-    realizedPnl += (remainExitPnlPct / 100) * remainingSize;
   }
 
-  // Max loss cap
-  if (realizedPnl < -ENGINE.maxLossPerTrade) {
-    realizedPnl = -ENGINE.maxLossPerTrade;
-    result.newReason = 'max_loss_capped';
+  if (P.maxLossPerTrade > 0 && pnl < -P.maxLossPerTrade) {
+    pnl = -P.maxLossPerTrade;
+    result.reason = 'max_loss_capped';
   }
-
-  result.newPnl = realizedPnl;
+  result.pnl = pnl;
   return result;
 }
 
 async function run() {
+  const current = await currentParams();
+  if (update) {
+    fs.writeFileSync(BASELINE, JSON.stringify({ savedAt: new Date().toISOString(), params: current }, null, 2) + '\n');
+    console.log('Baseline saved →', path.relative(process.cwd(), BASELINE), JSON.stringify(current));
+    await pool.end();
+    process.exit(0);
+  }
+  if (!fs.existsSync(BASELINE)) throw new Error('No baseline yet — run with --update first.');
+  const base = JSON.parse(fs.readFileSync(BASELINE)).params;
   const trades = await loadTrades();
+
   console.log(`\n${'='.repeat(80)}`);
-  console.log(`DRY RUN BACKTEST — ${trades.length} historical trades`);
-  console.log(`Engine params: TP1=${ENGINE.tp1Mult}x SL=${ENGINE.slMult}x Partial=${ENGINE.partialTP1*100}/${ENGINE.partialTP2*100}/${ENGINE.partialTP3*100}%`);
+  console.log(`DRY RUN — ${trades.length} closed technical-signal trades (${Object.keys(SOURCES).join(', ')}), baseline vs current settings`);
+  for (const k of Object.keys(SOURCES)) {
+    const diff = Object.keys(current[k]).filter(p => current[k][p] !== base[k]?.[p]);
+    console.log(`  ${k}: ${JSON.stringify(current[k])}${diff.length ? `\n    changed vs baseline: ${diff.map(p => `${p} ${base[k]?.[p]} → ${current[k][p]}`).join(', ')}` : ' (same as baseline)'}`);
+  }
   console.log(`${'='.repeat(80)}\n`);
 
-  let oldTotalLive = 0, newTotalLive = 0;
-  let oldTotalPaper = 0, newTotalPaper = 0;
-  let improved = 0, same = 0, regressed = 0;
-  let blocked = 0;
-
-  const results = [];
-
-  for (const trade of trades) {
-    const sim = simulateTrade(trade);
-    results.push(sim);
-
-    if (sim.mode === 'live') {
-      oldTotalLive += sim.oldPnl;
-      newTotalLive += sim.newPnl;
-    } else {
-      oldTotalPaper += sim.oldPnl;
-      newTotalPaper += sim.newPnl;
-    }
-
-    const diff = sim.newPnl - sim.oldPnl;
-    if (sim.newReason === 'blocked_dead_hours') blocked++;
-    else if (Math.abs(diff) < 0.01) same++;
-    else if (diff > 0) improved++;
-    else if (sim.oldReason === 'manual_close') { same++; } // manual closes are user-timed, not regressions
+  const tot = { live: { rec: 0, base: 0, now: 0 }, paper: { rec: 0, base: 0, now: 0 } };
+  let improved = 0, same = 0, regressed = 0, blocked = 0;
+  const lines = [];
+  for (const t of trades) {
+    const a = simulateTrade(t, base[t.source]), b = simulateTrade(t, current[t.source]);
+    const m = tot[t.mode === 'live' ? 'live' : 'paper'];
+    m.rec += recordedPnl(t); m.base += a.pnl; m.now += b.pnl;
+    const d = b.pnl - a.pnl;
+    if (b.reason === 'blocked_dead_hours' && a.reason !== 'blocked_dead_hours') blocked++;
+    if (Math.abs(d) < 0.01) { same++; continue; }
+    if (d > 0) improved++;
+    else if (t.close_reason === 'manual_close') same++; // manual closes are user-timed, not regressions
     else regressed++;
+    lines.push(`${d > 0 ? '✅' : '❌'} ${t.mode === 'live' ? '💰' : '📝'} #${t.id} ${t.symbol.padEnd(8)} ${t.direction.padEnd(5)} | baseline $${a.pnl.toFixed(2).padStart(7)} → now $${b.pnl.toFixed(2).padStart(7)} (${b.reason}) | Δ $${d.toFixed(2)}`);
+    for (const c of b.changes) lines.push(`   └─ ${c}`);
   }
 
-  // Print per-trade details
-  console.log('TRADE DETAILS:');
-  console.log(`${'─'.repeat(80)}`);
-  for (const r of results) {
-    const diff = r.newPnl - r.oldPnl;
-    const emoji = r.newReason === 'blocked_dead_hours' ? '🚫' : diff > 0.01 ? '✅' : diff < -0.01 ? '❌' : '➖';
-    const tag = r.mode === 'live' ? '💰' : '📝';
-    console.log(`${emoji} ${tag} ${r.symbol.padEnd(8)} ${r.direction.padEnd(5)} | Old: $${r.oldPnl.toFixed(2).padStart(8)} (${r.oldReason}) → New: $${r.newPnl.toFixed(2).padStart(8)} (${r.newReason}) | Δ $${diff.toFixed(2)}`);
-    for (const c of r.changes) console.log(`   └─ ${c}`);
+  if (lines.length) { console.log('CHANGED TRADES:'); console.log(lines.join('\n')); console.log(); }
+  console.log(`${'='.repeat(80)}\nSUMMARY\n${'='.repeat(80)}`);
+  for (const [k, m] of Object.entries(tot)) {
+    console.log(`${k === 'live' ? '💰 LIVE' : '📝 PAPER'}: recorded $${m.rec.toFixed(2)} | model baseline $${m.base.toFixed(2)} → current $${m.now.toFixed(2)} (Δ $${(m.now - m.base).toFixed(2)})`);
   }
+  console.log(`📊 ✅ improved ${improved} · ➖ same ${same} · ❌ regressed ${regressed} · 🚫 newly blocked ${blocked}`);
 
-  // Summary
+  const liveOk = tot.live.now >= tot.live.base - 0.01;
+  const passed = liveOk && regressed === 0;
   console.log(`\n${'='.repeat(80)}`);
-  console.log('SUMMARY');
-  console.log(`${'='.repeat(80)}`);
-  console.log(`\n💰 LIVE TRADES:`);
-  console.log(`   Old P&L: $${oldTotalLive.toFixed(2)}`);
-  console.log(`   New P&L: $${newTotalLive.toFixed(2)}`);
-  console.log(`   Change:  $${(newTotalLive - oldTotalLive).toFixed(2)} (${oldTotalLive !== 0 ? ((newTotalLive - oldTotalLive) / Math.abs(oldTotalLive) * 100).toFixed(0) : 0}%)`);
-
-  console.log(`\n📝 PAPER TRADES:`);
-  console.log(`   Old P&L: $${oldTotalPaper.toFixed(2)}`);
-  console.log(`   New P&L: $${newTotalPaper.toFixed(2)}`);
-  console.log(`   Change:  $${(newTotalPaper - oldTotalPaper).toFixed(2)}`);
-
-  console.log(`\n📊 TRADE BREAKDOWN:`);
-  console.log(`   ✅ Improved: ${improved}`);
-  console.log(`   ➖ Same:     ${same}`);
-  console.log(`   ❌ Regressed: ${regressed}`);
-  console.log(`   🚫 Blocked:  ${blocked}`);
-
-  // PASS/FAIL verdict
-  const liveImproved = newTotalLive >= oldTotalLive;
-  const noRegression = regressed === 0;
-  const passed = liveImproved && noRegression;
-
-  console.log(`\n${'='.repeat(80)}`);
-  if (passed) {
-    console.log('✅ DRY RUN PASSED — No regressions, live P&L improved or equal');
-  } else {
+  if (passed) console.log('✅ DRY RUN PASSED — No regressions vs baseline, live P&L equal or better');
+  else {
     console.log('❌ DRY RUN FAILED');
-    if (!liveImproved) console.log('   ⚠️  Live P&L decreased');
-    if (!noRegression) console.log(`   ⚠️  ${regressed} trade(s) regressed`);
+    if (!liveOk) console.log('   ⚠️  Live P&L lower than the baseline settings');
+    if (regressed) console.log(`   ⚠️  ${regressed} trade(s) regressed vs the baseline settings`);
   }
   console.log(`${'='.repeat(80)}\n`);
-
   await pool.end();
   process.exit(passed ? 0 : 1);
 }

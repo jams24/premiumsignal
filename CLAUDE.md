@@ -1,32 +1,42 @@
 # CryptoSignal Bot — Development Guide
 
-## Mandatory Dry Run
+## Mandatory Checks Before Committing Trading Logic
 
-**Before committing ANY change to trading logic**, run the backtest:
+Two checks, each exits 0 (pass) or 1 (fail). Both compare the current code/config against a saved baseline.
 
+### 1. Dry run — technical-signal trades
 ```bash
 node src/tests/dryrun.js
 ```
-
-This replays all historical trades from the database through the current engine and compares old vs new P&L. The script exits with code 0 (pass) or 1 (fail).
-
-### Rules
-- **MUST PASS before committing** changes to these files:
+Replays the closed `main`/`onchain` technical-signal trades (not pump auto/manual trades) through a simple exit model
+with the baseline settings and with the current ones. Current settings are read from the code and DB (executor TP1/TP2
+close %, profit protect %, max loss per trade; dead hours parsed from technicalScanner.js) — no constants to keep in sync.
+- **MUST PASS before committing** changes to:
   - `src/engine/tradeExecutor.js` (trade execution, TP/SL logic, partial exits)
   - `src/collectors/technicalScanner.js` (signal scoring, filters, TP/SL calculation)
   - `src/collectors/smcAnalyzer.js` (SMC structure analysis)
   - `src/engine/signalEngine.js` (signal processing)
-- **Zero regressions** — no individual trade should perform worse
-- **Live P&L must improve or stay equal** — paper regressions on manual closes are acceptable (user-timed exits)
-- If the dry run fails, **fix the regression before committing**
+- **Zero regressions vs the baseline settings**, and live P&L equal or better (manual closes don't count)
+- The model only uses stored trades (exit price + TP hit flags), so it reacts to the settings above, not to code
+  paths like order placement or leverage. Say so when a change isn't covered.
 
-### Updating the Backtest
-When engine parameters change, update `ENGINE` constants in `src/tests/dryrun.js` to match:
-- `tp1Mult`, `tp2Mult`, `tp3Mult`, `slMult` — ATR multipliers (from technicalScanner.js)
-- `partialTP1/TP2/TP3` — partial exit fractions (from tradeExecutor.js checkOpenTrades)
-- `profitProtectPct` — breakeven trail threshold (from tradeExecutor.js)
-- `maxLossPerTrade` — per-trade loss cap (from tradeExecutor.js)
-- `deadHoursStart/End` — suppressed hours UTC (from technicalScanner.js)
+### 2. Pump check — pump short + runner long
+```bash
+node --max-old-space-size=8000 src/tests/pumpcheck.js
+```
+Replays the pump-signal history (`backtest/data` Jun–Oct, `backtest/data_early` Dec–May; git-ignored, fill with
+`sh backtest/update.sh`) through the bot's own pump code: `entryVerdict`, the signal-time re-check, `blockReason`
+(BTC pause, spot share, no-spot), `isRunnerSignal`, TP/stop levels, early stop move, executor TP close sizes — with the
+live /autopump config from the DB (`--defaults` for code defaults). $150/trade, fees in.
+- **MUST PASS before committing** changes to `src/collectors/pumpSignalCheck.js`, `src/engine/pumpAutoTrader.js`,
+  `src/engine/pumpRunnerPaper.js`, `src/collectors/spotShare.js`, and to the TP/stop handling in `tradeExecutor.js`
+- Pass = P&L equal or better in **both** periods; it lists trades that got worse, new and no longer taken
+- Not modelled: max open, daily loss stop, real fills/slippage, liquidation
+
+### Updating a baseline
+Only after the user approves a change that moves the result: `node src/tests/dryrun.js --update` /
+`node --max-old-space-size=8000 src/tests/pumpcheck.js --update`, and commit the baseline JSON with the change.
+A /autopump settings change in Telegram also moves the pump check (it reads the live config) — re-baseline then too.
 
 ## Architecture
 

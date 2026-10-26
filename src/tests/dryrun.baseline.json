@@ -1,0 +1,23 @@
+{
+  "savedAt": "2026-10-26T18:21:49.449Z",
+  "params": {
+    "main": {
+      "partialTP1": 0.33,
+      "partialTP2": 0.5,
+      "partialTP3": 0.5,
+      "profitProtectPct": 2.5,
+      "maxLossPerTrade": 6,
+      "deadHoursStart": 4,
+      "deadHoursEnd": 5
+    },
+    "onchain": {
+      "partialTP1": 0.25,
+      "partialTP2": 0.5,
+      "partialTP3": 0.5,
+      "profitProtectPct": 3,
+      "maxLossPerTrade": 4,
+      "deadHoursStart": 4,
+      "deadHoursEnd": 5
+    }
+  }
+}
