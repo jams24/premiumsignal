@@ -71,6 +71,18 @@ function beStopLabel(c) {
   return s > 0 ? `−${s}%` : 'entry';
 }
 
+// Which pump strategy opened a trade, for the position views: the auto short is the exhaustion short, switch trades
+// are the no-spot switch (side from the closed-candle 7-day run), auto longs without the switch flag are the retired runner
+function strategyTag(t) {
+  const c = t.onchain_context || {};
+  if (c.switchTrade) {
+    const run = Number(c.run7d);
+    return `🔀 Switch ${t.direction === 'long' ? 'LONG' : 'SHORT'}${c.run7d != null && isFinite(run) ? ` · 7D ${run >= 0 ? '+' : ''}${run.toFixed(0)}%` : ''}`;
+  }
+  if (c.autoPump) return t.direction === 'short' ? '🔥 Exhaust SHORT' : '🏃 Runner LONG (retired)';
+  return null;
+}
+
 function runLabel(run7d) {
   const type = runType(run7d);
   if (!type) return null;
@@ -1804,6 +1816,8 @@ class TelegramBot {
     const positionCard = (t, st, price) => {
       const tpRow = st.tps.map(x => `${x.hit ? '✅' : '⬜'}${x.n}`).join(' ');
       let card = `${st.isLong ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(t.symbol)}</b> ${posTag(t)} · ${t.mode === 'live' ? '💰 LIVE' : '📝 paper'} · ${escapeHtml(t.exchange || '?')} · ${st.lev}x\n`;
+      const kind = strategyTag(t);
+      if (kind) card += `  <b>${kind}</b>\n`;
       card += `  Entry $${fmtP(st.entry)}${price ? ` → Now <b>$${fmtP(price)}</b>` : ' · <i>price unavailable</i>'}\n`;
       card += st.pct == null
         ? `  P&L: —${st.realized ? ` · Banked ${fmtUsd(st.realized)}` : ''}\n`
@@ -1867,10 +1881,10 @@ class TelegramBot {
         const part = (live) => { const g = closed.find(x => x.live === live); return g ? `${g.n} · <b>${fmtUsd(g.pnl)}</b>` : '0'; };
         text += `📅 Closed today (UTC): 💰 live ${part(true)} · 📝 paper ${part(false)}\n`;
       }
-      text += `\n<i>🤖 auto-pump · 🔧 manual · 🔗 onchain · 🌊 swing · 🧱 demand zone · 📡 main\nSorted by ${POS_SORTS[sort]}${pages > 1 ? ` · page ${page + 1}/${pages}` : ''} · updated ${utcClock()} UTC</i>`;
+      text += `\n<i>🤖 auto-pump (🔥 exhaust short · 🔀 no-spot switch) · 🔧 manual · 🔗 onchain · 🌊 swing · 🧱 demand zone · 📡 main\nSorted by ${POS_SORTS[sort]}${pages > 1 ? ` · page ${page + 1}/${pages}` : ''} · updated ${utcClock()} UTC</i>`;
 
       const cb = (f, so, pg) => `mt_pv_${f}_${so}_${pg}`;
-      const kb = grid(shown.map(r => Markup.button.callback(`${r.st.isLong ? '🟢' : '🔴'} ${r.t.symbol}${r.st.pct == null ? '' : ` ${fmtUsd(r.st.total)}`} ›`, `mt_pd_${r.t.id}`)), 2);
+      const kb = grid(shown.map(r => Markup.button.callback(`${r.st.isLong ? '🟢' : '🔴'}${r.t.onchain_context?.switchTrade ? '🔀' : r.t.onchain_context?.autoPump && !r.st.isLong ? '🔥' : ''} ${r.t.symbol}${r.st.pct == null ? '' : ` ${fmtUsd(r.st.total)}`} ›`, `mt_pd_${r.t.id}`)), 2);
       if (pages > 1) {
         kb.push([
           Markup.button.callback(page > 0 ? '◀️ Prev' : '·', page > 0 ? cb(filter, sort, page - 1) : 'mt_noop'),
@@ -2236,7 +2250,7 @@ class TelegramBot {
         if (!trades.length) return ctx.replyWithHTML(symbol ? `⚠️ No open position in ${escapeHtml(symbol)}.` : '📭 No open positions.');
         if (trades.length === 1) return sendCloseConfirm(ctx, trades[0]);
         const rows = grid(trades.slice(0, 20).map(t =>
-          Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} ${t.symbol} · ${t.source}${t.onchain_context?.manual ? ' 🔧' : ''}`, `mt_close_${t.id}`)), 2);
+          Markup.button.callback(`${t.direction === 'long' ? '🟢' : '🔴'} ${t.symbol} · ${strategyTag(t) || `${t.source}${t.onchain_context?.manual ? ' 🔧' : ''}`}`, `mt_close_${t.id}`)), 2);
         await ctx.replyWithHTML('🔧 <b>Which position do you want to close?</b>', Markup.inlineKeyboard(rows));
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
@@ -4104,7 +4118,8 @@ class TelegramBot {
           const modeTag = t.mode === 'paper' ? '📝' : '💰';
           const dcaStatus = t.dca_filled_3 ? '3/3' : t.dca_filled_2 ? '2/3' : '1/3';
           const slTrailed = t.original_stop_loss && t.stop_loss !== t.original_stop_loss;
-          msg += `${modeTag} ${dir} <b>$${t.symbol}</b> (${t.exchange})\n`;
+          const kind = strategyTag(t);
+          msg += `${modeTag} ${dir} <b>$${t.symbol}</b> (${t.exchange})${kind ? ` · ${kind}` : ''}\n`;
           msg += `   Entry: $${t.entry_price} | Size: $${t.position_size} (${t.leverage}x) | DCA: ${dcaStatus}\n`;
           msg += `   TP1: $${t.tp1}${t.hit_tp1 ? ' ✅' : ''} | TP2: $${t.tp2}${t.hit_tp2 ? ' ✅' : ''} | TP3: $${t.tp3}${t.hit_tp3 ? ' ✅' : ''}${t.tp4 ? ` | TP4: $${t.tp4}` : ''}\n`;
           msg += `   SL: $${t.stop_loss}${slTrailed ? ' 🔒 (trailed)' : ''}${t.invalidation ? ` | Inv: $${t.invalidation}` : ''}\n\n`;
@@ -9298,7 +9313,9 @@ class TelegramBot {
           const _d = new Date(t.created_at);
           const openTime = `${_d.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][_d.getUTCMonth()]} ${String(_d.getUTCHours()).padStart(2,'0')}:${String(_d.getUTCMinutes()).padStart(2,'0')}`;
 
+          const kind = strategyTag(t);
           msg += `${icon}${dir} <b>${t.symbol}</b> (${t.exchange}) · ${_ageStr} · ${openTime}\n`;
+          if (kind) msg += `${kind}\n`;
           msg += `Entry: $${t.entry_price.toPrecision(6)} → $${currentPrice ? currentPrice.toPrecision(6) : '?'}\n`;
           msg += `PnL: <b>${pnlLev >= 0 ? '+' : ''}${pnlLev.toFixed(1)}%</b> ($${pnlUsd.toFixed(2)}) | ${t.leverage}x\n`;
           msg += `DCA: ${dca} | TP: ${tpHit} | SL: $${t.stop_loss.toPrecision(6)}\n`;
