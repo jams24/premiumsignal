@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 
@@ -2517,7 +2517,8 @@ class TelegramBot {
           [Markup.button.callback(`🔀 Switch real trades: ${c.switchLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_switch_live')],
           [Markup.button.callback(`🔀 Switch lab: ${c.switchTest !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_switch'),
            Markup.button.callback(`🔀 Switch log & size${ws ? ` (${ws.closed + ws.open})` : ''}`, 'ap_switch_log')],
-          [Markup.button.callback(`🎯 Switch long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1')]] : []),
+          [Markup.button.callback(`🎯 Switch long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1'),
+           Markup.button.callback(`💵 Switch size ⚙️`, 'ap_swsize')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback(`💵 Auto size: ${money(full.margin)} × ${full.leverage}x ⚙️`, 'ap_size')],
         ...(ap.runner ? [[Markup.button.callback('📜 Old runner labs (retired)', 'ap_oldlabs')]] : []),
@@ -2721,7 +2722,7 @@ class TelegramBot {
       let text = `🔀 <b>SWITCH LAB</b> — test only, no real orders\n` +
         `<i>No-spot coins at the moment the signal goes out. 7-day run on closed 1h candles: 12–50% → LONG, 50–${to}% → SHORT, otherwise skip. ` +
         `Stop −8% → entry after TP1 · TP 5/12/20/30% · max 48h. Replay with the live delay: +$488 / +$591 per period at $150, t ≈ 2.5 — still unproven live. ` +
-        `Margin / leverage below = the switch's own size (paper lab and real switch trades).</i>\n`;
+        `💵 Switch size below = the size of the paper lab and the real switch trades.</i>\n`;
       if (s) {
         const openPnl = open.reduce((a, r, i) => a + lab.view(r, prices[i]).pnl, 0);
         text += `\n📊 ${s.closed} closed · ${s.wins} won · <b>${fmtUsd(s.pnl)}</b>${open.length ? ` · open now <b>${fmtUsd(openPnl)}</b>` : ''}\n` +
@@ -2743,7 +2744,7 @@ class TelegramBot {
       const sz = await ap.switchSizing();
       return { text, keyboard: Markup.inlineKeyboard([
         [Markup.button.callback('🔄 Refresh', 'ap_switch_log'), Markup.button.callback(`🔴 Short zone: 50–${to}%`, 'ap_switch_to')],
-        [Markup.button.callback(`💵 Margin: $${sz.margin}`, 'ap_switch_margin'), Markup.button.callback(`⚙️ Leverage: ${sz.leverage}x`, 'ap_switch_lev')],
+        [Markup.button.callback(`💵 Switch size: $${sz.margin} × ${sz.leverage}x ⚙️`, 'ap_swsize')],
         [Markup.button.callback('⬅️ Back', 'ap_refresh')],
       ]) };
     };
@@ -2756,24 +2757,6 @@ class TelegramBot {
       await ap.update({ switchTest: ap.config.switchTest === false });
       await ack(ctx, ap.config.switchTest !== false ? 'Switch lab ON (paper)' : 'Switch lab OFF (open ones keep being tracked)');
       await showAutoPump(ctx, true);
-    });
-    const SWITCH_MARGINS = [10, 20, 30, 50, 75, 100];
-    const SWITCH_LEVERAGES = [3, 5, 7, 10];
-    apAction('ap_switch_margin', async (ctx, ap) => {
-      const cur = Number(ap.config.switchMargin) || 30;
-      const next = SWITCH_MARGINS[(SWITCH_MARGINS.indexOf(cur) + 1) % SWITCH_MARGINS.length];
-      await ap.update({ switchMargin: next });
-      const sz = await ap.switchSizing();
-      await ack(ctx, `Switch size $${sz.margin} × ${sz.leverage}x = $${sz.position} (stop ≈ -$${(sz.position * 0.08).toFixed(2)})`);
-      await showRunner(ctx, await switchLabView(ap));
-    });
-    apAction('ap_switch_lev', async (ctx, ap) => {
-      const cur = Number(ap.config.switchLeverage) || 5;
-      const next = SWITCH_LEVERAGES[(SWITCH_LEVERAGES.indexOf(cur) + 1) % SWITCH_LEVERAGES.length];
-      await ap.update({ switchLeverage: next });
-      const sz = await ap.switchSizing();
-      await ack(ctx, `Switch size $${sz.margin} × ${sz.leverage}x = $${sz.position} (stop ≈ -$${(sz.position * 0.08).toFixed(2)})`);
-      await showRunner(ctx, await switchLabView(ap));
     });
     apAction('ap_switch_live', async (ctx, ap) => {
       if (ap.config.switchLive === true) {
@@ -2976,6 +2959,54 @@ class TelegramBot {
         if (!/not modified/i.test(e.message)) throw e;
       });
     };
+    // Switch size menu: same layout as the short's; 0 = follow the short's auto size
+    const showSwitchSizeMenu = async (ctx, ap) => {
+      const c = ap.config, sl = PUMP_RULES.slPct, owner = c.ownerId || ctx.from.id;
+      const sz = await ap.switchSizing(owner);
+      const full = await ap.sizing(PUMP_RULES.extendedRunPct, owner);
+      const m = Number(c.switchMargin ?? 30), l = Number(c.switchLeverage ?? 5);
+      const text = [
+        `💵 <b>Switch trade size</b> (🔀 no-spot longs and shorts)`,
+        '',
+        `Now: <b>${money(sz.margin)} × ${sz.leverage}x = ${money(sz.position)}</b> position`,
+        `   margin ${sz.sameM ? `= short size (${money(full.margin)})` : '<b>own</b>'} · leverage ${sz.sameL ? `= short size (${full.leverage}x)` : '<b>own</b>'}`,
+        `🛑 SL −${sl}% loses <b>-${money(sz.position * sl / 100)}</b> · TP1 (25% at 5%) +${money(sz.position * 0.25 * 0.05)}`,
+        sz.marginSaver
+          ? `🏦 Margin saver ON: exchange runs <b>${sz.exchangeLev}x</b> → locks about <b>${money(sz.locked)}</b> (the liquidation guard may lower it on high-margin coins)`
+          : `🏦 Margin saver OFF: exchange runs ${sz.exchangeLev}x → locks ${money(sz.locked)}`,
+        `🤖 Regular short for comparison: ${money(full.margin)} × ${full.leverage}x = ${money(full.position)}`,
+        '',
+        `<i>Applies to new switch trades and the switch paper lab. "= short" follows the 💵 Auto size of the regular short. Max ${AUTO_MAX_LEVERAGE}x.</i>`,
+      ].join('\n');
+      const mBtns = SWITCH_MARGINS.map(v => Markup.button.callback(`${v === m ? '✅ ' : ''}${v > 0 ? '$' + v : '= short'}`, `ap_swm_${v}`));
+      const lBtns = SWITCH_LEVERAGES.map(v => Markup.button.callback(`${v === l ? '✅ ' : ''}${v > 0 ? v + 'x' : '= short'}`, `ap_swl_${v}`));
+      const rows = (btns, n) => Array.from({ length: Math.ceil(btns.length / n) }, (_, i) => btns.slice(i * n, i * n + n));
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('1️⃣ Margin:', 'ap_swsize')],
+        ...rows(mBtns, 4),
+        [Markup.button.callback('2️⃣ Leverage:', 'ap_swsize')],
+        ...rows(lBtns, 5),
+        [Markup.button.callback('🔀 Switch log', 'ap_switch_log'), Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_swsize', async (ctx, ap) => { await ack(ctx); await showSwitchSizeMenu(ctx, ap); });
+    apAction(/^ap_swm_(\d+)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!SWITCH_MARGINS.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update({ switchMargin: v });
+      await ack(ctx, v > 0 ? `Switch margin $${v} (new switch trades)` : 'Switch margin = short size');
+      await showSwitchSizeMenu(ctx, ap);
+    });
+    apAction(/^ap_swl_(\d+)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!SWITCH_LEVERAGES.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update({ switchLeverage: v });
+      await ack(ctx, v > 0 ? `Switch leverage ${v}x (new switch trades)` : 'Switch leverage = short size');
+      await showSwitchSizeMenu(ctx, ap);
+    });
     apAction('ap_size', async (ctx, ap) => { await ack(ctx); await showSizeMenu(ctx, ap); });
     apAction(/^ap_szm_(\d+)$/, async (ctx, ap) => {
       const v = Number(ctx.match[1]);

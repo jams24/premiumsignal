@@ -91,6 +91,8 @@ const DEFAULTS = {
 const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
 const AUTO_MARGINS = [0, 10, 20, 30, 50, 75, 100]; // /autopump margin buttons (0 = from /trade)
 const AUTO_LEVERAGES = [0, 3, 5, 7, 10];           // /autopump leverage buttons (0 = from /trade)
+const SWITCH_MARGINS = [0, 10, 20, 30, 50, 75, 100]; // switch size menu (0 = same as the short's auto size)
+const SWITCH_LEVERAGES = [0, 3, 5, 7, 10];
 const BE_AT_PCTS = [2, 2.5, 3, 3.5, 4, 4.5, 4.8]; // trigger buttons in /autopump (only those below TP1 are shown)
 const BE_STOP_PCTS = [0, 2, 3, 4, 5, 6, 7];       // new stop buttons, % from entry (0 = entry)
 const BE_DEFAULT = { at: 4.5, stop: 5 };          // best in the backtest
@@ -256,16 +258,19 @@ class PumpAutoTrader {
     return { side: 'short', tpPcts, slPct: PUMP_RULES.slPct, tps: tpPcts.map(p => entry * (1 - p / 100)), stopLoss: entry * (1 + PUMP_RULES.slPct / 100) };
   }
 
-  // Switch trades' own size (switchMargin × switchLeverage, leverage capped like the short); margin saver from the /trade panel
+  // Switch trades' own size (switchMargin × switchLeverage, leverage capped like the short); 0 = the short's auto size
+  // (full size, never "half on fresh"). Margin saver from the /trade panel.
   async switchSizing(ownerId = this.config.ownerId) {
     const prefs = (ownerId && await db.getManualPrefs(ownerId).catch(() => null)) || {};
     const c = this.config;
-    const margin = Number(c.switchMargin) > 0 ? Number(c.switchMargin) : 30;
-    const leverage = Math.min(Number(c.switchLeverage) > 0 ? Number(c.switchLeverage) : 5, AUTO_MAX_LEVERAGE);
+    const sameM = Number(c.switchMargin) === 0, sameL = Number(c.switchLeverage) === 0;
+    const short = sameM || sameL ? await this.sizing(PUMP_RULES.extendedRunPct, ownerId) : null;
+    const margin = sameM ? short.margin : Number(c.switchMargin) > 0 ? Number(c.switchMargin) : 30;
+    const leverage = Math.min(sameL ? short.leverage : Number(c.switchLeverage) > 0 ? Number(c.switchLeverage) : 5, AUTO_MAX_LEVERAGE);
     const marginSaver = prefs.marginSaver !== false;
     const exchangeLev = marginSaver ? marginSaverLeverage(PUMP_RULES.slPct, { chosen: leverage }) : leverage;
     const position = margin * leverage;
-    return { margin, leverage, position, marginSaver, exchangeLev, locked: position / exchangeLev };
+    return { margin, leverage, position, marginSaver, exchangeLev, locked: position / exchangeLev, sameM, sameL };
   }
 
   // Paper switch lab for a no-spot signal: same side, size and levels as a real switch trade (no order)
@@ -515,4 +520,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES };
