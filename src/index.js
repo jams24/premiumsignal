@@ -23,6 +23,7 @@ const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, follo
 const TelegramBot = require('./bot/telegramBot');
 const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
 const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
+const { PumpSwitchPaper, measureRun7dClosed } = require('./engine/pumpSwitchPaper');
 const { measureSpotShare, measureKoreaShare, measureBuyerSigns, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -614,12 +615,18 @@ async function main() {
     tell: (html) => pumpAutoTrader.tell(html),
     lab: 'signal',
   });
+  // Paper lab: 7-day-run switch on no-spot coins (long 12–50% / short 50–100% / skip), at the signal
+  const pumpSwitchPaper = new PumpSwitchPaper({
+    exchanges: listingMonitor.exchanges,
+    tell: (html) => pumpAutoTrader.tell(html),
+  });
   const pumpAutoTrader = new PumpAutoTrader({
     executor: onchainTradeExecutor,
     notify: (chatId, html) => bot.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }),
     adminIds: config.telegram.adminIds,
     runner: pumpRunnerPaper,
     signalLab: pumpRunnerSignal,
+    switchLab: pumpSwitchPaper,
   });
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
@@ -629,6 +636,7 @@ async function main() {
   // original channel message only when something changes. Watch state lives on the pump_signals row
   // (watch_state), so a redeploy or crash resumes the watch instead of silently dropping it.
   const pumpWatches = new Map();
+  const switchSkipped = new Set(); // `${symbol}:${UTC day}` of no-spot pumps outside the switch zones (not posted)
   let pumpWatchRunning = false;
   const watchState = (w, status, outcome = null) => ({
     status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, side: w.side || 'short', signalPrice: w.signalPrice,
@@ -674,12 +682,9 @@ async function main() {
               if (long) r.levels = pumpAutoTrader.runnerLevels(r.price);
             }
             await finishWatch(key, w, r.kind, { ...base, ...r });
-            if (r.kind === 'enter' && long) {
-              // Long-only: the channel said BUY. The coin had no spot market at the signal, so an ENTER-time
-              // measurement that failed doesn't stop the long the channel just posted.
-              await pumpAutoTrader.runnerLongNow({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot || { hasSpot: false }, korea: r.korea })
-                .catch(e => logger.error(`Runner long at ENTER failed: ${e.message}`));
-            } else if (r.kind === 'enter') {
+            // Long watches are only old runner-long signals from before the switch (no new ones are created):
+            // the reply still goes out, but the retired runner long opens nothing
+            if (r.kind === 'enter' && !long) {
               await autoTradeEnter({ signalId: w.signalId, symbol: w.symbol, exchangeId: w.exchangeId, price: r.price, run7d: w.run7d ?? null, via: 'follow-up', spot: r.spot, korea: r.korea, buyers: r.buyers });
             }
           } else if (r.kind === 'new_high') {
@@ -713,6 +718,7 @@ async function main() {
   cron.schedule('* * * * *', () => {
     pumpRunnerPaper.check().catch(e => logger.error(`Paper runner check error: ${e.message}`));
     pumpRunnerSignal.check().catch(e => logger.error(`At-signal lab check error: ${e.message}`));
+    pumpSwitchPaper.check().catch(e => logger.error(`Switch lab check error: ${e.message}`));
     pumpAutoTrader.checkBreakeven().catch(e => logger.error(`Stop→entry check error: ${e.message}`));
   });
 
@@ -1063,6 +1069,8 @@ async function main() {
               [token.symbol, today]
             );
             if (rows.length > 0) continue;
+            // No-spot coin already found outside the switch zones today: not posted, so not re-measured every scan
+            if (switchSkipped.has(`${token.symbol}:${today}`)) continue;
 
             const ex = listingMonitor.exchanges[token.exchange];
             let top = null;
@@ -1088,11 +1096,24 @@ async function main() {
             // Rules met on the first look → 'recheck': the watch confirms on its next step before the short (PUMP_RULES.recheckMinMin)
             const signalVerdict = entryVerdict(check);
             check.verdict = signalVerdict === 'enter' ? 'recheck' : signalVerdict;
-            // Runner coins (no spot market, already up 20%+ in 7 days) go out as a LONG: the bot longs them and never
-            // shorts them (skipNoSpot), so the channel shows the trade the bot takes
+            // No-spot coins → the SWITCH decides at the signal from the 7-day run on closed 1h candles: 12–50% LONG,
+            // 50–100% (or 80%) SHORT, anything else is not posted (no edge either way). The channel shows the side the
+            // bot trades, and the trade is at the signal (no ✅ ENTER wait, no watch). Spot coins: the short, as before.
             await pumpAutoTrader.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
-            check.side = pumpAutoTrader.isRunnerSignal({ run7d, spot }) ? 'long' : 'short';
-            const levels = check.side === 'long' ? pumpAutoTrader.runnerLevels(token.price) : channelLevels(token.price);
+            let sw = null;
+            if (ex && spot && spot.hasSpot === false) {
+              const run7dClosed = await measureRun7dClosed(ex, token.symbol).catch(() => null);
+              const side = pumpAutoTrader.switchSide(run7dClosed);
+              if (!side) {
+                if (run7dClosed != null) switchSkipped.add(`${token.symbol}:${today}`);
+                logger.info(`No-spot pump ${token.symbol}: 7d ${run7dClosed == null ? 'unknown' : run7dClosed.toFixed(0) + '%'} (closed candles) outside the switch zones — not posted`);
+                continue;
+              }
+              sw = { side, run7dClosed, shortTo: pumpAutoTrader.switchShortTo() };
+            }
+            check.side = sw ? sw.side : 'short';
+            check.switch = sw;
+            const levels = sw ? pumpAutoTrader.switchLevels(token.price, sw.side) : channelLevels(token.price);
             const msgId = await bot.sendPumpSignal(token, setup, check, levels);
 
             // Channel levels are logged so the outcome tracker scores what subscribers were shown
@@ -1115,6 +1136,7 @@ async function main() {
                 crowdedFlip: ctx.crowdedFlip, exhaustion: ctx.exhaustion,
                 cisdScore: ctx.cisdScore || 0, cisdFlags: ctx.cisdFlags || [],
                 verdict: check.verdict, signalVerdict, topAgeMin: check.topAgeMin, high24: check.high24, tp3: levels.tps[2], run7d,
+                switch: sw ? { side: sw.side, run7dClosed: sw.run7dClosed, shortTo: sw.shortTo } : null,
                 spotShare: spot ? spot.pct : null, hasSpot: spot ? spot.hasSpot : null, altMarket,
                 koreaShare: korea ? korea.pct : null, koreaListed: korea ? korea.listed : null,
                 koreaUsd: korea ? korea.krUsd : null, koreaPerpUsd: korea ? korea.perpUsd : null,
@@ -1122,23 +1144,17 @@ async function main() {
               },
             }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
 
-            // At-signal lab (paper): runner coins get a long at the live price now, whatever the verdict. Not awaited,
-            // so it never delays the watch or the runner long below.
-            if (signalId != null && ex && spot && spot.hasSpot === false) {
-              pumpAutoTrader.runnerAtSignal({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, spot })
-                .catch(e => logger.warn(`At-signal lab failed: ${e.message}`));
-            }
-
-            // The runner long doesn't wait for the re-check; the short does (the watch's ENTER opens it)
-            if (check.verdict === 'recheck' && ex) {
-              await pumpAutoTrader.runnerLongNow({ signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, via: 'signal', spot, korea })
-                .catch(e => logger.error(`Runner long at signal failed: ${e.message}`));
+            // Switch coin: the paper lab (not awaited) and the real switch trade, both now at the signal. Nothing is
+            // watched afterwards — the channel already said BUY/SELL NOW, and the short's ENTER never applies to it.
+            if (sw) {
+              const info = { signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, run7dClosed: sw.run7dClosed, side: sw.side, spot, korea, via: 'signal' };
+              if (signalId != null) pumpAutoTrader.switchAtSignal(info).catch(e => logger.warn(`Switch lab failed: ${e.message}`));
+              await pumpAutoTrader.switchTrade(info).catch(e => logger.error(`Switch trade at signal failed: ${e.message}`));
+              continue;
             }
 
             // A re-check is watched even if the channel post failed, so the short still gets its ENTER.
-            // A long whose rules were met at the signal was bought above and posted as BUY NOW: nothing left to watch.
-            const longBoughtNow = check.side === 'long' && check.verdict === 'recheck';
-            if (ex && !longBoughtNow && (msgId || check.verdict === 'recheck')) {
+            if (ex && (msgId || check.verdict === 'recheck')) {
               const w = {
                 signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, verdict: check.verdict, side: check.side,
                 signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false, run7d,

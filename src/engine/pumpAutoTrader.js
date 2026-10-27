@@ -6,6 +6,7 @@ const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const { isTradFiMarket } = require('../utils/tradfi');
 const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, KOREA_GROUP_PCT } = require('../collectors/spotShare');
 const { RUNNER } = require('./pumpRunnerPaper');
+const { switchSide } = require('./pumpSwitchPaper');
 
 // Owner-DM line for the Korean share at entry (info only — size and filters never use it)
 function koreaNote(k) {
@@ -61,15 +62,10 @@ const DEFAULTS = {
   // Skip coins with no spot market on Binance or Bybit. 4.5-month replay: no-spot shorts −$135 on 514 (only Sep
   // positive, −$212 when BTC 7d < −2%); spot share ≤ 13% with a spot market +$603 on 447, positive every month.
   skipNoSpot: false,
-  // PAPER-only long on no-spot coins already up ≥ runnerMinRun7d % in 7 days at ENTER (see engine/pumpRunnerPaper.js)
-  runnerLongs: true,
+  // Old runner long (no-spot coins ≥ runnerMinRun7d % in 7 days, long at ENTER) — RETIRED for the switch below; its
+  // two paper labs only finish their open rows. runnerMinRun7d is kept for the old lab screens.
   runnerMinRun7d: 20,
-  // Also place the runner long as a real auto trade (in the auto-trade's mode, normally LIVE). Off by default.
-  // Same plan as the paper test: stop −8%, TP +6/12/20/30 (TP1 = runnerTp1Pct), stop to entry at TP1. Stop sweep on the 4.5-month replay
-  // (271 longs, $150): 3–7% +$294–419, 8% +$532 (best second half +$160), 10–12% +$590–602 but weaker second half.
-  // Not paused by the BTC rule: longs did +$296 on 88 trades with BTC 7d < −2%.
-  runnerLive: false,
-  // TP1 of new runner longs (real and both paper labs), one of AUTO_TP1_PCTS; TP2–TP4 stay +12/20/30
+  // TP1 of switch longs (real and paper), one of AUTO_TP1_PCTS; TP2–TP4 stay +12/20/30
   runnerTp1Pct: RUNNER.tpPcts[0],
   // Tighter stop once an auto trade has been beAtPct % in profit before TP1: the stop moves from −8% to −beStopPct %
   // (0 = entry). Nothing is closed. beAtPct 0 = off. Backtest ($1000, TP1 5%) vs never moving:
@@ -81,6 +77,16 @@ const DEFAULTS = {
   // Auto-trade's own size; 0 = use the /trade panel's margin / leverage (as before). The margin saver still applies.
   autoMargin: 0,
   autoLeverage: 0,
+  // No-spot coins → the 7-day-run SWITCH (engine/pumpSwitchPaper.js), at the signal: run on closed 1h candles
+  // 12–50% → long, 50–switchShortTo % → short, else no trade and no channel post. Replaced the runner long (27 Oct
+  // 2026): with the live bot's ~15–20 min delay the runner long was ≈ $0 in the replay (−$69 live), the switch
+  // +$488 / +$591 per period ($150). switchTest = paper lab; switchLive = also open it as a real auto trade
+  // (auto-trade ON, its mode, max open, daily stop) at its own size switchMargin × switchLeverage.
+  switchTest: true,
+  switchShortTo: 100,
+  switchLive: false,
+  switchMargin: 30,
+  switchLeverage: 5,
 };
 const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
 const AUTO_MARGINS = [0, 10, 20, 30, 50, 75, 100]; // /autopump margin buttons (0 = from /trade)
@@ -90,10 +96,11 @@ const BE_STOP_PCTS = [0, 2, 3, 4, 5, 6, 7];       // new stop buttons, % from en
 const BE_DEFAULT = { at: 4.5, stop: 5 };          // best in the backtest
 
 class PumpAutoTrader {
-  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null, signalLab = null }) {
+  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, runner = null, signalLab = null, switchLab = null }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
     this.runner = runner;           // PumpRunnerPaper — paper longs on no-spot runners, never real orders
     this.signalLab = signalLab;     // PumpRunnerPaper('signal') — the same long bought at the signal, paper only
+    this.switchLab = switchLab;     // PumpSwitchPaper — 7-day-run switch (long / short / skip) on no-spot coins, paper only
     this.notify = notify;           // async (chatId, html) => void
     this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
     this.measureBtc = measureBtc;   // async (hours) => BTC % change
@@ -159,9 +166,7 @@ class PumpAutoTrader {
 
   // Called when a pump signal reaches ✅ ENTER. info: { signalId, symbol, exchangeId, price, run7d, via }
   async onEnter(info) {
-    const result = await this.enterShort(info);
-    await this.runnerLong(info);
-    return result;
+    return this.enterShort(info);
   }
 
   // Every minute: open auto trades (short or runner long) whose best move since entry reached beAtPct before TP1 get
@@ -233,61 +238,118 @@ class PumpAutoTrader {
     );
   }
 
-  // Runner coin (no spot market, 7-day run ≥ runnerMinRun7d): the channel posts a LONG for it instead of the short.
-  // Same test the runner long applies (runnerLong → maybeOpen); the short skips these coins while skipNoSpot is on.
-  isRunnerSignal({ run7d, spot }) {
-    const c = this.config;
-    return c.runnerLongs !== false && run7d >= (c.runnerMinRun7d ?? 20) && spot?.hasSpot === false;
-  }
+  // ── SWITCH: no-spot coins, decided at the signal by the 7-day run on closed 1h candles ──
+  // 'long' (12–50%) | 'short' (50–switchShortTo %) | null (no trade, no channel post)
+  switchShortTo() { return this.config.switchShortTo === 80 ? 80 : 100; }
+  switchSide(run7dClosed) { return switchSide(run7dClosed, this.switchShortTo()); }
 
-  // Channel levels for a runner long from an entry price (the plan the real and paper longs use)
+  // Long levels from an entry price (switch longs, real and paper; also the old runner screens)
   runnerLevels(entry) {
     const tpPcts = this.runnerTpPcts();
     return { side: 'long', tpPcts, slPct: RUNNER.slPct, tps: tpPcts.map(p => entry * (1 + p / 100)), stopLoss: entry * (1 - RUNNER.slPct / 100) };
   }
 
-  // Signal-time ENTER: the short waits for the watch's re-check, the runner long opens now. When the re-check's
-  // ENTER later reaches onEnter, the paper row (unique per signal) already exists, so no second long opens.
-  // Runner longs are no-spot coins, which the short skips while skipNoSpot is on, so the two don't compete.
-  // Also the ✅ ENTER of a signal the channel posted as a long: long only, the short isn't tried.
-  async runnerLongNow(info) {
-    await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
-    return this.runnerLong(info);
+  // Channel / trade levels for a switch trade: long = the long plan, short = the auto short's own TPs (TP1 choice) and −8% stop
+  switchLevels(entry, side) {
+    if (side === 'long') return this.runnerLevels(entry);
+    const tpPcts = this.tpPcts();
+    return { side: 'short', tpPcts, slPct: PUMP_RULES.slPct, tps: tpPcts.map(p => entry * (1 - p / 100)), stopLoss: entry * (1 + PUMP_RULES.slPct / 100) };
   }
 
-  // At-signal lab: every runner signal (any verdict) gets a paper long at the live price right away.
-  // Paper only and separate from runnerLong, so it never opens or blocks a real trade.
-  async runnerAtSignal(info) {
-    if (!this.signalLab) return null;
+  // Switch trades' own size (switchMargin × switchLeverage, leverage capped like the short); margin saver from the /trade panel
+  async switchSizing(ownerId = this.config.ownerId) {
+    const prefs = (ownerId && await db.getManualPrefs(ownerId).catch(() => null)) || {};
+    const c = this.config;
+    const margin = Number(c.switchMargin) > 0 ? Number(c.switchMargin) : 30;
+    const leverage = Math.min(Number(c.switchLeverage) > 0 ? Number(c.switchLeverage) : 5, AUTO_MAX_LEVERAGE);
+    const marginSaver = prefs.marginSaver !== false;
+    const exchangeLev = marginSaver ? marginSaverLeverage(PUMP_RULES.slPct, { chosen: leverage }) : leverage;
+    const position = margin * leverage;
+    return { margin, leverage, position, marginSaver, exchangeLev, locked: position / exchangeLev };
+  }
+
+  // Paper switch lab for a no-spot signal: same side, size and levels as a real switch trade (no order)
+  async switchAtSignal(info) {
+    if (!this.switchLab) return null;
     try {
       await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
       const c = this.config;
-      if (c.runnerLongs === false || !(info.run7d >= (c.runnerMinRun7d ?? 20))) return null;
-      const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
-      return await this.signalLab.maybeOpen(info, c, size?.position || 150, this.runnerTpPcts());
+      if (c.switchTest === false) return { skipped: 'off' };
+      const size = await this.switchSizing().catch(() => null);
+      return await this.switchLab.maybeOpen(info, {
+        position: size?.position || 150, longTp1: this.runnerTpPcts()[0], shortTp1: this.tpPcts()[0],
+        beAt: Number(c.beAtPct) || 0, beStop: Math.max(0, Number(c.beStopPct ?? 5)), shortTo: this.switchShortTo(),
+      });
     } catch (e) {
-      logger.warn(`At-signal lab ${info.symbol} failed: ${e.message}`);
+      logger.warn(`Switch lab ${info.symbol} failed: ${e.message}`);
       return null;
     }
   }
 
-  // Paper runner long — after the short so it never delays it, and nothing here can affect the short
-  async runnerLong(info) {
-    if (!this.runner) return null;
+  // Real switch trade at the signal (switchLive + auto-trade ON). info: { signalId, symbol, exchangeId, price,
+  // run7dClosed, side, via }. Same guards as the short: owner, market, keys, existing position, signal already
+  // traded, max open, daily loss stop. Not paused by the BTC rule (the replay didn't use it).
+  async switchTrade(info) {
+    await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
+    const c = this.config;
+    if (c.switchLive !== true) return { skipped: 'switch real trades off' };
+    if (!c.enabled) return { skipped: 'auto-trade off' };
+    const key = `W:${info.signalId ?? info.symbol}`;
+    if (this.busy.has(key)) return { skipped: 'in progress' };
+    this.busy.add(key);
+    const label = `${info.side.toUpperCase()}`;
     try {
-      const c = this.config;
-      if (c.runnerLongs === false || !(info.run7d >= (c.runnerMinRun7d ?? 20))) return null;
-      if (info.spot === undefined) info.spot = await this.measureSpot(info.symbol).catch(() => null);
-      // Always full panel size (never "half on fresh") so every test trade is comparable
-      const size = await this.sizing(PUMP_RULES.extendedRunPct).catch(() => null);
-      const res = await this.runner.maybeOpen(info, c, size?.position || 150, this.runnerTpPcts());
-      // Real long only for a qualifying signal the paper test just took (once per signal)
-      if (res?.opened && c.runnerLive === true) res.live = await this.enterRunnerLong(info);
-      return res;
+      const block = await this.commonBlock(info);
+      if (block) {
+        const reason = typeof block === 'string' ? block : block.reason;
+        if (!block.silent) await this.tell(`🔀 <b>Switch ${label} not placed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
+        return { skipped: reason };
+      }
+      return await this.openSwitchTrade(info);
     } catch (e) {
-      logger.warn(`Paper runner long ${info.symbol} failed: ${e.message}`);
-      return null;
+      logger.error(`Switch trade ${info.symbol} failed: ${e.message}`);
+      await this.tell(`🔀 ⚠️ <b>Switch ${label} failed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(e.message)}`);
+      return { error: e.message };
+    } finally {
+      this.busy.delete(key);
     }
+  }
+
+  async openSwitchTrade(info) {
+    const c = this.config, te = this.executor, side = info.side, S = side === 'short';
+    const size = await this.switchSizing();
+    const L = this.switchLevels(info.price, side);
+    const trade = await te.openManualTrade({
+      symbol: info.symbol, exchangeId: info.exchangeId, direction: side, mode: c.mode,
+      entryPrice: info.price, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
+      tp1: L.tps[0], tp2: L.tps[1], tp3: L.tps[2], tp4: L.tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
+      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, switchTrade: true, pumpSignalId: info.signalId ?? null,
+        run7d: info.run7dClosed ?? null, via: info.via || 'signal', koreaShare: koreaPct(info.korea) },
+    });
+    if (!trade) {
+      await this.tell(`🔀 ⚠️ <b>Switch ${side.toUpperCase()} NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift).`);
+      return { skipped: 'executor declined' };
+    }
+    const p = (v) => Number(v).toPrecision(6);
+    const fill = trade.entryPrice || info.price;
+    const lev = trade.leverage || size.leverage;
+    const pos = trade.positionSize || size.position;
+    const tps = trade.stopLoss > 0 ? [trade.tp1, trade.tp2, trade.tp3, trade.tp4].map((v, i) => v || L.tps[i]) : L.tps;
+    const sl = trade.stopLoss || L.stopLoss;
+    await this.tell(
+      `🔀 <b>AUTO-TRADE OPENED — ${escapeHtml(info.symbol)} ${side.toUpperCase()} (switch)</b>\n` +
+      `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · no spot market · 7-day run +${(info.run7dClosed ?? 0).toFixed(0)}% ` +
+      `(${S ? `50–${this.switchShortTo()}% → short` : '12–50% → long'})\n\n` +
+      `💰 Entry: <b>$${p(fill)}</b>\n` +
+      `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position\n` +
+      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}${liqGuardNote(trade)}\n` +
+      `🎯 ${L.tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (${S ? '−' : '+'}${t}%)`).join(' · ')}\n` +
+      `🛑 SL $${p(sl)} (${S ? '+' : '−'}${L.slPct}%) → max loss ≈ -$${(pos * L.slPct / 100).toFixed(2)} · to entry at TP1\n` +
+      koreaNote(info.korea) +
+      `🛡️ Exit: TPs only · manage or close in /mpositions`
+    );
+    logger.info(`Switch ${side} auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x`);
+    return { opened: trade };
   }
 
   async enterShort(info) {
@@ -393,78 +455,13 @@ class PumpAutoTrader {
     return null;
   }
 
-  // Runner long as a real auto trade. Called only after the paper test opened it, so the signal already passed
-  // the runner filter (no spot market, 7-day run ≥ min). Uses the auto-trade's ON switch, mode and guards.
-  async enterRunnerLong(info) {
-    const c = this.config;
-    if (!c.enabled) return { skipped: 'auto-trade off' };
-    const key = `L:${info.signalId}`;
-    if (this.busy.has(key)) return { skipped: 'in progress' };
-    this.busy.add(key);
-    try {
-      const block = await this.commonBlock(info);
-      if (block) {
-        const reason = typeof block === 'string' ? block : block.reason;
-        if (!block.silent) await this.tell(`🚀 <b>Runner long not placed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}\n<i>Still tracked as a paper long.</i>`);
-        return { skipped: reason };
-      }
-      return await this.openRunnerLong(info);
-    } catch (e) {
-      logger.error(`Runner long ${info.symbol} failed: ${e.message}`);
-      await this.tell(`🚀 ⚠️ <b>Runner long failed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(e.message)}`);
-      return { error: e.message };
-    } finally {
-      this.busy.delete(key);
-    }
-  }
-
-  async openRunnerLong(info) {
-    const c = this.config, te = this.executor;
-    // Full size, like the paper test (never "half on fresh")
-    const size = await this.sizing(PUMP_RULES.extendedRunPct);
-    const entry = info.price;
-    const tpPcts = this.runnerTpPcts();
-    const tps = tpPcts.map(p => entry * (1 + p / 100));
-    const stopLoss = entry * (1 - RUNNER.slPct / 100);
-    const trade = await te.openManualTrade({
-      symbol: info.symbol, exchangeId: info.exchangeId, direction: 'long', mode: c.mode,
-      entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
-      tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss, atr: null, rebaseOnFill: true,
-      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, runnerLong: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea) },
-    });
-    if (!trade) {
-      await this.tell(`🚀 ⚠️ <b>Runner long NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Still tracked as a paper long.`);
-      return { skipped: 'executor declined' };
-    }
-    const p = (v) => Number(v).toPrecision(6);
-    const fill = trade.entryPrice || entry;
-    const lev = trade.leverage || size.leverage;
-    const pos = trade.positionSize || size.position;
-    // Live levels follow the real fill (rebaseOnFill)
-    if (trade.stopLoss > 0) tps.splice(0, 4, ...[trade.tp1, trade.tp2, trade.tp3, trade.tp4].map((v, i) => v || tps[i]));
-    const sl = trade.stopLoss || stopLoss;
-    await this.tell(
-      `🚀 <b>AUTO-TRADE OPENED — ${escapeHtml(info.symbol)} LONG (runner)</b>\n` +
-      `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · no spot market, already +${(info.run7d ?? 0).toFixed(0)}% in 7 days\n\n` +
-      `💰 Entry: <b>$${p(fill)}</b>\n` +
-      `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position\n` +
-      `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}${liqGuardNote(trade)}\n` +
-      `🎯 ${tpPcts.map((t, i) => `TP${i + 1} $${p(tps[i])} (+${t}%)`).join(' · ')}\n` +
-      `🛑 SL $${p(sl)} (−${RUNNER.slPct}%) → max loss ≈ -$${(pos * RUNNER.slPct / 100).toFixed(2)} · to entry at TP1\n` +
-      koreaNote(info.korea) +
-      `🛡️ Exit: TPs only · manage or close in /mpositions`
-    );
-    logger.info(`Runner long auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x`);
-    return { opened: trade };
-  }
-
   // Targets for auto-trades: the plan with the chosen TP1 (anything not on the list falls back to the plan)
   tpPcts() {
     const tp1 = AUTO_TP1_PCTS.includes(this.config.tp1Pct) ? this.config.tp1Pct : PLAN_TP_PCTS[0];
     return [tp1, ...PLAN_TP_PCTS.slice(1)];
   }
 
-  // Targets for runner longs: the runner plan with the long's own TP1 choice
+  // Targets for switch longs: the long plan with the long's own TP1 choice
   runnerTpPcts() {
     const tp1 = AUTO_TP1_PCTS.includes(this.config.runnerTp1Pct) ? this.config.runnerTp1Pct : RUNNER.tpPcts[0];
     return [tp1, ...RUNNER.tpPcts.slice(1)];

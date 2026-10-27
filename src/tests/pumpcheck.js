@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
  * Pump check — replays the stored pump-signal history through the bot's CURRENT pump code and config,
- * and compares against a saved baseline. Run before committing changes to the pump short / runner long.
+ * and compares against a saved baseline. Run before committing changes to the pump short / no-spot switch.
  *
  *   node --max-old-space-size=8000 src/tests/pumpcheck.js            compare with the baseline (exit 0 pass / 1 fail)
  *   node --max-old-space-size=8000 src/tests/pumpcheck.js --update   save the current result as the new baseline
  *   add --defaults to use the code defaults instead of the live /autopump + executor config from the DB
+ *   add --switch-on to count switch trades even while "switch real trades" is off (to see what turning it on does)
  *
  * What comes from the bot's code: entry rule (entryVerdict), signal-time re-check (PUMP_RULES.recheckMinMin),
- * skip rules (PumpAutoTrader.blockReason: BTC pause, spot share, no-spot), runner-long test (isRunnerSignal),
- * TP levels (tpPcts / runnerTpPcts), stop (PUMP_RULES.slPct / RUNNER.slPct), early stop move (beAtPct/beStopPct),
- * TP close sizes (executor tp1ClosePct / tp2ClosePct, TP3 50%, TP4 all).
+ * skip rules (PumpAutoTrader.blockReason: BTC pause, spot share, no-spot), no-spot switch (PumpAutoTrader.switchSide
+ * on the closed-candle 7-day run: long / short / skip), TP levels (tpPcts / runnerTpPcts), stop (PUMP_RULES.slPct /
+ * RUNNER.slPct), early stop move (beAtPct/beStopPct), TP close sizes (executor tp1ClosePct / tp2ClosePct, TP3 50%, TP4 all).
+ * Switch trades enter at the first 5-min watch check ≥ SWITCH_DELAY_MIN after the replay signal: the live scanner
+ * fires ~15–20 min after the replay's signal (27 Oct 2026 check), and a long at the replay signal itself is not reachable.
  * Fixed here: $150 per trade, 0.1% fees, 48h max hold, stop checked before targets inside a 1m candle.
  * Not modelled: max open, daily loss stop, live fills/slippage, liquidation.
  *
@@ -28,7 +31,7 @@ const TradeExecutor = require('../engine/tradeExecutor');
 const ROOT = path.join(__dirname, '..', '..');
 const BASELINE = path.join(__dirname, 'pumpcheck.baseline.json');
 const SETS = [['Jun–Oct', 'backtest/data'], ['Dec–May', 'backtest/data_early']];
-const POS = 150, FEE_PCT = 0.1, HOLD_MIN = 48 * 60, M = 60000, Hr = 3600000;
+const POS = 150, FEE_PCT = 0.1, HOLD_MIN = 48 * 60, M = 60000, Hr = 3600000, SWITCH_DELAY_MIN = 15;
 const args = new Set(process.argv.slice(2));
 
 // Live config: pump_autotrade (id 1) and the onchain executor's settings (bot_settings id 2). Read directly, so the
@@ -58,7 +61,7 @@ async function loadConfig() {
       closeFracs: [exec.tp1ClosePct, exec.tp2ClosePct, 0.5, 1],
       beAtPct: Number(c.beAtPct) || 0, beStopPct: Math.max(0, Number(c.beStopPct ?? 5)),
       btcPausePct: c.btcPausePct, maxSpotSharePct: c.maxSpotSharePct, skipNoSpot: !!c.skipNoSpot,
-      runnerLongs: c.runnerLongs !== false, runnerMinRun7d: c.runnerMinRun7d ?? 20, runnerLive: c.runnerLive === true,
+      switchLive: c.switchLive === true || args.has('--switch-on'), switchShortTo: auto.switchShortTo(),
     },
   };
 }
@@ -108,17 +111,17 @@ async function replaySet(dir, cfg) {
     // Steps until the watch ends ('missed' stops it)
     const steps = [];
     for (const s of r.all) { if (s.k === 'missed') break; steps.push(s); }
+    // No-spot coin: the switch decides at the signal (any verdict) from the closed-candle 7-day run; never the short
+    if (r.hasSpot === false) {
+      const side = plan.switchLive ? auto.switchSide(run7d) : null;
+      const s = side && steps.find(z => z.now - r.t >= SWITCH_DELAY_MIN * M);
+      if (s) out[`${r.s}|${r.t}|sw-${side}`] = simulate(hl, Math.round((s.now - r.t) / M), s.p, side, side === 'long' ? plan.runnerTps : plan.shortTps, side === 'long' ? plan.runnerSl : plan.shortSl, plan);
+      continue;
+    }
     const firstPass = (from) => steps.findIndex((s, i) => i >= from && passes(s));
     let i0 = firstPass(0);
     if (i0 < 0) continue;
 
-    if (auto.isRunnerSignal({ run7d, spot: r.hasSpot === false ? { hasSpot: false } : { hasSpot: true } })) {
-      // Runner long: enters at ENTER (at once when the rules are already met at the signal)
-      if (!plan.runnerLive) continue;
-      const s = steps[i0], off = Math.round((s.now - r.t) / M);
-      out[`${r.s}|${r.t}|long`] = simulate(hl, off, s.p, 'long', plan.runnerTps, plan.runnerSl, plan);
-      continue;
-    }
     // Short: rules met at the signal itself → re-check on a later step at least recheckMinMin later
     if (i0 === 0) { i0 = steps.findIndex((s, i) => i >= 1 && s.now - r.t >= PUMP_RULES.recheckMinMin * M && passes(s)); if (i0 < 0) continue; }
     const s = steps[i0];
@@ -138,7 +141,8 @@ function summary(trades) {
   const sum = (f) => v.filter(([k]) => f(k)).reduce((a, [, x]) => a + x, 0);
   return {
     trades: v.length, wins: v.filter(([, x]) => x > 0).length,
-    pnl: +sum(() => true).toFixed(2), short: +sum(k => k.endsWith('short')).toFixed(2), long: +sum(k => k.endsWith('long')).toFixed(2),
+    pnl: +sum(() => true).toFixed(2), short: +sum(k => k.endsWith('|short')).toFixed(2), long: +sum(k => k.endsWith('|long')).toFixed(2),
+    switch: +sum(k => k.includes('|sw-')).toFixed(2),
   };
 }
 
@@ -190,7 +194,7 @@ function summary(trades) {
     const ok = diff >= -0.01;
     if (!ok) pass = false;
     console.log(`\n${ok ? '✅' : '❌'} ${name}: ${was.summary.trades} → ${now.summary.trades} trades | P&L $${was.summary.pnl} → $${now.summary.pnl} (${diff >= 0 ? '+' : ''}${diff.toFixed(2)})` +
-      ` | short $${now.summary.short}, long $${now.summary.long}`);
+      ` | short $${now.summary.short}, switch $${now.summary.switch ?? 0}, old runner long $${now.summary.long}`);
     console.log(`   per trade: ${same} same, ${better} better, ${worse} worse, ${added} new, ${dropped} no longer taken`);
     worst.sort((x, y) => x[1] - y[1]).slice(0, 5).forEach(([k, d]) => console.log(`   worse: ${k.split('|')[0]} ${new Date(+k.split('|')[1]).toISOString().slice(0, 16)} ${k.split('|')[2]} ${d.toFixed(2)}`));
   }

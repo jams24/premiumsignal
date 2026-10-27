@@ -2448,8 +2448,7 @@ class TelegramBot {
       const fresh = await ap.sizing(0, owner);
       const s = await ap.stats().catch(() => null);
       const btc7d = c.btcPausePct > 0 ? await ap.measureBtc(168).catch(() => null) : null;
-      const rs = ap.runner ? await ap.runner.stats().catch(() => null) : null;
-      const ls = ap.signalLab ? await ap.signalLab.stats().catch(() => null) : null;
+      const ws = ap.switchLab ? await ap.switchLab.stats().catch(() => null) : null;
       const slLoss = (sz) => money(sz.position * PUMP_RULES.slPct / 100);
       const live = c.mode === 'live';
 
@@ -2478,24 +2477,25 @@ class TelegramBot {
         c.btcPausePct > 0
           ? `₿ BTC pause: no new trades while BTC's 7-day change is below <b>−${c.btcPausePct}%</b> · now ${btc7d == null ? 'unknown' : `${btc7d >= 0 ? '+' : ''}${btc7d.toFixed(1)}%${btc7d < -c.btcPausePct ? ' → <b>⏸ PAUSED</b>' : ' → trading'}`}`
           : `₿ BTC pause: <b>off</b> — trades in any BTC trend`,
-        c.skipNoSpot
-          ? `🚫 Coins with no spot market (Binance/Bybit): <b>not auto-traded</b>`
-          : `🚫 Coins with no spot market (Binance/Bybit): auto-traded`,
+        `🚫 Coins with no spot market (Binance/Bybit): <b>not shorted here</b> — the 🔀 switch below handles them`,
         c.beAtPct > 0
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
       );
-      if (ap.runner) {
-        lines.push('', c.runnerLongs !== false
-          ? `🧪 <b>Paper runner longs: ON</b> — no-spot coins already up ≥ +${c.runnerMinRun7d ?? 20}% in 7 days get a PAPER long at ✅ ENTER (the test score below; never posted in the channel)`
-          : `🧪 Paper runner longs: <b>off</b>`);
-        if (rs) lines.push(`🧪 Runner test: ${rs.closed} closed · ${rs.wins} won · <b>${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}</b> · ${rs.open} open`);
-        if (ls) lines.push(`⚡ At-signal lab (same long, bought at the signal): ${ls.closed} closed · ${ls.wins} won · <b>${ls.pnl >= 0 ? '+' : '-'}${money(Math.abs(ls.pnl))}</b> · ${ls.open} open`);
-        lines.push(c.runnerLongs !== false && c.runnerLive === true
-          ? `🚀 <b>Runner longs as real trades: ON</b> — each runner long is also opened as an auto trade (${live ? '💰 <b>LIVE</b>' : '📝 paper'}, needs auto-trade ON), ${money(full.position)} · SL −8% loses <b>-${money(full.position * 0.08)}</b> · TP +${ap.runnerTpPcts().join('/')}% · uses the same max-open and daily stop · not paused by BTC`
-          : `🚀 Runner longs as real trades: <b>off</b> (paper test only)`);
-        lines.push(`🎯 Long TP1: <b>+${ap.runnerTpPcts()[0]}%</b> (closes 25%, stop to entry) — real and paper runner longs; the short's TP1 is separate`);
+      if (ap.switchLab) {
+        const to = ap.switchShortTo();
+        const sz = await ap.switchSizing(owner);
+        lines.push('',
+          `🔀 <b>NO-SPOT SWITCH</b> — no-spot pumps, decided at the signal by the 7-day run (closed 1h candles): ` +
+            `<b>12–50% → LONG</b> · <b>50–${to}% → SHORT</b> · otherwise not traded and not posted. The channel posts the same side.`,
+          c.switchLive === true
+            ? `🔀 <b>Switch real trades: ON</b> — ${live ? '💰 <b>LIVE</b>' : '📝 paper'} (needs auto-trade ON) · ${money(sz.margin)} × ${sz.leverage}x = ${money(sz.position)} · SL −8% loses <b>-${money(sz.position * 0.08)}</b> · uses max open + daily stop`
+            : `🔀 Switch real trades: <b>off</b> (size when on: ${money(sz.margin)} × ${sz.leverage}x = ${money(sz.position)})`,
+          c.switchTest !== false
+            ? `🔀 Switch paper lab: ON${ws ? ` — ${ws.closed} closed · ${ws.wins} won · <b>${ws.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.pnl))}</b> (long ${ws.long.n} ${ws.long.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.long.pnl))} · short ${ws.short.n} ${ws.short.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.short.pnl))}) · ${ws.open} open` : ''}`
+            : `🔀 Switch paper lab: <b>off</b>`,
+          `🎯 Switch long TP1: <b>+${ap.runnerTpPcts()[0]}%</b> · switch shorts use the short's TP1 (−${ap.tpPcts()[0]}%)`);
       }
       if (s) {
         lines.push('', `📊 Today: ${s.todayCount} closed · <b>${s.todayPnl >= 0 ? '+' : '-'}${money(Math.abs(s.todayPnl))}</b> · open now: ${s.open.length}`,
@@ -2512,15 +2512,15 @@ class TelegramBot {
          Markup.button.callback(`🧪 Max spot share: ${c.maxSpotSharePct > 0 ? c.maxSpotSharePct + '%' : 'off'}`, 'ap_spot')],
         [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
-        [Markup.button.callback(`Auto-trade no-spot coins: ${c.skipNoSpot ? '⛔ OFF' : '✅ ON'}`, 'ap_nospot')],
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
-        ...(ap.runner ? [[Markup.button.callback(`🧪 Paper runner longs: ${c.runnerLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_runner'),
-          Markup.button.callback(`🧪 Runner log${rs ? ` (${rs.closed + rs.open})` : ''}`, 'ap_runner_log')],
-          ...(ap.signalLab ? [[Markup.button.callback(`⚡ At-signal lab${ls ? ` (${ls.closed + ls.open})` : ''}`, 'ap_rsig_log')]] : []),
-          [Markup.button.callback(`🚀 Runner longs real trade: ${c.runnerLongs !== false && c.runnerLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_runner_live')],
-          [Markup.button.callback(`🎯 Long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1')]] : []),
+        ...(ap.switchLab ? [
+          [Markup.button.callback(`🔀 Switch real trades: ${c.switchLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_switch_live')],
+          [Markup.button.callback(`🔀 Switch lab: ${c.switchTest !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_switch'),
+           Markup.button.callback(`🔀 Switch log & size${ws ? ` (${ws.closed + ws.open})` : ''}`, 'ap_switch_log')],
+          [Markup.button.callback(`🎯 Switch long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1')]] : []),
         [Markup.button.callback(`📋 Open auto trades (${s ? s.open.length : 0})`, 'ap_open'), Markup.button.callback('🔄 Refresh', 'ap_refresh')],
         [Markup.button.callback(`💵 Auto size: ${money(full.margin)} × ${full.leverage}x ⚙️`, 'ap_size')],
+        ...(ap.runner ? [[Markup.button.callback('📜 Old runner labs (retired)', 'ap_oldlabs')]] : []),
       ]);
       return { text: lines.join('\n'), keyboard };
     };
@@ -2617,42 +2617,6 @@ class TelegramBot {
       await ack(ctx, next ? `Pause while BTC 7d < −${next}%` : 'BTC pause off');
       await showAutoPump(ctx, true);
     });
-    apAction('ap_nospot', async (ctx, ap) => {
-      await ap.update({ skipNoSpot: !ap.config.skipNoSpot });
-      await ack(ctx, ap.config.skipNoSpot ? 'No-spot coins will NOT be auto-traded' : 'No-spot coins will be auto-traded');
-      await showAutoPump(ctx, true);
-    });
-    apAction('ap_runner', async (ctx, ap) => {
-      const on = ap.config.runnerLongs === false;
-      // Real runner longs only follow the paper test, so switching the test off switches them off too
-      await ap.update(on ? { runnerLongs: true } : { runnerLongs: false, runnerLive: false });
-      await ack(ctx, ap.config.runnerLongs !== false ? 'Paper runner longs ON' : 'Paper runner longs OFF (open ones keep being tracked)');
-      await showAutoPump(ctx, true);
-    });
-    apAction('ap_runner_live', async (ctx, ap) => {
-      if (ap.config.runnerLongs !== false && ap.config.runnerLive === true) {
-        await ap.update({ runnerLive: false });
-        await ack(ctx, 'Runner longs: paper test only');
-        return showAutoPump(ctx, true);
-      }
-      await ack(ctx);
-      const full = await ap.sizing(PUMP_RULES.extendedRunPct, ap.config.ownerId || ctx.from.id);
-      const live = ap.config.mode === 'live';
-      const rs = ap.runner ? await ap.runner.stats().catch(() => null) : null;
-      return apConfirm(ctx, `OPEN RUNNER LONGS AS ${live ? 'LIVE' : 'PAPER'} AUTO TRADES?`,
-        `When a pump signal says ✅ ENTER on a coin with <b>no spot market</b> that is already <b>+${ap.config.runnerMinRun7d ?? 20}%</b> in 7 days, ` +
-        `the bot will open a <b>${live ? 'real ' : ''}LONG</b> on its own (auto-trade must be ON).\n\n` +
-        `💵 ${money(full.margin)} × ${full.leverage}x = ${money(full.position)} · 🛑 SL −8% loses about <b>-${money(full.position * 0.08)}</b>\n` +
-        `🎯 TP +6 / 12 / 20 / 30% · SL to entry at TP1 · counts toward max open and the daily stop\n\n` +
-        `⚠️ Backtest: +$532 on 271 trades ($150), but most of it was June and July lost. ` +
-        `Paper test so far: ${rs ? `${rs.closed} closed, ${rs.wins} won, ${rs.pnl >= 0 ? '+' : '-'}${money(Math.abs(rs.pnl))}` : 'no data'} — still a small sample.\n\n` +
-        `👉 <b>Nothing changes until you tap ✅ Yes, confirm.</b>`, 'ap_runner_live_yes');
-    });
-    apAction('ap_runner_live_yes', async (ctx, ap) => {
-      await ap.update({ runnerLongs: true, runnerLive: true });
-      await ack(ctx, `Runner longs ON as ${ap.config.mode === 'live' ? 'LIVE' : 'paper'} auto trades`);
-      await showAutoPump(ctx, true);
-    });
     // Paper runner lab: open longs with live price and P&L (🔄 refreshes), each one manageable like a live position
     const RUNNER_MIN_RUNS = [10, 20, 30, 50];
     const runnerWhy = { stop: 'stop −8%', entry: 'TP1 then entry', tp4: 'all TPs', time: '48h close', manual: 'closed by hand' };
@@ -2745,6 +2709,114 @@ class TelegramBot {
       await ack(ctx, 'Updated');
       await showRunner(ctx, await runnerLab(ap, 'signal'));
     });
+    // Switch lab (paper, view only so the score stays clean): long / short / skip by the closed-candle 7-day run
+    const switchWhy = { stop: 'stop −8%', entry: 'TP1 then entry', tp4: 'all TPs', time: '48h close' };
+    const switchLabView = async (ap) => {
+      const lab = ap.switchLab;
+      const [open, closed, s] = await Promise.all([lab.recent(20, 'open'), lab.recent(12, 'closed'), lab.stats().catch(() => null)]);
+      const prices = await Promise.all(open.map(r => lab.price(r)));
+      const to = ap.config.switchShortTo === 80 ? 80 : 100;
+      const side = (r) => r.side === 'short' ? '🔴 SHORT' : '🟢 LONG';
+      const run = (r) => `7d ${Number(r.run7d) >= 0 ? '+' : ''}${Number(r.run7d).toFixed(0)}%`;
+      let text = `🔀 <b>SWITCH LAB</b> — test only, no real orders\n` +
+        `<i>No-spot coins at the moment the signal goes out. 7-day run on closed 1h candles: 12–50% → LONG, 50–${to}% → SHORT, otherwise skip. ` +
+        `Stop −8% → entry after TP1 · TP 5/12/20/30% · max 48h. Replay with the live delay: +$488 / +$591 per period at $150, t ≈ 2.5 — still unproven live. ` +
+        `Margin / leverage below = the switch's own size (paper lab and real switch trades).</i>\n`;
+      if (s) {
+        const openPnl = open.reduce((a, r, i) => a + lab.view(r, prices[i]).pnl, 0);
+        text += `\n📊 ${s.closed} closed · ${s.wins} won · <b>${fmtUsd(s.pnl)}</b>${open.length ? ` · open now <b>${fmtUsd(openPnl)}</b>` : ''}\n` +
+          `🟢 Longs ${s.long.n}: <b>${fmtUsd(s.long.pnl)}</b> · 🔴 Shorts ${s.short.n}: <b>${fmtUsd(s.short.pnl)}</b>\n`;
+      }
+      text += `\n<b>Open (${open.length})</b>\n`;
+      text += open.length ? open.map((r, i) => {
+        const v = lab.view(r, prices[i]);
+        return `${side(r)} <b>${escapeHtml(r.symbol)}</b> · ${run(r)} · entry $${fmtP(v.entry)}${v.movePct != null ? ` · ${fmtPct(v.movePct)}` : ''} · <b>${fmtUsd(v.pnl)}</b>${r.hit ? ` · TP${r.hit}` : ''}`;
+      }).join('\n') + '\n' : '<i>None open.</i>\n';
+      if (closed.length) {
+        text += `\n<b>Last closed</b>\n` + closed.map(r => {
+          const when = new Date(r.entry_at).toISOString().slice(5, 16).replace('T', ' ');
+          return `${Number(r.pnl_usd) > 0 ? '✅' : '❌'} ${side(r)} <b>${escapeHtml(r.symbol)}</b> ${when} · ${run(r)} · ${switchWhy[r.close_reason] || escapeHtml(r.close_reason || '')}` +
+            `${r.hit && r.close_reason !== 'tp4' ? ` (TP${r.hit})` : ''} · <b>${fmtUsd(Number(r.pnl_usd))}</b>`;
+        }).join('\n') + '\n';
+      }
+      text += `\n<i>Updated ${utcClock()} UTC</i>`;
+      const sz = await ap.switchSizing();
+      return { text, keyboard: Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', 'ap_switch_log'), Markup.button.callback(`🔴 Short zone: 50–${to}%`, 'ap_switch_to')],
+        [Markup.button.callback(`💵 Margin: $${sz.margin}`, 'ap_switch_margin'), Markup.button.callback(`⚙️ Leverage: ${sz.leverage}x`, 'ap_switch_lev')],
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]) };
+    };
+    apAction('ap_switch_log', async (ctx, ap) => {
+      if (!ap.switchLab) return ack(ctx, 'Switch lab not ready');
+      await ack(ctx, 'Updated');
+      await showRunner(ctx, await switchLabView(ap));
+    });
+    apAction('ap_switch', async (ctx, ap) => {
+      await ap.update({ switchTest: ap.config.switchTest === false });
+      await ack(ctx, ap.config.switchTest !== false ? 'Switch lab ON (paper)' : 'Switch lab OFF (open ones keep being tracked)');
+      await showAutoPump(ctx, true);
+    });
+    const SWITCH_MARGINS = [10, 20, 30, 50, 75, 100];
+    const SWITCH_LEVERAGES = [3, 5, 7, 10];
+    apAction('ap_switch_margin', async (ctx, ap) => {
+      const cur = Number(ap.config.switchMargin) || 30;
+      const next = SWITCH_MARGINS[(SWITCH_MARGINS.indexOf(cur) + 1) % SWITCH_MARGINS.length];
+      await ap.update({ switchMargin: next });
+      const sz = await ap.switchSizing();
+      await ack(ctx, `Switch size $${sz.margin} × ${sz.leverage}x = $${sz.position} (stop ≈ -$${(sz.position * 0.08).toFixed(2)})`);
+      await showRunner(ctx, await switchLabView(ap));
+    });
+    apAction('ap_switch_lev', async (ctx, ap) => {
+      const cur = Number(ap.config.switchLeverage) || 5;
+      const next = SWITCH_LEVERAGES[(SWITCH_LEVERAGES.indexOf(cur) + 1) % SWITCH_LEVERAGES.length];
+      await ap.update({ switchLeverage: next });
+      const sz = await ap.switchSizing();
+      await ack(ctx, `Switch size $${sz.margin} × ${sz.leverage}x = $${sz.position} (stop ≈ -$${(sz.position * 0.08).toFixed(2)})`);
+      await showRunner(ctx, await switchLabView(ap));
+    });
+    apAction('ap_switch_live', async (ctx, ap) => {
+      if (ap.config.switchLive === true) {
+        await ap.update({ switchLive: false });
+        await ack(ctx, 'Switch real trades OFF (paper lab keeps running)');
+        return showAutoPump(ctx, true);
+      }
+      await ack(ctx);
+      const sz = await ap.switchSizing(ap.config.ownerId || ctx.from.id);
+      const live = ap.config.mode === 'live';
+      const ws = ap.switchLab ? await ap.switchLab.stats().catch(() => null) : null;
+      return apConfirm(ctx, `OPEN SWITCH TRADES AS ${live ? 'LIVE' : 'PAPER'} AUTO TRADES?`,
+        `On every pump signal for a coin with <b>no spot market</b>, the bot will ${live ? '<b>place a real order</b>' : 'open a paper auto trade'} at the signal ` +
+        `(auto-trade must be ON): 7-day run 12–50% → <b>LONG</b>, 50–${ap.switchShortTo()}% → <b>SHORT</b>. The channel posts the same side.\n\n` +
+        `💵 ${money(sz.margin)} × ${sz.leverage}x = ${money(sz.position)} · 🛑 SL −8% loses about <b>-${money(sz.position * 0.08)}</b>\n` +
+        `🎯 TP 5 / 12 / 20 / 30% · SL to entry at TP1 · counts toward max open and the daily stop\n\n` +
+        `⚠️ Replay with the live delay: +$488 / +$591 per period at $150 (t ≈ 2.5, about $3 a trade) — zones were picked after a wide search, so expect less. ` +
+        `Paper lab so far: ${ws ? `${ws.closed} closed, ${ws.wins} won, ${ws.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.pnl))}` : 'no data'}.\n\n` +
+        `👉 <b>Nothing changes until you tap ✅ Yes, confirm.</b>`, 'ap_switch_live_yes');
+    });
+    apAction('ap_switch_live_yes', async (ctx, ap) => {
+      await ap.update({ switchLive: true });
+      await ack(ctx, `Switch trades ON as ${ap.config.mode === 'live' ? 'LIVE' : 'paper'} auto trades`);
+      await showAutoPump(ctx, true);
+    });
+    // Retired runner-long labs: history only (they finish their open rows, nothing new opens)
+    apAction('ap_oldlabs', async (ctx, ap) => {
+      await ack(ctx);
+      const [rs, ls] = await Promise.all([ap.runner?.stats().catch(() => null), ap.signalLab?.stats().catch(() => null)]);
+      const f = (x) => x ? `${x.closed} closed · ${x.wins} won · <b>${fmtUsd(x.pnl)}</b> · ${x.open} open` : 'n/a';
+      const text = `📜 <b>OLD RUNNER LABS (retired)</b>\n<i>The no-spot runner long was replaced by the 🔀 switch on 27 Oct 2026. These labs open nothing new; ` +
+        `open rows still finish.</i>\n\n🧪 Runner test (long at ✅ ENTER): ${f(rs)}\n⚡ At-signal lab (long at the signal): ${f(ls)}`;
+      await showRunner(ctx, { text, keyboard: Markup.inlineKeyboard([
+        [Markup.button.callback('🧪 Runner log', 'ap_runner_log'), Markup.button.callback('⚡ At-signal log', 'ap_rsig_log')],
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]) });
+    });
+    apAction('ap_switch_to', async (ctx, ap) => {
+      const next = ap.config.switchShortTo === 80 ? 100 : 80;
+      await ap.update({ switchShortTo: next });
+      await ack(ctx, `Switch lab shorts 50–${next}% (replay: 50–100 +$212/+$237, 50–80 +$203/+$139)`);
+      await showRunner(ctx, await switchLabView(ap));
+    });
     apAction('ap_rl_minrun', async (ctx, ap) => {
       const cur = ap.config.runnerMinRun7d ?? 20;
       const next = RUNNER_MIN_RUNS[(RUNNER_MIN_RUNS.indexOf(cur) + 1) % RUNNER_MIN_RUNS.length];
@@ -2770,7 +2842,7 @@ class TelegramBot {
     apAction('ap_rtp1', async (ctx, ap) => {
       const next = AUTO_TP1_PCTS[(AUTO_TP1_PCTS.indexOf(ap.runnerTpPcts()[0]) + 1) % AUTO_TP1_PCTS.length];
       await ap.update({ runnerTp1Pct: next });
-      await ack(ctx, `Long TP1 at +${next}% for new runner longs`);
+      await ack(ctx, `Switch long TP1 at +${next}% for new switch longs`);
       await showAutoPump(ctx, true);
     });
     // Tighter-stop menu: ON/OFF, trigger buttons (profit before TP1) and new-stop buttons
@@ -9833,22 +9905,43 @@ class TelegramBot {
           `  → No new high for ${topAge}m · CISD ${check.cisdScore}/4 (${cisdFlags}) — the tested entry is now`,
       };
 
-      let msg = long
-        ? `🟢 <b>PUMP RUNNER — ${escapeHtml(token.symbol)} (LONG)</b>\n🚀 No spot market · already <b>+${Number(check.run7d).toFixed(0)}%</b> in 7 days\n\n`
-        : `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
-      msg += `${(long ? longVerdicts : verdicts)[check.verdict]}\n`;
-      const run = long ? null : runLabel(check.run7d);
+      // No-spot coin decided by the switch (check.switch, levels from pumpAutoTrader.switchLevels): the bot trades
+      // it now, at the signal, in this direction — so the post says so, with the bot's own levels
+      const sw = check.switch;
+      let msg;
+      if (sw) {
+        const run7 = `${sw.run7dClosed >= 0 ? '+' : ''}${Number(sw.run7dClosed).toFixed(0)}%`;
+        msg = long
+          ? `🟢 <b>NO-SPOT PUMP — ${escapeHtml(token.symbol)} (LONG)</b>\n✅ <b>BUY NOW — LONG</b>\n` +
+            `  → No spot market · 7-day run <b>${run7}</b> (12–50% zone): futures-only pumps at this stage kept running in our tests\n\n`
+          : `🔴 <b>NO-SPOT PUMP — ${escapeHtml(token.symbol)} (SHORT)</b>\n✅ <b>SELL NOW — SHORT</b>\n` +
+            `  → No spot market · 7-day run <b>${run7}</b> (50–${sw.shortTo}% zone): futures-only pumps this stretched faded in our tests\n\n`;
+      } else {
+        msg = long
+          ? `🟢 <b>PUMP RUNNER — ${escapeHtml(token.symbol)} (LONG)</b>\n🚀 No spot market · already <b>+${Number(check.run7d).toFixed(0)}%</b> in 7 days\n\n`
+          : `🔴 <b>PUMP EXHAUSTION — ${escapeHtml(token.symbol)}</b>\n${grade}\n\n`;
+        msg += `${(long ? longVerdicts : verdicts)[check.verdict]}\n`;
+      }
+      const run = long || sw ? null : runLabel(check.run7d);
       if (run) msg += `${run.line}\n`;
       msg += `\n`;
       msg += `💰 Price: <b>$${price}</b>\n`;
       msg += `📈 Pump: <b>+${pumpPct.toFixed(1)}%</b>\n`;
       msg += `📊 OI 4H: <b>${oi4h >= 0 ? '+' : ''}${oi4h.toFixed(0)}%</b> · OI 1H: <b>${oi1h == null ? 'N/A' : `${oi1h >= 0 ? '+' : ''}${oi1h.toFixed(0)}%`}</b>${oi1h != null && oi1h > R.maxOi1h ? ' ⛔' : ''}\n`;
-      if (check.high24) msg += `🔝 24H High: <b>$${p(check.high24)}</b> (${belowHigh.toFixed(1)}% above price) · ${topAge}m ago${topAge >= R.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
-      msg += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${cisdFlags})${check.cisdScore >= R.minCisd ? ' ✅' : ''}\n`;
+      // ✅ / ⏳ marks are the short's ENTER rules — left off switch posts, which enter now
+      if (check.high24) msg += `🔝 24H High: <b>$${p(check.high24)}</b> (${belowHigh.toFixed(1)}% above price) · ${topAge}m ago${sw ? '' : topAge >= R.minTopAgeMin ? ' ✅' : ' ⏳'}\n`;
+      msg += `🔄 CISD 1H: <b>${check.cisdScore}/4</b> (${cisdFlags})${!sw && check.cisdScore >= R.minCisd ? ' ✅' : ''}\n`;
       if (!long) msg += `🔥 Exhaustion: <b>${exhScore}/10</b> · 💵 Funding: <b>${fundingBias}</b> · 📉 RSI 5m: <b>${rsi}</b>\n`;
       msg += `${spot.line}\n`;
       msg += `${koreaLine(check.korea)}\n`;
-      if (long) {
+      if (sw) {
+        const sgn = long ? '+' : '−';
+        msg += `\n<b>Plan (${long ? 'long' : 'short'}) — enter now:</b>\n`;
+        msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (${sgn}${levels.tpPcts[i]}%)`).join('\n');
+        msg += `\n🛑 SL: $${p(levels.stopLoss)} (${long ? '−' : '+'}${levels.slPct}%) · moves to entry at TP1\n`;
+        msg += `⚙️ Max <b>${R.maxLeverage}x</b> (an ${levels.slPct}% SL = ${levels.slPct * R.maxLeverage}% of margin) · Exit style: <b>TPs only</b>\n`;
+        msg += `<i>Entry is at this signal — no ✅ ENTER follow-up for this one</i>`;
+      } else if (long) {
         const minRun = this.pumpAutoTrader?.config?.runnerMinRun7d ?? 20;
         msg += `\n<b>Plan (long):</b>\n`;
         msg += levels.tps.map((tp, i) => `🎯 TP${i + 1}: $${p(tp)} (+${levels.tpPcts[i]}%)`).join('\n');
