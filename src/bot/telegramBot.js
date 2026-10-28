@@ -27,6 +27,7 @@ const ALERT_TYPES = [
   ['signalTrack', '🎯 Signal TP/SL updates'],
   ['invalidated', '⚠️ Alert invalidated'],
   ['brief', '🧠 4h market brief'],
+  ['nearTp', '⏰ Near-TP turn-back DMs'],
 ];
 
 // 🟢/🟠 label from the 7-day run before the pump signal (see PUMP_RULES.extendedRunPct)
@@ -2286,6 +2287,99 @@ class TelegramBot {
         logger.error(`Manual take-profit failed (#${id}): ${e.message}`);
         ctx.editMessageText(`🚨 Take profit failed: ${escapeHtml(e.message)}\n<i>Nothing was booked. Check the position on the exchange if this says an order went through.</i>`, { parse_mode: 'HTML', reply_markup: back }).catch(() => {});
       }
+    });
+
+    // Near-TP turn-back alert (owner DM): a live trade past TP1 got ≥ 80% of the way to its next TP, then pulled back
+    // ≥ 1.5 points from its best. One DM per trade per TP level (kept in onchain_context.nearTpAlerts), muteable in the
+    // alerts menu ('nearTp'). It only informs — nothing is closed; the buttons lead to the take-profit screens.
+    const NEAR_TP = { progress: 0.8, pullback: 1.5 };
+    this.nearTpPeaks = new Map();   // trade id → { best, next } — best % move since entry from closed 1m candles
+    const nearTpView = (t, st, price, best) => {
+      const n = st.nextTp.n, prevTp = st.tps.find(x => x.n === n - 1);
+      const pctOf = (lvl) => (st.isLong ? lvl - st.entry : st.entry - lvl) / st.entry * 100;
+      const prev = prevTp ? pctOf(prevTp.price) : 0, next = pctOf(st.nextTp.price);
+      const way = Math.max(0, Math.min(1, (best - prev) / (next - prev)));
+      const kind = strategyTag(t);
+      let text = `⏰ <b>NEAR TP${n} — turning back</b>\n${st.isLong ? '🟢 LONG' : '🔴 SHORT'} <b>$${escapeHtml(t.symbol)}</b>${kind ? ` · ${kind}` : ''} · ${escapeHtml(t.exchange)}\n\n`;
+      text += `Best <b>${fmtPct(best)}</b> · TP${n} ${fmtPct(next)} (got ${(way * 100).toFixed(0)}% of the way) → now <b>${fmtPct(st.pct)}</b>\n`;
+      text += `${st.total >= 0 ? '🟩' : '🟥'} Open ${fmtUsd(st.unrealized)} · banked ${fmtUsd(st.realized)} · `;
+      text += st.atBreakeven ? 'SL at entry (the rest can\'t lose)\n' : st.slLocksProfit ? `SL locks ${fmtUsd(st.slPnl)}\n` : `SL ${fmtUsd(st.slPnl ?? 0)} if hit\n`;
+      if (n === 2) text += `\n<i>In the backtest about 9 in 10 trades that got this close still reached TP2 — taking some is your call.</i>\n`;
+      text += `<i>Updated ${utcClock()} UTC</i>`;
+      const kb = [
+        [Markup.button.callback('✅ Take 50%', `mt_tkp_${t.id}_50`), Markup.button.callback('💰 Take profit…', `mt_tk_${t.id}`)],
+        [Markup.button.callback('🔄 Refresh', `mt_na_${t.id}`), Markup.button.callback('🔎 Position', `mt_pd_${t.id}`)],
+      ];
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+    // Best % move since entry, from closed 1m candles fetched incrementally (no pre-entry wick counts)
+    const nearTpBest = async (t) => {
+      const ex = executorForSource(t.source)?.exchanges?.[t.exchange] || mtExec()?.exchanges?.[t.exchange];
+      if (!ex) return null;
+      const entry = parseFloat(t.entry_price), isLong = t.direction === 'long';
+      const seen = this.nearTpPeaks.get(t.id) || { best: -Infinity, next: Math.ceil(new Date(t.created_at).getTime() / 60000) * 60000 };
+      for (let page = 0; page < 5 && seen.next + 60000 <= Date.now(); page++) {
+        const candles = await ex.fetchOHLCV(pairOf(t.symbol), '1m', seen.next, 1000).catch(() => null);
+        const closed = (candles || []).filter(k => k[0] + 60000 <= Date.now());
+        if (!closed.length) break;
+        for (const k of closed) seen.best = Math.max(seen.best, isLong ? (k[2] / entry - 1) * 100 : (1 - k[3] / entry) * 100);
+        seen.next = closed[closed.length - 1][0] + 60000;
+      }
+      this.nearTpPeaks.set(t.id, seen);
+      return isFinite(seen.best) ? seen.best : null;
+    };
+    this.nearTpRunning = false;
+    this.nearTpCheck = async () => {
+      if (this.nearTpRunning || this.alertMuted('nearTp')) return;
+      const owner = this.pumpAutoTrader?.config?.ownerId;
+      if (!owner) return;
+      this.nearTpRunning = true;
+      try {
+        const open = (await db.getOpenTrades()).filter(t => t.mode === 'live' && t.hit_tp1);
+        for (const id of this.nearTpPeaks.keys()) if (!open.some(t => t.id === id)) this.nearTpPeaks.delete(id);
+        if (!open.length) return;
+        const prices = await positionPrices(open);
+        for (const t of open) {
+          try {
+            const price = prices.get(`${t.exchange}:${t.symbol}`);
+            const st = positionStats(t, price);
+            if (!price || !st.nextTp || st.nextTp.n < 2) continue;
+            const sent = Array.isArray(t.onchain_context?.nearTpAlerts) ? t.onchain_context.nearTpAlerts : [];
+            if (sent.includes(st.nextTp.n)) continue;
+            const best = await nearTpBest(t);
+            if (best == null) continue;
+            const pctOf = (lvl) => (st.isLong ? lvl - st.entry : st.entry - lvl) / st.entry * 100;
+            const prevTp = st.tps.find(x => x.n === st.nextTp.n - 1);
+            const prev = prevTp ? pctOf(prevTp.price) : 0, next = pctOf(st.nextTp.price);
+            if ((best - prev) / (next - prev) < NEAR_TP.progress || best - st.pct < NEAR_TP.pullback) continue;
+            await db.query(
+              `UPDATE trades SET onchain_context = jsonb_set(COALESCE(onchain_context, '{}'::jsonb), '{nearTpAlerts}',
+                 COALESCE(onchain_context->'nearTpAlerts', '[]'::jsonb) || $1::jsonb) WHERE id = $2`,
+              [JSON.stringify([st.nextTp.n]), t.id]
+            );
+            const v = nearTpView(t, st, price, best);
+            await this.bot.telegram.sendMessage(owner, v.text, { parse_mode: 'HTML', reply_markup: v.keyboard.reply_markup });
+            logger.info(`Near-TP alert: ${t.symbol} #${t.id} best ${best.toFixed(1)}% → TP${st.nextTp.n} ${next.toFixed(1)}%, now ${st.pct.toFixed(1)}%`);
+          } catch (e) { logger.warn(`Near-TP check ${t.symbol} #${t.id} failed: ${e.message}`); }
+        }
+      } finally {
+        this.nearTpRunning = false;
+      }
+    };
+
+    this.bot.action(/^mt_na_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Updated');
+      const id = Number(ctx.match[1]);
+      try {
+        const t = await getOpenTradeById(id);
+        if (!t) return ctx.editMessageText('✅ That position is closed now.', { reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📊 All positions', 'mt_pv_all_pnl_0')]]).reply_markup }).catch(() => {});
+        const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+        const st = positionStats(t, price);
+        if (!price || !st.nextTp) return editOrReply(ctx, await positionDetail(id));
+        const best = await nearTpBest(t);
+        await editOrReply(ctx, nearTpView(t, st, price, Math.max(best ?? st.pct, st.pct)));
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
     });
 
     this.bot.action('mt_pos_refresh_new', async (ctx) => {

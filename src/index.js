@@ -720,6 +720,7 @@ async function main() {
     pumpRunnerSignal.check().catch(e => logger.error(`At-signal lab check error: ${e.message}`));
     pumpSwitchPaper.check().catch(e => logger.error(`Switch lab check error: ${e.message}`));
     pumpAutoTrader.checkBreakeven().catch(e => logger.error(`Stop→entry check error: ${e.message}`));
+    bot.nearTpCheck?.().catch(e => logger.error(`Near-TP alert check error: ${e.message}`));
   });
 
   // Per-user virtual paper accounts (pass bot for user notifications)
