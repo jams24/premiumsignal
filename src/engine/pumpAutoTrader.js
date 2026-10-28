@@ -93,12 +93,12 @@ const DEFAULTS = {
   switchLongLeverage: 0,
 };
 const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
-const AUTO_MARGINS = [0, 10, 20, 30, 50, 75, 100]; // /autopump margin buttons (0 = from /trade)
-const AUTO_LEVERAGES = [0, 3, 5, 7, 10];           // /autopump leverage buttons (0 = from /trade)
-const SWITCH_MARGINS = [0, 10, 20, 30, 50, 75, 100]; // switch size menu (0 = same as the short's auto size)
-const SWITCH_LEVERAGES = [0, 3, 5, 7, 10];
-const SWITCH_LONG_MARGINS = [0, 5, 10, 15, 20, 25, 30, 50]; // switch LONG size menu (0 = same as the switch size)
-const SWITCH_LONG_LEVERAGES = [0, 2, 3, 5, 7, 10];
+// Size menu buttons — margin $ and leverage. 0 = /autopump: from /trade · switch: = short · switch long: = switch
+const SIZE_MARGINS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100];
+const SIZE_LEVERAGES = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const AUTO_MARGINS = SIZE_MARGINS, AUTO_LEVERAGES = SIZE_LEVERAGES;
+const SWITCH_MARGINS = SIZE_MARGINS, SWITCH_LEVERAGES = SIZE_LEVERAGES;
+const SWITCH_LONG_MARGINS = SIZE_MARGINS, SWITCH_LONG_LEVERAGES = SIZE_LEVERAGES;
 const BE_AT_PCTS = [2, 2.5, 3, 3.5, 4, 4.5, 4.8]; // trigger buttons in /autopump (only those below TP1 are shown)
 const BE_STOP_PCTS = [0, 2, 3, 4, 5, 6, 7];       // new stop buttons, % from entry (0 = entry)
 const BE_DEFAULT = { at: 4.5, stop: 5 };          // best in the backtest

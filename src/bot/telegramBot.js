@@ -3254,7 +3254,7 @@ class TelegramBot {
         [Markup.button.callback('1️⃣ Long margin:', 'ap_swlsize')],
         ...rows(mBtns, 4),
         [Markup.button.callback('2️⃣ Long leverage:', 'ap_swlsize')],
-        ...rows(lBtns, 3),
+        ...rows(lBtns, 5),
         [Markup.button.callback('💵 Switch size', 'ap_swsize'), Markup.button.callback('🔀 Switch log', 'ap_switch_log')],
         [Markup.button.callback('⬅️ Back', 'ap_refresh')],
       ]);
