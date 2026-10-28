@@ -1713,6 +1713,9 @@ class TradeExecutor {
     const updates = [];
 
     for (const trade of trades) {
+      // A manual take-profit (takeProfitNow) is changing this trade — leave it to the next pass
+      if (this._tradeLocks?.has(trade.id)) continue;
+      this._checkingId = trade.id;
       try {
         let exchange = this.exchanges[trade.exchange];
         if (!exchange) exchange = Object.values(this.exchanges)[0];
@@ -2162,6 +2165,7 @@ class TradeExecutor {
         logger.error(`Trade check error for ${trade.symbol}: ${err.message}`);
       }
     }
+    this._checkingId = null;
 
     return updates;
   }
@@ -2262,7 +2266,9 @@ class TradeExecutor {
   }
 
   // level = which TP triggered this (1-3); used to re-place only the TP limits still ahead
-  async partialClosePosition(trade, fraction, tpExit, level = 0) {
+  // opts.strict (manual take-profit): any exchange failure, or a position smaller than tracked, throws before the DB is
+  // touched, and the TP limits are put back for the full size
+  async partialClosePosition(trade, fraction, tpExit, level = 0, opts = {}) {
     const closeQty = trade.quantity * fraction;
     let remainQty = trade.quantity - closeQty;
     let remainSize = trade.position_size * (1 - fraction);
@@ -2292,7 +2298,14 @@ class TradeExecutor {
               remainSize = remainQty > 0 ? remainSize * (actualQty / remainQty) : 0;
               remainQty = actualQty;
             }
-          } catch (e) { logger.warn(`${pair}: position check before partial close failed, closing the full share: ${e.message}`); }
+          } catch (e) {
+            if (opts.strict) throw new Error(`position check failed: ${e.message}`);
+            logger.warn(`${pair}: position check before partial close failed, closing the full share: ${e.message}`);
+          }
+          if (opts.strict) {
+            if (toClose < closeQty * 0.95) throw new Error('the exchange position is smaller than the bot tracks (a TP may have just filled) — wait a minute and try again');
+            limitFilledQty = 0;   // nothing was filled by a TP limit here — the whole share goes at market
+          }
 
           const limitPrice = (level && trade[`tp${level}`]) || tpExit || null;
           if (toClose > 0) {
@@ -2323,7 +2336,15 @@ class TradeExecutor {
           if (fraction < 1.0 && remainQty > 0) {
             await this.placeTPOrders({ ...trade, quantity: remainQty }, level);
           }
-        } catch (e) { logger.error(`Partial close failed for ${trade.symbol}: ${e.message}`); }
+        } catch (e) {
+          logger.error(`Partial close failed for ${trade.symbol}: ${e.message}`);
+          if (opts.strict) {
+            await this.placeTPOrders(trade, level).catch(() => {});
+            throw e;
+          }
+        }
+      } else if (opts.strict) {
+        throw new Error(`No API keys for ${trade.exchange}`);
       }
     }
 
@@ -2826,6 +2847,47 @@ class TradeExecutor {
     this.saveConfig();
     logger.info(`Manual paper ${p.direction} ${p.symbol} @ $${p.entryPrice} ($${p.positionSize} @ ${p.leverage}x)`);
     return trade;
+  }
+
+  // Bank part of an open trade by hand: market-closes `fraction` of what is still open and books it in realized_pnl like
+  // a TP partial. TPs already hit stay hit; the remaining TP limits are re-placed for the smaller size (each still closes
+  // its usual share of what is left); the stop price is unchanged (the exchange stop is reduce-only, as after a TP partial).
+  // Each take is logged in onchain_context.manualTakes. The minute check skips the trade while this runs.
+  async takeProfitNow(tradeId, fraction) {
+    if (!(fraction > 0 && fraction < 1)) throw new Error('Pick less than the whole position — use Close for all of it.');
+    const locks = (this._tradeLocks ||= new Set());
+    if (locks.has(tradeId)) throw new Error('This trade is already being changed — try again in a moment.');
+    locks.add(tradeId);
+    try {
+      // Let a minute check that is already on this trade finish first (max ~20s)
+      for (let i = 0; i < 40 && this._checkingId === tradeId; i++) await new Promise(r => setTimeout(r, 500));
+      const { rows } = await db.query("SELECT * FROM trades WHERE id = $1 AND status = 'open'", [tradeId]);
+      const trade = rows[0];
+      if (!trade) throw new Error('That position is already closed.');
+      const exchange = this.exchanges[trade.exchange];
+      const pair = `${trade.symbol}/USDT:USDT`;
+      const price = await exchange?.fetchTicker(pair).then(t => t.last).catch(() => null);
+      if (!price) throw new Error('No live price right now — try again.');
+      if (trade.mode === 'live') {
+        if (!exchange?.apiKey) throw new Error(`No API keys for ${trade.exchange}`);
+        if (!this.calcMinNotional(exchange, pair, trade.quantity * fraction, price).ok) throw new Error('That part is below the exchange minimum order ($5) — take a bigger share.');
+        if (!this.calcMinNotional(exchange, pair, trade.quantity * (1 - fraction), price).ok) throw new Error('What would be left is below the exchange minimum ($5) — close the whole position instead.');
+      }
+      const level = trade.hit_tp3 ? 3 : trade.hit_tp2 ? 2 : trade.hit_tp1 ? 1 : 0;
+      const qty = trade.quantity * fraction, size = trade.position_size * fraction;
+      const pnl = await this.partialClosePosition(trade, fraction, price, level, { strict: true });
+      const take = { at: new Date().toISOString(), fraction: +fraction.toFixed(4), qty, size: +size.toFixed(4), price: trade._partialFillPrice, pnl: +pnl.toFixed(4) };
+      await db.query(
+        `UPDATE trades SET onchain_context = jsonb_set(COALESCE(onchain_context, '{}'::jsonb), '{manualTakes}',
+           COALESCE(onchain_context->'manualTakes', '[]'::jsonb) || $1::jsonb) WHERE id = $2`,
+        [JSON.stringify([take]), tradeId]
+      );
+      if (trade.mode === 'paper') this.saveConfig();
+      logger.info(`Manual take-profit ${trade.symbol} #${trade.id}: ${(fraction * 100).toFixed(1)}% ($${size.toFixed(2)}) @ $${take.price} → $${pnl.toFixed(2)} (${trade.mode})`);
+      return { trade, ...take, remainingSize: trade.position_size };
+    } finally {
+      locks.delete(tradeId);
+    }
   }
 
   // Close any open trade of this executor immediately (exchange close for live), returns final P&L

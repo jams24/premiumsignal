@@ -1919,9 +1919,12 @@ class TelegramBot {
       text += `  Source: ${escapeHtml(t.source || '?')}${c.autoPump ? ' · pump auto-trade' : c.manual ? ' · manual' : ''}${c.exitStyle ? ` · exit: ${escapeHtml(String(c.exitStyle))}` : ''}\n`;
       text += `  Quantity: ${parseFloat(t.quantity || 0)} · exchange leverage ${parseFloat(t.leverage || st.lev)}x${c.marginSaver ? ' (margin saver)' : ''}\n`;
       text += `  Opened: ${opened} UTC (${posAge(t)} ago)\n`;
+      const takes = Array.isArray(c.manualTakes) ? c.manualTakes : [];
+      if (takes.length) text += `  💰 Taken by hand: <b>${fmtUsd(takes.reduce((a, x) => a + (Number(x.pnl) || 0), 0))}</b> (${takes.length}×, in Banked)\n`;
       text += `\n<i>Updated ${utcClock()} UTC</i>`;
       const canBe = price && st.pct >= 0.5 && isFinite(st.sl) && !st.atBreakeven && !st.slLocksProfit;
       const kb = [[Markup.button.callback('🔄 Refresh', `mt_pd_${t.id}`), Markup.button.callback('❌ Close position', `mt_close_${t.id}`)]];
+      if (price && st.unrealized > 1) kb.push([Markup.button.callback(`💰 Take profit (open ${fmtUsd(st.unrealized)})`, `mt_tk_${t.id}`)]);
       kb.push(canBe ? [Markup.button.callback('🛡 Move SL to breakeven', `mt_be_${t.id}`), Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]
         : [Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]);
       kb.push([Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]);
@@ -2161,6 +2164,96 @@ class TelegramBot {
       } catch (e) {
         logger.error(`SL edit failed: ${e.message}`);
         ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    });
+
+    // Take profit by hand: bank part of an open winner (a $ amount of the open profit, or a % of the position).
+    // The executor market-closes that share, books it like a TP partial and re-places the remaining TP limits;
+    // TPs already hit stay hit and the stop is unchanged.
+    const TAKE_USD = [5, 10, 15, 20, 30, 50, 75, 100];
+    const TAKE_PCT = [25, 50, 75];
+    // Fraction of the open position to close for a choice ('u' = $ of open profit, 'p' = % of position) at this price
+    const takeCheck = async (id, kind, value) => {
+      const t = await getOpenTradeById(id);
+      if (!t) return { error: 'That position is already closed.' };
+      const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+      if (!price) return { error: 'No live price right now — try again.' };
+      const st = positionStats(t, price);
+      if (!(st.unrealized > 0)) return { error: `The open part is not in profit now (${fmtUsd(st.unrealized)}).` };
+      const fraction = kind === 'u' ? value / st.unrealized : value / 100;
+      if (kind === 'u' && fraction >= 0.95) return { error: `Open profit is only ${fmtUsd(st.unrealized)} now — pick a smaller amount or close the position.` };
+      if (!(fraction >= 0.05 && fraction < 1)) return { error: 'Pick between 5% and 95% of the position.' };
+      const size = st.size * fraction, fee = size * 0.0011;
+      return { t, st, price, fraction, size, bank: st.unrealized * fraction - fee, fee };
+    };
+    const takeMenu = async (id) => {
+      const t = await getOpenTradeById(id);
+      const back = Markup.inlineKeyboard([[Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]]);
+      if (!t) return { text: '⚠️ That position is already closed.', keyboard: back };
+      const price = (await positionPrices([t])).get(`${t.exchange}:${t.symbol}`);
+      const st = positionStats(t, price);
+      let text = `💰 <b>Take profit — ${st.isLong ? '🟢 LONG' : '🔴 SHORT'} $${escapeHtml(t.symbol)}</b> #${t.id}\n\n`;
+      text += `Now $${price ? fmtP(price) : '?'} (${st.pct == null ? '?' : fmtPct(st.pct)}) · open <b>$${st.size.toFixed(2)}</b>\n`;
+      text += `Open profit <b>${fmtUsd(st.unrealized)}</b>${st.realized ? ` · already banked ${fmtUsd(st.realized)}` : ''}\n`;
+      if (st.nextTp) text += `Next TP${st.nextTp.n} $${fmtP(st.nextTp.price)}${st.tpAway != null ? ` (${st.tpAway.toFixed(1)}% away)` : ''}\n`;
+      text += `\nBank a $ amount of the open profit, or a share of the position:\n`;
+      const usdBtns = st.unrealized > 0
+        ? TAKE_USD.filter(u => u / st.unrealized >= 0.05 && u / st.unrealized < 0.95).map(u => Markup.button.callback(`$${u} (${Math.round(u / st.unrealized * 100)}%)`, `mt_tku_${t.id}_${u}`))
+        : [];
+      const kb = [...grid(usdBtns, 4), TAKE_PCT.map(p => Markup.button.callback(`${p}% · ${fmtUsd(st.unrealized * p / 100)}`, `mt_tkp_${t.id}_${p}`))];
+      kb.push([Markup.button.callback('🔄 Refresh', `mt_tk_${t.id}`), Markup.button.callback('⬅️ Back to position', `mt_pd_${t.id}`)]);
+      text += `<i>The rest stays open: TPs already hit stay hit, the next TPs close their usual share of what is left, the stop doesn't move. The take is recorded on the trade (Banked).</i>`;
+      return { text, keyboard: Markup.inlineKeyboard(kb) };
+    };
+    const takeConfirm = async (ctx, id, kind, value) => {
+      const r = await takeCheck(id, kind, value);
+      if (r.error) return ctx.replyWithHTML(`⚠️ ${escapeHtml(r.error)}`, Markup.inlineKeyboard([[Markup.button.callback('💰 Back to take profit', `mt_tk_${id}`)]]));
+      const left = r.st.size - r.size;
+      await ctx.replyWithHTML(
+        `❓ <b>Take profit on ${escapeHtml(r.t.symbol)}?</b>\n\n` +
+        `Close <b>${(r.fraction * 100).toFixed(0)}%</b> ($${r.size.toFixed(2)}) at about $${fmtP(r.price)} → banks ≈ <b>${fmtUsd(r.bank)}</b> after fees\n` +
+        `Left open: $${left.toFixed(2)} · open profit on it ${fmtUsd(r.st.unrealized - r.st.unrealized * r.fraction)}\n` +
+        `${r.st.nextTp ? `TP${r.st.nextTp.n} $${fmtP(r.st.nextTp.price)} and later TPs stay on the rest · ` : ''}SL $${fmtP(r.st.sl)} unchanged\n` +
+        `${r.t.mode === 'live' ? `💰 LIVE — market order on ${escapeHtml(r.t.exchange)}` : '📝 PAPER'}\n` +
+        `<i>${kind === 'u' ? 'The share is re-worked out from the price when you confirm.' : ''}</i>`,
+        Markup.inlineKeyboard([[Markup.button.callback('✅ Yes, take it', `mt_tkok_${r.t.id}_${kind}_${value}`), Markup.button.callback('⬅️ Not now', `mt_tk_${r.t.id}`)]])
+      );
+    };
+
+    this.bot.action(/^mt_tk_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try { await editOrReply(ctx, await takeMenu(Number(ctx.match[1]))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_tk([up])_(\d+)_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try { await takeConfirm(ctx, Number(ctx.match[2]), ctx.match[1], Number(ctx.match[3])); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    this.bot.action(/^mt_tkok_(\d+)_([up])_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Taking profit…');
+      const id = Number(ctx.match[1]);
+      const back = Markup.inlineKeyboard([[Markup.button.callback('🔎 Back to position', `mt_pd_${id}`), Markup.button.callback('📊 All positions', 'mt_pv_all_pnl_0')]]).reply_markup;
+      try {
+        const r = await takeCheck(id, ctx.match[2], Number(ctx.match[3]));   // re-checked at the current price
+        if (r.error) return ctx.editMessageText(`⚠️ ${r.error}`, { reply_markup: back }).catch(() => {});
+        const executor = executorForSource(r.t.source);
+        if (!executor?.takeProfitNow) return ctx.editMessageText(`⚠️ No executor for source "${r.t.source}".`).catch(() => {});
+        await ctx.editMessageText(`⏳ Taking ${(r.fraction * 100).toFixed(0)}% of ${r.t.symbol}…`).catch(() => {});
+        const res = await executor.takeProfitNow(id, r.fraction);
+        await ctx.editMessageText(
+          `✅ <b>${escapeHtml(r.t.symbol)} — profit taken</b>\n\n` +
+          `Closed ${(res.fraction * 100).toFixed(0)}% ($${res.size.toFixed(2)}) @ $${fmtP(res.price)} → banked <b>${fmtUsd(res.pnl)}</b>\n` +
+          `Still open: $${Number(res.remainingSize).toFixed(2)} · TPs re-placed for the rest · SL unchanged\n` +
+          `<i>Recorded on trade #${id} as a manual take.</i>`,
+          { parse_mode: 'HTML', reply_markup: back }
+        ).catch(() => {});
+      } catch (e) {
+        logger.error(`Manual take-profit failed (#${id}): ${e.message}`);
+        ctx.editMessageText(`🚨 Take profit failed: ${escapeHtml(e.message)}\n<i>Nothing was booked. Check the position on the exchange if this says an order went through.</i>`, { parse_mode: 'HTML', reply_markup: back }).catch(() => {});
       }
     });
 
