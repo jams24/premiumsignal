@@ -2714,6 +2714,8 @@ class TelegramBot {
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
+        `📣 Channel posts: 🟢 longs <b>${c.channelLongs !== false ? 'ON' : 'OFF'}</b> · 🔴 shorts <b>${c.channelShorts !== false ? 'ON' : 'OFF'}</b>` +
+          (c.channelLongs === false || c.channelShorts === false ? ' — off = not posted, still traded' : ''),
       );
       if (ap.switchLab) {
         const to = ap.switchShortTo();
@@ -2747,6 +2749,8 @@ class TelegramBot {
         [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
+        [Markup.button.callback(`📣 🟢 Long posts: ${c.channelLongs !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_ch_long'),
+         Markup.button.callback(`📣 🔴 Short posts: ${c.channelShorts !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_ch_short')],
         ...(ap.switchLab ? [
           [Markup.button.callback(`🔀 Switch real trades: ${c.switchLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_switch_live')],
           [Markup.button.callback(`🔀 Switch lab: ${c.switchTest !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_switch'),
@@ -2987,6 +2991,15 @@ class TelegramBot {
       await ack(ctx, 'Updated');
       await showRunner(ctx, await switchLabView(ap));
     });
+    for (const [action, key, label] of [['ap_ch_long', 'channelLongs', 'long'], ['ap_ch_short', 'channelShorts', 'short']]) {
+      apAction(action, async (ctx, ap) => {
+        await ap.update({ [key]: ap.config[key] === false });
+        await ack(ctx, ap.config[key] !== false
+          ? `New ${label} signals will be posted in the channel`
+          : `New ${label} signals won't be posted in the channel (still traded)`);
+        await showAutoPump(ctx, true);
+      });
+    }
     apAction('ap_switch', async (ctx, ap) => {
       await ap.update({ switchTest: ap.config.switchTest === false });
       await ack(ctx, ap.config.switchTest !== false ? 'Switch lab ON (paper)' : 'Switch lab OFF (open ones keep being tracked)');

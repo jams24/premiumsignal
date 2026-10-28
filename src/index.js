@@ -639,7 +639,7 @@ async function main() {
   const switchSkipped = new Set(); // `${symbol}:${UTC day}` of no-spot pumps outside the switch zones (not posted)
   let pumpWatchRunning = false;
   const watchState = (w, status, outcome = null) => ({
-    status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, verdict: w.verdict, side: w.side || 'short', signalPrice: w.signalPrice,
+    status, outcome, exchangeId: w.exchangeId, msgId: w.msgId, posted: w.posted !== false, verdict: w.verdict, side: w.side || 'short', signalPrice: w.signalPrice,
     high: w.high, pumpBase: w.pumpBase, startedAt: w.startedAt, newHighSent: w.newHighSent, run7d: w.run7d ?? null,
     enterSpot: w.enterSpot ?? null, enterKorea: w.enterKorea ?? null, enterBuyers: w.enterBuyers ?? null,
   });
@@ -650,7 +650,7 @@ async function main() {
   async function finishWatch(key, w, outcome, reply) {
     pumpWatches.delete(key);
     await saveWatch(w, 'done', outcome);
-    await bot.sendPumpFollowUp(w.msgId, reply);
+    if (w.posted !== false) await bot.sendPumpFollowUp(w.msgId, reply);
   }
   async function processPumpWatches() {
     if (pumpWatchRunning || !pumpWatches.size) return;
@@ -692,7 +692,7 @@ async function main() {
             const firstNewHigh = !w.newHighSent;
             w.newHighSent = true;
             await saveWatch(w);
-            if (firstNewHigh) await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
+            if (firstNewHigh && w.posted !== false) await bot.sendPumpFollowUp(w.msgId, { ...base, ...r });
           }
         } catch (e) {
           logger.warn(`Pump watch ${w.symbol} failed: ${e.message}`);
@@ -1115,7 +1115,10 @@ async function main() {
             check.side = sw ? sw.side : 'short';
             check.switch = sw;
             const levels = sw ? pumpAutoTrader.switchLevels(token.price, sw.side) : channelLevels(token.price);
-            const msgId = await bot.sendPumpSignal(token, setup, check, levels);
+            // 📣 channel switch per side (/autopump): an unposted signal is still logged, watched and traded
+            const posted = pumpAutoTrader.postsToChannel(check.side);
+            const msgId = posted ? await bot.sendPumpSignal(token, setup, check, levels) : null;
+            if (!posted) logger.info(`Pump signal ${token.symbol} ${check.side.toUpperCase()}: channel posts for ${check.side}s are off — not posted`);
 
             // Channel levels are logged so the outcome tracker scores what subscribers were shown
             const signalId = await db.logPumpSignal(token.symbol, {
@@ -1154,10 +1157,11 @@ async function main() {
               continue;
             }
 
-            // A re-check is watched even if the channel post failed, so the short still gets its ENTER.
-            if (ex && (msgId || check.verdict === 'recheck')) {
+            // A re-check is watched even if the channel post failed, so the short still gets its ENTER; an unposted
+            // one (channel off) is watched too, without replies.
+            if (ex && (msgId || check.verdict === 'recheck' || !posted)) {
               const w = {
-                signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, verdict: check.verdict, side: check.side,
+                signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, posted, verdict: check.verdict, side: check.side,
                 signalPrice: token.price, high: check.high24, pumpBase: top?.low24 ?? null, startedAt: Date.now(), newHighSent: false, run7d,
               };
               pumpWatches.set(signalId ?? token.symbol, w);
