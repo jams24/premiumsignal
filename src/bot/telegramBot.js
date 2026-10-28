@@ -2209,14 +2209,23 @@ class TelegramBot {
       const r = await takeCheck(id, kind, value);
       if (r.error) return ctx.replyWithHTML(`⚠️ ${escapeHtml(r.error)}`, Markup.inlineKeyboard([[Markup.button.callback('💰 Back to take profit', `mt_tk_${id}`)]]));
       const left = r.st.size - r.size;
+      // Breakeven offered when the stop is still below entry and price is far enough in profit for it not to fire at once
+      const canBe = isFinite(r.st.sl) && !r.st.atBreakeven && !r.st.slLocksProfit && r.st.pct >= 0.5;
+      const slLoss = canBe && r.st.slPnl != null ? r.st.slPnl * (1 - r.fraction) : null;
+      const btns = [Markup.button.callback('✅ Take it', `mt_tkok_${r.t.id}_${kind}_${value}`)];
+      if (canBe) btns.push(Markup.button.callback('🛡 Take + SL to breakeven', `mt_tkbe_${r.t.id}_${kind}_${value}`));
       await ctx.replyWithHTML(
         `❓ <b>Take profit on ${escapeHtml(r.t.symbol)}?</b>\n\n` +
         `Close <b>${(r.fraction * 100).toFixed(0)}%</b> ($${r.size.toFixed(2)}) at about $${fmtP(r.price)} → banks ≈ <b>${fmtUsd(r.bank)}</b> after fees\n` +
         `Left open: $${left.toFixed(2)} · open profit on it ${fmtUsd(r.st.unrealized - r.st.unrealized * r.fraction)}\n` +
         `${r.st.nextTp ? `TP${r.st.nextTp.n} $${fmtP(r.st.nextTp.price)} and later TPs stay on the rest · ` : ''}SL $${fmtP(r.st.sl)} unchanged\n` +
         `${r.t.mode === 'live' ? `💰 LIVE — market order on ${escapeHtml(r.t.exchange)}` : '📝 PAPER'}\n` +
+        (canBe
+          ? `\n<b>If it then reverses:</b>\n✅ Take it → the rest can still hit the stop: ${slLoss != null ? `${fmtUsd(slLoss)} on what is left, ` : ''}net ≈ <b>${fmtUsd(r.bank + (slLoss ?? 0))}</b>\n` +
+            `🛡 Take + breakeven → the rest closes at entry: net ≈ <b>${fmtUsd(r.bank - (r.st.size - r.size) * 0.0011)}</b> (but an early dip to entry ends it before TP1)\n`
+          : '') +
         `<i>${kind === 'u' ? 'The share is re-worked out from the price when you confirm.' : ''}</i>`,
-        Markup.inlineKeyboard([[Markup.button.callback('✅ Yes, take it', `mt_tkok_${r.t.id}_${kind}_${value}`), Markup.button.callback('⬅️ Not now', `mt_tk_${r.t.id}`)]])
+        Markup.inlineKeyboard([btns, [Markup.button.callback('⬅️ Not now', `mt_tk_${r.t.id}`)]])
       );
     };
 
@@ -2232,22 +2241,44 @@ class TelegramBot {
       try { await takeConfirm(ctx, Number(ctx.match[2]), ctx.match[1], Number(ctx.match[3])); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
     });
 
-    this.bot.action(/^mt_tkok_(\d+)_([up])_(\d+)$/, async (ctx) => {
+    // mt_tkok = take only · mt_tkbe = take, then move the stop on what is left to entry (exchange first, like ✏️ Edit stop)
+    this.bot.action(/^mt_tk(ok|be)_(\d+)_([up])_(\d+)$/, async (ctx) => {
       if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
       await ack(ctx, 'Taking profit…');
-      const id = Number(ctx.match[1]);
+      const withBe = ctx.match[1] === 'be', id = Number(ctx.match[2]);
       const back = Markup.inlineKeyboard([[Markup.button.callback('🔎 Back to position', `mt_pd_${id}`), Markup.button.callback('📊 All positions', 'mt_pv_all_pnl_0')]]).reply_markup;
       try {
-        const r = await takeCheck(id, ctx.match[2], Number(ctx.match[3]));   // re-checked at the current price
+        const r = await takeCheck(id, ctx.match[3], Number(ctx.match[4]));   // re-checked at the current price
         if (r.error) return ctx.editMessageText(`⚠️ ${r.error}`, { reply_markup: back }).catch(() => {});
         const executor = executorForSource(r.t.source);
         if (!executor?.takeProfitNow) return ctx.editMessageText(`⚠️ No executor for source "${r.t.source}".`).catch(() => {});
         await ctx.editMessageText(`⏳ Taking ${(r.fraction * 100).toFixed(0)}% of ${r.t.symbol}…`).catch(() => {});
         const res = await executor.takeProfitNow(id, r.fraction);
+
+        let slLine = 'SL unchanged';
+        if (withBe) {
+          // The take is done and booked — a failure here only leaves the stop where it was
+          try {
+            // Re-checked on the smaller trade: still below entry, price still ≥ 0.5% in profit
+            const b = await breakevenCheck(id);
+            if (b.error) slLine = `⚠️ SL not moved: ${escapeHtml(b.error)}`;
+            else {
+              const ok = b.t.mode === 'live' ? await executor.updateExchangeSL(b.t, b.st.entry) : true;
+              if (ok === true) {
+                await db.updateTradeStopLoss(id, b.st.entry);
+                logger.info(`Manual take + SL → breakeven: ${b.t.symbol} #${id} ${b.st.sl} → ${b.st.entry}`);
+                slLine = `🛡 SL moved to breakeven $${fmtP(b.st.entry)} — the rest can't end in a loss (fees aside)`;
+              } else slLine = `🚨 The exchange rejected the breakeven stop — SL still $${fmtP(b.st.sl)}. Try 🛡 Move SL to breakeven on the position.`;
+            }
+          } catch (e) {
+            logger.error(`Take + breakeven: SL move failed (#${id}): ${e.message}`);
+            slLine = `🚨 Profit taken, but moving the SL failed (${escapeHtml(e.message)}) — check the stop on the position.`;
+          }
+        }
         await ctx.editMessageText(
           `✅ <b>${escapeHtml(r.t.symbol)} — profit taken</b>\n\n` +
           `Closed ${(res.fraction * 100).toFixed(0)}% ($${res.size.toFixed(2)}) @ $${fmtP(res.price)} → banked <b>${fmtUsd(res.pnl)}</b>\n` +
-          `Still open: $${Number(res.remainingSize).toFixed(2)} · TPs re-placed for the rest · SL unchanged\n` +
+          `Still open: $${Number(res.remainingSize).toFixed(2)} · TPs re-placed for the rest\n${slLine}\n` +
           `<i>Recorded on trade #${id} as a manual take.</i>`,
           { parse_mode: 'HTML', reply_markup: back }
         ).catch(() => {});
