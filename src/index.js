@@ -1115,10 +1115,11 @@ async function main() {
             check.side = sw ? sw.side : 'short';
             check.switch = sw;
             const levels = sw ? pumpAutoTrader.switchLevels(token.price, sw.side) : channelLevels(token.price);
-            // 📣 channel switch per side (/autopump): an unposted signal is still logged, watched and traded
-            const posted = pumpAutoTrader.postsToChannel(check.side);
+            // 📣 switch channel posts per side (/autopump): an unposted switch signal is still logged and traded.
+            // Pump (exhaust) shorts are always posted.
+            const posted = pumpAutoTrader.postsToChannel(check.side, !!sw);
             const msgId = posted ? await bot.sendPumpSignal(token, setup, check, levels) : null;
-            if (!posted) logger.info(`Pump signal ${token.symbol} ${check.side.toUpperCase()}: channel posts for ${check.side}s are off — not posted`);
+            if (!posted) logger.info(`Switch signal ${token.symbol} ${check.side.toUpperCase()}: channel posts for switch ${check.side}s are off — not posted`);
 
             // Channel levels are logged so the outcome tracker scores what subscribers were shown
             const signalId = await db.logPumpSignal(token.symbol, {
@@ -1157,8 +1158,7 @@ async function main() {
               continue;
             }
 
-            // A re-check is watched even if the channel post failed, so the short still gets its ENTER; an unposted
-            // one (channel off) is watched too, without replies.
+            // A re-check is watched even if the channel post failed, so the short still gets its ENTER.
             if (ex && (msgId || check.verdict === 'recheck' || !posted)) {
               const w = {
                 signalId, symbol: token.symbol, ex, exchangeId: token.exchange, msgId, posted, verdict: check.verdict, side: check.side,

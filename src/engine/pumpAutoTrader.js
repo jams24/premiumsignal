@@ -91,8 +91,8 @@ const DEFAULTS = {
   // t 1.6, wins 62–64% vs switch shorts $2.5–2.7, t 2.1–2.2, wins 72–76%), so it can run smaller than the shorts.
   switchLongMargin: 0,
   switchLongLeverage: 0,
-  // Channel posts of new pump signals by side: 🟢 longs (switch longs) / 🔴 shorts (pump shorts + switch shorts).
-  // Off = no post and no follow-up replies; the bot still watches, logs and auto-trades the signal as before.
+  // Channel posts of new SWITCH signals by side: 🟢 switch longs / 🔴 switch shorts. Pump (exhaust) shorts are always
+  // posted. Off = no post; the bot still logs and auto-trades the signal as before.
   channelLongs: true,
   channelShorts: true,
 };
@@ -254,8 +254,11 @@ class PumpAutoTrader {
   // 'long' (12–50%) | 'short' (50–switchShortTo %) | null (no trade, no channel post)
   switchShortTo() { return this.config.switchShortTo === 80 ? 80 : 100; }
   switchSide(run7dClosed) { return switchSide(run7dClosed, this.switchShortTo()); }
-  // Whether a new signal on this side goes to the channel (/autopump 📣 buttons)
-  postsToChannel(side) { return side === 'long' ? this.config.channelLongs !== false : this.config.channelShorts !== false; }
+  // Whether a new signal goes to the channel (/autopump 📣 buttons): only switch signals can be held back
+  postsToChannel(side, isSwitch) {
+    if (!isSwitch) return true;
+    return side === 'long' ? this.config.channelLongs !== false : this.config.channelShorts !== false;
+  }
 
   // Long levels from an entry price (switch longs, real and paper; also the old runner screens)
   runnerLevels(entry) {
