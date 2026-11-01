@@ -8,9 +8,9 @@ const M5 = 5 * 60000, H = 3600000;
 const CACHE_MS = 60000;
 const cache = new Map();   // key → { at, data }
 
-async function getJson(url) {
+async function getJson(url, ms = 6000) {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const r = await fetch(url, { signal: AbortSignal.timeout(ms) });
     if (!r.ok) return null;
     const j = await r.json();
     if (j && j.retCode !== undefined && j.retCode !== 0) return null;   // Bybit error envelope
@@ -22,9 +22,12 @@ async function getJson(url) {
 const arr = (x) => (Array.isArray(x) ? x : []);
 const pct = (a, b) => (a > 0 && b > 0 ? (a / b - 1) * 100 : null);
 
+// endTime=now on /futures/data: the same URL can come back from Binance's cache one 5m point stale
+const fresh = () => `&endTime=${Date.now()}`;
+
 // Binance /futures/data series (ascending), 5m: latest, 1h ago, 4h ago, and the point at `since` (open trade's entry)
 async function binanceRatio(path, sym, since) {
-  const now = await getJson(`${BN}/futures/data/${path}?symbol=${sym}USDT&period=5m&limit=49`);
+  const now = await getJson(`${BN}/futures/data/${path}?symbol=${sym}USDT&period=5m&limit=49${fresh()}`);
   const s = arr(now);
   if (!s.length) return null;
   const val = (x) => x && { ratio: +x.longShortRatio, long: +x.longAccount, t: +x.timestamp };
@@ -54,7 +57,7 @@ async function bybitRetail(sym, since) {
 }
 
 async function binanceOi(sym, since) {
-  const s = arr(await getJson(`${BN}/futures/data/openInterestHist?symbol=${sym}USDT&period=5m&limit=49`));
+  const s = arr(await getJson(`${BN}/futures/data/openInterestHist?symbol=${sym}USDT&period=5m&limit=49${fresh()}`));
   if (!s.length) return null;
   const v = (x) => x && +x.sumOpenInterest;
   const out = { now: v(s[s.length - 1]), usd: +s[s.length - 1].sumOpenInterestValue, h1: v(s[s.length - 13]), h4: v(s[0]) };
@@ -145,6 +148,48 @@ function retailVerdict(kind, ratio) {
   return { tag, text: `${tag} — retail ${range}: $${usd.toFixed(2)}/trade, ${Math.round(win * 100)}% win (${n} trades; all ${kind}s $${AVG[kind].toFixed(2)})` };
 }
 
+// ── Crowd check for SHORTS: Binance whales (top traders by position) AND Binance retail (all accounts) both long ──
+// October 2026, 88 live + lab pump trades with the readings at entry, held to the rules ($150, fees in): shorts with
+// both ≥ 1.4 made −$2.58/trade, 45% stopped (22 trades) vs +$2.68 / 26% for the other shorts; ≥ 1.5 −$1.99 / 44% (16)
+// vs +$2.41 / 27%; ≥ 1.6 −$2.13 / 38% (8) vs +$2.19. The October replay (131 trades) was negative at all three too.
+// Most of it is exhaust shorts (18 of 22 at 1.4); only 4 switch shorts (APR, ARIA stopped). Longs in the zone were fine
+// (+$6.71/trade, 15). ONE MONTH only: Binance deletes this data after 30 days, so it can't be tested further back.
+// n = trades (19/14/6 replay + 3/2/2 live), lost = how many lost. The live ones (ERA, BANK, APR) all made money for real
+// (BANK +$34.51); held to the rules ERA and APR were stopped. By setup: exhaust shorts −$25 / −$13 / +$2 (16/11/3 replay),
+// switch shorts ARIA, ON, APR, APR −$20.85 at every level — but the 10-month Bybit-retail test calls crowded retail the
+// BEST case for switch shorts (87–90% wins), so the two disagree.
+const CROWD_BT = {
+  1.4: { n: 22, usd: -2.58, lost: 10, rest: 2.68 },
+  1.5: { n: 16, usd: -1.99, lost: 7, rest: 2.41 },
+  1.6: { n: 8, usd: -2.13, lost: 3, rest: 2.19 },
+};
+const CROWD_WARN_AT = 1.5;   // ⚠️ in DMs and /flow when the skip setting is off
+
+// Latest 5m point of each ratio; null when the coin isn't on Binance futures or the call fails (never blocks a trade)
+async function crowdReading(symbol) {
+  const sym = String(symbol).toUpperCase().replace(/USDT$/, '');
+  const last = async (path) => {
+    const s = arr(await getJson(`${BN}/futures/data/${path}?symbol=${sym}USDT&period=5m&limit=2${fresh()}`, 4000));
+    const r = s.length ? +s[s.length - 1].longShortRatio : NaN;
+    return isFinite(r) && r > 0 ? r : null;
+  };
+  const [w, g] = await Promise.all([last('topLongShortPositionRatio'), last('globalLongShortAccountRatio')]);
+  return { w, g };
+}
+
+const isCrowded = (c, at = CROWD_WARN_AT) => !!(c && c.w != null && c.g != null && c.w >= at && c.g >= at);
+
+// One DM line: the two readings, and the October result when both are at or above `at`
+function crowdNote(c, { short = true, at = CROWD_WARN_AT } = {}) {
+  if (!c || (c.w == null && c.g == null)) return '🐋 Whales / retail: no Binance data for this coin\n';
+  const base = `🐋 Whales ${f2(c.w)} · 👥 retail ${f2(c.g)} (Binance)`;
+  if (!isCrowded(c, at)) return `${base}\n`;
+  if (!short) return `${base} — both long (longs in this zone did fine in October)\n`;
+  const b = CROWD_BT[at] || CROWD_BT[CROWD_WARN_AT];
+  return `⚠️ ${base} — <b>both heavily long (≥ ${at})</b>: heads-up, watch this one. October shorts like this: ${b.lost} of ${b.n} lost, ` +
+    `−$${Math.abs(b.usd).toFixed(2)}/trade vs +$${b.rest.toFixed(2)} for the rest (mostly replay; the live ones made money)\n`;
+}
+
 // since = entry time (ms) of an open trade → adds the "since entry" values
 async function getFlow(symbol, { exchange, since } = {}) {
   const sym = String(symbol).toUpperCase().replace(/USDT$/, '');
@@ -202,6 +247,7 @@ function reading(w, r) {
   if (w == null || r == null) return null;
   if (w >= 1.2 && r <= 0.9) return '🐋 long vs 👥 short — squeeze-up risk for shorts (the Arslan pattern)';
   if (w <= 0.83 && r >= 1.1) return '🐋 short vs 👥 long — flush-down risk for longs';
+  if (w >= 1.4 && r >= 1.4) return 'Everyone long — crowded long ⚠️ (October: shorts here lost, see Crowd check)';
   if (w >= 1.2 && r >= 1.2) return 'Everyone long — crowded long';
   if (w <= 0.83 && r <= 0.83) return 'Everyone short — crowded short';
   return 'No strong split between whales and retail';
@@ -272,8 +318,25 @@ function formatFlow(d, trade) {
       if (v) L.push(`  ${kind === applies ? '👉 ' : ''}${KIND_ICON[kind]}: ${v.text}`);
     }
     if (!trade) L.push(`  <i>Spot on Binance/Bybit: ${d.spot ? (listed ? 'yes → exhaust-short coin' : `no → switch coin${zone ? ` (${zone})` : ', outside the zones'}`) : '?'}</i>`);
-    L.push('  🐋 Whales: no edge in backtests — winners and losers had the same whale ratio (exhaust short median 1.27 vs 1.31)');
     if (applies === 'switch short' && rRatio >= 1.2) L.push('  <i>Retail crowded long is the best case for a switch short in the backtest (longs are the fuel for the drop) — but our 3 live ones in this zone (TAG, DOS, IDOL) lost.</i>');
+  }
+  // Crowd check (whales AND retail both long, Binance) — October result for shorts; read at entry for an open trade
+  const cw = trade ? (wp?.entry?.ratio ?? null) : wp?.now?.ratio, cg = trade ? (rb?.entry?.ratio ?? null) : rb?.now?.ratio;
+  if (cw != null && cg != null) {
+    const shortCase = trade ? short : true;
+    L.push('');
+    L.push(`<b>Crowd check</b> (🐋 whales + 👥 retail on Binance${trade ? ', at your entry' : ''}: ${f2(cw)} / ${f2(cg)})`);
+    const hit = [1.6, 1.5, 1.4].find(at => cw >= at && cg >= at);
+    if (hit && shortCase) {
+      const b = CROWD_BT[hit];
+      L.push(`  ⚠️ <b>Both heavily long ≥ ${hit}</b> — October shorts here: ${b.lost} of ${b.n} lost, −$${Math.abs(b.usd).toFixed(2)}/trade vs +$${b.rest.toFixed(2)} for the other shorts`);
+      L.push('  <i>Mostly replay trades — the 3 live ones (ERA, BANK, APR) all made money. Often a small profit first, then a fade or a squeeze: worth watching closely.</i>');
+    } else if (hit) {
+      L.push(`  Both long ≥ ${hit} — longs in this zone did fine in October (+$6.71/trade, 15 trades)`);
+    } else {
+      L.push(`  Not both ≥ 1.4 → no crowd warning (October shorts outside the zone: +$2.68/trade, 26% stopped)`);
+    }
+    L.push('  <i>One month of data (Binance keeps 30 days) — mostly exhaust shorts; whales alone showed no edge.</i>');
   }
   if (trade) {
     const E = +trade.entry_price, S = short;
@@ -310,4 +373,4 @@ function flowLine(d) {
   return parts.length ? parts.join(' · ') : null;
 }
 
-module.exports = { getFlow, formatFlow, flowLine, switchZone };
+module.exports = { getFlow, formatFlow, flowLine, switchZone, crowdReading, crowdNote, isCrowded, CROWD_BT, CROWD_WARN_AT };

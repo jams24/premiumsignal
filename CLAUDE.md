@@ -35,7 +35,8 @@ itself overstates longs (the retired runner long showed +$457 there, ≈ $0 with
   `src/engine/pumpSwitchPaper.js`, `src/engine/pumpRunnerPaper.js`, `src/collectors/spotShare.js`, and to the TP/stop
   handling in `tradeExecutor.js`
 - Pass = P&L equal or better in **both** periods; it lists trades that got worse, new and no longer taken
-- Not modelled: max open, daily loss stop, real fills/slippage, liquidation
+- Not modelled: max open, daily loss stop, real fills/slippage, liquidation, the /autopump crowd skip (no whale/retail
+  history past 30 days)
 
 ### Updating a baseline
 Only after the user approves a change that moves the result: `node src/tests/dryrun.js --update` /

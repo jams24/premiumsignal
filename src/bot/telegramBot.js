@@ -6,10 +6,10 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
-const { getFlow, formatFlow, flowLine } = require('../collectors/coinFlow');
+const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
 const ALERT_TYPES = [
@@ -2760,6 +2760,13 @@ class TelegramBot {
           ? `₿ BTC pause: no new trades while BTC's 7-day change is below <b>−${c.btcPausePct}%</b> · now ${btc7d == null ? 'unknown' : `${btc7d >= 0 ? '+' : ''}${btc7d.toFixed(1)}%${btc7d < -c.btcPausePct ? ' → <b>⏸ PAUSED</b>' : ' → trading'}`}`
           : `₿ BTC pause: <b>off</b> — trades in any BTC trend`,
         `🚫 Coins with no spot market (Binance/Bybit): <b>not shorted here</b> — the 🔀 switch below handles them`,
+        (() => {
+          const at = Number(c.crowdSkipAt) || 0, pre = ap.crowdPreset();
+          return at > 0
+            ? `🐋 Crowd skip: <b>${ap.crowdLabel()}</b> — skipped when Binance whales <b>and</b> retail are both that long` +
+              (pre?.n ? ` <i>(Oct: ${pre.n} skipped, ${pre.lost} lost, saves $${pre.saved.toFixed(2)} · one month)</i>` : '')
+            : `🐋 Crowd skip: <b>off</b> — every short traded; the trade DM shows ⚠️ when whales and retail are both ≥ ${CROWD_WARN_AT}`;
+        })(),
         c.beAtPct > 0
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
@@ -2799,6 +2806,7 @@ class TelegramBot {
         [Markup.button.callback(`🎯 Short TP1: −${ap.tpPcts()[0]}%`, 'ap_tp1'),
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
+        [Markup.button.callback(`🐋 Crowd skip: ${Number(c.crowdSkipAt) > 0 ? `✅ ${ap.crowdLabel()}` : '⛔ OFF'} ⚙️`, 'ap_crowd')],
         [Markup.button.callback(`📣 🔀🟢 Switch long posts: ${c.channelLongs !== false ? '✅' : '⛔'}`, 'ap_ch_long'),
          Markup.button.callback(`📣 🔀🔴 Switch short posts: ${c.channelShorts !== false ? '✅' : '⛔'}`, 'ap_ch_short')],
         ...(ap.switchLab ? [
@@ -2905,6 +2913,60 @@ class TelegramBot {
       await ap.update({ btcPausePct: next });
       await ack(ctx, next ? `Pause while BTC 7d < −${next}%` : 'BTC pause off');
       await showAutoPump(ctx, true);
+    });
+    // 🐋 Crowd skip menu: presets (October numbers) + custom which-shorts and level
+    const showCrowdMenu = async (ctx, ap) => {
+      const c = ap.config, at = Number(c.crowdSkipAt) || 0, scope = c.crowdScope === 'switch' ? 'switch' : 'all';
+      const cur = ap.crowdPreset();
+      const text = [
+        `🐋 <b>Crowd skip</b> — skip shorts when Binance 🐋 whales <b>and</b> 👥 retail are both heavily long`,
+        `Now: <b>${at > 0 ? ap.crowdLabel() : 'OFF'}</b>${at > 0 && !cur ? ' (custom)' : ''}`,
+        '',
+        `<b>Presets</b> — October 2026, $150/trade held to the rules: shorts skipped · lost · P&L saved`,
+        ...CROWD_PRESETS.map(p => p.n
+          ? `${p.id === cur?.id ? '✅ ' : ''}${p.label}: ${p.n} skipped · ${p.lost} lost · <b>+$${p.saved.toFixed(2)}</b>
+      <i>live trades it would have skipped (real result): ${p.live}</i>`
+          : `${p.id === cur?.id ? '✅ ' : ''}${p.label}: every short traded, ⚠️ in the trade DM at ≥ ${CROWD_WARN_AT}`),
+        '',
+        `<i>One month of data (Binance keeps 30 days), mostly replay trades — all 3 live ones made money (BANK +$34.51).`,
+        `Exhaust shorts: −$25 / −$13 / +$2 at 1.4 / 1.5 / 1.6. Switch shorts: −$20.85 on 4 trades at every level, but the`,
+        `10-month Bybit-retail test calls crowded retail the best case for switch shorts. Every reading is logged — recheck in a few weeks.</i>`,
+        `<i>No Binance data for a coin → never skipped. The channel post is not affected.</i>`,
+      ].join('\n');
+      const tick = (on) => (on ? '✅ ' : '');
+      const keyboard = Markup.inlineKeyboard([
+        ...CROWD_PRESETS.map(p => [Markup.button.callback(`${tick(p.id === cur?.id)}${p.label}`, `ap_crp_${p.id}`)]),
+        [Markup.button.callback('— Custom: which shorts —', 'ap_crowd')],
+        [Markup.button.callback(`${tick(scope === 'all')}🔥🔀 All shorts`, 'ap_crs_all'), Markup.button.callback(`${tick(scope === 'switch')}🔀 Switch shorts only`, 'ap_crs_switch')],
+        [Markup.button.callback('— Custom: level (whales and retail both ≥) —', 'ap_crowd')],
+        AUTO_CROWD_AT.map(v => Markup.button.callback(`${tick(v === at)}${v > 0 ? v : 'Off'}`, `ap_cra_${v}`)),
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_crowd', async (ctx, ap) => { await ack(ctx); await showCrowdMenu(ctx, ap); });
+    apAction(/^ap_crp_(\w+)$/, async (ctx, ap) => {
+      const p = CROWD_PRESETS.find(x => x.id === ctx.match[1]);
+      if (!p) return ack(ctx, 'Unknown preset');
+      await ap.update({ crowdSkipAt: p.at, crowdScope: p.scope });
+      await ack(ctx, p.at > 0 ? `Crowd skip: ${ap.crowdLabel()}` : 'Crowd skip off');
+      await showCrowdMenu(ctx, ap);
+    });
+    apAction(/^ap_crs_(all|switch)$/, async (ctx, ap) => {
+      const scope = ctx.match[1];
+      if (!CROWD_SCOPES.includes(scope)) return ack(ctx, 'Unknown value');
+      await ap.update({ crowdScope: scope });
+      await ack(ctx, scope === 'switch' ? 'Applies to switch shorts only' : 'Applies to all shorts (pump + switch)');
+      await showCrowdMenu(ctx, ap);
+    });
+    apAction(/^ap_cra_(\d+(?:\.\d+)?)$/, async (ctx, ap) => {
+      const v = Number(ctx.match[1]);
+      if (!AUTO_CROWD_AT.includes(v)) return ack(ctx, 'Unknown value');
+      await ap.update({ crowdSkipAt: v });
+      await ack(ctx, v > 0 ? `Crowd skip: ${ap.crowdLabel()}` : 'Crowd skip off');
+      await showCrowdMenu(ctx, ap);
     });
     // Paper runner lab: open longs with live price and P&L (🔄 refreshes), each one manageable like a live position
     const RUNNER_MIN_RUNS = [10, 20, 30, 50];

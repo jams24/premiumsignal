@@ -129,6 +129,7 @@ async function replaySet(dir, cfg) {
     const b = btc7(s.now);
     auto.measureBtc = async () => b;
     auto.commonBlock = async () => null;
+    auto.measureCrowd = async () => null;   // crowd check not modelled: Binance keeps whale/retail data 30 days only
     if (await auto.blockReason(info)) continue;
     const off = Math.round((s.now - r.t) / M);
     out[`${r.s}|${r.t}|short`] = simulate(hl, off, s.p, 'short', plan.shortTps, plan.shortSl, plan);
