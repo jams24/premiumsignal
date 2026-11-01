@@ -2007,7 +2007,9 @@ class TradeExecutor {
           const curSL = parseFloat(trade.stop_loss);
           const newSL = isFinite(curSL) && (isLong ? curSL > trade.entry_price : curSL < trade.entry_price) ? curSL : trade.entry_price;
           await db.updateTradeStopLoss(trade.id, newSL);
-          await this.updateExchangeSL(trade, newSL);
+          const slMoved = await this.updateExchangeSL(trade, newSL);
+          // The bot still closes at the new stop in its 1-minute check, but a fast move can reach the old exchange stop first
+          if (slMoved === false) await this.notify(`⚠️ <b>${escapeHtml(trade.symbol)}: TP1 hit but the exchange rejected the stop move to $${newSL}</b>\nThe old exchange stop is still there; the bot watches the new level every minute.`).catch(() => {});
           logger.info(`${trade.symbol}: TP1 hit, closed ${(this.tp1ClosePct * 100).toFixed(0)}% (+$${partialPnl.toFixed(2)}), SL to ${newSL === trade.entry_price ? 'breakeven' : `$${newSL} (kept, past entry)`}`);
         }
         // --- TRAILING STOP: after TP1, trail tightens proportionally to profit ---
@@ -2516,7 +2518,9 @@ class TradeExecutor {
       const pair = `${trade.symbol}/USDT:USDT`;
       const closeSide = trade.direction === 'long' ? 'sell' : 'buy';
 
-      const qty = trade.quantity || exchange.amountToPrecision(pair, trade.position_size / newSLPrice);
+      // Rounded to the coin's lot step: after a partial close the tracked quantity is fractional (e.g. 13041 × 0.75 =
+      // 9780.75) and Binance rejects that, leaving the old stop in place while the bot believed it had moved
+      const qty = exchange.amountToPrecision(pair, (Number(trade.quantity) || trade.position_size / newSLPrice) * (1 + 1e-9));
       const slPrice = exchange.priceToPrecision(pair, newSLPrice);
 
       // Place new SL FIRST — if it fails, old stop stays as protection
@@ -2580,7 +2584,7 @@ class TradeExecutor {
         side: side.toUpperCase(),
         type: 'STOP_MARKET',
         triggerPrice: stopPrice.toString(),
-        quantity: qty.toString(),
+        quantity: exchange.amountToPrecision(pair, Number(qty)),
         reduceOnly: 'true',
         workingType: 'CONTRACT_PRICE',
       });
