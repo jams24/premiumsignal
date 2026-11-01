@@ -9,6 +9,7 @@ const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../
 const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
+const { getFlow, formatFlow, flowLine } = require('../collectors/coinFlow');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
 const ALERT_TYPES = [
@@ -1922,12 +1923,17 @@ class TelegramBot {
       text += `  Opened: ${opened} UTC (${posAge(t)} ago)\n`;
       const takes = Array.isArray(c.manualTakes) ? c.manualTakes : [];
       if (takes.length) text += `  💰 Taken by hand: <b>${fmtUsd(takes.reduce((a, x) => a + (Number(x.pnl) || 0), 0))}</b> (${takes.length}×, in Banked)\n`;
+      // Whales / retail / OI one-liner — skipped if the market data is slow (the 🐋 button has the full view)
+      const fl = await Promise.race([getFlow(t.symbol, { exchange: t.exchange }).catch(() => null), new Promise(r => setTimeout(() => r(null), 4000))]);
+      const line = flowLine(fl);
+      if (line) text += `  ${line}\n`;
       text += `\n<i>Updated ${utcClock()} UTC</i>`;
       const canBe = price && st.pct >= 0.5 && isFinite(st.sl) && !st.atBreakeven && !st.slLocksProfit;
       const kb = [[Markup.button.callback('🔄 Refresh', `mt_pd_${t.id}`), Markup.button.callback('❌ Close position', `mt_close_${t.id}`)]];
       if (price && st.unrealized > 1) kb.push([Markup.button.callback(`💰 Take profit (open ${fmtUsd(st.unrealized)})`, `mt_tk_${t.id}`)]);
       kb.push(canBe ? [Markup.button.callback('🛡 Move SL to breakeven', `mt_be_${t.id}`), Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]
         : [Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]);
+      kb.push([Markup.button.callback('🐋 Whales · retail · level', `mt_fl_${t.id}`)]);
       kb.push([Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]);
       return { text, keyboard: Markup.inlineKeyboard(kb) };
     };
@@ -2617,7 +2623,7 @@ class TelegramBot {
       const working = await ctx.replyWithHTML(`🔍 Checking <b>${escapeHtml(symbol)}</b>…`);
       try {
         const r = await runExhaustionCheck(symbol, ctx.from.id);
-        const rows = [[Markup.button.callback('🔄 Re-check', `chk_re_${symbol}`)]];
+        const rows = [[Markup.button.callback('🔄 Re-check', `chk_re_${symbol}`), Markup.button.callback('🐋 Whales · retail', `fl_re_${symbol}`)]];
         if (r.isExhaustion) {
           rows.unshift([Markup.button.callback(r.verdict === 'oi_building' ? '⚠️ Open short panel anyway' : '🔧 Open short panel (plan levels)',
             `chk_tr_${symbol}${r.lev ? `_${r.lev}_${r.margin}` : ''}`)]);
@@ -2637,6 +2643,50 @@ class TelegramBot {
       if (!symbol) return ctx.replyWithHTML('Usage: <code>/check SYMBOL</code> — runs the pump-exhaustion analysis and entry rules on any coin.\nExample: <code>/check OGN</code>');
       if (!/^[A-Z0-9]{1,20}$/.test(symbol)) return ctx.replyWithHTML('⚠️ Invalid symbol.');
       await sendCheck(ctx, symbol);
+    });
+
+    // === /flow SYMBOL — whale positions, retail long/short, OI / taker / funding and where price sits (info only) ===
+    // With an open trade on the coin it adds "since your entry" (whales, retail, OI) and the squeeze-building warning.
+    const sendFlow = async (ctx, symbol, tradeId) => {
+      const working = await ctx.replyWithHTML(`🐋 Checking ${escapeHtml(symbol)}…`);
+      try {
+        const open = tradeId ? await getOpenTradeById(tradeId) : (await db.getOpenTrades().catch(() => [])).find(x => x.symbol === symbol && x.mode === 'live');
+        const t = open && open.symbol === symbol ? open : null;
+        const d = await getFlow(symbol, { exchange: t?.exchange, since: t ? new Date(t.created_at).getTime() : undefined });
+        const rows = [[Markup.button.callback('🔄 Refresh', t ? `mt_fl_${t.id}` : `fl_re_${symbol}`)]];
+        if (t) rows.push([Markup.button.callback('🔎 Back to position', `mt_pd_${t.id}`)]);
+        else rows[0].push(Markup.button.callback('🔍 Exhaustion check', `chk_re_${symbol}`));
+        await ctx.telegram.editMessageText(working.chat.id, working.message_id, undefined, formatFlow(d, t), {
+          parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(rows).reply_markup,
+        });
+      } catch (e) {
+        logger.error(`/flow ${symbol}: ${e.message}`);
+        await ctx.telegram.editMessageText(working.chat.id, working.message_id, undefined, `⚠️ Flow check failed for ${escapeHtml(symbol)}: ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    };
+
+    for (const name of ['flow', 'whales']) {
+      this.bot.command(name, async (ctx) => {
+        if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+        const symbol = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase().replace(/USDT$/, '');
+        if (!symbol) return ctx.replyWithHTML('Usage: <code>/flow SYMBOL</code> — whale positions, retail long/short, OI, funding and where the price sits.\nExample: <code>/flow BEAMX</code>\nOn a coin you hold, it also shows what changed since your entry.');
+        if (!/^[A-Z0-9]{1,20}$/.test(symbol)) return ctx.replyWithHTML('⚠️ Invalid symbol.');
+        await sendFlow(ctx, symbol);
+      });
+    }
+
+    this.bot.action(/^fl_re_([A-Z0-9]{1,20})$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Checking…');
+      await sendFlow(ctx, ctx.match[1]);
+    });
+
+    this.bot.action(/^mt_fl_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Checking…');
+      const t = await getOpenTradeById(Number(ctx.match[1])).catch(() => null);
+      if (!t) return ctx.replyWithHTML('⚠️ That position is already closed.');
+      await sendFlow(ctx, t.symbol, t.id);
     });
 
     this.bot.action(/^chk_re_([A-Z0-9]{1,20})$/, async (ctx) => {
@@ -7169,6 +7219,7 @@ class TelegramBot {
         [Markup.button.callback('📊 All Positions', 'pnl_positions'),
          Markup.button.callback('📍 Limit Orders', 'mt_orders')],
         [Markup.button.callback('🔍 Check a coin (pump exhaustion)', 'pnl_check')],
+        [Markup.button.callback('🐋 Whales · retail · level of a coin', 'pnl_flow')],
         [Markup.button.callback('🤖 Pump auto-trade', 'pnl_autopump')],
         [Markup.button.callback('📈 All Stats', 'pnl_stats'),
          Markup.button.callback('🔔 Alert toggles', 'al_show')],
@@ -7251,6 +7302,11 @@ class TelegramBot {
     this.bot.action('pnl_check', async (ctx) => {
       await ctx.answerCbQuery();
       ctx.replyWithHTML('🔍 <b>Check a coin</b>\n\nSend <code>/check SYMBOL</code> — e.g. <code>/check OGN</code>\n\nRuns the pump-exhaustion analysis and the channel entry rules (OI building, top age, CISD), shows the plan levels and your size, with a button to open the short panel.');
+    });
+
+    this.bot.action('pnl_flow', async (ctx) => {
+      await ctx.answerCbQuery();
+      ctx.replyWithHTML('🐋 <b>Whales · retail · level</b>\n\nSend <code>/flow SYMBOL</code> — e.g. <code>/flow BEAMX</code>\n\nShows Binance top-trader positions, retail long/short (Binance + Bybit), OI, taker flow, funding, the 24h range, the 7-day run (switch zone) and distance from the 30/45-day high. On a coin you hold it adds what changed since your entry. Also on every position: 🐋 button in /mpositions.');
     });
 
     this.bot.action('pnl_long', async (ctx) => {
@@ -10479,6 +10535,7 @@ class TelegramBot {
       { command: 'alerts', description: 'Turn alert types on or off' },
       { command: 'swingsettings', description: 'Swing trade settings' },
       { command: 'dzsettings', description: 'Demand zone settings' },
+      { command: 'flow', description: 'Whales, retail, OI & level of a coin (/flow BEAMX)' },
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 
