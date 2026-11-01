@@ -55,6 +55,16 @@ function shouldLogAlert(type, symbol, direction) {
   return true;
 }
 
+// Same coin under two exchange tickers (BEAMX / BEAM, 1000PEPE / PEPE): one name starts with the other once a
+// 1000… multiplier prefix is removed, and the prices (per 1 coin) are within 3%
+function sameCoin(symA, priceA, symB, priceB) {
+  if (symA === symB) return true;
+  const split = (s, p) => { const m = /^(1000+)(.+)$/.exec(s); return m ? [m[2], p / +m[1]] : [s, p]; };
+  const [a, pa] = split(symA, priceA), [b, pb] = split(symB, priceB);
+  if (a.length < 3 || b.length < 3 || !(a.startsWith(b) || b.startsWith(a))) return false;
+  return pa > 0 && pb > 0 && Math.abs(pa / pb - 1) <= 0.03;
+}
+
 async function main() {
   logger.info('=== CryptoSignal Bot Starting ===');
 
@@ -1065,11 +1075,17 @@ async function main() {
           if (!isExhaustion) continue;
           try {
             const today = new Date().toISOString().slice(0, 10);
+            // One signal per coin per day — also across exchange tickers of the same coin (BEAMX on Binance, BEAM on
+            // Bybit, 30 Oct: both posted 6 min apart)
             const { rows } = await db.query(
-              `SELECT 1 FROM pump_signals WHERE symbol = $1 AND created_at::date = $2::date LIMIT 1`,
-              [token.symbol, today]
+              `SELECT symbol, price FROM pump_signals WHERE created_at::date = $1::date`,
+              [today]
             );
-            if (rows.length > 0) continue;
+            const twin = rows.find(r => sameCoin(r.symbol, +r.price, token.symbol, +token.price));
+            if (twin) {
+              if (twin.symbol !== token.symbol) logger.debug(`Pump signal ${token.symbol}: same coin as today's ${twin.symbol} signal — not posted again`);
+              continue;
+            }
             // No-spot coin already found outside the switch zones today: not posted, so not re-measured every scan
             if (switchSkipped.has(`${token.symbol}:${today}`)) continue;
 
