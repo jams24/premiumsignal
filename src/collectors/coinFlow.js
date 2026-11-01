@@ -117,13 +117,41 @@ async function taker1h(sym) {
   return sell > 0 ? buy / sell : null;
 }
 
+// Spot market on Binance or Bybit? (rough stand-in for the bot's spot-share check, which decides exhaust vs switch)
+async function spotListed(sym) {
+  const [b, y] = await Promise.all([
+    getJson(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}USDT`),
+    getJson(`${BY}/v5/market/tickers?category=spot&symbol=${sym}USDT`),
+  ]);
+  return { binance: !!(b && b.price), bybit: arr(y?.result?.list).length > 0 };
+}
+
+// Backtest by Bybit retail L/S ratio at entry (current rules, $150/trade, fees in; Dec–May + Jun–Oct + 18–30 Oct,
+// 1,787 trades — research 30 Oct 2026). [from, to, $/trade, win, n]
+const RETAIL_BT = {
+  'exhaust short': [[0, 0.9, 0.34, 0.63, 377], [0.9, 1.2, 2.44, 0.70, 328], [1.2, 1.6, 2.89, 0.74, 230], [1.6, 99, 0.15, 0.61, 127]],
+  'switch short': [[0, 0.9, 1.78, 0.70, 87], [0.9, 1.2, -1.37, 0.63, 38], [1.2, 1.6, 4.94, 0.90, 29], [1.6, 99, 6.81, 0.87, 23]],
+  'switch long': [[0, 0.9, 2.86, 0.67, 125], [0.9, 1.2, 1.26, 0.62, 141], [1.2, 1.6, 0.41, 0.64, 139], [1.6, 99, 0.27, 0.59, 143]],
+};
+const AVG = { 'exhaust short': 1.52, 'switch short': 2.28, 'switch long': 1.15 };   // all trades of the kind, $/trade
+const KIND_ICON = { 'exhaust short': '🔥 Exhaust short', 'switch short': '🔀🔴 Switch short', 'switch long': '🔀🟢 Switch long' };
+
+function retailVerdict(kind, ratio) {
+  const b = RETAIL_BT[kind].find(([lo, hi]) => ratio >= lo && ratio < hi);
+  if (!b) return null;
+  const [lo, hi, usd, win, n] = b;
+  const tag = usd >= 4 ? '✅ best zone' : usd >= 2 ? '✅ good zone' : usd >= 0.5 ? '➖ average' : usd >= 0 ? '⚠️ weak zone' : '❌ losing zone';
+  const range = hi >= 99 ? `≥ ${lo}` : lo === 0 ? `< ${hi}` : `${lo}–${hi}`;
+  return { tag, text: `${tag} — retail ${range}: $${usd.toFixed(2)}/trade, ${Math.round(win * 100)}% win (${n} trades; all ${kind}s $${AVG[kind].toFixed(2)})` };
+}
+
 // since = entry time (ms) of an open trade → adds the "since entry" values
 async function getFlow(symbol, { exchange, since } = {}) {
   const sym = String(symbol).toUpperCase().replace(/USDT$/, '');
   const key = `${sym}|${since || ''}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-  const [k, whalesPos, whalesAcc, retailBn, retailBy, oiBn, fund, taker] = await Promise.all([
+  const [k, whalesPos, whalesAcc, retailBn, retailBy, oiBn, fund, taker, spot] = await Promise.all([
     candles(sym, exchange),
     binanceRatio('topLongShortPositionRatio', sym, since),
     binanceRatio('topLongShortAccountRatio', sym, since),
@@ -132,6 +160,7 @@ async function getFlow(symbol, { exchange, since } = {}) {
     binanceOi(sym, since),
     funding(sym),
     taker1h(sym),
+    spotListed(sym),
   ]);
   if (!k.h1.length) return { symbol: sym, error: `No futures data for ${sym}USDT on Binance or Bybit.` };
   const oi = oiBn || await bybitOi(sym, since);
@@ -148,8 +177,7 @@ async function getFlow(symbol, { exchange, since } = {}) {
     symbol: sym, src: k.src, price, run7d, hi24, lo24,
     ch1h: pct(price, at(1)), ch4h: pct(price, at(4)), ch24h: pct(price, at(24)),
     fromHi24: pct(price, hi24), fromHi30: pct(price, hiN(30)), fromHi45: pct(price, hiN(45)), days: d1.length,
-    whalesPos, whalesAcc, retailBn, retailBy, oi, funding: fund, taker,
-    entryPrice: null,
+    whalesPos, whalesAcc, retailBn, retailBy, oi, funding: fund, taker, spot,
   };
   cache.set(key, { at: Date.now(), data });
   if (cache.size > 300) cache.delete(cache.keys().next().value);
@@ -226,6 +254,27 @@ function formatFlow(d, trade) {
     if (rd) L.push(`  • ${rd}`);
     if (od) L.push(`  • Last hour: ${od}`);
   }
+  // What this means for our three setups — backtest numbers at this retail level, the setup that applies marked 👉
+  // Open trade: the bucket is read at the trade's entry (that is what the backtest measured); otherwise now
+  const rEntry = trade ? (ry?.entry?.ratio ?? rb?.entry?.ratio) : null;
+  const rRatio = rEntry ?? ry?.now?.ratio ?? rb?.now?.ratio;
+  const fromBybit = rEntry != null ? ry?.entry?.ratio != null : ry?.now?.ratio != null;
+  if (rRatio != null) {
+    const ctx = trade?.onchain_context || {};
+    const isSwitch = ctx.switchTrade === true || ctx.switchTrade === 'true';
+    const listed = d.spot && (d.spot.binance || d.spot.bybit);
+    const zone = d.run7d == null ? null : d.run7d >= 12 && d.run7d < 50 ? 'switch long' : d.run7d >= 50 && d.run7d < 100 ? 'switch short' : null;
+    const applies = trade ? (isSwitch ? `switch ${trade.direction}` : trade.direction === 'short' ? 'exhaust short' : null) : (listed ? 'exhaust short' : zone);
+    L.push('');
+    L.push(`<b>For our setups</b> (backtest by retail at entry · ${rEntry != null ? 'your entry' : 'now'}: ${f2(rRatio)}${fromBybit ? '' : ' — Binance; the backtest used Bybit, they can differ a lot'})`);
+    for (const kind of ['exhaust short', 'switch short', 'switch long']) {
+      const v = retailVerdict(kind, rRatio);
+      if (v) L.push(`  ${kind === applies ? '👉 ' : ''}${KIND_ICON[kind]}: ${v.text}`);
+    }
+    if (!trade) L.push(`  <i>Spot on Binance/Bybit: ${d.spot ? (listed ? 'yes → exhaust-short coin' : `no → switch coin${zone ? ` (${zone})` : ', outside the zones'}`) : '?'}</i>`);
+    L.push('  🐋 Whales: no edge in backtests — winners and losers had the same whale ratio (exhaust short median 1.27 vs 1.31)');
+    if (applies === 'switch short' && rRatio >= 1.2) L.push('  <i>Retail crowded long is the best case for a switch short in the backtest (longs are the fuel for the drop) — but our 3 live ones in this zone (TAG, DOS, IDOL) lost.</i>');
+  }
   if (trade) {
     const E = +trade.entry_price, S = short;
     const move = E > 0 ? (S ? -pct(d.price, E) : pct(d.price, E)) : null;
@@ -244,7 +293,7 @@ function formatFlow(d, trade) {
     }
   }
   L.push('');
-  L.push(`<i>Info only — whale/retail ratios at entry didn't predict pump trades in our backtests; the one steady slice was switch shorts doing best with retail ≥ 1.2. Updated ${new Date().toISOString().slice(11, 16)} UTC.</i>`);
+  L.push(`<i>Backtest averages, not a forecast for this trade — not financial advice. Updated ${new Date().toISOString().slice(11, 16)} UTC.</i>`);
   return L.join('\n');
 }
 
