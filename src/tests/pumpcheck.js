@@ -62,6 +62,8 @@ async function loadConfig() {
       beAtPct: Number(c.beAtPct) || 0, beStopPct: Math.max(0, Number(c.beStopPct ?? 5)),
       btcPausePct: c.btcPausePct, maxSpotSharePct: c.maxSpotSharePct, skipNoSpot: !!c.skipNoSpot,
       switchLive: c.switchLive === true || args.has('--switch-on'), switchShortTo: auto.switchShortTo(),
+      // Per-side real switch toggles (/autopump 🟢 / 🔴); --switch-on counts both sides
+      switchLong: args.has('--switch-on') || c.switchLiveLong !== false, switchShort: args.has('--switch-on') || c.switchLiveShort !== false,
     },
   };
 }
@@ -113,7 +115,8 @@ async function replaySet(dir, cfg) {
     for (const s of r.all) { if (s.k === 'missed') break; steps.push(s); }
     // No-spot coin: the switch decides at the signal (any verdict) from the closed-candle 7-day run; never the short
     if (r.hasSpot === false) {
-      const side = plan.switchLive ? auto.switchSide(run7d) : null;
+      const side0 = plan.switchLive ? auto.switchSide(run7d) : null;
+      const side = side0 && (side0 === 'long' ? plan.switchLong : plan.switchShort) ? side0 : null;
       const s = side && steps.find(z => z.now - r.t >= SWITCH_DELAY_MIN * M);
       if (s) out[`${r.s}|${r.t}|sw-${side}`] = simulate(hl, Math.round((s.now - r.t) / M), s.p, side, side === 'long' ? plan.runnerTps : plan.shortTps, side === 'long' ? plan.runnerSl : plan.shortSl, plan);
       continue;

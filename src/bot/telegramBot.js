@@ -2785,6 +2785,8 @@ class TelegramBot {
           c.switchLive === true
             ? `🔀 <b>Switch real trades: ON</b> — ${live ? '💰 <b>LIVE</b>' : '📝 paper'} (needs auto-trade ON) · ${sizes} · uses max open + daily stop`
             : `🔀 Switch real trades: <b>off</b> (sizes when on: ${sizes})`,
+          `🔀 Real sides: 🟢 longs <b>${c.switchLiveLong !== false ? 'ON' : 'OFF — paper lab only'}</b> · 🔴 shorts <b>${c.switchLiveShort !== false ? 'ON' : 'OFF — paper lab only'}</b>` +
+            (c.switchLive !== true ? ' <i>(apply once switch real trades are ON)</i>' : ''),
           c.switchTest !== false
             ? `🔀 Switch paper lab: ON${ws ? ` — ${ws.closed} closed · ${ws.wins} won · <b>${ws.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.pnl))}</b> (long ${ws.long.n} ${ws.long.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.long.pnl))} · short ${ws.short.n} ${ws.short.pnl >= 0 ? '+' : '-'}${money(Math.abs(ws.short.pnl))}) · ${ws.open} open` : ''}`
             : `🔀 Switch paper lab: <b>off</b>`,
@@ -2811,6 +2813,8 @@ class TelegramBot {
          Markup.button.callback(`📣 🔀🔴 Switch short posts: ${c.channelShorts !== false ? '✅' : '⛔'}`, 'ap_ch_short')],
         ...(ap.switchLab ? [
           [Markup.button.callback(`🔀 Switch real trades: ${c.switchLive === true ? `✅ ON${live ? ' (LIVE)' : ''}` : '⛔ OFF'}`, 'ap_switch_live')],
+          [Markup.button.callback(`🟢 Real switch longs: ${c.switchLiveLong !== false ? '✅' : '⛔'}`, 'ap_swside_long'),
+           Markup.button.callback(`🔴 Real switch shorts: ${c.switchLiveShort !== false ? '✅' : '⛔'}`, 'ap_swside_short')],
           [Markup.button.callback(`🔀 Switch lab: ${c.switchTest !== false ? '✅ ON' : '⛔ OFF'}`, 'ap_switch'),
            Markup.button.callback(`🔀 Switch log & size${ws ? ` (${ws.closed + ws.open})` : ''}`, 'ap_switch_log')],
           [Markup.button.callback(`🎯 Switch long TP1: +${ap.runnerTpPcts()[0]}%`, 'ap_rtp1'),
@@ -3141,6 +3145,34 @@ class TelegramBot {
     apAction('ap_switch_live_yes', async (ctx, ap) => {
       await ap.update({ switchLive: true });
       await ack(ctx, `Switch trades ON as ${ap.config.mode === 'live' ? 'LIVE' : 'paper'} auto trades`);
+      await showAutoPump(ctx, true);
+    });
+    // Per-side real switch trades: OFF at once (that side stays paper-lab only, open trades untouched); ON asks to
+    // confirm when it would place real orders (live mode with switch real trades on)
+    const SIDE_KEY = { long: 'switchLiveLong', short: 'switchLiveShort' };
+    const sideName = (side) => (side === 'long' ? '🟢 switch LONGS' : '🔴 switch SHORTS');
+    apAction(/^ap_swside_(long|short)$/, async (ctx, ap) => {
+      const side = ctx.match[1], key = SIDE_KEY[side];
+      if (ap.config[key] !== false) {
+        await ap.update({ [key]: false });
+        await ack(ctx, `Real ${side}s OFF — paper lab only (open trades untouched)`);
+        return showAutoPump(ctx, true);
+      }
+      if (ap.config.mode === 'live' && ap.config.switchLive === true) {
+        await ack(ctx);
+        const sz = await ap.switchSizing(ap.config.ownerId || ctx.from.id, side);
+        return apConfirm(ctx, `TURN ON REAL ${side === 'long' ? 'SWITCH LONGS' : 'SWITCH SHORTS'} (LIVE)?`,
+          `New ${sideName(side)} signals will <b>place real orders</b> again at ${money(sz.margin)} × ${sz.leverage}x = ${money(sz.position)} ` +
+          `(SL −8% ≈ <b>-${money(sz.position * 0.08)}</b>).\n\n👉 <b>Nothing changes until you tap ✅ Yes, confirm.</b>`, `ap_swside_${side}_yes`);
+      }
+      await ap.update({ [key]: true });
+      await ack(ctx, `Real ${side}s ON`);
+      return showAutoPump(ctx, true);
+    });
+    apAction(/^ap_swside_(long|short)_yes$/, async (ctx, ap) => {
+      const side = ctx.match[1];
+      await ap.update({ [SIDE_KEY[side]]: true });
+      await ack(ctx, `Real switch ${side}s ON`);
       await showAutoPump(ctx, true);
     });
     // Retired runner-long labs: history only (they finish their open rows, nothing new opens)

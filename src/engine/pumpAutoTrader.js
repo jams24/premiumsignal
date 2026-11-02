@@ -103,6 +103,10 @@ const DEFAULTS = {
   switchTest: true,
   switchShortTo: 100,
   switchLive: false,
+  // Per side, while switchLive is on: false = that side stays paper only (the lab keeps tracking it, the channel post
+  // follows its own 📣 setting). Open trades are never touched.
+  switchLiveLong: true,
+  switchLiveShort: true,
   switchMargin: 30,
   switchLeverage: 5,
   // Switch LONGS' own size (0 = the switch size above). The long leg is the thinner edge ($1.0–1.3 per $150 trade,
@@ -276,6 +280,8 @@ class PumpAutoTrader {
   // ── SWITCH: no-spot coins, decided at the signal by the 7-day run on closed 1h candles ──
   // 'long' (12–50%) | 'short' (50–switchShortTo %) | null (no trade, no channel post)
   switchShortTo() { return this.config.switchShortTo === 80 ? 80 : 100; }
+  // Real switch trades allowed on this side? (/autopump 🟢 / 🔴 real switch buttons)
+  switchSideLive(side) { return side === 'long' ? this.config.switchLiveLong !== false : this.config.switchLiveShort !== false; }
   switchSide(run7dClosed) { return switchSide(run7dClosed, this.switchShortTo()); }
   // Whether a new signal goes to the channel (/autopump 📣 buttons): only switch signals can be held back
   postsToChannel(side, isSwitch) {
@@ -343,6 +349,10 @@ class PumpAutoTrader {
     await this.load().catch(e => logger.warn(`Auto-trade config reload failed, using memory: ${e.message}`));
     const c = this.config;
     if (c.switchLive !== true) return { skipped: 'switch real trades off' };
+    if (!this.switchSideLive(info.side)) {
+      logger.info(`Switch ${info.side} ${info.symbol}: real switch ${info.side}s are off — paper lab only`);
+      return { skipped: `switch real ${info.side}s off` };
+    }
     if (!c.enabled) return { skipped: 'auto-trade off' };
     const key = `W:${info.signalId ?? info.symbol}`;
     if (this.busy.has(key)) return { skipped: 'in progress' };
