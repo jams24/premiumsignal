@@ -7,6 +7,7 @@
  *   node --max-old-space-size=8000 src/tests/pumpcheck.js --update   save the current result as the new baseline
  *   add --defaults to use the code defaults instead of the live /autopump + executor config from the DB
  *   add --switch-on to count switch trades even while "switch real trades" is off (to see what turning it on does)
+ *   add --a-size=1.5 (or 2) to see a ⭐ A-setup size on exhaust shorts without changing /autopump
  *
  * What comes from the bot's code: entry rule (entryVerdict), signal-time re-check (PUMP_RULES.recheckMinMin),
  * skip rules (PumpAutoTrader.blockReason: BTC pause, spot share, no-spot), no-spot switch (PumpAutoTrader.switchSide
@@ -24,7 +25,7 @@ require('dotenv').config({ quiet: true });
 const fs = require('fs');
 const path = require('path');
 const { PUMP_RULES, entryVerdict } = require('../collectors/pumpSignalCheck');
-const { PumpAutoTrader } = require('../engine/pumpAutoTrader');
+const { PumpAutoTrader, aSetupExhaust } = require('../engine/pumpAutoTrader');
 const { RUNNER } = require('../engine/pumpRunnerPaper');
 const TradeExecutor = require('../engine/tradeExecutor');
 
@@ -64,6 +65,8 @@ async function loadConfig() {
       switchLive: c.switchLive === true || args.has('--switch-on'), switchShortTo: auto.switchShortTo(),
       // Per-side real switch toggles (/autopump 🟢 / 🔴); --switch-on counts both sides
       switchLong: args.has('--switch-on') || c.switchLiveLong !== false, switchShort: args.has('--switch-on') || c.switchLiveShort !== false,
+      // ⭐ A-setup size on exhaust shorts (funding < 0 at the signal + entry ≥ 1% below the signal price); switch ⭐ not modelled
+      aSizeMult: (() => { const a = [...args].find(x => x.startsWith('--a-size=')); return a ? Number(a.split('=')[1]) || 1 : auto.aMult(); })(),
     },
   };
 }
@@ -135,7 +138,8 @@ async function replaySet(dir, cfg) {
     auto.measureCrowd = async () => null;   // crowd check not modelled: Binance keeps whale/retail data 30 days only
     if (await auto.blockReason(info)) continue;
     const off = Math.round((s.now - r.t) / M);
-    out[`${r.s}|${r.t}|short`] = simulate(hl, off, s.p, 'short', plan.shortTps, plan.shortSl, plan);
+    const aMult = plan.aSizeMult > 1 && aSetupExhaust({ fundingFrac: r.sig?.fr, signalPrice: r.sig?.price, price: s.p }).ok ? plan.aSizeMult : 1;
+    out[`${r.s}|${r.t}|short`] = +(simulate(hl, off, s.p, 'short', plan.shortTps, plan.shortSl, plan) * aMult).toFixed(4);
   }
   return out;
 }

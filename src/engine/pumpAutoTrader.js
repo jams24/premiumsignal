@@ -7,7 +7,7 @@ const { isTradFiMarket } = require('../utils/tradfi');
 const { measureSpotShare, spotVerdict, measureBtcChange, DEFAULT_MAX_SPOT_SHARE, KOREA_GROUP_PCT } = require('../collectors/spotShare');
 const { RUNNER } = require('./pumpRunnerPaper');
 const { switchSide } = require('./pumpSwitchPaper');
-const { crowdReading, crowdNote, isCrowded, CROWD_WARN_AT } = require('../collectors/coinFlow');
+const { crowdReading, crowdNote, isCrowded, CROWD_WARN_AT, bybitRetailNow } = require('../collectors/coinFlow');
 
 // Owner-DM line for the Korean share at entry (info only — size and filters never use it)
 function koreaNote(k) {
@@ -66,7 +66,36 @@ const CROWD_PRESETS = [
   { id: 'all15', at: 1.5, scope: 'all', label: '🔥🔀 All shorts ≥ 1.5', n: 16, lost: 7, saved: 31.77, live: 'BANK +$34.51, APR +$0.34' },
   { id: 'all14', at: 1.4, scope: 'all', label: '🔥🔀 All shorts ≥ 1.4', n: 22, lost: 10, saved: 56.69, live: 'ERA +$0.67, BANK +$34.51, APR +$0.34' },
 ];
-const CROWD_SCOPES = ['all', 'switch'];   // all = pump (exhaust) + switch shorts · switch = switch shorts only
+const CROWD_SCOPES = ['all', 'switch'];
+// ⭐ A-SETUPS (research 3 Nov 2026, scratchpad clean_dump.js / clean_validate.js; pumpcheck replay, $150, fees in):
+//  • exhaust short: funding at the signal < 0 AND the ENTER price ≥ 1% below the signal price (it was already falling).
+//    Live 15 trades, 2 full stops, +$272 vs the other 42: 22 full stops, +$18. Replay Dec–May 123 trades: full stops 25%
+//    vs 31%, $2.63 vs $1.14/trade; Jun–Oct 60: 23% vs 29%, $4.11 vs $1.58. The rest still made money in the replay.
+//  • switch short: Bybit retail long/short ≥ 1.18. Replay 26 / 27 trades: full stops 12% / 7% vs 27% / 23%, $6.27 / $6.15
+//    vs $2.47 / $2.72 per trade. Live only 3 (DOS, APR, LYN), all positive.
+// Still ~1 in 4 (exhaust) full stops — a better trade, not a sure one. aSizeMult: ⭐ trades' margin × this (1 = off).
+const A_EXHAUST_BELOW_PCT = 1;
+const A_SWITCH_RETAIL = 1.18;
+const A_SIZE_MULTS = [1, 1.5, 2];
+function aSetupExhaust({ fundingFrac, signalPrice, price }) {
+  const below = signalPrice > 0 && price > 0 ? (price / signalPrice - 1) * 100 : null;
+  const ok = fundingFrac != null && isFinite(fundingFrac) && fundingFrac < 0 && below != null && below <= -A_EXHAUST_BELOW_PCT;
+  return { ok, kind: 'exhaust', fundingPct: fundingFrac != null && isFinite(fundingFrac) ? fundingFrac * 100 : null, belowPct: below };
+}
+function aSetupSwitchShort(retailBy) {
+  return { ok: retailBy != null && retailBy >= A_SWITCH_RETAIL, kind: 'switch short', retailBy };
+}
+function aNote(a, mult) {
+  if (!a?.ok) return '';
+  const size = mult > 1 ? ` · <b>size ×${mult}</b>` : '';
+  if (a.kind === 'exhaust') {
+    return `⭐ <b>A-setup</b>: funding ${a.fundingPct.toFixed(3)}% at the signal + entry ${Math.abs(a.belowPct).toFixed(1)}% below the signal price${size}\n` +
+      `<i>   replay: full stops 23–25% vs 29–31%, $2.6–4.1 vs $1.1–1.6 per $150 trade — still about 1 in 4 stops</i>\n`;
+  }
+  return `⭐ <b>A-setup</b>: Bybit retail ${a.retailBy.toFixed(2)} (≥ ${A_SWITCH_RETAIL})${size}\n` +
+    `<i>   replay: full stops 7–12% vs 23–27%, about $6 vs $2.5 per $150 trade — only 3 live so far</i>\n`;
+}
+const aData = (a) => (a ? { ok: a.ok, ...(a.kind === 'exhaust' ? { fundingPct: a.fundingPct, belowPct: a.belowPct } : { retailBy: a.retailBy }) } : null);   // all = pump (exhaust) + switch shorts · switch = switch shorts only
 const DEFAULTS = {
   enabled: false,
   mode: 'paper',
@@ -121,6 +150,8 @@ const DEFAULTS = {
   // still shows ⚠️ at ≥ CROWD_WARN_AT). No Binance data for the coin → never skipped. One month of evidence: off by default.
   crowdSkipAt: 0,
   crowdScope: 'all',
+  // ⭐ A-setup size (A_SIZE_MULTS): margin × this on ⭐ trades; 1 = off (the ⭐ line still shows in the DM)
+  aSizeMult: 1,
 };
 const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
 // Size menu buttons — margin $ and leverage. 0 = /autopump: from /trade · switch: = short · switch long: = switch
@@ -143,6 +174,7 @@ class PumpAutoTrader {
     this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
     this.measureBtc = measureBtc;   // async (hours) => BTC % change
     this.measureCrowd = measureCrowd; // async (symbol) => { w: whales, g: retail } (Binance, latest 5m; null parts = no data)
+    this.measureBybitRetail = bybitRetailNow; // async (symbol) => Bybit retail L/S ratio now, or null
     this.adminIds = adminIds;       // told about ENTERs missed while auto-trade is off and no owner is set
     this.config = { ...DEFAULTS };
     this.busy = new Set();          // signal ids being processed
@@ -377,14 +409,16 @@ class PumpAutoTrader {
 
   async openSwitchTrade(info) {
     const c = this.config, te = this.executor, side = info.side, S = side === 'short';
-    const [size] = await Promise.all([this.switchSizing(c.ownerId, side), this.readCrowd(info)]);
+    const [size0, , a] = await Promise.all([this.switchSizing(c.ownerId, side), this.readCrowd(info), S ? this.aSetupFor(info, 'switch short') : null]);
+    const size = this.boostSize(size0, a);
     const L = this.switchLevels(info.price, side);
     const trade = await te.openManualTrade({
       symbol: info.symbol, exchangeId: info.exchangeId, direction: side, mode: c.mode,
       entryPrice: info.price, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
       tp1: L.tps[0], tp2: L.tps[1], tp3: L.tps[2], tp4: L.tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
       context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, switchTrade: true, pumpSignalId: info.signalId ?? null,
-        run7d: info.run7dClosed ?? null, via: info.via || 'signal', koreaShare: koreaPct(info.korea), crowd: crowdData(info.crowd) },
+        run7d: info.run7dClosed ?? null, via: info.via || 'signal', koreaShare: koreaPct(info.korea), crowd: crowdData(info.crowd),
+        aSetup: aData(a), sizeMult: size.mult },
     });
     if (!trade) {
       await this.tell(`🔀 ⚠️ <b>Switch ${side.toUpperCase()} NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift).`);
@@ -407,6 +441,7 @@ class PumpAutoTrader {
       `🛑 SL $${p(sl)} (${S ? '+' : '−'}${L.slPct}%) → max loss ≈ -$${(pos * L.slPct / 100).toFixed(2)} · to entry at TP1\n` +
       koreaNote(info.korea) +
       crowdNote(info.crowd, { short: S, at: this.crowdAt('switch') }) +
+      aNote(a, size.mult) +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Switch ${side} auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x`);
@@ -493,6 +528,37 @@ class PumpAutoTrader {
     return `${this.config.crowdScope === 'switch' ? '🔀 switch shorts' : '🔥🔀 all shorts'} ≥ ${at}`;
   }
 
+  // ⭐ size multiplier in force (1 = off)
+  aMult() { const m = Number(this.config.aSizeMult); return A_SIZE_MULTS.includes(m) ? m : 1; }
+
+  // ⭐ check for this trade. Exhaust: signal price + funding from the signal row (or info.signalPrice / signalFunding);
+  // switch short: Bybit retail now (or info.bybitRetail from the signal). Never throws; no data → not ⭐.
+  async aSetupFor(info, kind) {
+    try {
+      if (kind === 'exhaust') {
+        let sp = info.signalPrice, fr = info.signalFunding;
+        if ((sp == null || fr == null) && info.signalId != null) {
+          const { rows } = await db.query('SELECT price, funding_rate FROM pump_signals WHERE id = $1', [info.signalId]);
+          if (rows[0]) { sp = sp ?? (rows[0].price != null ? Number(rows[0].price) : null); fr = fr ?? (rows[0].funding_rate != null ? Number(rows[0].funding_rate) : null); }
+        }
+        return aSetupExhaust({ fundingFrac: fr, signalPrice: sp, price: info.price });
+      }
+      if (kind === 'switch short') {
+        const by = info.bybitRetail !== undefined ? info.bybitRetail : await this.measureBybitRetail(info.symbol).catch(() => null);
+        return aSetupSwitchShort(by);
+      }
+    } catch (e) { logger.warn(`A-setup check ${info.symbol} failed: ${e.message}`); }
+    return null;
+  }
+
+  // Bigger margin on a ⭐ trade (same leverage, so the exchange locks more and the −8% stop loses more)
+  boostSize(size, a) {
+    const m = this.aMult();
+    if (!(a?.ok) || m <= 1) return { ...size, mult: 1 };
+    const margin = Math.round(size.margin * m * 100) / 100, position = margin * size.leverage;
+    return { ...size, margin, position, locked: position / size.exchangeLev, mult: m };
+  }
+
   // Whales / retail at this moment, measured once per trade attempt (info.crowd); a failed call leaves null (no block)
   async readCrowd(info) {
     if (info.crowd === undefined) info.crowd = await this.measureCrowd(info.symbol).catch(() => null);
@@ -565,7 +631,8 @@ class PumpAutoTrader {
 
   async open(info) {
     const c = this.config, te = this.executor;
-    const [size] = await Promise.all([this.sizing(info.run7d), this.readCrowd(info)]);
+    const [size0, , a] = await Promise.all([this.sizing(info.run7d), this.readCrowd(info), this.aSetupFor(info, 'exhaust')]);
+    const size = this.boostSize(size0, a);
     const entry = info.price;
     const L = channelLevels(entry);
     const tpPcts = this.tpPcts();
@@ -574,7 +641,8 @@ class PumpAutoTrader {
       symbol: info.symbol, exchangeId: info.exchangeId, direction: 'short', mode: c.mode,
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
       tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
-      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea), buyers: buyersData(info.buyers), crowd: crowdData(info.crowd) },
+      context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea), buyers: buyersData(info.buyers), crowd: crowdData(info.crowd),
+        aSetup: aData(a), sizeMult: size.mult },
     });
     if (!trade) {
       await this.tell(`🤖 ⚠️ <b>Auto-trade NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Check the bot notification for the reason.`);
@@ -600,6 +668,7 @@ class PumpAutoTrader {
       koreaNote(info.korea) +
       buyersNote(info.buyers) +
       crowdNote(info.crowd, { short: true, at: this.crowdAt('exhaust') }) +
+      aNote(a, size.mult) +
       `🛡️ Exit: TPs only · manage or close in /mpositions`
     );
     logger.info(`Pump auto-trade opened: ${info.symbol} ${c.mode} $${size.margin} × ${lev}x via ${info.via}`);
@@ -612,4 +681,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };
+module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };

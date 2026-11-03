@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
+const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
@@ -2767,6 +2767,9 @@ class TelegramBot {
               (pre?.n ? ` <i>(Oct: ${pre.n} skipped, ${pre.lost} lost, saves $${pre.saved.toFixed(2)} · one month)</i>` : '')
             : `🐋 Crowd skip: <b>off</b> — every short traded; the trade DM shows ⚠️ when whales and retail are both ≥ ${CROWD_WARN_AT}`;
         })(),
+        ap.aMult() > 1
+          ? `⭐ A-setups: <b>size ×${ap.aMult()}</b> — exhaust short with funding &lt; 0 + entry ≥ 1% below the signal price · switch short with Bybit retail ≥ 1.18 (⭐ in the DM)`
+          : `⭐ A-setups: tagged ⭐ in the trade DM · bigger size <b>off</b>`,
         c.beAtPct > 0
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
@@ -2809,6 +2812,7 @@ class TelegramBot {
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
         [Markup.button.callback(`🐋 Crowd skip: ${Number(c.crowdSkipAt) > 0 ? `✅ ${ap.crowdLabel()}` : '⛔ OFF'} ⚙️`, 'ap_crowd')],
+        [Markup.button.callback(`⭐ A-setup size: ${ap.aMult() > 1 ? `✅ ×${ap.aMult()}` : '⛔ OFF'} ⚙️`, 'ap_asize')],
         [Markup.button.callback(`📣 🔀🟢 Switch long posts: ${c.channelLongs !== false ? '✅' : '⛔'}`, 'ap_ch_long'),
          Markup.button.callback(`📣 🔀🔴 Switch short posts: ${c.channelShorts !== false ? '✅' : '⛔'}`, 'ap_ch_short')],
         ...(ap.switchLab ? [
@@ -3254,6 +3258,45 @@ class TelegramBot {
       });
     };
     apAction('ap_be', async (ctx, ap) => { await ack(ctx); await showBeMenu(ctx, ap); });
+    // ⭐ A-setup size menu: ×1 (off) / ×1.5 / ×2 on the margin of ⭐ trades; a bigger size in live mode asks to confirm
+    const showASizeMenu = async (ctx, ap) => {
+      const owner = ap.config.ownerId || ctx.from.id, m = ap.aMult();
+      const ex = await ap.sizing(PUMP_RULES.extendedRunPct, owner), sw = await ap.switchSizing(owner, 'short');
+      const line = (label, sz, k) => `${label}: ${money(sz.margin * k)} × ${sz.leverage}x = ${money(sz.margin * k * sz.leverage)} · SL −8% ≈ <b>-${money(sz.margin * k * sz.leverage * 0.08)}</b>`;
+      const text = [
+        `⭐ <b>A-setup size</b> — now <b>${m > 1 ? `×${m}` : 'OFF (×1)'}</b>`,
+        '',
+        `<b>⭐ exhaust short</b>: funding &lt; 0 at the signal + ENTER price ≥ 1% below the signal price`,
+        `<i>Live 15 trades, 2 full stops, +$272 at $150 (the other 42: 22 full stops, +$18). Replay: full stops 23–25% vs 29–31%, $2.63 / $4.11 vs $1.14 / $1.58 per trade.</i>`,
+        `<b>⭐ switch short</b>: Bybit retail long/short ≥ 1.18 at the signal`,
+        `<i>Replay: full stops 12% / 7% vs 27% / 23%, $6.27 / $6.15 vs $2.47 / $2.72 per trade. Live only 3 (DOS, APR, LYN).</i>`,
+        '',
+        `Still about <b>1 in 4</b> ⭐ exhaust shorts hit the full stop — a bigger size means a bigger loss on those.`,
+        ...A_SIZE_MULTS.map(k => `${k === m ? '✅ ' : ''}×${k}${k === 1 ? ' (off)' : ''} → ${line('🔥 short', ex, k)} · ${line('🔀 switch short', sw, k)}`),
+        `<i>Only the margin changes (leverage stays). The ⭐ line shows in the DM either way. Open trades are not changed.</i>`,
+      ].join('\n');
+      const keyboard = Markup.inlineKeyboard([
+        A_SIZE_MULTS.map(k => Markup.button.callback(`${k === m ? '✅ ' : ''}×${k}${k === 1 ? ' off' : ''}`, `ap_asz_${k}`)),
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_asize', async (ctx, ap) => { await ack(ctx); await showASizeMenu(ctx, ap); });
+    apAction(/^ap_asz_(\d+(?:\.\d+)?)(_yes)?$/, async (ctx, ap) => {
+      const k = Number(ctx.match[1]), confirmed = !!ctx.match[2];
+      if (!A_SIZE_MULTS.includes(k)) return ack(ctx, 'Unknown value');
+      if (k > ap.aMult() && ap.config.mode === 'live' && !confirmed) {
+        await ack(ctx);
+        return apConfirm(ctx, `⭐ A-SETUP SIZE ×${k} (LIVE)?`,
+          `New ⭐ trades will use <b>${k}× the margin</b> with real orders. About 1 in 4 ⭐ exhaust shorts still hit the −8% stop, so those losses are ${k}× bigger too.\n\n` +
+          `👉 <b>Nothing changes until you tap ✅ Yes, confirm.</b>`, `ap_asz_${k}_yes`);
+      }
+      await ap.update({ aSizeMult: k });
+      await ack(ctx, k > 1 ? `⭐ size ×${k}` : '⭐ size off');
+      await showASizeMenu(ctx, ap);
+    });
     apAction('ap_be_tog', async (ctx, ap) => {
       const on = Number(ap.config.beAtPct) > 0, at = beTrigger(ap.config);
       await ap.update(on ? { beAtPct: 0, beLastAtPct: at } : { beAtPct: at, beLastAtPct: at, beStopPct: Number(ap.config.beStopPct ?? BE_DEFAULT.stop) });

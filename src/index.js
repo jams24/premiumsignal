@@ -22,7 +22,7 @@ const { trackSignalOutcomes } = require('./collectors/signalOutcomeTracker');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, entryVerdict, followUpCheck } = require('./collectors/pumpSignalCheck');
 const TelegramBot = require('./bot/telegramBot');
 const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
-const { crowdReading } = require('./collectors/coinFlow');
+const { crowdReading, bybitRetailNow } = require('./collectors/coinFlow');
 const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
 const { PumpSwitchPaper, measureRun7dClosed } = require('./engine/pumpSwitchPaper');
 const { measureSpotShare, measureKoreaShare, measureBuyerSigns, measureAltMarket } = require('./collectors/spotShare');
@@ -1103,11 +1103,12 @@ async function main() {
               cisdFlags: ctx.cisdFlags || [],
               run7d,
             };
-            const [spot, altMarket, korea, crowd] = await Promise.all([
+            const [spot, altMarket, korea, crowd, retailBy] = await Promise.all([
               measureSpotShare(token.symbol).catch(() => null),
               measureAltMarket(),
               measureKoreaShare(token.symbol).catch(() => null),
               crowdReading(token.symbol).catch(() => null),   // whales / retail (Binance) — logged for forward tracking
+              bybitRetailNow(token.symbol).catch(() => null), // Bybit retail L/S — ⭐ switch-short check + tracking
             ]);
             check.spot = spot;
             check.altMarket = altMarket;
@@ -1164,6 +1165,7 @@ async function main() {
                 koreaShare: korea ? korea.pct : null, koreaListed: korea ? korea.listed : null,
                 koreaUsd: korea ? korea.krUsd : null, koreaPerpUsd: korea ? korea.perpUsd : null,
                 crowd: crowd && (crowd.w != null || crowd.g != null) ? { w: crowd.w, g: crowd.g } : null,
+                retailBy,
                 engineLevels: { tp1: setup.tp1, tp2: setup.tp2, stopLoss: setup.stopLoss },
               },
             }).catch(e => { logger.warn(`Pump log failed: ${e.message}`); return null; });
@@ -1171,7 +1173,7 @@ async function main() {
             // Switch coin: the paper lab (not awaited) and the real switch trade, both now at the signal. Nothing is
             // watched afterwards — the channel already said BUY/SELL NOW, and the short's ENTER never applies to it.
             if (sw) {
-              const info = { signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, run7dClosed: sw.run7dClosed, side: sw.side, spot, korea, crowd, via: 'signal' };
+              const info = { signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, run7dClosed: sw.run7dClosed, side: sw.side, spot, korea, crowd, bybitRetail: retailBy, via: 'signal' };
               if (signalId != null) pumpAutoTrader.switchAtSignal(info).catch(e => logger.warn(`Switch lab failed: ${e.message}`));
               await pumpAutoTrader.switchTrade(info).catch(e => logger.error(`Switch trade at signal failed: ${e.message}`));
               continue;

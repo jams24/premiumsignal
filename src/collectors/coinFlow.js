@@ -177,6 +177,15 @@ async function crowdReading(symbol) {
   return { w, g };
 }
 
+// Bybit retail long/short (accounts) right now = buyRatio / (1 − buyRatio); null when not on Bybit or the call fails
+async function bybitRetailNow(symbol) {
+  const sym = String(symbol).toUpperCase().replace(/USDT$/, '');
+  const s = arr((await getJson(`${BY}/v5/market/account-ratio?category=linear&symbol=${sym}USDT&period=5min&limit=2`, 4000))?.result?.list)
+    .map(x => ({ t: +x.timestamp, v: +x.buyRatio })).sort((a, b) => a.t - b.t);
+  const v = s.length ? s[s.length - 1].v : NaN;
+  return v > 0 && v < 1 ? v / (1 - v) : null;
+}
+
 const isCrowded = (c, at = CROWD_WARN_AT) => !!(c && c.w != null && c.g != null && c.w >= at && c.g >= at);
 
 // One DM line: the two readings, and the October result when both are at or above `at`
@@ -373,4 +382,4 @@ function flowLine(d) {
   return parts.length ? parts.join(' · ') : null;
 }
 
-module.exports = { getFlow, formatFlow, flowLine, switchZone, crowdReading, crowdNote, isCrowded, CROWD_BT, CROWD_WARN_AT };
+module.exports = { getFlow, formatFlow, flowLine, switchZone, crowdReading, crowdNote, isCrowded, CROWD_BT, CROWD_WARN_AT, bybitRetailNow };
