@@ -1918,7 +1918,7 @@ class TelegramBot {
       const origSl = parseFloat(t.original_stop_loss);
       if (isFinite(origSl) && Math.abs(origSl - st.sl) / st.entry > 0.0005) text += `  <i>Original SL $${fmtP(origSl)}</i>\n`;
       text += `\n<b>Details</b>\n`;
-      text += `  Source: ${escapeHtml(t.source || '?')}${c.autoPump ? ' · pump auto-trade' : c.manual ? ' · manual' : ''}${c.exitStyle ? ` · exit: ${escapeHtml(String(c.exitStyle))}` : ''}\n`;
+      text += `  Source: ${escapeHtml(t.source || '?')}${c.autoPump ? ' · pump auto-trade' : c.manual ? ' · manual' : ''}${c.exitStyle ? ` · exit: ${escapeHtml(MT_EXIT_STYLES[c.exitStyle] || String(c.exitStyle))}` : ''}\n`;
       text += `  Quantity: ${parseFloat(t.quantity || 0)} · exchange leverage ${parseFloat(t.leverage || st.lev)}x${c.marginSaver ? ' (margin saver)' : ''}\n`;
       text += `  Opened: ${opened} UTC (${posAge(t)} ago)\n`;
       const takes = Array.isArray(c.manualTakes) ? c.manualTakes : [];
@@ -1933,6 +1933,8 @@ class TelegramBot {
       if (price && st.unrealized > 1) kb.push([Markup.button.callback(`💰 Take profit (open ${fmtUsd(st.unrealized)})`, `mt_tk_${t.id}`)]);
       kb.push(canBe ? [Markup.button.callback('🛡 Move SL to breakeven', `mt_be_${t.id}`), Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]
         : [Markup.button.callback('✏️ Edit stop loss', `mt_sl_${t.id}`)]);
+      // Manual trades (and auto-pump ones) follow their own exit style — switch an open one to the auto trades' "TPs only"
+      if (c.manual === true && c.exitStyle !== 'tponly') kb.push([Markup.button.callback('🛡️ TPs only from here (stop trailing)', `mt_xso_${t.id}`)]);
       kb.push([Markup.button.callback('🐋 Whales · retail · level', `mt_fl_${t.id}`)]);
       kb.push([Markup.button.callback('⬅️ All positions', 'mt_pv_all_pnl_0')]);
       return { text, keyboard: Markup.inlineKeyboard(kb) };
@@ -2021,6 +2023,63 @@ class TelegramBot {
         ).catch(() => {});
       } catch (e) {
         logger.error(`SL → breakeven failed: ${e.message}`);
+        ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
+      }
+    });
+
+    // Open trade → "TPs only" from now on (the auto trades' exit): the executor reads the trade's exit style on every
+    // 1-minute check, so it applies from the next check. Stop and TPs are left exactly as they are — no more trailing or
+    // breakeven moves; at TP1 the stop goes to entry only if it isn't already past it; TP2–TP4 close in steps.
+    const exitSwitchCheck = async (id) => {
+      const t = await getOpenTradeById(id);
+      if (!t) return { error: 'That position is already closed.' };
+      const c = t.onchain_context || {};
+      if (c.manual !== true) return { error: 'Only manual and auto-pump trades have an exit style.' };
+      if (c.exitStyle === 'tponly') return { error: 'This trade is already on TPs only.' };
+      return { t, from: c.exitStyle || 'tight' };
+    };
+    this.bot.action(/^mt_xso_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      try {
+        const r = await exitSwitchCheck(Number(ctx.match[1]));
+        if (r.error) return ctx.replyWithHTML(`⚠️ ${escapeHtml(r.error)}`);
+        const sl = parseFloat(r.t.stop_loss), entry = parseFloat(r.t.entry_price), isLong = r.t.direction === 'long';
+        const slPct = isFinite(sl) ? ((isLong ? sl - entry : entry - sl) / entry) * 100 : null;
+        await ctx.replyWithHTML(
+          `❓ <b>Switch ${escapeHtml(r.t.symbol)} ${r.t.direction.toUpperCase()} to TPs only?</b>\n\n` +
+          `Now: <b>${escapeHtml(MT_EXIT_STYLES[r.from] || r.from)}</b> — ${describeExit(r.from)}\n\n` +
+          `After: <b>TPs only</b> — ${describeExit('tponly')}\n\n` +
+          `🛑 The stop stays where it is: <b>$${fmtP(sl)}</b>${slPct == null ? '' : ` (${fmtPct(slPct)} from entry)`} — it is never loosened. ` +
+          `${r.t.hit_tp1 ? 'TP1 is already hit, so from here it just waits for the next TP.' : 'At TP1 it moves to entry.'}\n` +
+          `<i>Applies from the bot's next 1-minute check. ${r.t.mode === 'live' ? '💰 LIVE trade — nothing is ordered or closed now.' : '📝 Paper trade.'}</i>`,
+          Markup.inlineKeyboard([[Markup.button.callback('✅ Yes, TPs only', `mt_xsok_${r.t.id}`), Markup.button.callback('⬅️ Leave it', 'mt_closeno')]])
+        );
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+    this.bot.action(/^mt_xsok_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Switching…');
+      try {
+        const r = await exitSwitchCheck(Number(ctx.match[1]));   // re-checked: it may have closed since the prompt
+        if (r.error) return ctx.editMessageText(`⚠️ ${r.error}`).catch(() => {});
+        // Merge only these keys (other writers jsonb_set their own keys), and only while still open
+        const { rowCount } = await db.query(
+          `UPDATE trades SET onchain_context = COALESCE(onchain_context, '{}'::jsonb)
+             || jsonb_build_object('exitStyle', 'tponly', 'exitStyleWas', $2::text, 'exitStyleChangedAt', NOW())
+           WHERE id = $1 AND status = 'open'`,
+          [r.t.id, r.from]
+        );
+        if (!rowCount) return ctx.editMessageText('⚠️ That position closed before the switch.').catch(() => {});
+        logger.info(`Exit style → TPs only: ${r.t.symbol} #${r.t.id} (${r.t.mode}), was ${r.from}, SL stays ${r.t.stop_loss}`);
+        await ctx.editMessageText(
+          `🛡️ <b>${escapeHtml(r.t.symbol)} is on TPs only now</b> (was ${escapeHtml(MT_EXIT_STYLES[r.from] || r.from)})\n` +
+          `No more trailing — SL stays at $${fmtP(parseFloat(r.t.stop_loss))}; TPs close in steps as usual.\n` +
+          `<i>Applies from the bot's next 1-minute check.</i>`,
+          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('🔎 Back to position', `mt_pd_${r.t.id}`), Markup.button.callback('📊 All positions', 'mt_pv_all_pnl_0')]]).reply_markup }
+        ).catch(() => {});
+      } catch (e) {
+        logger.error(`Exit style switch failed: ${e.message}`);
         ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
       }
     });
