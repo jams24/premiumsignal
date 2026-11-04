@@ -25,6 +25,7 @@ const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
 const { crowdReading, bybitRetailNow } = require('./collectors/coinFlow');
 const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
 const { PumpSwitchPaper, measureRun7dClosed } = require('./engine/pumpSwitchPaper');
+const { PumpChannelTracker } = require('./engine/pumpChannelTracker');
 const { measureSpotShare, measureKoreaShare, measureBuyerSigns, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
 
@@ -642,6 +643,15 @@ async function main() {
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
+  // Channel trade updates: TP / stop / back-to-entry / 48h replies under every posted entry (exhaust short ✅ ENTER
+  // replies, and switch longs / shorts when their 📣 channel posts are on), from the levels the channel showed
+  const pumpChannelTracker = new PumpChannelTracker({
+    exchanges: listingMonitor.exchanges,
+    reply: (replyToId, html) => bot.sendPumpReply(replyToId, html),
+  });
+  // Not awaited by the callers: the real trade right after must not wait on this DB write
+  const trackChannelEntry = (signalId, t) => pumpChannelTracker.start(signalId, t).catch(e => logger.warn(`Channel tracker ${t.symbol} start failed: ${e.message}`));
+  pumpChannelTracker.restore().catch(e => logger.error(`Restoring channel trackers failed: ${e.message}`));
 
   // Every pump signal is watched every 5 min for up to 2h (one that met the rules at once as a 're-check'); the bot replies under the
   // original channel message only when something changes. Watch state lives on the pump_signals row
@@ -657,11 +667,12 @@ async function main() {
   const saveWatch = (w, status = 'watching', outcome) => (w.signalId
     ? db.savePumpWatch(w.signalId, watchState(w, status, outcome)).catch(e => logger.warn(`Saving pump watch ${w.symbol} failed: ${e.message}`))
     : Promise.resolve());
-  // Marked done before replying: a crash mid-send loses one reply rather than repeating it after restart
+  // Marked done before replying: a crash mid-send loses one reply rather than repeating it after restart.
+  // Returns the reply's channel message id (null when not posted)
   async function finishWatch(key, w, outcome, reply) {
     pumpWatches.delete(key);
     await saveWatch(w, 'done', outcome);
-    if (w.posted !== false) await bot.sendPumpFollowUp(w.msgId, reply);
+    return w.posted !== false ? bot.sendPumpFollowUp(w.msgId, reply) : null;
   }
   async function processPumpWatches() {
     if (pumpWatchRunning || !pumpWatches.size) return;
@@ -692,7 +703,14 @@ async function main() {
               w.enterBuyers = r.buyers;
               if (long) r.levels = pumpAutoTrader.runnerLevels(r.price);
             }
-            await finishWatch(key, w, r.kind, { ...base, ...r });
+            const replyId = await finishWatch(key, w, r.kind, { ...base, ...r });
+            // The ✅ ENTER reply told subscribers to enter at its levels → follow them and reply under it
+            if (r.kind === 'enter' && replyId && r.levels) {
+              trackChannelEntry(w.signalId, {
+                symbol: w.symbol, exchangeId: w.exchangeId, side: long ? 'long' : 'short', entry: r.price,
+                tps: r.levels.tps, stopLoss: r.levels.stopLoss, replyTo: replyId,
+              });
+            }
             // Long watches are only old runner-long signals from before the switch (no new ones are created):
             // the reply still goes out, but the retired runner long opens nothing
             if (r.kind === 'enter' && !long) {
@@ -731,6 +749,7 @@ async function main() {
     pumpRunnerSignal.check().catch(e => logger.error(`At-signal lab check error: ${e.message}`));
     pumpSwitchPaper.check().catch(e => logger.error(`Switch lab check error: ${e.message}`));
     pumpAutoTrader.checkBreakeven().catch(e => logger.error(`Stop→entry check error: ${e.message}`));
+    pumpChannelTracker.check().catch(e => logger.error(`Channel tracker check error: ${e.message}`));
     bot.nearTpCheck?.().catch(e => logger.error(`Near-TP alert check error: ${e.message}`));
   });
 
@@ -1173,6 +1192,13 @@ async function main() {
             // Switch coin: the paper lab (not awaited) and the real switch trade, both now at the signal. Nothing is
             // watched afterwards — the channel already said BUY/SELL NOW, and the short's ENTER never applies to it.
             if (sw) {
+              // Posted (📣 on for this side): the post said BUY/SELL NOW at these levels → TP / stop replies under it
+              if (msgId) {
+                trackChannelEntry(signalId, {
+                  symbol: token.symbol, exchangeId: token.exchange, side: sw.side, entry: token.price,
+                  tps: levels.tps, stopLoss: levels.stopLoss, replyTo: msgId,
+                });
+              }
               const info = { signalId, symbol: token.symbol, exchangeId: token.exchange, price: token.price, run7d, run7dClosed: sw.run7dClosed, side: sw.side, spot, korea, crowd, bybitRetail: retailBy, via: 'signal' };
               if (signalId != null) pumpAutoTrader.switchAtSignal(info).catch(e => logger.warn(`Switch lab failed: ${e.message}`));
               await pumpAutoTrader.switchTrade(info).catch(e => logger.error(`Switch trade at signal failed: ${e.message}`));

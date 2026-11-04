@@ -449,6 +449,8 @@ async function init(retries = 3) {
   }
   // Follow-up watcher state, so an active watch survives redeploys/restarts
   await p.query('ALTER TABLE pump_signals ADD COLUMN IF NOT EXISTS watch_state JSONB');
+  // Channel trade updates (TP / stop replies under the post), so a tracked entry survives redeploys/restarts
+  await p.query('ALTER TABLE pump_signals ADD COLUMN IF NOT EXISTS channel_track JSONB');
   // TP1 each paper runner long opened with (the long's TP1 choice in /autopump); null = the plan's +6%
   for (const table of ['pump_runner_paper', 'pump_runner_signal']) {
     await p.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS tp1_pct DOUBLE PRECISION`);
@@ -703,6 +705,21 @@ async function getActivePumpWatches(maxAgeMinutes) {
      WHERE watch_state->>'status' = 'watching' AND created_at > NOW() - ($1 || ' minutes')::interval
      ORDER BY created_at`,
     [String(maxAgeMinutes)]
+  );
+  return rows;
+}
+
+async function saveChannelTrack(id, state) {
+  await query('UPDATE pump_signals SET channel_track = $1 WHERE id = $2', [JSON.stringify(state), id]);
+}
+
+// Channel trade trackers still open, for signals young enough to matter (2h watch + 48h hold)
+async function getOpenChannelTracks(maxAgeHours) {
+  const { rows } = await query(
+    `SELECT id, symbol, channel_track FROM pump_signals
+     WHERE channel_track->>'status' = 'open' AND created_at > NOW() - ($1 || ' hours')::interval
+     ORDER BY created_at`,
+    [String(maxAgeHours)]
   );
   return rows;
 }
@@ -1308,4 +1325,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, savePumpWatch, getActivePumpWatches, getPumpAutoConfig, savePumpAutoConfig, mergePumpAutoConfig, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs, getAlertMutes, saveAlertMutes };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, savePumpWatch, getActivePumpWatches, saveChannelTrack, getOpenChannelTracks, getPumpAutoConfig, savePumpAutoConfig, mergePumpAutoConfig, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs, getAlertMutes, saveAlertMutes };

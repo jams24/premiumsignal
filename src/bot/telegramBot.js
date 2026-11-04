@@ -10495,8 +10495,9 @@ class TelegramBot {
 
   // Reply under a pump signal from the 5-minute watcher.
   // u: { kind: 'enter'|'new_high'|'missed'|'expired', symbol, signalPrice, ageMin, price?, top?, cisd?, oi1h?, belowHigh?, levels? }
+  // Returns the reply's message id (an ENTER reply is where the channel trade tracker replies), or null
   async sendPumpFollowUp(replyToId, u) {
-    if (!this.pumpChannelId) return;
+    if (!this.pumpChannelId) return null;
     try {
       const p = (v) => Number(v).toPrecision(6);
       const R = PUMP_RULES;
@@ -10551,13 +10552,30 @@ class TelegramBot {
       } else {
         msg = `⌛ <b>${sym} — NO ENTRY WITHIN ${R.followUpMaxMin / 60}H</b>\nThe entry rules never lined up. Watch stopped — skip this one.`;
       }
-      await this.bot.telegram.sendMessage(this.pumpChannelId, msg, {
+      const sent = await this.bot.telegram.sendMessage(this.pumpChannelId, msg, {
         parse_mode: 'HTML',
         ...(replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {}),
       });
       logger.info(`Pump follow-up sent: ${u.symbol} ${long ? 'LONG ' : ''}(${u.kind})`);
+      return sent?.message_id || null;
     } catch (err) {
       logger.error(`Failed to send pump follow-up: ${err.message}`);
+      return null;
+    }
+  }
+
+  // Trade update from the channel tracker (TP / stop / entry / 48h), as a reply under the post that said enter
+  async sendPumpReply(replyToId, html) {
+    if (!this.pumpChannelId) return null;
+    try {
+      const sent = await this.bot.telegram.sendMessage(this.pumpChannelId, html, {
+        parse_mode: 'HTML',
+        ...(replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {}),
+      });
+      return sent?.message_id || null;
+    } catch (err) {
+      logger.error(`Failed to send pump trade update: ${err.message}`);
+      return null;
     }
   }
 
