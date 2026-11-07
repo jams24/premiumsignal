@@ -158,7 +158,8 @@ const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidati
 const SIZE_MARGINS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100];
 const SIZE_LEVERAGES = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const AUTO_MARGINS = SIZE_MARGINS, AUTO_LEVERAGES = SIZE_LEVERAGES;
-const SWITCH_MARGINS = SIZE_MARGINS, SWITCH_LEVERAGES = SIZE_LEVERAGES;
+// Switch shorts (the stronger edge) also get bigger margins, e.g. $250 × 5x = $1,250 → ≈ −$101 at the −8% SL
+const SWITCH_MARGINS = [...SIZE_MARGINS, 125, 150, 200, 250, 300], SWITCH_LEVERAGES = SIZE_LEVERAGES;
 const SWITCH_LONG_MARGINS = SIZE_MARGINS, SWITCH_LONG_LEVERAGES = SIZE_LEVERAGES;
 const BE_AT_PCTS = [2, 2.5, 3, 3.5, 4, 4.5, 4.8]; // trigger buttons in /autopump (only those below TP1 are shown)
 const BE_STOP_PCTS = [0, 2, 3, 4, 5, 6, 7];       // new stop buttons, % from entry (0 = entry)
