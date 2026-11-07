@@ -88,10 +88,13 @@ const pnlUsd = (realizedPct, position, rules = SWITCH) => (realizedPct / 100) * 
 const rowTps = (r) => [Number(r.tp1_pct) > 0 ? Number(r.tp1_pct) : 5, ...SWITCH.tpRest];
 
 class PumpSwitchPaper {
-  constructor({ exchanges, tell }) {
+  // table / name / icon: the day-off lab (pumpDayOffPaper.js) reuses this class with its own table
+  constructor({ exchanges, tell, table = 'pump_switch_paper', name = 'Switch lab', icon = '🔀' }) {
     this.exchanges = exchanges;   // ccxt instances by id (public candles only)
     this.tell = tell;             // async (html) => void — owner DM
-    this.table = 'pump_switch_paper';
+    this.table = table;
+    this.name = name;
+    this.icon = icon;
     this.checking = false;
   }
 
@@ -143,7 +146,7 @@ class PumpSwitchPaper {
     try {
       const { rows } = await db.query(`SELECT * FROM ${this.table} WHERE status = 'open' ORDER BY id`);
       for (const r of rows) {
-        try { await this.checkOne(r, now); } catch (e) { logger.warn(`Switch lab ${r.symbol} check failed: ${e.message}`); }
+        try { await this.checkOne(r, now); } catch (e) { logger.warn(`${this.name} ${r.symbol} check failed: ${e.message}`); }
       }
     } finally { this.checking = false; }
   }
@@ -184,18 +187,24 @@ class PumpSwitchPaper {
       const why = { stop: `stopped ${r.side === 'short' ? '+' : '−'}${SWITCH.slPct}%`, entry: state.hit ? 'TP1, rest closed at entry' : 'tighter stop hit',
         tp4: 'all targets hit', time: '48h limit, closed at market' }[closed.reason];
       await this.tell(
-        `🔀 <b>Switch lab ${r.side.toUpperCase()} closed — ${escapeHtml(r.symbol)}</b>\n` +
+        `${this.icon} <b>${this.name} ${r.side.toUpperCase()} closed — ${escapeHtml(r.symbol)}</b>\n` +
         `${why} · <b>${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}</b> on $${pos.toFixed(0)} paper` +
-        (s ? `\nSwitch lab so far: ${s.closed} closed · ${s.wins} won · <b>${s.pnl >= 0 ? '+' : '-'}$${Math.abs(s.pnl).toFixed(2)}</b> ` +
-          `(long ${s.long.n}: ${s.long.pnl >= 0 ? '+' : '-'}$${Math.abs(s.long.pnl).toFixed(2)} · short ${s.short.n}: ${s.short.pnl >= 0 ? '+' : '-'}$${Math.abs(s.short.pnl).toFixed(2)}) · ${s.open} open` : '')
+        (s ? `\n${this.summaryLine(s)}` : '')
       ).catch(() => {});
-      logger.info(`Switch lab ${r.side} closed: ${r.symbol} ${closed.reason} ${pnl.toFixed(2)}`);
+      logger.info(`${this.name} ${r.side} closed: ${r.symbol} ${closed.reason} ${pnl.toFixed(2)}`);
       return;
     }
     await db.query(
       `UPDATE ${this.table} SET hit = $2, rem = $3, realized_pct = $4, stop_pct = $5, best_pct = $6, last_candle = $7 WHERE id = $1`,
       [r.id, state.hit, state.rem, state.realizedPct, state.stopPct, best, state.lastCandle]
     );
+  }
+
+  // Running total line in the close DM
+  summaryLine(s) {
+    const m = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`;
+    return `${this.name} so far: ${s.closed} closed · ${s.wins} won · <b>${m(s.pnl)}</b> ` +
+      `(long ${s.long.n}: ${m(s.long.pnl)} · short ${s.short.n}: ${m(s.short.pnl)}) · ${s.open} open`;
   }
 
   async price(r) {

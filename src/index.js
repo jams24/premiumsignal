@@ -25,6 +25,7 @@ const { PumpAutoTrader } = require('./engine/pumpAutoTrader');
 const { crowdReading, bybitRetailNow } = require('./collectors/coinFlow');
 const { PumpRunnerPaper } = require('./engine/pumpRunnerPaper');
 const { PumpSwitchPaper, measureRun7dClosed } = require('./engine/pumpSwitchPaper');
+const { PumpDayOffPaper } = require('./engine/pumpDayOffPaper');
 const { PumpChannelTracker } = require('./engine/pumpChannelTracker');
 const { measureSpotShare, measureKoreaShare, measureBuyerSigns, measureAltMarket } = require('./collectors/spotShare');
 const { generateSetupChart } = require('./utils/chartGenerator');
@@ -632,6 +633,11 @@ async function main() {
     exchanges: listingMonitor.exchanges,
     tell: (html) => pumpAutoTrader.tell(html),
   });
+  // Paper lab: real trades a 📅 day off skipped (pump shorts at ENTER, switch trades at the signal)
+  const pumpDayOffPaper = new PumpDayOffPaper({
+    exchanges: listingMonitor.exchanges,
+    tell: (html) => pumpAutoTrader.tell(html),
+  });
   const pumpAutoTrader = new PumpAutoTrader({
     executor: onchainTradeExecutor,
     notify: (chatId, html) => bot.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }),
@@ -639,6 +645,7 @@ async function main() {
     runner: pumpRunnerPaper,
     signalLab: pumpRunnerSignal,
     switchLab: pumpSwitchPaper,
+    dayOffLab: pumpDayOffPaper,
   });
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
@@ -748,6 +755,7 @@ async function main() {
     pumpRunnerPaper.check().catch(e => logger.error(`Paper runner check error: ${e.message}`));
     pumpRunnerSignal.check().catch(e => logger.error(`At-signal lab check error: ${e.message}`));
     pumpSwitchPaper.check().catch(e => logger.error(`Switch lab check error: ${e.message}`));
+    pumpDayOffPaper.check().catch(e => logger.error(`Day-off lab check error: ${e.message}`));
     pumpAutoTrader.checkBreakeven().catch(e => logger.error(`Stop→entry check error: ${e.message}`));
     pumpChannelTracker.check().catch(e => logger.error(`Channel tracker check error: ${e.message}`));
     bot.nearTpCheck?.().catch(e => logger.error(`Near-TP alert check error: ${e.message}`));
@@ -1153,11 +1161,13 @@ async function main() {
             check.side = sw ? sw.side : 'short';
             check.switch = sw;
             const levels = sw ? pumpAutoTrader.switchLevels(token.price, sw.side) : channelLevels(token.price);
-            // 📣 switch channel posts per side (/autopump): an unposted switch signal is still logged and traded.
-            // Pump (exhaust) shorts are always posted.
+            // 📣 channel posts (/autopump): pump shorts, switch longs, switch shorts each on/off. An unposted signal is
+            // still logged and traded; an unposted pump short is still watched for its ENTER, with no channel replies.
             const posted = pumpAutoTrader.postsToChannel(check.side, !!sw);
             const msgId = posted ? await bot.sendPumpSignal(token, setup, check, levels) : null;
-            if (!posted) logger.info(`Switch signal ${token.symbol} ${check.side.toUpperCase()}: channel posts for switch ${check.side}s are off — not posted`);
+            if (!posted) logger.info(sw
+              ? `Switch signal ${token.symbol} ${check.side.toUpperCase()}: channel posts for switch ${check.side}s are off — not posted`
+              : `Pump short signal ${token.symbol}: channel posts for pump shorts are off — not posted (still watched and auto-traded)`);
 
             // Channel levels are logged so the outcome tracker scores what subscribers were shown
             const signalId = await db.logPumpSignal(token.symbol, {

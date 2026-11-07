@@ -287,6 +287,37 @@ async function init(retries = 3) {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- Paper-only record of the real trades a 📅 day off skipped (engine/pumpDayOffPaper.js): kind = 'exhaust' (pump
+    -- short at its ENTER) | 'switch' (at its signal); day = the UTC weekday that was off. Same columns as the switch lab.
+    CREATE TABLE IF NOT EXISTS pump_dayoff_paper (
+      id SERIAL PRIMARY KEY,
+      signal_id INTEGER UNIQUE NOT NULL,
+      kind TEXT NOT NULL,
+      day TEXT,
+      symbol TEXT NOT NULL,
+      exchange TEXT NOT NULL,
+      side TEXT NOT NULL,
+      entry_price DOUBLE PRECISION NOT NULL,
+      entry_at TIMESTAMPTZ NOT NULL,
+      position_usd DOUBLE PRECISION NOT NULL,
+      signal_price DOUBLE PRECISION,
+      status TEXT NOT NULL DEFAULT 'open',
+      hit INTEGER NOT NULL DEFAULT 0,
+      rem DOUBLE PRECISION NOT NULL DEFAULT 1,
+      realized_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+      stop_pct DOUBLE PRECISION NOT NULL DEFAULT -8,
+      best_pct DOUBLE PRECISION,
+      tp1_pct DOUBLE PRECISION,
+      be_at_pct DOUBLE PRECISION,
+      be_stop_pct DOUBLE PRECISION,
+      last_candle BIGINT,
+      close_reason TEXT,
+      exit_price DOUBLE PRECISION,
+      pnl_usd DOUBLE PRECISION,
+      closed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS manual_prefs (
       telegram_id BIGINT PRIMARY KEY,
       prefs JSONB NOT NULL,

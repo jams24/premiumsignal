@@ -2835,8 +2835,8 @@ class TelegramBot {
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
         `<i>Skips if you already hold the coin, the signal was already traded, or LIVE has no API keys.</i>`,
-        `📣 Channel posts: 🔥 pump shorts <b>always</b> · 🔀🟢 switch longs <b>${c.channelLongs !== false ? 'ON' : 'OFF'}</b> · 🔀🔴 switch shorts <b>${c.channelShorts !== false ? 'ON' : 'OFF'}</b>` +
-          (c.channelLongs === false || c.channelShorts === false ? ' — off = not posted, still traded' : ''),
+        `📣 Channel posts: 🔥 pump shorts <b>${c.channelExhaust !== false ? 'ON' : 'OFF'}</b> · 🔀🟢 switch longs <b>${c.channelLongs !== false ? 'ON' : 'OFF'}</b> · 🔀🔴 switch shorts <b>${c.channelShorts !== false ? 'ON' : 'OFF'}</b>` +
+          (c.channelExhaust === false || c.channelLongs === false || c.channelShorts === false ? ' — off = not posted, still traded' : ''),
       );
       if (ap.switchLab) {
         const to = ap.switchShortTo();
@@ -2875,6 +2875,7 @@ class TelegramBot {
         [Markup.button.callback(`🐋 Crowd skip: ${Number(c.crowdSkipAt) > 0 ? `✅ ${ap.crowdLabel()}` : '⛔ OFF'} ⚙️`, 'ap_crowd')],
         [Markup.button.callback(`⭐ A-setup size: ${ap.aMult() > 1 ? `✅ ×${ap.aMult()}` : '⛔ OFF'} ⚙️`, 'ap_asize')],
         [Markup.button.callback(`📅 Trading days: ${ap.skipDays('exhaust').length || ap.skipDays('switch').length ? `🔥 ${daysLabel(ap.skipDays('exhaust'))} · 🔀 ${daysLabel(ap.skipDays('switch'))} off` : 'all on'} ⚙️`, 'ap_days')],
+        [Markup.button.callback(`📣 🔥 Pump short posts: ${c.channelExhaust !== false ? '✅' : '⛔'}`, 'ap_ch_exhaust')],
         [Markup.button.callback(`📣 🔀🟢 Switch long posts: ${c.channelLongs !== false ? '✅' : '⛔'}`, 'ap_ch_long'),
          Markup.button.callback(`📣 🔀🔴 Switch short posts: ${c.channelShorts !== false ? '✅' : '⛔'}`, 'ap_ch_short')],
         ...(ap.switchLab ? [
@@ -3173,12 +3174,12 @@ class TelegramBot {
       await ack(ctx, 'Updated');
       await showRunner(ctx, await switchLabView(ap));
     });
-    for (const [action, key, label] of [['ap_ch_long', 'channelLongs', 'long'], ['ap_ch_short', 'channelShorts', 'short']]) {
+    for (const [action, key, label] of [['ap_ch_exhaust', 'channelExhaust', 'pump short'], ['ap_ch_long', 'channelLongs', 'switch long'], ['ap_ch_short', 'channelShorts', 'switch short']]) {
       apAction(action, async (ctx, ap) => {
         await ap.update({ [key]: ap.config[key] === false });
         await ack(ctx, ap.config[key] !== false
-          ? `New switch ${label} signals will be posted in the channel`
-          : `New switch ${label} signals won't be posted in the channel (still traded; pump shorts always posted)`);
+          ? `New ${label} signals will be posted in the channel`
+          : `New ${label} signals won't be posted in the channel (still auto-traded)`);
         await showAutoPump(ctx, true);
       });
     }
@@ -3324,8 +3325,27 @@ class TelegramBot {
     // 📅 Trading days: live results by UTC weekday (last 8 weeks, re-read every time) + days off per kind
     const showDaysMenu = async (ctx, ap) => {
       await ap.load().catch(() => {});
-      const st = await ap.weekdayStats(56);
+      const [st, lab, labRows] = await Promise.all([
+        ap.weekdayStats(56),
+        ap.dayOffLab ? ap.dayOffLab.stats().catch(() => null) : null,
+        ap.dayOffLab ? ap.dayOffLab.recent(6).catch(() => []) : [],
+      ]);
       const signed = (v) => `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(0)}`;
+      const signed2 = (v) => `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(2)}`;
+      // 📒 Day-off lab: the real trades a day off skipped, tracked on paper
+      const labLine = (k, title) => {
+        const x = lab?.[k];
+        if (!x || !(x.n || x.open)) return `${title}: <i>none yet</i>`;
+        return `${title}: ${x.n} closed · ${x.wins} won · ${x.stops} stop${x.stops === 1 ? '' : 's'} · <b>${signed2(x.pnl)}</b>${x.open ? ` · ${x.open} open` : ''}`;
+      };
+      const labBlock = ap.dayOffLab ? [
+        '',
+        `📒 <b>Day-off lab</b> — the real trades your days off skipped, tracked on paper${lab?.first ? ` (since ${new Date(lab.first).toISOString().slice(0, 10)})` : ''}`,
+        labLine('exhaust', '🔥 Pump shorts'),
+        labLine('switch', '🔀 Switch trades'),
+        ...(labRows.length ? [`Last: ${labRows.map(r => `${escapeHtml(r.symbol)} ${r.day || ''} ${r.status === 'closed' ? signed2(Number(r.pnl_usd || 0)) : '(open)'}`).join(' · ')}`] : []),
+        `<i>Plus = the day off cost you that much · minus = it saved you that much.</i>`,
+      ] : [];
       const block = (kind, title) => {
         const off = ap.skipDays(kind), rows = st[kind];
         const losing = rows.map((r, i) => (r.n >= 3 && r.atSize < 0 ? DAY_NAMES[i] : null)).filter(Boolean);
@@ -3344,10 +3364,12 @@ class TelegramBot {
         ...block('exhaust', '🔥 <b>Pump shorts</b>'),
         '',
         ...block('switch', '🔀 <b>Switch trades</b>'),
+        ...labBlock,
         '',
-        `<i>Backtest (~1,270 trades): weekends best in both periods, Tuesday the weakest — most weekday patterns don't repeat. ` +
-          `Switching off each day that lost over the last 4–8 weeks LOST money there (pump shorts −$42 to −$203 per period at $150/trade), ` +
-          `so days only change when you tap them. A day off skips new real trades that UTC day only; open trades, the switch paper lab and channel posts carry on.</i>`,
+        `<i>Backtest, both periods ($150/trade): 🔥 pump shorts made money on every weekday overall — best Wed +$474, Sun +$357, ` +
+          `Fri +$288, weakest Tue +$16, Thu +$28. 🔀 switch shorts: Fri the only day that lost in both periods (−$59, 27 trades — could be chance). ` +
+          `Switching off each day that lost over the last 4–8 weeks LOST money (pump shorts −$42 to −$203 per period), so days only change when you tap them. ` +
+          `A day off skips new real trades that UTC day only (they go to the 📒 day-off lab); open trades, the switch lab and channel posts carry on.</i>`,
       ].join('\n');
       const btn = (k, d) => Markup.button.callback(`${ap.skipDays(k === 'e' ? 'exhaust' : 'switch').includes(d) ? '⛔' : '✅'} ${DAY_NAMES[d - 1]}`, `ap_dayx_${k}_${d}`);
       const keyboard = Markup.inlineKeyboard([

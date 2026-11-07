@@ -146,8 +146,9 @@ const DEFAULTS = {
   // t 1.6, wins 62–64% vs switch shorts $2.5–2.7, t 2.1–2.2, wins 72–76%), so it can run smaller than the shorts.
   switchLongMargin: 0,
   switchLongLeverage: 0,
-  // Channel posts of new SWITCH signals by side: 🟢 switch longs / 🔴 switch shorts. Pump (exhaust) shorts are always
-  // posted. Off = no post; the bot still logs and auto-trades the signal as before.
+  // Channel posts of new signals (/autopump 📣): 🔥 pump (exhaust) shorts, 🟢 switch longs, 🔴 switch shorts. Off = no
+  // post and no channel replies under it (ENTER / new high / TP / stop); the bot still logs, watches and auto-trades it.
+  channelExhaust: true,
   channelLongs: true,
   channelShorts: true,
   // Crowd check on shorts (AUTO_CROWD_AT): skip when whales and retail are both ≥ crowdSkipAt; 0 = off (the trade DM
@@ -175,11 +176,12 @@ const BE_STOP_PCTS = [0, 2, 3, 4, 5, 6, 7];       // new stop buttons, % from en
 const BE_DEFAULT = { at: 4.5, stop: 5 };          // best in the backtest
 
 class PumpAutoTrader {
-  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, measureCrowd = crowdReading, runner = null, signalLab = null, switchLab = null }) {
+  constructor({ executor, notify, adminIds = [], measureSpot = measureSpotShare, measureBtc = measureBtcChange, measureCrowd = crowdReading, runner = null, signalLab = null, switchLab = null, dayOffLab = null }) {
     this.executor = executor;       // onchain TradeExecutor (same engine as manual trades)
     this.runner = runner;           // PumpRunnerPaper — paper longs on no-spot runners, never real orders
     this.signalLab = signalLab;     // PumpRunnerPaper('signal') — the same long bought at the signal, paper only
     this.switchLab = switchLab;     // PumpSwitchPaper — 7-day-run switch (long / short / skip) on no-spot coins, paper only
+    this.dayOffLab = dayOffLab;     // PumpDayOffPaper — real trades a 📅 day off skipped, tracked on paper
     this.notify = notify;           // async (chatId, html) => void
     this.measureSpot = measureSpot; // async (symbol) => spot share, used when the caller didn't measure it
     this.measureBtc = measureBtc;   // async (hours) => BTC % change
@@ -204,15 +206,32 @@ class PumpAutoTrader {
     return this.skipDays(kind).includes(d) ? DAY_NAMES[d - 1] : null;
   }
 
-  // Skip reason for a day off; announced once per kind and UTC date, later skips that day stay silent
+  // Skip for a day off → { reason, silent, dayOff: kind, day }. Checked after every other rule, so a day-off skip is a
+  // trade that would have opened (it goes to the day-off lab). The plain note (no lab) goes out once per kind and UTC date.
   dayOffBlock(kind, at = Date.now()) {
     const day = this.dayOff(kind, at);
     if (!day) return null;
     const reason = `Day off: ${day} (UTC) is switched off for ${kind === 'switch' ? '🔀 switch trades' : '🔥 pump shorts'}. Change it in /autopump → 📅 Trading days.`;
     const key = `${kind}:${new Date(at).toISOString().slice(0, 10)}`;
-    if (this.dayOffNotified.has(key)) return { reason, silent: true };
+    const silent = this.dayOffNotified.has(key);
     this.dayOffNotified.add(key);
-    return reason;
+    return { reason, silent, dayOff: kind, day };
+  }
+
+  // A real trade a day off skipped → the day-off lab (paper, the real trade's size and plan). Returns the lab result.
+  async recordDayOff(info, kind, side, day) {
+    if (!this.dayOffLab) return null;
+    try {
+      const c = this.config;
+      const size = kind === 'switch' ? await this.switchSizing(c.ownerId, side) : await this.sizing(info.run7d);
+      return await this.dayOffLab.record(info, { kind, side, day }, {
+        position: size?.position || 150, tp1: side === 'long' ? this.runnerTpPcts()[0] : this.tpPcts()[0],
+        beAt: Number(c.beAtPct) || 0, beStop: Math.max(0, Number(c.beStopPct ?? 5)),
+      });
+    } catch (e) {
+      logger.warn(`Day-off lab ${info.symbol} failed: ${e.message}`);
+      return null;
+    }
   }
 
   // Closed auto trades of the last `days` days by UTC weekday of entry: 'exhaust' = pump shorts on coins with a spot
@@ -382,9 +401,9 @@ class PumpAutoTrader {
   // Real switch trades allowed on this side? (/autopump 🟢 / 🔴 real switch buttons)
   switchSideLive(side) { return side === 'long' ? this.config.switchLiveLong !== false : this.config.switchLiveShort !== false; }
   switchSide(run7dClosed) { return switchSide(run7dClosed, this.switchShortTo()); }
-  // Whether a new signal goes to the channel (/autopump 📣 buttons): only switch signals can be held back
+  // Whether a new signal goes to the channel (/autopump 📣 buttons): pump shorts, switch longs, switch shorts
   postsToChannel(side, isSwitch) {
-    if (!isSwitch) return true;
+    if (!isSwitch) return this.config.channelExhaust !== false;
     return side === 'long' ? this.config.channelLongs !== false : this.config.channelShorts !== false;
   }
 
@@ -458,11 +477,12 @@ class PumpAutoTrader {
     this.busy.add(key);
     const label = `${info.side.toUpperCase()}`;
     try {
-      const block = this.dayOffBlock('switch') || await this.commonBlock(info) || (info.side === 'short' ? await this.crowdBlock(info, 'switch') : null);
+      const block = await this.commonBlock(info) || (info.side === 'short' ? await this.crowdBlock(info, 'switch') : null) || this.dayOffBlock('switch');
       if (block) {
         const reason = typeof block === 'string' ? block : block.reason;
-        if (!block.silent) await this.tell(`🔀 <b>Switch ${label} not placed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
-        return { skipped: reason };
+        const lab = block.dayOff ? await this.recordDayOff(info, 'switch', info.side, block.day) : null;
+        if (!block.silent && !lab?.opened) await this.tell(`🔀 <b>Switch ${label} not placed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
+        return { skipped: reason, dayOffLab: lab?.opened ?? null };
       }
       return await this.openSwitchTrade(info);
     } catch (e) {
@@ -535,8 +555,9 @@ class PumpAutoTrader {
       const block = await this.blockReason(info);
       if (block) {
         const reason = typeof block === 'string' ? block : block.reason;
-        if (!block.silent) await this.tell(`🤖 <b>Auto-trade skipped — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
-        return { skipped: reason };
+        const lab = block.dayOff ? await this.recordDayOff(info, 'exhaust', 'short', block.day) : null;
+        if (!block.silent && !lab?.opened) await this.tell(`🤖 <b>Auto-trade skipped — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
+        return { skipped: reason, dayOffLab: lab?.opened ?? null };
       }
       return await this.open(info);
     } catch (e) {
@@ -549,9 +570,6 @@ class PumpAutoTrader {
   }
 
   async blockReason(info) {
-    // Day off for pump shorts (the replay passes the signal's time in replayAt)
-    const off = this.dayOffBlock('exhaust', info.replayAt ?? Date.now());
-    if (off) return off;
     const common = await this.commonBlock(info);
     if (common) return common;
     const c = this.config;
@@ -576,7 +594,11 @@ class PumpAutoTrader {
       if (!info.spot) return `Spot market could not be checked, so the no-spot rule can't be applied — skipped to be safe.`;
       if (!info.spot.hasSpot) return `No spot market on Binance or Bybit — no-spot coins are set to skip (change it in /autopump).`;
     }
-    return this.crowdBlock(info, 'exhaust');
+    const crowd = await this.crowdBlock(info, 'exhaust');
+    if (crowd) return crowd;
+    // Day off last: everything else passed, so this is a trade that would have opened (→ day-off lab).
+    // The replay passes the entry time in replayAt.
+    return this.dayOffBlock('exhaust', info.replayAt ?? Date.now());
   }
 
   // Crowd skip on for this kind of short ('exhaust' | 'switch')? → its level, else 0
