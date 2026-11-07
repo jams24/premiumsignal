@@ -167,7 +167,9 @@ const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidati
 // Size menu buttons — margin $ and leverage. 0 = /autopump: from /trade · switch: = short · switch long: = switch
 const SIZE_MARGINS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100];
 const SIZE_LEVERAGES = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const AUTO_MARGINS = SIZE_MARGINS, AUTO_LEVERAGES = SIZE_LEVERAGES;
+// Pump shorts can go bigger too ($125–$300). Replay with switch shorts at $1,250: pump $500 → worst dip −$407 / −$855,
+// pump $1,250 → −$848 / −$1,312 and the $200 daily stop hit on 12–13 days per period (live pump shorts ≈ half the replay)
+const AUTO_MARGINS = [...SIZE_MARGINS, 125, 150, 200, 250, 300], AUTO_LEVERAGES = SIZE_LEVERAGES;
 // Switch shorts (the stronger edge) also get bigger margins, e.g. $250 × 5x = $1,250 → ≈ −$101 at the −8% SL
 const SWITCH_MARGINS = [...SIZE_MARGINS, 125, 150, 200, 250, 300], SWITCH_LEVERAGES = SIZE_LEVERAGES;
 const SWITCH_LONG_MARGINS = SIZE_MARGINS, SWITCH_LONG_LEVERAGES = SIZE_LEVERAGES;

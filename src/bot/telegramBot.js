@@ -2775,7 +2775,7 @@ class TelegramBot {
 
     // === /autopump — auto-trade pump signals when they reach ✅ ENTER ===
     const AP_MAX_OPEN = [1, 2, 3, 5];
-    const AP_DAILY_STOP = [30, 60, 100, 200, 0];
+    const AP_DAILY_STOP = [30, 60, 100, 200, 300, 400, 500, 750, 0]; // bigger ones for $1,250 trades (1 full SL ≈ $101)
     const AP_SPOT_SHARE = [10, 12, 13, 15, 20, 0];
     const money = (v) => `$${Number(v).toFixed(2)}`;
     const daysLabel = (list) => (list.length ? list.map(d => DAY_NAMES[d - 1]).join(', ') : 'none');
