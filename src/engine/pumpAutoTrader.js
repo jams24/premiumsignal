@@ -18,6 +18,10 @@ function koreaNote(k) {
 }
 const koreaPct = (k) => (k ? +k.pct.toFixed(2) : null);
 
+// Trading days (UTC): 1 = Monday … 7 = Sunday
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const isoDay = (t) => ((new Date(t).getUTCDay() + 6) % 7) + 1;
+
 // Owner-DM note when the executor lowered the exchange leverage so liquidation stays past the SL
 function liqGuardNote(trade) {
   const g = trade?.onchainContext?.liqGuard;
@@ -150,6 +154,11 @@ const DEFAULTS = {
   // still shows ⚠️ at ≥ CROWD_WARN_AT). No Binance data for the coin → never skipped. One month of evidence: off by default.
   crowdSkipAt: 0,
   crowdScope: 'all',
+  // Days off (UTC weekday 1 = Mon … 7 = Sun): no new real trades that day — pump (exhaust) shorts and switch trades
+  // separately. Open trades, the switch paper lab and channel posts carry on. Manual only: in the replay, turning off
+  // each day that lost over the last 4–8 weeks lost money (exhaust −$42 to −$203 per period at $150/trade).
+  skipDaysExhaust: [],
+  skipDaysSwitch: [],
   // ⭐ A-setup size (A_SIZE_MULTS): margin × this on ⭐ trades; 1 = off (the ⭐ line still shows in the DM)
   aSizeMult: 1,
 };
@@ -180,6 +189,63 @@ class PumpAutoTrader {
     this.config = { ...DEFAULTS };
     this.busy = new Set();          // signal ids being processed
     this.dailyStopNotified = null;  // UTC date we already warned about the daily stop
+    this.dayOffNotified = new Set(); // 'kind:YYYY-MM-DD' days off already announced
+  }
+
+  // Days off for 'exhaust' | 'switch' → sorted UTC weekdays (1 = Mon … 7 = Sun)
+  skipDays(kind) {
+    const list = kind === 'switch' ? this.config.skipDaysSwitch : this.config.skipDaysExhaust;
+    return Array.isArray(list) ? [...new Set(list.map(Number).filter(d => d >= 1 && d <= 7))].sort((a, b) => a - b) : [];
+  }
+
+  // Day name when `at` (ms) falls on a day off for this kind, else null
+  dayOff(kind, at = Date.now()) {
+    const d = isoDay(at);
+    return this.skipDays(kind).includes(d) ? DAY_NAMES[d - 1] : null;
+  }
+
+  // Skip reason for a day off; announced once per kind and UTC date, later skips that day stay silent
+  dayOffBlock(kind, at = Date.now()) {
+    const day = this.dayOff(kind, at);
+    if (!day) return null;
+    const reason = `Day off: ${day} (UTC) is switched off for ${kind === 'switch' ? '🔀 switch trades' : '🔥 pump shorts'}. Change it in /autopump → 📅 Trading days.`;
+    const key = `${kind}:${new Date(at).toISOString().slice(0, 10)}`;
+    if (this.dayOffNotified.has(key)) return { reason, silent: true };
+    this.dayOffNotified.add(key);
+    return reason;
+  }
+
+  // Closed auto trades of the last `days` days by UTC weekday of entry: 'exhaust' = pump shorts on coins with a spot
+  // market, 'switch' = switch trades. Each trade's % result is also shown at today's size, so old sizes compare.
+  // Retired kinds (exhaust longs, the old no-spot shorts) are left out.
+  async weekdayStats(days = 56) {
+    const c = this.config;
+    const { rows } = await db.query(
+      `SELECT t.created_at, t.direction, t.leverage, t.pnl_usd, t.realized_pnl, t.onchain_context AS ctx, s.confluence->>'hasSpot' AS has_spot
+       FROM trades t LEFT JOIN pump_signals s ON s.id::text = t.onchain_context->>'pumpSignalId'
+       WHERE t.source = $1 AND t.mode = $2 AND t.status = 'closed' AND t.onchain_context->>'autoPump' = 'true'
+         AND t.created_at > NOW() - ($3 || ' days')::interval`,
+      [this.executor.settingsKey, c.mode, String(days)]
+    );
+    const pos = {
+      exhaust: (await this.sizing(PUMP_RULES.extendedRunPct)).position,
+      switch: (await this.switchSizing(c.ownerId, 'short')).position,
+    };
+    const blank = () => DAY_NAMES.map(() => ({ n: 0, wins: 0, stops: 0, pnl: 0, atSize: 0 }));
+    const out = { days, pos, exhaust: blank(), switch: blank() };
+    for (const r of rows) {
+      const ctx = r.ctx || {}, sw = ctx.switchTrade === true || ctx.switchTrade === 'true';
+      if (!sw && (r.direction !== 'short' || r.has_spot === 'false')) continue;
+      const start = (Number(ctx.margin) || 0) * (Number(ctx.chosenLeverage) || Number(r.leverage) || 0);
+      if (!(start > 0)) continue;
+      const kind = sw ? 'switch' : 'exhaust';
+      const pnl = Number(r.pnl_usd || 0) + Number(r.realized_pnl || 0), frac = pnl / start;
+      const d = out[kind][isoDay(r.created_at) - 1];
+      d.n++; d.pnl += pnl; d.atSize += frac * pos[kind];
+      if (pnl > 0) d.wins++;
+      if (frac <= -0.075) d.stops++;
+    }
+    return out;
   }
 
   async load() {
@@ -392,7 +458,7 @@ class PumpAutoTrader {
     this.busy.add(key);
     const label = `${info.side.toUpperCase()}`;
     try {
-      const block = await this.commonBlock(info) || (info.side === 'short' ? await this.crowdBlock(info, 'switch') : null);
+      const block = this.dayOffBlock('switch') || await this.commonBlock(info) || (info.side === 'short' ? await this.crowdBlock(info, 'switch') : null);
       if (block) {
         const reason = typeof block === 'string' ? block : block.reason;
         if (!block.silent) await this.tell(`🔀 <b>Switch ${label} not placed — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
@@ -483,6 +549,9 @@ class PumpAutoTrader {
   }
 
   async blockReason(info) {
+    // Day off for pump shorts (the replay passes the signal's time in replayAt)
+    const off = this.dayOffBlock('exhaust', info.replayAt ?? Date.now());
+    if (off) return off;
     const common = await this.commonBlock(info);
     if (common) return common;
     const c = this.config;
@@ -682,4 +751,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };
+module.exports = { PumpAutoTrader, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };

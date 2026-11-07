@@ -10,7 +10,7 @@
  *   add --a-size=1.5 (or 2) to see a ⭐ A-setup size on exhaust shorts without changing /autopump
  *
  * What comes from the bot's code: entry rule (entryVerdict), signal-time re-check (PUMP_RULES.recheckMinMin),
- * skip rules (PumpAutoTrader.blockReason: BTC pause, spot share, no-spot), no-spot switch (PumpAutoTrader.switchSide
+ * skip rules (PumpAutoTrader.blockReason: days off, BTC pause, spot share, no-spot; switch days off via dayOff), no-spot switch (PumpAutoTrader.switchSide
  * on the closed-candle 7-day run: long / short / skip), TP levels (tpPcts / runnerTpPcts), stop (PUMP_RULES.slPct /
  * RUNNER.slPct), early stop move (beAtPct/beStopPct), TP close sizes (executor tp1ClosePct / tp2ClosePct, TP3 50%, TP4 all).
  * Switch trades enter at the first 5-min watch check ≥ SWITCH_DELAY_MIN after the replay signal: the live scanner
@@ -67,6 +67,9 @@ async function loadConfig() {
       switchLong: args.has('--switch-on') || c.switchLiveLong !== false, switchShort: args.has('--switch-on') || c.switchLiveShort !== false,
       // ⭐ A-setup size on exhaust shorts (funding < 0 at the signal + entry ≥ 1% below the signal price); switch ⭐ not modelled
       aSizeMult: (() => { const a = [...args].find(x => x.startsWith('--a-size=')); return a ? Number(a.split('=')[1]) || 1 : auto.aMult(); })(),
+      // /autopump 📅 days off (UTC weekday 1 = Mon … 7 = Sun); listed only when set, so the plan matches older baselines
+      ...(auto.skipDays('exhaust').length ? { skipDaysExhaust: auto.skipDays('exhaust') } : {}),
+      ...(auto.skipDays('switch').length ? { skipDaysSwitch: auto.skipDays('switch') } : {}),
     },
   };
 }
@@ -121,7 +124,7 @@ async function replaySet(dir, cfg) {
       const side0 = plan.switchLive ? auto.switchSide(run7d) : null;
       const side = side0 && (side0 === 'long' ? plan.switchLong : plan.switchShort) ? side0 : null;
       const s = side && steps.find(z => z.now - r.t >= SWITCH_DELAY_MIN * M);
-      if (s) out[`${r.s}|${r.t}|sw-${side}`] = simulate(hl, Math.round((s.now - r.t) / M), s.p, side, side === 'long' ? plan.runnerTps : plan.shortTps, side === 'long' ? plan.runnerSl : plan.shortSl, plan);
+      if (s && !auto.dayOff('switch', s.now)) out[`${r.s}|${r.t}|sw-${side}`] = simulate(hl, Math.round((s.now - r.t) / M), s.p, side, side === 'long' ? plan.runnerTps : plan.shortTps, side === 'long' ? plan.runnerSl : plan.shortSl, plan);
       continue;
     }
     const firstPass = (from) => steps.findIndex((s, i) => i >= from && passes(s));
@@ -131,7 +134,7 @@ async function replaySet(dir, cfg) {
     // Short: rules met at the signal itself → re-check on a later step at least recheckMinMin later
     if (i0 === 0) { i0 = steps.findIndex((s, i) => i >= 1 && s.now - r.t >= PUMP_RULES.recheckMinMin * M && passes(s)); if (i0 < 0) continue; }
     const s = steps[i0];
-    const info = { symbol: sym, spot: spotAt(s) };
+    const info = { symbol: sym, spot: spotAt(s), replayAt: s.now };
     const b = btc7(s.now);
     auto.measureBtc = async () => b;
     auto.commonBlock = async () => null;

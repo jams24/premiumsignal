@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
+const { DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
@@ -2778,6 +2778,7 @@ class TelegramBot {
     const AP_DAILY_STOP = [30, 60, 100, 200, 0];
     const AP_SPOT_SHARE = [10, 12, 13, 15, 20, 0];
     const money = (v) => `$${Number(v).toFixed(2)}`;
+    const daysLabel = (list) => (list.length ? list.map(d => DAY_NAMES[d - 1]).join(', ') : 'none');
 
     const autoPumpPanel = async (uid) => {
       const ap = this.pumpAutoTrader;
@@ -2829,6 +2830,7 @@ class TelegramBot {
         ap.aMult() > 1
           ? `⭐ A-setups: <b>size ×${ap.aMult()}</b> — exhaust short with funding &lt; 0 + entry ≥ 1% below the signal price · switch short with Bybit retail ≥ 1.18 (⭐ in the DM)`
           : `⭐ A-setups: tagged ⭐ in the trade DM · bigger size <b>off</b>`,
+        `📅 Days off (UTC): 🔥 pump shorts <b>${daysLabel(ap.skipDays('exhaust'))}</b> · 🔀 switch trades <b>${daysLabel(ap.skipDays('switch'))}</b>`,
         c.beAtPct > 0
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
@@ -2872,6 +2874,7 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
         [Markup.button.callback(`🐋 Crowd skip: ${Number(c.crowdSkipAt) > 0 ? `✅ ${ap.crowdLabel()}` : '⛔ OFF'} ⚙️`, 'ap_crowd')],
         [Markup.button.callback(`⭐ A-setup size: ${ap.aMult() > 1 ? `✅ ×${ap.aMult()}` : '⛔ OFF'} ⚙️`, 'ap_asize')],
+        [Markup.button.callback(`📅 Trading days: ${ap.skipDays('exhaust').length || ap.skipDays('switch').length ? `🔥 ${daysLabel(ap.skipDays('exhaust'))} · 🔀 ${daysLabel(ap.skipDays('switch'))} off` : 'all on'} ⚙️`, 'ap_days')],
         [Markup.button.callback(`📣 🔀🟢 Switch long posts: ${c.channelLongs !== false ? '✅' : '⛔'}`, 'ap_ch_long'),
          Markup.button.callback(`📣 🔀🔴 Switch short posts: ${c.channelShorts !== false ? '✅' : '⛔'}`, 'ap_ch_short')],
         ...(ap.switchLab ? [
@@ -3318,6 +3321,62 @@ class TelegramBot {
     };
     apAction('ap_be', async (ctx, ap) => { await ack(ctx); await showBeMenu(ctx, ap); });
     // ⭐ A-setup size menu: ×1 (off) / ×1.5 / ×2 on the margin of ⭐ trades; a bigger size in live mode asks to confirm
+    // 📅 Trading days: live results by UTC weekday (last 8 weeks, re-read every time) + days off per kind
+    const showDaysMenu = async (ctx, ap) => {
+      await ap.load().catch(() => {});
+      const st = await ap.weekdayStats(56);
+      const signed = (v) => `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(0)}`;
+      const block = (kind, title) => {
+        const off = ap.skipDays(kind), rows = st[kind];
+        const losing = rows.map((r, i) => (r.n >= 3 && r.atSize < 0 ? DAY_NAMES[i] : null)).filter(Boolean);
+        return [
+          `${title} — at today's size ${money(st.pos[kind])}`,
+          ...rows.map((r, i) => `${off.includes(i + 1) ? '⛔' : '✅'} <b>${DAY_NAMES[i]}</b> ` + (r.n
+            ? `${r.n} tr · ${Math.round(r.wins / r.n * 100)}% won · ${r.stops} stop${r.stops === 1 ? '' : 's'} · <b>${signed(r.atSize)}</b>${r.n >= 3 && r.atSize < 0 ? ' ⚠️' : ''}`
+            : '<i>no trades</i>')),
+          `💡 Losing days lately (3+ trades): <b>${losing.length ? losing.join(', ') : 'none'}</b>`,
+        ];
+      };
+      const text = [
+        `📅 <b>Trading days</b> (UTC) — closed live trades of the last 8 weeks, re-counted every time you open this`,
+        `<i>Each trade's % result is shown at today's size, so older sizes compare. ⛔ = day off (no new real trades).</i>`,
+        '',
+        ...block('exhaust', '🔥 <b>Pump shorts</b>'),
+        '',
+        ...block('switch', '🔀 <b>Switch trades</b>'),
+        '',
+        `<i>Backtest (~1,270 trades): weekends best in both periods, Tuesday the weakest — most weekday patterns don't repeat. ` +
+          `Switching off each day that lost over the last 4–8 weeks LOST money there (pump shorts −$42 to −$203 per period at $150/trade), ` +
+          `so days only change when you tap them. A day off skips new real trades that UTC day only; open trades, the switch paper lab and channel posts carry on.</i>`,
+      ].join('\n');
+      const btn = (k, d) => Markup.button.callback(`${ap.skipDays(k === 'e' ? 'exhaust' : 'switch').includes(d) ? '⛔' : '✅'} ${DAY_NAMES[d - 1]}`, `ap_dayx_${k}_${d}`);
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔥 Pump shorts — tap a day to skip / allow', 'ap_days')],
+        [1, 2, 3, 4].map(d => btn('e', d)), [5, 6, 7].map(d => btn('e', d)),
+        [Markup.button.callback('🔀 Switch trades — tap a day to skip / allow', 'ap_days')],
+        [1, 2, 3, 4].map(d => btn('s', d)), [5, 6, 7].map(d => btn('s', d)),
+        [Markup.button.callback('↺ All days on', 'ap_days_all'), Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_days', async (ctx, ap) => { await ack(ctx); await showDaysMenu(ctx, ap); });
+    apAction(/^ap_dayx_([es])_([1-7])$/, async (ctx, ap) => {
+      await ap.load().catch(() => {});
+      const kind = ctx.match[1] === 'e' ? 'exhaust' : 'switch', d = Number(ctx.match[2]);
+      const list = ap.skipDays(kind), off = !list.includes(d);
+      const next = off ? [...list, d].sort((a, b) => a - b) : list.filter(x => x !== d);
+      await ap.update({ [kind === 'exhaust' ? 'skipDaysExhaust' : 'skipDaysSwitch']: next });
+      await ack(ctx, `${kind === 'exhaust' ? '🔥 Pump shorts' : '🔀 Switch trades'}: ${DAY_NAMES[d - 1]} ${off ? 'OFF' : 'ON'}`);
+      await showDaysMenu(ctx, ap);
+    });
+    apAction('ap_days_all', async (ctx, ap) => {
+      await ap.update({ skipDaysExhaust: [], skipDaysSwitch: [] });
+      await ack(ctx, 'All days on');
+      await showDaysMenu(ctx, ap);
+    });
+
     const showASizeMenu = async (ctx, ap) => {
       const owner = ap.config.ownerId || ctx.from.id, m = ap.aMult();
       const ex = await ap.sizing(PUMP_RULES.extendedRunPct, owner), sw = await ap.switchSizing(owner, 'short');
