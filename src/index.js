@@ -915,6 +915,11 @@ async function main() {
     }
   });
 
+  // Manual limit orders resting on the exchange: check every 15 s so a fill gets its stop and TPs quickly
+  setInterval(() => {
+    bot.checkRealLimitOrders?.().catch(err => logger.error(`Real limit check error: ${err.message}`));
+  }, 15000);
+
   cron.schedule('*/15 * * * *', async () => {
     try {
       const tokens = await socialScanner.scanTrending();

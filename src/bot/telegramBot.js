@@ -9,6 +9,7 @@ const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../
 const { DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
+const manualLimits = require('../engine/manualLimitOrders');
 const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
@@ -1552,8 +1553,42 @@ class TelegramBot {
             stopLoss: s.stopLoss, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3, tp4: s.tp4, atr: s.atr,
             exitStyle: st.exitStyle,
             marginSaver: st.marginSaver,
+            // A price the user typed stays put when the levels move with the real fill
+            slFixed: st.customSl > 0, tpFixed: !(st.tpPcts?.length) && st.customTp1 > 0,
             placedAt: Date.now(), expiresAt: Date.now() + MT_ORDER_TTL_MS,
           };
+          // Live long below / short above market on Binance or Bybit: a real limit order on the exchange book
+          if (manualLimits.wantsRealLimit(cfg, s.market)) {
+            let real;
+            try {
+              real = await manualLimits.placeEntryLimit(te, cfg);
+            } catch (e) {
+              logger.warn(`Manual limit ${st.symbol} not placed: ${e.message}`);
+              return ctx.editMessageText(`⚠️ <b>Limit order NOT placed</b> — ${escapeHtml(st.symbol)}\n\n${escapeHtml(e.message)}`, { parse_mode: 'HTML' });
+            }
+            Object.assign(cfg, { real: true, ...real });
+            let id;
+            try {
+              id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
+            } catch (e) {
+              // Not tracked → don't leave it on the exchange
+              await manualLimits.cancelEntryOrder(te, cfg).catch(() => {});
+              throw e;
+            }
+            this.pendingLimitOrders.set(id, { id, chatId: ctx.chat.id, ...cfg });
+            delete this.manualTradeState[ctx.from.id];
+            const scaled = cfg.positionSize < s.posSize * 0.99 ? ` (scaled to your free margin)` : '';
+            return ctx.editMessageText(
+              `📍 <b>LIMIT ORDER #${id} ON ${st.exchangeId.toUpperCase()}</b> — ${escapeHtml(st.symbol)}\n\n` +
+              `${dirLabel} · ${modeLabel} · ${st.exchangeId.toUpperCase()}\n` +
+              `📍 Limit: <b>$${fmtP(st.limitPrice)}</b> — resting on the ${st.exchangeId.toUpperCase()} order book (market $${fmtP(s.market)})\n` +
+              `💵 $${cfg.positionSize.toFixed(2)} at ${cfg.exLeverage}x${scaled}\n` +
+              `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)} · TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
+              `🛑 SL $${fmtP(s.stopLoss)} (-$${s.maxLoss.toFixed(2)})\n\n` +
+              `⏳ <i>Fills at your price or better · the bot places the stop and TPs within ~15 s of the fill, from the real fill price · expires in 24h · margin is reserved while it waits</i>`,
+              { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback(`❌ Cancel order #${id}`, `mt_cancelorder_${id}`)]]).reply_markup }
+            );
+          }
           const id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
           this.pendingLimitOrders.set(id, { id, chatId: ctx.chat.id, ...cfg });
           delete this.manualTradeState[ctx.from.id];
@@ -1646,7 +1681,11 @@ class TelegramBot {
       return db.setManualOrderStatus(o.id, status);
     };
 
+    const realLimitHooks = (o) => ({ finish: finishOrder, notify: (html) => notifyChat(o.chatId, html) });
+
     const processLimitOrder = async (te, o) => {
+      // Resting on the exchange: its own checks (fill → stop + TPs, cancel, expiry)
+      if (o.real) return manualLimits.checkRealOrder(te, o, realLimitHooks(o));
       const label = `${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)} (#${o.id})`;
       if (Date.now() > o.expiresAt) {
         if (await finishOrder(o, 'expired')) await notifyChat(o.chatId, `⏰ Limit order expired: ${label}`);
@@ -1679,13 +1718,20 @@ class TelegramBot {
       if (!(await finishOrder(o, 'filled'))) return;
 
       const fillPrice = o.mode === 'paper' ? o.limitPrice : price;
+      // Live: this path fills at market after the touch, so the levels move with the price (and rebaseOnFill moves
+      // them again to the real fill) — else a fill past the limit widens the stop and shrinks TP1 (AIOT 8 Nov).
+      // A price the user typed (SL / TP1) stays put.
+      const k = o.mode === 'live' && o.limitPrice > 0 ? fillPrice / o.limitPrice : 1;
+      const lv = (v, fixed) => (v > 0 && !fixed ? v * k : v);
       let trade = null;
       try {
         trade = await te.openManualTrade({
           symbol: o.symbol, exchangeId: o.exchangeId, direction: o.direction, mode: o.mode,
           entryPrice: fillPrice, positionSize: o.margin * o.leverage, leverage: o.leverage,
-          tp1: o.tp1, tp2: o.tp2, tp3: o.tp3, tp4: o.tp4, stopLoss: o.stopLoss, atr: o.atr,
+          tp1: lv(o.tp1, o.tpFixed), tp2: lv(o.tp2, o.tpFixed), tp3: lv(o.tp3, o.tpFixed), tp4: lv(o.tp4, o.tpFixed),
+          stopLoss: lv(o.stopLoss, o.slFixed), atr: o.atr,
           marginSaver: o.marginSaver !== false,
+          rebaseOnFill: o.mode === 'live' && !o.slFixed && !o.tpFixed,
           context: { margin: o.margin, limitOrderId: o.id, limitPrice: o.limitPrice, exitStyle: o.exitStyle || 'tight' },
         });
       } catch (e) {
@@ -1701,7 +1747,33 @@ class TelegramBot {
         `${isLong ? '🟢 LONG' : '🔴 SHORT'} · ${o.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${o.exchangeId.toUpperCase()}\n` +
         `💰 Entry: <b>$${fmtP(trade.entryPrice)}</b> (limit $${fmtP(o.limitPrice)})\n` +
         `💵 $${(trade.positionSize || o.margin * o.leverage).toFixed(2)} at ${trade.leverage || o.leverage}x\n` +
-        `🎯 TP1 $${fmtP(o.tp1)} · 🛑 SL $${fmtP(o.stopLoss)}`);
+        `🎯 TP1 $${fmtP(trade.tp1)} · 🛑 SL $${fmtP(trade.stopLoss)}`);
+    };
+
+    // Exchange-resting limits are checked every ~15 s (index.js) so a fill gets its stop quickly
+    this.checkRealLimitOrders = async () => {
+      if (this._realLimitRunning) return;
+      this._realLimitRunning = true;
+      try {
+        await loadPendingOrders();
+        const te = mtExec();
+        if (!te) return;
+        for (const o of [...this.pendingLimitOrders.values()]) {
+          if (!o.real) continue;
+          try { await manualLimits.checkRealOrder(te, o, realLimitHooks(o)); } catch (e) { logger.error(`Limit order #${o.id} ${o.symbol}: ${e.message}`); }
+        }
+      } finally {
+        this._realLimitRunning = false;
+      }
+    };
+
+    // User cancel: a real order is cancelled on the exchange first. Returns a short text for the reply.
+    const cancelPending = async (o) => {
+      if (!o.real) return (await finishOrder(o, 'cancelled')) ? 'cancelled' : 'gone';
+      const te = mtExec();
+      const r = await manualLimits.cancelByUser(te, o, { finish: finishOrder });
+      if (r === 'filled') await manualLimits.checkRealOrder(te, o, realLimitHooks(o)).catch(e => logger.error(`Limit #${o.id} after cancel: ${e.message}`));
+      return r;
     };
 
     this.checkPendingLimitOrders = async () => {
@@ -1725,7 +1797,7 @@ class TelegramBot {
       let text = `📍 <b>PENDING LIMIT ORDERS</b> (${orders.length})\n\n`;
       for (const o of orders) {
         const hoursLeft = Math.max(0, (o.expiresAt - Date.now()) / 3600000).toFixed(1);
-        text += `#${o.id} ${o.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(o.symbol)}</b> @ $${fmtP(o.limitPrice)} · $${o.margin} × ${o.leverage}x · ${o.mode} · ${hoursLeft}h left\n`;
+        text += `#${o.id} ${o.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(o.symbol)}</b> @ $${fmtP(o.limitPrice)} · $${o.margin} × ${o.leverage}x · ${o.mode}${o.real ? ` · 📗 on ${o.exchangeId} book` : ''} · ${hoursLeft}h left\n`;
       }
       const buttons = orders.map(o => [Markup.button.callback(`❌ Cancel #${o.id} ${o.symbol}`, `mt_cancelorder_${o.id}`)]);
       return { text, keyboard: Markup.inlineKeyboard(buttons) };
@@ -1746,18 +1818,34 @@ class TelegramBot {
       const arg = (ctx.message.text.trim().split(/\s+/)[1] || '').toUpperCase().replace(/^#/, '');
       if (!arg) return ctx.replyWithHTML('Usage: <code>/cancelorder SYMBOL</code> or <code>/cancelorder 12</code> — or use /orders');
       const matches = [...this.pendingLimitOrders.values()].filter(o => String(o.id) === arg || o.symbol === arg);
-      let cancelled = 0;
-      for (const o of matches) if (await finishOrder(o, 'cancelled')) cancelled++;
-      ctx.replyWithHTML(cancelled ? `✅ Cancelled ${cancelled} limit order(s).` : `⚠️ No pending order matches ${escapeHtml(arg)}.`);
+      if (!matches.length) return ctx.replyWithHTML(`⚠️ No pending order matches ${escapeHtml(arg)}.`);
+      const lines = [];
+      for (const o of matches) {
+        const r = await cancelPending(o);
+        lines.push(r === 'cancelled' ? `✅ #${o.id} ${escapeHtml(o.symbol)} cancelled${o.real ? ` on ${o.exchangeId}` : ''}`
+          : r === 'filled' ? `📍 #${o.id} ${escapeHtml(o.symbol)} had already filled — it is now an open trade with its stop and TPs`
+          : r === 'busy' ? `⏳ #${o.id} ${escapeHtml(o.symbol)} is being checked right now — try again in a few seconds`
+          : r === 'gone' ? `⚠️ #${o.id} ${escapeHtml(o.symbol)} was already filled, expired or cancelled`
+          : `⚠️ #${o.id} ${escapeHtml(o.symbol)}: could not confirm the cancel on ${o.exchangeId} — try again or cancel it in the exchange app`);
+      }
+      ctx.replyWithHTML(lines.join('\n'));
     });
 
     this.bot.action(/^mt_cancelorder_(\d+)$/, async (ctx) => {
       if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
       await loadPendingOrders();
       const o = this.pendingLimitOrders.get(Number(ctx.match[1]));
-      if (!o || !(await finishOrder(o, 'cancelled'))) return ack(ctx, 'Already filled, expired or cancelled');
+      if (!o) return ack(ctx, 'Already filled, expired or cancelled');
+      const r = await cancelPending(o);
+      if (r === 'gone') return ack(ctx, 'Already filled, expired or cancelled');
+      if (r === 'busy') return ctx.answerCbQuery('Being checked right now — try again in a few seconds', { show_alert: true }).catch(() => {});
+      if (r === 'failed') return ctx.answerCbQuery(`Could not confirm the cancel on ${o.exchangeId} — try again or cancel it in the exchange app`, { show_alert: true }).catch(() => {});
+      if (r === 'filled') {
+        await ack(ctx, 'It had already filled');
+        return ctx.editMessageText(`📍 Limit order #${o.id} had already filled — ${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} is now an open trade with its stop and TPs (see /mpositions).`).catch(() => {});
+      }
       await ack(ctx, 'Cancelled');
-      await ctx.editMessageText(`❌ Limit order #${o.id} cancelled — ${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)}`).catch(() => {});
+      await ctx.editMessageText(`❌ Limit order #${o.id} cancelled${o.real ? ` on ${o.exchangeId}` : ''} — ${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)}`).catch(() => {});
     });
 
     // --- Positions & closing (any open trade, any executor) ---
