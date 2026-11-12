@@ -3409,4 +3409,5 @@ init();
 </body>
 </html>`
   .replace('<!--SMC_PLAYBOOK-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'smcPlaybook.html'), 'utf8'))
-  .replace('<!--SIMULATOR-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'simulator.html'), 'utf8'));
+  .replace('<!--SIMULATOR-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'simulator.html'), 'utf8'))
+  .replace('<!--SMC_ENGINE-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'smcEngine.js'), 'utf8'));

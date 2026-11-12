@@ -1,5 +1,6 @@
 <!-- Trade Simulator tab, inserted into the dashboard's tab-sim panel by src/dashboard.js. Paper only: it reads candles
-     through /api/sim/* (src/web/simApi.js) and never sends orders. CSS scoped under .sim, one IIFE, ids prefixed sim-. -->
+     through /api/sim/* (src/web/simApi.js) and never sends orders. The SMC overlay, setup finder and coach use
+     src/web/smcEngine.js (inserted below by dashboard.js). CSS scoped under .sim, one IIFE, ids prefixed sim-. -->
 <style>
 .sim { display: grid; gap: 14px; color: var(--text); font: 400 14px/1.5 var(--font-body); padding-bottom: 40px; }
 .sim * { box-sizing: border-box; }
@@ -66,6 +67,29 @@
 .sim thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
 .sim tbody tr + tr td { border-top: 1px solid var(--border); }
 .sim-empty { color: var(--muted); font-size: 13px; }
+.sim-smcbar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.sim-watch { font: 400 12.5px/1.6 var(--font-mono); color: var(--text2); background: var(--bg); border: 1px solid transparent; border-radius: 6px; padding: 7px 10px; }
+.sim-watch b { color: var(--text); }
+.sim-watch .ok { color: var(--accent); white-space: nowrap; } .sim-watch .no, .sim .m { color: var(--muted); }
+.sim-watch .no { white-space: nowrap; }
+.sim-watch.hot { border-color: var(--gold); background: var(--gold-dim); color: var(--text); }
+.sim-watch .b { padding: 5px 9px; margin-left: 6px; }
+.sim-coach { border-color: rgba(96,165,250,0.45); }
+.sim-coach h4 { font: 600 15px/1.3 var(--font-body); }
+.sim-coach-text { display: grid; gap: 8px; font-size: 13.5px; line-height: 1.6; color: var(--text2); }
+.sim-coach-text b { color: var(--text); }
+.sim-coach-text .b { justify-self: start; }
+.sim-steps { display: flex; gap: 4px; }
+.sim-steps i { flex: 1; height: 4px; border-radius: 2px; background: var(--surface2); }
+.sim-steps i.on { background: #60a5fa; }
+.sim-fb { font-size: 13px; line-height: 1.5; border-radius: 6px; padding: 8px 10px; }
+.sim-fb.good { background: var(--accent-dim); color: var(--accent); }
+.sim-fb.near { background: var(--gold-dim); color: var(--gold); }
+.sim-fb.bad { background: var(--danger-dim); color: #fca5a5; }
+.sim-fb b { color: var(--text); }
+.sim-scan { display: grid; gap: 6px; }
+.sim-scan-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; background: var(--bg); border-radius: 6px; padding: 8px 10px; font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); }
+.sim-scan-row b { color: var(--text); }
 @media (max-width: 960px) { .sim-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .sim-chart { height: 360px; } }
 </style>
@@ -98,8 +122,10 @@
       <input id="sim-symbol-live" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
       <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
       <button type="button" class="b go" id="sim-load-live">Load live chart</button>
+      <button type="button" class="b" id="sim-scan-btn" title="Check the last 48 h of pump-signal coins for SMC setups">🔎 Find setups</button>
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
     </div>
+    <div class="sim-scan" id="sim-scan" hidden></div>
     <div class="sim-status" id="sim-status" aria-live="polite"></div>
   </div>
 
@@ -118,6 +144,14 @@
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
       </div>
+      <div class="sim-smcbar">
+        <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-smc-on" checked> SMC overlay</label>
+        <select id="sim-smc-tf" aria-label="Structure timeframe"><option value="15">Structure 15m</option><option value="5">Structure 5m</option></select>
+        <button type="button" class="b" id="sim-coach-btn">🎓 Walk me through</button>
+        <button type="button" class="b" id="sim-next-setup" title="Jump forward to the next setup the simulator finds">⏭ Next setup</button>
+        <label class="sim-opt" style="margin:0" id="sim-pause-wrap"><input type="checkbox" id="sim-smc-pause" checked> Pause on setups</label>
+      </div>
+      <div class="sim-watch" id="sim-watch" aria-live="polite" hidden></div>
       <div class="sim-clock" id="sim-clock">No chart loaded</div>
       <div class="sim-chart" id="sim-chart"></div>
       <div class="sim-hint" id="sim-hint"></div>
@@ -133,6 +167,20 @@
     </div>
 
     <div class="sim-side">
+      <div class="sim-card sim-coach" id="sim-coach" hidden>
+        <h3>SMC coach <small id="sim-coach-n"></small></h3>
+        <div class="sim-steps" id="sim-coach-bar"></div>
+        <h4 id="sim-coach-title"></h4>
+        <div class="sim-coach-text" id="sim-coach-text"></div>
+        <div class="sim-fb" id="sim-coach-fb" hidden></div>
+        <div class="sim-row">
+          <button type="button" class="b" id="sim-coach-back">◀ Back</button>
+          <button type="button" class="b go" id="sim-coach-next">Next ▶</button>
+          <button type="button" class="b" id="sim-coach-try">Try it first</button>
+          <button type="button" class="b" id="sim-coach-close">Close</button>
+        </div>
+      </div>
+
       <div class="sim-card" id="sim-ticket">
         <h3>Order ticket <small id="sim-price">–</small></h3>
         <div class="sim-two" role="group" aria-label="Side">
@@ -193,13 +241,14 @@
   </div>
 </div>
 
+<script><!--SMC_ENGINE--></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
   const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN };
   const FEE = 0.0005, JKEY = 'sc_sim_journal_v1';
   const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
-  const S = { load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], pos: null, side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
+  const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], pos: null, side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
   let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
   const picks = new Map();
 
@@ -240,6 +289,7 @@
     cs = chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444' });
     vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    smcLayer = makeLayer(); cs.attachPrimitive(smcLayer);
     chart.subscribeClick(onChartClick);
     new ResizeObserver(() => { if (el.clientWidth) chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
   }
@@ -351,10 +401,10 @@
     const k = S.base[S.cur];
     S.pos = { side: S.side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
       tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * FEE,
-      checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, mode: S.mode, sym: S.sym, ex: S.ex,
+      checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, mode: S.mode, sym: S.sym, ex: S.ex,
       ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
     S.marks.push({ t: k[0], pos: S.side === 'short' ? 'aboveBar' : 'belowBar', color: '#e5e7eb', shape: S.side === 'short' ? 'arrowDown' : 'arrowUp', text: (S.side === 'short' ? 'Short ' : 'Long ') + fmt(px) });
-    $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; });  // next trade starts from a clean ticket
+    $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; }); S.auto = false;  // next trade starts from a clean ticket
     status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
     refresh();
   }
@@ -381,7 +431,7 @@
     const p = S.pos, risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
     const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
     const R = risk > 0 ? p.realized / risk : 0;
-    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, how, prec: S.prec });
+    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: S.prec });
     saveJ();
     S.pos = null;
     if (S.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
@@ -420,12 +470,13 @@
     const rows = J.slice(-25).reverse().map(j => {
       const f = v => (+v).toFixed(j.prec || 4);
       return `<tr><td>${utc(j.t1)}</td><td>${j.sym}${j.mode === 'live' ? ' · live' : ''}</td><td>${j.side}</td><td>${f(j.entry)}</td><td>${f(j.exit)}</td>` +
-        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4</td><td>${j.how}</td></tr>`;
+        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4${j.auto ? ' auto' : ''}</td><td>${j.how}</td></tr>`;
     });
     $('sim-jbody').innerHTML = rows.join('') || '<tr><td colspan="9" class="sim-empty" style="text-align:left">No simulated trades yet. Load a chart, set a stop, and take your first one.</td></tr>';
   }
   function refresh() {
     if (!cs) return;
+    runSmc();
     drawTop(); drawMarks(); drawPos(); renderTicket(); renderPos();
     const end = nowT();
     $('sim-clock').textContent = end ? `${S.sym}USDT perp · ${S.ex} · ${S.tf} · ${utc(end)} UTC` +
@@ -445,6 +496,9 @@
       pushLast();
       evalBar(k[0], k[2], k[3]);
       if (S.halt) { S.halt = false; break; }
+      if (smc.pause && (smc.on || coach.open) && !S.untilExit && smc.setT.has(k[0])) {
+        stopPlay(); status(`🎯 Paused: the simulator found an A+ ${smc.setT.get(k[0]).side} on this candle. See the line above the chart, or open the coach.`); break;
+      }
     }
     refresh();
   }
@@ -462,6 +516,7 @@
     S.prec = precFor(r.candles[r.candles.length - 1][4]); S.marks = [];
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
     $('sim-stop').value = ''; $('sim-tp').value = '';
+    recomputeFull();
   }
   async function loadReplay(sym, t, ex, extraMarks, label) {
     if (S.pos) return status('Close your simulated trade before loading another chart.', true);
@@ -492,7 +547,8 @@
       if (my !== S.load) return;
       if (!r.candles || !r.candles.length) throw new Error('no candles came back');
       setData(r); S.cur = S.base.length - 1;
-      redraw(true);
+      smc.seen = Infinity; redraw(true);
+      smc.seen = smc.A && smc.A.setups.length ? smc.A.setups[smc.A.setups.length - 1].conf : 0;
       status(`Live ${S.sym} on ${S.ex}. Paper trades fill at the last price.`);
       S.poll = setInterval(pollLive, 4000);
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
@@ -531,7 +587,7 @@
     picks.clear();
     const og = (label, items) => items.length ? `<optgroup label="${label}">${items.join('')}</optgroup>` : '';
     const sig = (s.signals || []).map(x => {
-      picks.set('s' + x.id, { sym: x.symbol, t: x.t, label: `${x.symbol} pump signal ${utc(x.t)}`,
+      picks.set('s' + x.id, { kind: 'signal', sym: x.symbol, t: x.t, label: `${x.symbol} pump signal ${utc(x.t)}`,
         marks: [{ t: x.t, pos: 'aboveBar', color: '#f59e0b', shape: 'arrowDown', text: 'Signal' }] });
       const pump = x.pumpPct != null ? Math.round(x.pumpPct) + '%' : '';
       return `<option value="s${x.id}">${utc(x.t)} · ${x.symbol} · pump ${pump}${x.pumpPct != null && x.pumpPct < 40 ? ' WEAK' : ''}</option>`;
@@ -539,7 +595,7 @@
     const tr = (t.trades || []).map(x => {
       const marks = [{ t: x.t, pos: x.direction === 'short' ? 'aboveBar' : 'belowBar', color: '#f59e0b', shape: x.direction === 'short' ? 'arrowDown' : 'arrowUp', text: 'Real entry' }];
       if (x.t1) marks.push({ t: x.t1, pos: 'belowBar', color: '#f59e0b', shape: 'circle', text: 'Real exit' + (x.pnl != null ? ' ' + usd(x.pnl) : '') });
-      picks.set('t' + x.id, { sym: x.symbol, t: x.t - 15 * MIN, ex: x.exchange, marks, label: `Trade #${x.id} ${x.symbol} (starts 15 min before the real entry)` });
+      picks.set('t' + x.id, { kind: 'trade', sym: x.symbol, t: x.t - 15 * MIN, ex: x.exchange, marks, label: `Trade #${x.id} ${x.symbol} (starts 15 min before the real entry)` });
       return `<option value="t${x.id}">#${x.id} ${x.symbol} ${x.direction} · ${utc(x.t)} · ${x.pnl != null ? usd(x.pnl) : 'open'}</option>`;
     });
     sel.innerHTML = (sig.length || tr.length) ? og('Recent pump signals', sig) + og('Our live trades', tr) : '<option value="">No signals in the last 21 days</option>';
@@ -550,6 +606,300 @@
     loadReplay(p.sym, p.t, p.ex, p.marks, p.label);
   }
 
+  // ---------- SMC overlay: the engine's marks drawn on the chart canvas (series primitive) ----------
+  const SKEY = 'sc_sim_smc_v1';
+  const smc = (() => { let o = {}; try { o = JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { /* private window */ }
+    return { on: o.on !== false, tf: o.tf === 5 ? 5 : 15, pause: o.pause !== false, A: null, full: null, setT: new Map(), layers: null, hide: null, seen: Infinity }; })();
+  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ on: smc.on, tf: smc.tf, pause: smc.pause })); } catch (e) { /* ignore */ } };
+  const COL = { red: '#ef4444', green: '#10b981', gold: '#f59e0b', blue: '#60a5fa', text: '#e5e7eb', muted: '#94a3b8' };
+  const hm = t => new Date(t).toISOString().slice(11, 16);
+  const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  let smcLayer = null;
+
+  function makeLayer() {
+    let req = null;
+    const view = z => ({ zOrder: () => z, renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintSmc(sc.context, sc.mediaSize, z === 'bottom')) }) });
+    const views = [view('bottom'), view('top')];
+    return { attached: p => { req = p.requestUpdate; }, detached: () => { req = null; }, paneViews: () => views, updateAllViews: () => {}, update: () => { if (req) req(); } };
+  }
+  function paintSmc(g, m, back) {
+    const A = smc.A; if (!A || !cs || !(smc.on || coach.open)) return;
+    const show = k => (!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k;
+    const ts = chart.timeScale(), W = m.width;
+    const X = t => ts.timeToCoordinate(bucket(t) / 1000);
+    const Y = p => cs.priceToCoordinate(p);
+    const ok = (...v) => v.every(x => x != null && isFinite(x));
+    const leg = A.leg && !A.leg.dead ? A.leg : null;
+    g.save();
+    if (back) {
+      if (show('range') && leg) {
+        const x0 = X(leg.dir === -1 ? leg.hiT : leg.loT), yH = Y(leg.hi), yE = Y((leg.hi + leg.lo) / 2), yL = Y(leg.lo);
+        if (ok(x0, yH, yE, yL)) { g.fillStyle = 'rgba(239,68,68,0.07)'; g.fillRect(x0, yH, W - x0, yE - yH); g.fillStyle = 'rgba(16,185,129,0.07)'; g.fillRect(x0, yE, W - x0, yL - yE); }
+      }
+      if (show('zones')) for (const z of A.zones.filter(z => !z.broken).slice(-3)) {
+        const x0 = X(z.t), y1 = Y(z.top), y2 = Y(z.bot); if (!ok(x0, y1, y2)) continue;
+        const sup = z.type === 'supply';
+        g.fillStyle = sup ? 'rgba(239,68,68,0.16)' : 'rgba(16,185,129,0.16)'; g.fillRect(x0, y1, W - x0, Math.max(2, y2 - y1));
+        g.strokeStyle = sup ? 'rgba(239,68,68,0.55)' : 'rgba(16,185,129,0.55)'; g.lineWidth = 1; g.strokeRect(Math.round(x0) + .5, Math.round(y1) + .5, W - x0, Math.max(2, Math.round(y2 - y1)));
+      }
+      g.restore(); return;
+    }
+    g.font = '600 10px "JetBrains Mono", monospace'; g.textBaseline = 'middle';
+    const line = (x1, x2, y, color, dash, w) => { if (!ok(x1, x2, y)) return; g.strokeStyle = color; g.lineWidth = w || 1; g.setLineDash(dash || []); g.beginPath(); g.moveTo(x1, Math.round(y) + .5); g.lineTo(x2, Math.round(y) + .5); g.stroke(); g.setLineDash([]); };
+    const placed = [];   // labels already drawn: a new one that would overlap moves up/down a line, or is skipped
+    const tag = (txt, x, y, color, align) => {
+      if (!ok(x, y)) return; const w = g.measureText(txt).width + 8, x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+      const free = yy => placed.every(r => x0 + w <= r.x || x0 >= r.x + r.w || yy + 7 <= r.y - 7 || yy - 7 >= r.y + 7);
+      const yy = [y, y - 15, y + 15].find(free); if (yy == null) return;
+      placed.push({ x: x0, y: yy, w });
+      g.fillStyle = 'rgba(19,23,34,0.88)'; g.fillRect(x0, yy - 7, w, 14); g.fillStyle = color; g.textAlign = 'left'; g.fillText(txt, x0 + 4, yy + .5);
+    };
+    if (show('setup')) {
+      if (leg && leg.sweep && leg.trig) { line(X(leg.trig.t), W, Y(leg.trig.p), COL.blue, [5, 3], 1.5); tag('1m CHoCH level', W - 4, Y(leg.trig.p) + (leg.dir === -1 ? 9 : -9), COL.blue, 'right'); }
+      for (const s of A.setups.slice(-4).reverse()) {
+        const x = X(s.t), ye = Y(s.entry), ys = Y(s.stop), yt = Y(s.target); if (!ok(x, ye, ys, yt)) continue;
+        const x2 = Math.min(W, x + 110);
+        g.fillStyle = 'rgba(239,68,68,0.16)'; g.fillRect(x, Math.min(ye, ys), x2 - x, Math.abs(ys - ye));
+        g.fillStyle = 'rgba(16,185,129,0.14)'; g.fillRect(x, Math.min(ye, yt), x2 - x, Math.abs(yt - ye));
+        line(x, x2, ys, COL.red, [], 1.5); line(x, x2, ye, COL.text, [], 1); line(x, x2, yt, COL.green, [], 1.5);
+        tag('A+ ' + s.side + ' · ' + s.R.toFixed(1) + 'R', x, s.dir === -1 ? ys - 10 : ys + 10, COL.gold);
+      }
+    }
+    if (show('range') && leg) {
+      const x0 = X(leg.dir === -1 ? leg.hiT : leg.loT), eq = (leg.hi + leg.lo) / 2;
+      line(x0, W, Y(eq), 'rgba(229,231,235,0.55)', [6, 4]);
+      tag('50% · EQ', W - 4, Y(eq) - 9, COL.text, 'right');
+      tag('Premium', W - 4, Y(leg.hi) + 9, '#fca5a5', 'right'); tag('Discount', W - 4, Y(leg.lo) - 9, '#6ee7b7', 'right');
+    }
+    if (show('zones')) for (const z of A.zones.filter(z => !z.broken).slice(-3)) {
+      const sup = z.type === 'supply'; tag(sup ? 'Supply zone' : 'Demand zone', X(z.t), Y(sup ? z.top : z.bot) + (sup ? -9 : 9), sup ? '#fca5a5' : '#6ee7b7');
+    }
+    if (show('swings')) {
+      g.textAlign = 'center'; g.font = '600 9.5px "JetBrains Mono", monospace';
+      for (const s of A.swings.slice(-40)) { const x = X(s.t), y = Y(s.p); if (!ok(x, y)) continue; g.fillStyle = /HH|HL/.test(s.label) ? '#6ee7b7' : /LH|LL/.test(s.label) ? '#fca5a5' : COL.muted; g.fillText(s.label, x, s.side === 'H' ? y - 9 : y + 10); }
+      g.font = '600 10px "JetBrains Mono", monospace';
+    }
+    if (show('structure')) for (const b of A.breaks.slice(-10).reverse()) {
+      const x1 = X(b.fromT), x2 = X(b.t), y = Y(b.p), c = b.dir === -1 ? COL.red : COL.green;
+      line(x1, x2, y, c, b.kind === 'BOS' ? [4, 3] : [], b.kind === 'CHoCH' ? 1.6 : 1);
+      if (ok(x1, x2, y)) tag(b.kind, (x1 + x2) / 2, y + (b.dir === -1 ? 9 : -9), c, 'center');
+    }
+    if (show('liq')) {
+      const side = leg ? (leg.dir === -1 ? 'H' : 'L') : null, eq = leg ? (leg.hi + leg.lo) / 2 : 0;
+      if (leg) for (const l of A.liq.filter(l => l.kind === 'swing' && l.side === side && (side === 'H' ? l.p >= eq : l.p <= eq)).slice(-4)) line(X(l.t), W, Y(l.p), 'rgba(245,158,11,0.5)', [1, 3]);
+      for (const e of A.eqs.filter(e => !e.taken).slice(-4)) { line(X(e.t1), W, Y(e.p), COL.gold, [3, 3], 1.2); tag(e.kind + ' · stops', X(e.t1), Y(e.p) + (e.side === 'H' ? -9 : 9), COL.gold); }
+      for (const s of A.sweeps.slice(-5).reverse()) {
+        line(X(s.levelT), X(s.t), Y(s.p), COL.gold, [1, 2]);
+        const x = X(s.t), y = Y(s.wick); if (ok(x, y)) tag('✕ sweep', x, s.dir === -1 ? y - 10 : y + 10, COL.gold, 'center');
+      }
+    }
+    g.restore();
+  }
+  function recomputeFull() {
+    smc.full = S.mode === 'replay' && S.base.length ? SMC.analyze(S.base, S.base.length - 1, { tf: smc.tf * MIN }) : null;
+    smc.setT = new Map((smc.full ? smc.full.setups : []).map(x => [x.t, x]));
+  }
+  function runSmc() {
+    smc.A = (smc.on || coach.open) && S.cur >= 0 && window.SMC ? SMC.analyze(S.base, S.cur, { tf: smc.tf * MIN }) : null;
+    const A = smc.A;
+    if (A && S.mode === 'live' && A.setups.length) {
+      const l = A.setups[A.setups.length - 1];
+      if (l.conf > smc.seen) status(`🎯 New A+ ${l.side} on ${S.sym}: entry ${fmt(l.entry)}, stop ${fmt(l.stop)}, target ${fmt(l.target)} (${l.R.toFixed(1)}R).`);
+      if (smc.seen !== Infinity) smc.seen = Math.max(smc.seen, l.conf);
+    }
+    if (smcLayer) smcLayer.update();
+    renderWatch(); renderCoach();
+  }
+  function renderWatch() {
+    const el = $('sim-watch'), A = smc.A;
+    if (!smc.on || !A) { el.hidden = true; return; }
+    el.hidden = false;
+    const leg = A.leg && !A.leg.dead ? A.leg : null, last = A.setups[A.setups.length - 1];
+    const fresh = last && A.now - last.conf < 30 * MIN;
+    const ck = (good, txt) => `<span class="${good ? 'ok' : 'no'}">${good ? '✓' : '○'} ${txt}</span>`;
+    let h;
+    if (fresh) h = `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)}: entry ${fmt(last.entry)} · stop ${fmt(last.stop)} · target ${fmt(last.target)} · <b>${last.R.toFixed(1)}R</b>` + (S.pos ? '' : '<button type="button" class="b" id="sim-use-setup">Use in ticket</button>');
+    else if (leg) {
+      const sh = leg.dir === -1;
+      h = `SMC ${smc.tf}m · <b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} at ${hm(leg.brk.t)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
+        (leg.sweep && leg.trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${fmt(leg.trig.p)}</b>` : '');
+    } else h = A.breaks.length ? `SMC ${smc.tf}m · no live idea: price closed back past the start of the last move. Wait for the next CHoCH or BOS.` : `SMC ${smc.tf}m · no structure break yet.`;
+    if (S.mode === 'replay' && smc.full) { const ahead = smc.full.setups.filter(x => x.conf > A.now).length; h += ` <span class="no">· ${ahead ? ahead + ' more A+ setup' + (ahead > 1 ? 's' : '') + ' ahead in this replay' : 'no more A+ setups ahead'}</span>`; }
+    el.classList.toggle('hot', !!fresh);
+    el.innerHTML = h;
+    const u = $('sim-use-setup'); if (u) u.onclick = () => useSetup(last);
+  }
+  function useSetup(x) {
+    if (!x || S.pos) return;
+    S.side = x.side; $('sim-stop').value = (+x.stop).toFixed(S.prec);
+    $('sim-plan').value = 'price'; $('sim-tp').value = (+x.target).toFixed(S.prec);
+    [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = true; });
+    S.auto = true;
+    status(`Ticket filled from the A+ ${x.side}: stop just past the sweep wick, target ${x.tgtKind === 'leg' ? 'the end of the leg' : 'at 2R'}. It fills at the current price when you press the button.`);
+    refresh();
+  }
+  function nextSetup() {
+    if (S.mode !== 'replay' || S.cur < 0) return;
+    if (!smc.full) recomputeFull();
+    const now = nowT(), x = smc.full.setups.find(s => s.conf > now);
+    if (!x) return status(`No more A+ setups in the rest of this replay on the ${smc.tf}m structure. Load another signal, or try Structure ${smc.tf === 5 ? '15m' : '5m'}.`);
+    const idx = S.base.findIndex(k => k[0] === x.t); if (idx < 0) return;
+    stopPlay();
+    if (S.pos) { step(idx - S.cur); if (S.cur !== idx) return; }   // stepping stops early if your trade closes
+    else { S.cur = idx; redraw(true); }
+    status(`⏭ ${utc(nowT())} UTC: the simulator found an A+ ${x.side} here. Open the coach to see each step, or use it in the ticket.`);
+  }
+
+  // ---------- SMC coach: walks through the current chart one step at a time ----------
+  const coach = { open: false, step: 0, quiz: false, fb: null, right: 0, tries: 0 };
+  const LAYERS = ['swings', 'structure', 'range', 'zones', 'liq', 'setup', 'setup'];
+  const TESTED = 'Practice, not signals: replayed on 140 pump-signal charts (13 Oct – 12 Nov 2026), these exact rules lost after fees (15m: −0.04R a trade over 242 setups; 5m: −0.16R over 403).';
+  function coachSteps(A) {
+    const tfN = smc.tf + 'm', leg = A.leg && !A.leg.dead ? A.leg : null, lb = A.breaks[A.breaks.length - 1];
+    const sh = leg ? leg.dir === -1 : lb ? lb.dir === -1 : true;
+    const w = sh ? { hl: 'high', pd: 'premium', zn: 'supply', ab: 'above', be: 'below', side: 'short', end: 'low' }
+                 : { hl: 'low', pd: 'discount', zn: 'demand', ab: 'below', be: 'above', side: 'long', end: 'high' };
+    const tol = Math.max(A.price * 0.003, (A.atr || 0) * 0.5);
+    const out = [];
+    const sw = A.swings.slice(-6), lastS = A.swings.filter(s => s.side === (sh ? 'H' : 'L')).slice(-1)[0];
+    out.push({ title: '1 · Read the swings', html:
+      `<p>Every confirmed swing point is labelled. A swing high is a candle with ${A.len} lower highs on each side, so it is only confirmed ${A.len} candles (${A.len * smc.tf} min) later. On a live chart you can't know it sooner either.</p>` +
+      `<p><b>HH</b> + <b>HL</b> (higher highs, higher lows) = uptrend. <b>LH</b> + <b>LL</b> = downtrend.</p>` +
+      (sw.length ? `<p>Latest on the ${tfN} chart: ${sw.map(s => `<b>${s.label}</b> ${fmt(s.p)} <span class="m">${hm(s.t)}</span>`).join(' → ')}</p>` : '<p>No swing confirmed yet. Step forward a little.</p>') +
+      '<p class="m">On each step, <b>Try it first</b> hides the answer so you can find the level yourself.</p>',
+      quiz: lastS ? { ask: `Click the most recent swing ${w.hl}.`, ans: lastS.p, tol, why: `A swing ${w.hl} is a candle whose ${w.hl} has ${A.len} candles with ${sh ? 'lower highs' : 'higher lows'} on each side. The newest one is at ${hm(lastS.t)}.` } : null });
+
+    let h2;
+    if (!lb) h2 = '<p>No structure break on this chart yet. Keep stepping forward; the coach updates as you go.</p>';
+    else {
+      h2 = `<p>At <b>${hm(lb.t)}</b> a ${tfN} candle closed at <b>${fmt(lb.close)}</b>, ${lb.dir === -1 ? 'below' : 'above'} the last swing ${lb.dir === -1 ? 'low' : 'high'} at <b>${fmt(lb.p)}</b> (from ${hm(lb.fromT)}).</p>` +
+        (lb.kind === 'CHoCH' ? `<p>That's a <b>CHoCH</b> (change of character): the first close against the ${lb.dir === -1 ? 'uptrend' : 'downtrend'}. The bias flips to <b>${lb.dir === -1 ? 'shorts' : 'longs'}</b>.</p>`
+          : `<p>That's a <b>BOS</b> (break of structure): a break in the same direction as the trend, so the ${lb.dir === -1 ? 'downtrend' : 'uptrend'} carries on. The bias stays <b>${lb.dir === -1 ? 'short' : 'long'}</b>.</p>`) +
+        '<p>Only a candle <b>close</b> counts. A wick through the level that closes back is a sweep (step 5), not a break.</p>' +
+        (!leg ? `<p>Since then price closed back past the start of that move, so this idea is cancelled. Wait for the next break.</p>` : '');
+    }
+    out.push({ title: '2 · Spot the break (CHoCH / BOS)', html: h2, quiz: lb ? { ask: 'Click the level that broke.', ans: lb.p, tol, why: `It's the last swing ${lb.dir === -1 ? 'low' : 'high'} before the breaking candle (${hm(lb.fromT)}): the line that a candle body closed through.` } : null });
+
+    if (!leg) {
+      const none = '<p>This step needs a live idea: a break that price hasn\'t cancelled. Step forward until the line above the chart shows one.</p>';
+      out.push({ title: '3 · Premium or discount?', html: none }, { title: `4 · Mark the zone`, html: none }, { title: '5 · Liquidity and the sweep', html: none }, { title: '6 · The trigger: 1m CHoCH', html: none }, { title: '7 · Plan the trade', html: none });
+      return out;
+    }
+    const eq = (leg.hi + leg.lo) / 2, at = (A.price - leg.lo) / ((leg.hi - leg.lo) || 1);
+    out.push({ title: '3 · Premium or discount?', html:
+      `<p>The move that broke structure runs from <b>${fmt(sh ? leg.hi : leg.lo)}</b> to <b>${fmt(sh ? leg.lo : leg.hi)}</b> so far. Halfway is <b>${fmt(eq)}</b>.</p>` +
+      `<p>Above halfway is <b>premium</b> (expensive), below is <b>discount</b> (cheap). Sell in premium, buy in discount. For this ${w.side}, wait for price to come back ${w.ab} ${fmt(eq)}.</p>` +
+      `<p>Price now: <b>${fmt(A.price)}</b>, ${Math.round(Math.max(0, Math.min(1, at)) * 100)}% of the way up the leg → <b>${at >= 0.5 ? 'premium' : 'discount'}</b>. ` +
+      (leg.prem ? `It reached ${w.pd} at ${hm(leg.prem.t)} ✓</p>` : `It hasn't reached ${w.pd} yet.</p>`),
+      quiz: { ask: 'Click where the 50% line of the leg is.', ans: eq, tol: Math.max(tol, (leg.hi - leg.lo) * 0.08), why: `Take the ${sh ? 'top' : 'bottom'} of the move (${fmt(sh ? leg.hi : leg.lo)}) and its ${sh ? 'lowest low' : 'highest high'} so far (${fmt(sh ? leg.lo : leg.hi)}); the middle is the line.` } });
+
+    const z = leg.zone;
+    out.push({ title: `4 · Mark the ${w.zn} zone`, html: z
+      ? `<p>The last ${sh ? 'up' : 'down'} candle before the move (${hm(z.t)}) marks the <b>${w.zn} zone</b>: <b>${fmt(z.bot)} – ${fmt(z.top)}</b>. The orders that started the move came from there, so price often reacts when it returns.</p>` +
+        `<p>The zone is dead once a ${tfN} candle closes ${sh ? 'above ' + fmt(z.top) : 'below ' + fmt(z.bot)}. ` + (z.broken ? 'That has happened.' : leg.inZone ? `Price came back into it at ${hm(leg.inZone.t)} ✓` : 'Price hasn\'t come back to it yet.') + '</p>'
+      : '<p>No clean zone on this move.</p>',
+      quiz: z ? { ask: sh ? 'Click the top of the supply zone.' : 'Click the bottom of the demand zone.', ans: sh ? z.top : z.bot, tol: Math.max(tol, (z.top - z.bot) * 0.5), why: `Find the ${sh ? 'highest point' : 'lowest point'} of the move, then the last ${sh ? 'green' : 'red'} candle at or just before it. The zone spans that candle's body to the ${sh ? 'top' : 'bottom'} of the move.` } : null });
+
+    const lv = A.liq.filter(l => l.side === (sh ? 'H' : 'L') && (sh ? l.p > A.price : l.p < A.price)).sort((a, b) => sh ? a.p - b.p : b.p - a.p);
+    const near = lv[0], eqs = A.eqs.filter(e => !e.taken && e.side === (sh ? 'H' : 'L'));
+    out.push({ title: '5 · Liquidity and the sweep', html:
+      `<p>Stop-losses pile up just ${sh ? 'above old highs' : 'below old lows'}, most of all at <b>equal ${sh ? 'highs (EQH)' : 'lows (EQL)'}</b>. Price often runs through them to fill big orders, then turns. A wick through the level that <b>closes back</b> is the <b>sweep</b>.</p>` +
+      `<p>${near ? `Nearest untaken ${sh ? 'high above' : 'low below'} price: <b>${fmt(near.p)}</b> (${near.kind === 'swing' ? 'swing ' + w.hl : near.kind}, ${hm(near.t)}).` : `No untaken ${sh ? 'highs above' : 'lows below'} price on the ${tfN} chart.`}` +
+      (eqs.length ? ` Equal ${sh ? 'highs' : 'lows'}: ${eqs.slice(-3).map(e => fmt(e.p)).join(', ')}.` : '') + '</p>' +
+      (leg.sweep ? `<p>✓ At ${hm(leg.sweep.t)} a ${tfN} candle wicked to <b>${fmt(leg.sweep.wick)}</b>, through the ${fmt(leg.sweep.p)} level, and closed back at ${fmt(leg.sweep.close)}: liquidity swept in ${w.pd}.</p>`
+        : leg.last ? `<p>The last sweep on this move (${hm(leg.last.sweep.t)}) already gave a setup. A new one needs a new sweep.</p>`
+        : `<p>No sweep in ${w.pd} yet. Wait for a ${tfN} candle to wick ${w.ab} a level like this and close back.</p>`),
+      quiz: near ? { ask: `Click the nearest ${sh ? 'high above' : 'low below'} price where stops are resting.`, ans: near.p, tol, why: `Look ${sh ? 'up' : 'down'} from the current price for the first swing ${w.hl} that no candle has traded through since. That's at ${hm(near.t)}.` } : null });
+
+    const tg = leg.trig, ls = leg.last;
+    out.push({ title: '6 · The trigger: 1m CHoCH', html:
+      `<p>After the sweep, drop to the <b>1m</b> chart. Find the last 1m ${sh ? 'higher low' : 'lower high'} before the sweep's ${sh ? 'top' : 'bottom'}. A 1m candle that <b>closes ${w.be}</b> it means the small timeframe has turned too. That's the entry trigger.</p>` +
+      (leg.sweep && tg ? `<p>Here the level is <b>${fmt(tg.p)}</b> (1m swing at ${hm(tg.t)}), the blue line. Waiting for a 1m close ${w.be} it, within 90 minutes of the sweep.</p>` : '') +
+      (ls ? `<p>✓ The last trigger on this move: at <b>${hm(ls.t)}</b> a 1m candle closed at ${fmt(ls.entry)}, ${w.be} ${fmt(ls.trig.p)}.</p>` : '') +
+      (!leg.sweep && !ls ? '<p>This step comes after a sweep. Keep stepping forward.</p>' : '') +
+      '<button type="button" class="b" id="sim-coach-1m">Show the 1m chart</button>',
+      quiz: leg.sweep && tg ? { ask: 'Switch to 1m if you like, then click the 1m level that has to break.', ans: tg.p, tol: Math.max(A.price * 0.002, tol * 0.5), why: `It's the last 1m swing ${sh ? 'low' : 'high'} before the sweep ${sh ? 'high' : 'low'} (${hm(tg.t)}).` } : null });
+
+    let h7;
+    if (ls) {
+      const size = parseFloat($('sim-size').value) || 150, rk = Math.abs(ls.stop - ls.entry) / ls.entry;
+      h7 = `<p><b>Entry</b> ${fmt(ls.entry)} (the trigger close) · <b>Stop</b> ${fmt(ls.stop)}, just ${w.ab} the sweep wick · <b>Target</b> ${fmt(ls.target)}, ${ls.tgtKind === 'leg' ? `the ${w.end} of the move, where the next stops sit` : `2R (the ${w.end} of the move was too close)`}.</p>` +
+        `<p>Risk ${(rk * 100).toFixed(1)}% · reward ${(Math.abs(ls.target - ls.entry) / ls.entry * 100).toFixed(1)}% → <b>${ls.R.toFixed(1)}R</b>. On $${size.toFixed(0)} the stop costs about $${(size * rk + 2 * size * FEE).toFixed(2)} with fees.` +
+        (ls.R < 1.5 ? ' Under 1.5R: many traders pass on this one.' : '') + '</p>' +
+        (rk > 0.08 ? `<p>⚠ This stop is wider than the bot's 8%. To risk the same dollars as an 8% stop on $${size.toFixed(0)}, trade about <b>$${(size * 0.08 / rk).toFixed(0)}</b> instead.</p>` : '') +
+        (S.pos ? '' : '<button type="button" class="b go" id="sim-coach-use">Load this plan into the ticket</button>');
+    } else h7 = `<p>No trigger yet, so no plan. When it triggers: enter on the 1m close, stop just ${w.ab} the sweep wick, target the ${w.end} of the move (or 2R if that's too close). Look for 1.5R or more.</p>`;
+    out.push({ title: '7 · Plan the trade', html: h7 + `<p class="m">${TESTED}</p>` });
+    return out;
+  }
+  function renderCoach() {
+    const card = $('sim-coach'); card.hidden = !coach.open;
+    $('sim-coach-btn').classList.toggle('on', coach.open);
+    if (!coach.open) return;
+    const A = smc.A;
+    if (!A) { $('sim-coach-title').textContent = 'Load a chart first'; $('sim-coach-text').innerHTML = ''; return; }
+    const steps = coachSteps(A), st = steps[coach.step], q = st.quiz;
+    if (coach.quiz && !q) { coach.quiz = false; smc.hide = null; if (S.tool === 'quiz') setTool(null); }
+    $('sim-coach-n').textContent = `Step ${coach.step + 1} of ${steps.length}` + (coach.tries ? ` · quiz ${coach.right}/${coach.tries}` : '');
+    $('sim-coach-bar').innerHTML = steps.map((_, i) => `<i class="${i <= coach.step ? 'on' : ''}"></i>`).join('');
+    $('sim-coach-title').textContent = st.title;
+    $('sim-coach-text').innerHTML = coach.quiz ? `<p><b>${q.ask}</b></p><p class="m">Click the chart. The answer stays hidden until you do.</p>` : st.html;
+    const fb = $('sim-coach-fb'); fb.hidden = !coach.fb;
+    if (coach.fb) { fb.className = 'sim-fb ' + coach.fb.cls; fb.innerHTML = coach.fb.html; }
+    const tr = $('sim-coach-try'); tr.hidden = !q || !!coach.fb; tr.textContent = coach.quiz ? 'Show me' : 'Try it first';
+    $('sim-coach-back').disabled = coach.step === 0; $('sim-coach-next').disabled = coach.step === steps.length - 1;
+    const one = $('sim-coach-1m'); if (one) one.onclick = () => setTF('1m');
+    const use = $('sim-coach-use'); if (use) use.onclick = () => useSetup(A.leg && A.leg.last);
+  }
+  function coachGo(i) {
+    coach.step = Math.max(0, Math.min(LAYERS.length - 1, i)); coach.quiz = false; coach.fb = null; smc.hide = null;
+    if (S.tool === 'quiz') setTool(null);
+    smc.layers = LAYERS.slice(0, coach.step + 1); refresh();
+  }
+  function quizAnswer(p) {
+    const A = smc.A; if (!A) return;
+    const q = coachSteps(A)[coach.step].quiz; if (!q) return;
+    const d = Math.abs(p - q.ans), good = d <= q.tol, near = !good && d <= 3 * q.tol;
+    coach.tries++; if (good) coach.right++;
+    lvlLines.push(cs.createPriceLine({ price: p, color: '#a78bfa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'your pick' }));
+    coach.fb = { cls: good ? 'good' : near ? 'near' : 'bad', html: (good ? '✓ Spot on.' : near ? 'Close.' : 'Not quite.') +
+      ` You clicked <b>${fmt(p)}</b>; the answer is <b>${fmt(q.ans)}</b> (${(d / q.ans * 100).toFixed(1)}% away).` + (good ? '' : ' ' + q.why) };
+    coach.quiz = false; smc.hide = null;
+  }
+  const setTF = tf => { const b = document.querySelector(`#sim .sim-tf .b[data-tf="${tf}"]`); if (b) b.click(); };
+
+  // ---------- live: check recent pump-signal coins for setups ----------
+  function scanRow(sym, ex, A) {
+    const leg = A.leg && !A.leg.dead ? A.leg : null, last = A.setups[A.setups.length - 1];
+    const f = v => (+v).toFixed(precFor(A.price)), age = last ? (A.now - last.conf) / MIN : Infinity;
+    if (age < 45) return { sym, ex, score: 10 - age / 45, txt: `🎯 <b>A+ ${last.side}</b> ${Math.round(age)} min ago · entry ${f(last.entry)} · stop ${f(last.stop)} · target ${f(last.target)} · ${last.R.toFixed(1)}R` };
+    if (!leg) return { sym, ex, score: 0, txt: 'no live idea right now' };
+    const sh = leg.dir === -1, n = 1 + (leg.prem ? 1 : 0) + (leg.sweep ? 1 : 0);
+    const next = leg.sweep ? `waiting for a 1m close ${sh ? 'below' : 'above'} ${leg.trig ? f(leg.trig.p) : 'the last 1m swing'}`
+      : leg.prem ? `in ${sh ? 'premium' : 'discount'}, waiting for a sweep` : `waiting for a ${sh ? 'bounce above' : 'dip below'} ${f((leg.hi + leg.lo) / 2)}`;
+    return { sym, ex, score: n, txt: `${sh ? 'short' : 'long'} idea · <b>${n}/4</b> · ${next}` };
+  }
+  async function scanCoins() {
+    const btn = $('sim-scan-btn'), box = $('sim-scan');
+    if (btn.disabled) return; btn.disabled = true; box.hidden = false;
+    const since = Date.now() - 48 * 3600e3, list = [];
+    if (S.sym) list.push(S.sym);
+    for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since && list.indexOf(p.sym) < 0) list.push(p.sym);
+    const syms = list.slice(0, 15), rows = [];
+    const rowsHtml = () => rows.map(r => `<div class="sim-scan-row"><span><b>${esc(r.sym)}</b> · ${r.txt}</span>` + (r.score >= 0 ? `<button type="button" class="b" data-scan="${esc(r.sym)}" data-ex="${esc(r.ex)}">Load live</button>` : '') + '</div>').join('');
+    if (!syms.length) { box.innerHTML = '<div class="sim-empty">No pump-signal coins in the last 48 hours. Load a coin above and the line over the chart tracks it.</div>'; btn.disabled = false; return; }
+    for (let i = 0; i < syms.length; i++) {
+      box.innerHTML = `<div class="sim-empty">Checking ${esc(syms[i])} (${i + 1} of ${syms.length})…</div>` + rowsHtml();
+      try {
+        const end = Date.now(), r = await api('/api/sim/klines', { symbol: syms[i], interval: '1m', start: end - 24 * 3600e3, end, exchange: 'auto' });
+        rows.push(scanRow(syms[i], r.exchange, SMC.analyze(r.candles, r.candles.length - 1, { tf: smc.tf * MIN })));
+      } catch (e) { rows.push({ sym: syms[i], ex: '', score: -1, txt: 'no data: ' + esc(e.message) }); }
+      rows.sort((a, b) => b.score - a.score);
+    }
+    box.innerHTML = `<div class="sim-empty">${syms.length} coins checked at ${hm(Date.now())} UTC on the ${smc.tf}m structure (the loaded coin and the last 48 h of pump signals). ${TESTED}</div>` + rowsHtml();
+    btn.disabled = false;
+  }
+
   // ---------- modes, tools, inputs ----------
   function setMode(m, quiet) {
     if (S.mode === m) return;
@@ -558,7 +908,8 @@
     $('sim-m-replay').setAttribute('aria-pressed', String(m === 'replay'));
     $('sim-m-live').setAttribute('aria-pressed', String(m === 'live'));
     $('sim-replay-load').hidden = m !== 'replay'; $('sim-replay-bar').hidden = m !== 'replay';
-    $('sim-live-load').hidden = m !== 'live';
+    $('sim-live-load').hidden = m !== 'live'; $('sim-scan').hidden = true;
+    $('sim-next-setup').hidden = m !== 'replay'; $('sim-pause-wrap').hidden = m !== 'replay';
     if (!quiet && m === 'live') { const sym = S.sym || 'BTC'; $('sim-symbol-live').value = sym; loadLive(sym, $('sim-ex-live').value); }
     if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
   }
@@ -567,11 +918,12 @@
     $('sim-tool-line').classList.toggle('on', S.tool === 'line');
     $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
     $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
-    hint(S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : '');
+    hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : '');
   }
   function onChartClick(param) {
     if (!S.tool || !param || !param.point) return;
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
+    if (S.tool === 'quiz') { quizAnswer(p); setTool(null); refresh(); return; }
     if (S.tool === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
     if (S.tool === 'stop') { if (S.pos) { moveStop(p); } else $('sim-stop').value = (+p).toFixed(S.prec); }
     if (S.tool === 'tp') { $('sim-plan').value = 'price'; $('sim-tp').value = (+p).toFixed(S.prec); }
@@ -585,6 +937,7 @@
 
   function start() {
     if (started) return; started = true;
+    $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
     initChart(); renderJournal();
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
     status('Loading recent signals…');
@@ -617,8 +970,8 @@
   $('sim-play').onclick = togglePlay;
   document.querySelectorAll('#sim-replay-bar [data-step]').forEach(b => b.onclick = () => step(+b.dataset.step));
   $('sim-until-exit').onclick = () => { if (!S.pos) return; S.untilExit = true; if (!S.play) { $('sim-play').textContent = '❚❚ Pause'; S.play = setInterval(() => step(+$('sim-speed').value), 300); } };
-  $('sim-side-short').onclick = () => { S.side = 'short'; $('sim-stop').value = ''; refresh(); };
-  $('sim-side-long').onclick = () => { S.side = 'long'; $('sim-stop').value = ''; refresh(); };
+  $('sim-side-short').onclick = () => { S.side = 'short'; S.auto = false; $('sim-stop').value = ''; refresh(); };
+  $('sim-side-long').onclick = () => { S.side = 'long'; S.auto = false; $('sim-stop').value = ''; refresh(); };
   $('sim-stop-8').onclick = () => { const px = price(); if (px == null) return; $('sim-stop').value = (px * (S.side === 'short' ? 1.08 : 0.92)).toFixed(S.prec); refresh(); };
   $('sim-stop-swing').onclick = () => {
     if (S.cur < 0) return; let hi = -Infinity, lo = Infinity;
@@ -628,6 +981,26 @@
   ['sim-stop', 'sim-size', 'sim-tp'].forEach(id => $(id).addEventListener('input', refresh));
   ['sim-plan', 'sim-c1', 'sim-c2', 'sim-c3', 'sim-c4'].forEach(id => $(id).addEventListener('change', refresh));
   $('sim-go').onclick = enter;
+  $('sim-smc-on').onchange = () => { smc.on = $('sim-smc-on').checked; saveSmc(); refresh(); };
+  $('sim-smc-tf').onchange = () => { smc.tf = +$('sim-smc-tf').value; saveSmc(); recomputeFull(); refresh(); };
+  $('sim-smc-pause').onchange = () => { smc.pause = $('sim-smc-pause').checked; saveSmc(); };
+  $('sim-next-setup').onclick = nextSetup;
+  $('sim-coach-btn').onclick = () => {
+    coach.open = !coach.open;
+    if (coach.open) coachGo(0); else { smc.layers = null; smc.hide = null; coach.quiz = false; if (S.tool === 'quiz') setTool(null); refresh(); }
+  };
+  $('sim-coach-close').onclick = () => { if (coach.open) $('sim-coach-btn').click(); };
+  $('sim-coach-back').onclick = () => coachGo(coach.step - 1);
+  $('sim-coach-next').onclick = () => coachGo(coach.step + 1);
+  $('sim-coach-try').onclick = () => {
+    if (coach.quiz) { coach.quiz = false; smc.hide = null; setTool(null); coach.fb = { cls: 'near', html: 'Here it is on the chart. Compare it with where you would have put it.' }; refresh(); return; }
+    coach.quiz = true; smc.hide = LAYERS[coach.step]; if (S.tool !== 'quiz') setTool('quiz'); refresh();
+  };
+  $('sim-scan-btn').onclick = scanCoins;
+  $('sim-scan').addEventListener('click', e => {
+    const b = e.target.closest('[data-scan]'); if (!b) return;
+    $('sim-symbol-live').value = b.dataset.scan; loadLive(b.dataset.scan, b.dataset.ex || 'auto');
+  });
   $('sim-close').onclick = () => { if (!S.pos) return; const t = S.mode === 'live' ? Date.now() : barT(); fill(S.pos.rem, price(), t, 'Closed by hand'); finish(t, 'Closed by hand'); S.halt = false; refresh(); };
   $('sim-to-be').onclick = () => { if (!S.pos) return; moveStop(S.pos.entry); refresh(); };
   let clearArmed = false;
