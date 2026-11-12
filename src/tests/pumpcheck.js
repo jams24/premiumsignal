@@ -25,7 +25,7 @@ require('dotenv').config({ quiet: true });
 const fs = require('fs');
 const path = require('path');
 const { PUMP_RULES, entryVerdict } = require('../collectors/pumpSignalCheck');
-const { PumpAutoTrader, aSetupExhaust } = require('../engine/pumpAutoTrader');
+const { PumpAutoTrader, aSetupExhaust, SWEEP, sweepScan } = require('../engine/pumpAutoTrader');
 const { RUNNER } = require('../engine/pumpRunnerPaper');
 const TradeExecutor = require('../engine/tradeExecutor');
 
@@ -70,6 +70,8 @@ async function loadConfig() {
       // /autopump 📅 days off (UTC weekday 1 = Mon … 7 = Sun); listed only when set, so the plan matches older baselines
       ...(auto.skipDays('exhaust').length ? { skipDaysExhaust: auto.skipDays('exhaust') } : {}),
       ...(auto.skipDays('switch').length ? { skipDaysSwitch: auto.skipDays('switch') } : {}),
+      // /autopump 🎯 WEAK sweep entry (listed only when on; --weak-sweep forces it on to see what it would do)
+      ...(c.weakSweep === true || args.has('--weak-sweep') ? { weakSweep: true } : {}),
     },
   };
 }
@@ -140,9 +142,23 @@ async function replaySet(dir, cfg) {
     auto.commonBlock = async () => null;
     auto.measureCrowd = async () => null;   // crowd check not modelled: Binance keeps whale/retail data 30 days only
     if (await auto.blockReason(info)) continue;
-    const off = Math.round((s.now - r.t) / M);
-    const aMult = plan.aSizeMult > 1 && aSetupExhaust({ fundingFrac: r.sig?.fr, signalPrice: r.sig?.price, price: s.p }).ok ? plan.aSizeMult : 1;
-    out[`${r.s}|${r.t}|short`] = +(simulate(hl, off, s.p, 'short', plan.shortTps, plan.shortSl, plan) * aMult).toFixed(4);
+    let off = Math.round((s.now - r.t) / M), E = s.p;
+    // 🎯 WEAK sweep entry: a WEAK short (pump under 40%) waits from ENTER for a push above the top (24h high at the
+    // signal or higher since) and a 5m close back under it — the bot's own sweepScan. Skip rules stay checked at ENTER.
+    if (plan.weakSweep && r.sig.pump < SWEEP.weakBelowPumpPct) {
+      let top = r.sig.price / (1 - (r.sig.near || 0) / 100);
+      for (let i = 0; i <= off && i < hl.length / 3; i++) top = Math.max(top, hl[3 * i]);
+      const candles = [];
+      for (let b = off; b + 5 <= Math.min(hl.length / 3, off + SWEEP.waitMin); b += 5) {
+        let h = -Infinity; for (let i = b; i < b + 5; i++) h = Math.max(h, hl[3 * i]);
+        candles.push({ h, c: hl[3 * (b + 4) + 2] });
+      }
+      const sw = sweepScan(candles, top);
+      if (sw.kind !== 'enter') continue;
+      off += 5 * (sw.index + 1); E = sw.price;
+    }
+    const aMult = plan.aSizeMult > 1 && aSetupExhaust({ fundingFrac: r.sig?.fr, signalPrice: r.sig?.price, price: E }).ok ? plan.aSizeMult : 1;
+    out[`${r.s}|${r.t}|short`] = +(simulate(hl, off, E, 'short', plan.shortTps, plan.shortSl, plan) * aMult).toFixed(4);
   }
   return out;
 }

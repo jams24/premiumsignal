@@ -648,6 +648,7 @@ async function main() {
     dayOffLab: pumpDayOffPaper,
   });
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
+  pumpAutoTrader.restoreSweeps().catch(e => logger.error(`Restoring sweep waits failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
   // Channel trade updates: TP / stop / back-to-entry / 48h replies under every posted entry (exhaust short ✅ ENTER
@@ -757,6 +758,7 @@ async function main() {
     pumpSwitchPaper.check().catch(e => logger.error(`Switch lab check error: ${e.message}`));
     pumpDayOffPaper.check().catch(e => logger.error(`Day-off lab check error: ${e.message}`));
     pumpAutoTrader.checkBreakeven().catch(e => logger.error(`Stop→entry check error: ${e.message}`));
+    pumpAutoTrader.checkSweeps().catch(e => logger.error(`Sweep entry check error: ${e.message}`));
     pumpChannelTracker.check().catch(e => logger.error(`Channel tracker check error: ${e.message}`));
     bot.nearTpCheck?.().catch(e => logger.error(`Near-TP alert check error: ${e.message}`));
   });

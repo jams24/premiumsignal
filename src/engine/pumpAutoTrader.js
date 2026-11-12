@@ -99,7 +99,29 @@ function aNote(a, mult) {
   return `⭐ <b>A-setup</b>: Bybit retail ${a.retailBy.toFixed(2)} (≥ ${A_SWITCH_RETAIL})${size}\n` +
     `<i>   replay: full stops 7–12% vs 23–27%, about $6 vs $2.5 per $150 trade — only 3 live so far</i>\n`;
 }
-const aData = (a) => (a ? { ok: a.ok, ...(a.kind === 'exhaust' ? { fundingPct: a.fundingPct, belowPct: a.belowPct } : { retailBy: a.retailBy }) } : null);   // all = pump (exhaust) + switch shorts · switch = switch shorts only
+const aData = (a) => (a ? { ok: a.ok, ...(a.kind === 'exhaust' ? { fundingPct: a.fundingPct, belowPct: a.belowPct } : { retailBy: a.retailBy }) } : null);
+
+// 🎯 WEAK sweep entry (/autopump, config weakSweep): a WEAK signal (pump under weakBelowPumpPct, the channel's ⚪ WEAK
+// grade) doesn't short at ✅ ENTER. From that moment the top = highest price of the last 24h; the bot waits for a 5m
+// candle above the top, then a 5m close back under it, and shorts then (normal plan: 8% stop, same TPs). If price holds
+// above the top for holdCandles candles, the new high becomes the top. No sweep within waitMin → no trade.
+// Replay (WEAK shorts, $150, 12 Nov 2026): Jun–Oct 327 trades +$595 → 132 +$453 (per trade 1.82 → 3.43, losers 103 → 34),
+// Dec–May 479 +$353 → 193 +$218 (0.74 → 1.13, losers 168 → 65): fewer, better trades, lower total. Real WEAK shorts
+// since 10 Oct: −$78 on 43 → +$90 on 29. A stop just above the sweep high instead of 8% lost (+$93 / −$36).
+const SWEEP = { weakBelowPumpPct: 40, waitMin: 120, holdCandles: 6, lateMin: 10 };
+const FIVE_MIN = 5 * 60000;
+// candles: closed 5m candles from the wait's start, oldest first, as { h, c }. Shared with the pump check's replay.
+// → { kind: 'enter', price (the close), top, sweepHigh, index } | { kind: 'wait', top, swept }
+function sweepScan(candles, top0, holdCandles = SWEEP.holdCandles) {
+  let top = top0, swept = -1, high = -Infinity;
+  for (let i = 0; i < candles.length; i++) {
+    const { h, c } = candles[i];
+    if (h > top) { if (swept < 0) swept = i; high = Math.max(high, h); }
+    if (swept >= 0 && c < top) return { kind: 'enter', price: c, top, sweepHigh: high, index: i };
+    if (swept >= 0 && i - swept >= holdCandles) { top = high; swept = -1; high = -Infinity; }
+  }
+  return { kind: 'wait', top, swept: swept >= 0 };
+}   // all = pump (exhaust) + switch shorts · switch = switch shorts only
 const DEFAULTS = {
   enabled: false,
   mode: 'paper',
@@ -162,6 +184,8 @@ const DEFAULTS = {
   skipDaysSwitch: [],
   // ⭐ A-setup size (A_SIZE_MULTS): margin × this on ⭐ trades; 1 = off (the ⭐ line still shows in the DM)
   aSizeMult: 1,
+  // 🎯 WEAK sweep entry (SWEEP above): WEAK pump shorts wait for a sweep of the top and a close back under it
+  weakSweep: false,
 };
 const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
 // Size menu buttons — margin $ and leverage. 0 = /autopump: from /trade · switch: = short · switch long: = switch
@@ -194,6 +218,8 @@ class PumpAutoTrader {
     this.busy = new Set();          // signal ids being processed
     this.dailyStopNotified = null;  // UTC date we already warned about the daily stop
     this.dayOffNotified = new Set(); // 'kind:YYYY-MM-DD' days off already announced
+    this.sweeps = new Map();        // 🎯 WEAK signals waiting for a sweep (key → wait), mirrored on pump_signals.sweep_state
+    this.sweepRunning = false;
   }
 
   // Days off for 'exhaust' | 'switch' → sorted UTC weekdays (1 = Mon … 7 = Sun)
@@ -561,6 +587,7 @@ class PumpAutoTrader {
         if (!block.silent && !lab?.opened) await this.tell(`🤖 <b>Auto-trade skipped — ${escapeHtml(info.symbol)}</b>\n${escapeHtml(reason)}`);
         return { skipped: reason, dayOffLab: lab?.opened ?? null };
       }
+      if (c.weakSweep && info.via !== 'sweep' && await this.startSweepWait(info)) return { waiting: 'sweep' };
       return await this.open(info);
     } catch (e) {
       logger.error(`Pump auto-trade ${info.symbol} failed: ${e.message}`);
@@ -569,6 +596,112 @@ class PumpAutoTrader {
     } finally {
       this.busy.delete(key);
     }
+  }
+
+  // 🎯 WEAK sweep entry: called at ✅ ENTER after every skip rule passed. A WEAK signal starts a wait instead of the
+  // short (checkSweeps opens it). → true when a wait started; false = trade now as usual (not WEAK, or no top read).
+  async startSweepWait(info) {
+    let pumpPct = info.pumpPct ?? null;
+    if (pumpPct == null && info.signalId != null) {
+      const { rows } = await db.query('SELECT pump_pct FROM pump_signals WHERE id = $1', [info.signalId]).catch(() => ({ rows: [] }));
+      pumpPct = rows[0]?.pump_pct != null ? Number(rows[0].pump_pct) : null;
+    }
+    if (pumpPct == null || !(pumpPct < SWEEP.weakBelowPumpPct)) return false;
+    const now = Date.now(), pair = `${info.symbol}/USDT:USDT`;
+    const ex = this.executor?.exchanges?.[info.exchangeId];
+    let top = null;
+    try {
+      const k = ex ? await ex.fetchOHLCV(pair, '5m', now - 24 * 3600000, 300) : null;
+      if (Array.isArray(k) && k.length) top = Math.max(...k.map(x => Number(x[2])));
+    } catch (e) { logger.warn(`Sweep entry ${info.symbol}: reading the 24h top failed: ${e.message}`); }
+    const p = (v) => Number(v).toPrecision(6);
+    if (!(top > 0)) {
+      await this.tell(`🎯 <b>${escapeHtml(info.symbol)}</b>: WEAK signal, but its pump top could not be read — shorting at ✅ ENTER as usual.`);
+      return false;
+    }
+    if (info.price > 0) top = Math.max(top, info.price);
+    const w = {
+      key: String(info.signalId ?? `${info.symbol}:${now}`), signalId: info.signalId ?? null, symbol: info.symbol, exchangeId: info.exchangeId,
+      startedAt: now, top, pumpPct, status: 'waiting',
+      // What enterShort needs again at the sweep (spot share measured at ENTER is kept; BTC, max open etc. are re-checked)
+      info: { signalId: info.signalId ?? null, symbol: info.symbol, exchangeId: info.exchangeId, price: info.price, run7d: info.run7d ?? null,
+        spot: info.spot, korea: info.korea ?? null, buyers: info.buyers ?? null, pumpPct, enterVia: info.via },
+    };
+    this.sweeps.set(w.key, w);
+    await this.saveSweep(w);
+    await this.tell(`🎯 <b>${escapeHtml(info.symbol)} — WEAK signal, waiting for a sweep</b>\n` +
+      `Pump +${pumpPct.toFixed(1)}% (WEAK: under ${SWEEP.weakBelowPumpPct}%) said ✅ ENTER at $${p(info.price)} — <b>not shorted yet</b>.\n` +
+      `Shorts once price pushes above the top <b>$${p(top)}</b> and a 5-minute candle closes back under it, within ${SWEEP.waitMin / 60}h. No sweep → no trade.`);
+    logger.info(`Pump auto-trade ${info.symbol}: WEAK (+${pumpPct.toFixed(1)}%) → waiting for a sweep of ${top}`);
+    return true;
+  }
+
+  async saveSweep(w) {
+    if (w.signalId == null) return;
+    await db.saveSweepWait(w.signalId, w).catch(e => logger.warn(`Saving sweep wait ${w.symbol} failed: ${e.message}`));
+  }
+
+  async finishSweep(w, outcome) {
+    this.sweeps.delete(w.key);
+    w.status = 'done';
+    w.outcome = outcome;
+    await this.saveSweep(w);
+  }
+
+  // After a restart: waits still running (the sweep is checked on the candles since each wait started)
+  async restoreSweeps() {
+    const rows = await db.getActiveSweepWaits(PUMP_RULES.followUpMaxMin + SWEEP.waitMin + 60);
+    for (const r of rows) if (r.sweep_state?.key) this.sweeps.set(r.sweep_state.key, r.sweep_state);
+    if (this.sweeps.size) logger.info(`Restored ${this.sweeps.size} sweep wait(s): ${[...this.sweeps.values()].map(w => w.symbol).join(', ')}`);
+  }
+
+  // Every minute: each 🎯 wait → short on the sweep, or give up after SWEEP.waitMin
+  async checkSweeps() {
+    if (this.sweepRunning || !this.sweeps.size) return;
+    this.sweepRunning = true;
+    try {
+      for (const w of [...this.sweeps.values()]) {
+        try { await this.checkSweep(w); } catch (e) { logger.warn(`Sweep entry ${w.symbol} check failed: ${e.message}`); }
+      }
+    } finally {
+      this.sweepRunning = false;
+    }
+  }
+
+  async checkSweep(w, now = Date.now()) {
+    const ex = this.executor?.exchanges?.[w.exchangeId], pair = `${w.symbol}/USDT:USDT`;
+    const p = (v) => Number(v).toPrecision(6);
+    const maxCandles = SWEEP.waitMin / 5;
+    let candles = null;
+    if (ex) {
+      const k = await ex.fetchOHLCV(pair, '5m', w.startedAt - FIVE_MIN, maxCandles + 4).catch(e => { logger.warn(`Sweep entry ${w.symbol}: candles failed: ${e.message}`); return null; });
+      // Closed candles that end after the wait started (the one running at ✅ ENTER counts: its earlier high is ≤ the top)
+      if (Array.isArray(k)) candles = k.filter(x => x[0] + FIVE_MIN > w.startedAt && x[0] + FIVE_MIN <= now).slice(0, maxCandles).map(x => ({ t: x[0], h: Number(x[2]), c: Number(x[4]) }));
+    }
+    const priceNow = async () => { const tk = ex ? await ex.fetchTicker(pair).catch(() => null) : null; return Number(tk?.last) > 0 ? Number(tk.last) : null; };
+    if (candles) {
+      const r = sweepScan(candles, w.top);
+      if (r.kind === 'enter') {
+        const closedAt = candles[r.index].t + FIVE_MIN;
+        await this.finishSweep(w, now - closedAt > SWEEP.lateMin * 60000 ? 'missed' : 'swept');
+        if (w.outcome === 'missed') {
+          await this.tell(`🎯 <b>${escapeHtml(w.symbol)} — sweep missed</b>\nThe sweep closed back under the top at ${new Date(closedAt).toISOString().slice(11, 16)} UTC while the bot was down — not traded this late.`);
+          return;
+        }
+        const price = (await priceNow()) || r.price;
+        const sweep = { top: +r.top, sweepHigh: +r.sweepHigh, close: +r.price, enterPrice: w.info.price, waitedMin: Math.round((closedAt - w.startedAt) / 60000) };
+        await this.tell(`🎯 <b>${escapeHtml(w.symbol)} — sweep done</b>\nPushed to $${p(r.sweepHigh)} above the top $${p(r.top)}, then a 5-minute close at $${p(r.price)} back under it → shorting now.`);
+        await this.enterShort({ ...w.info, price, via: 'sweep', sweep });
+        return;
+      }
+      if (candles.length < maxCandles && now - w.startedAt <= (SWEEP.waitMin + 30) * 60000) return;
+    } else if (now - w.startedAt <= (SWEEP.waitMin + 30) * 60000) return;
+    await this.finishSweep(w, 'expired');
+    const last = await priceNow();
+    const move = last && w.info.price ? (last / w.info.price - 1) * 100 : null;
+    await this.tell(`⌛ <b>${escapeHtml(w.symbol)} — no sweep within ${SWEEP.waitMin / 60}h, not traded</b>\n` +
+      `Price didn't push above $${p(w.top)} and close back under it.` +
+      (move != null ? ` ✅ ENTER was $${p(w.info.price)}, now $${p(last)} (${move >= 0 ? '+' : ''}${move.toFixed(1)}%).` : ''));
   }
 
   async blockReason(info) {
@@ -736,7 +869,7 @@ class PumpAutoTrader {
       entryPrice: entry, positionSize: size.position, leverage: size.leverage, marginSaver: size.marginSaver,
       tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], stopLoss: L.stopLoss, atr: null, rebaseOnFill: true,
       context: { margin: size.margin, exitStyle: 'tponly', autoPump: true, pumpSignalId: info.signalId ?? null, run7d: info.run7d ?? null, via: info.via, koreaShare: koreaPct(info.korea), buyers: buyersData(info.buyers), crowd: crowdData(info.crowd),
-        aSetup: aData(a), sizeMult: size.mult },
+        aSetup: aData(a), sizeMult: size.mult, ...(info.sweep ? { sweep: info.sweep } : {}) },
     });
     if (!trade) {
       await this.tell(`🤖 ⚠️ <b>Auto-trade NOT placed — ${escapeHtml(info.symbol)}</b>\nThe executor skipped it (existing exchange position, minimum size, liquidity or price drift). Check the bot notification for the reason.`);
@@ -751,7 +884,7 @@ class PumpAutoTrader {
     const sl = trade.stopLoss || L.stopLoss;
     await this.tell(
       `🤖 <b>AUTO-TRADE OPENED — ${escapeHtml(info.symbol)} SHORT</b>\n` +
-      `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · from ${info.via === 'follow-up' ? 'follow-up ✅ ENTER' : 'signal ✅ ENTER'}\n\n` +
+      `${c.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${info.exchangeId.toUpperCase()} · from ${info.via === 'sweep' ? `🎯 sweep entry (✅ ENTER was $${p(info.sweep?.enterPrice)}, waited ${info.sweep?.waitedMin ?? '?'} min)` : info.via === 'follow-up' ? 'follow-up ✅ ENTER' : 'signal ✅ ENTER'}\n\n` +
       `💰 Entry: <b>$${p(fill)}</b>\n` +
       `💵 $${size.margin} × ${size.leverage}x = <b>$${pos.toFixed(2)}</b> position${size.fresh && c.halfOnFresh ? ' · 🟠 half size (fresh breakout)' : ''}${size.levCapped ? ` · leverage capped ${size.panelLev}x → ${size.leverage}x` : ''}\n` +
       `🏦 Exchange: <b>${lev}x</b> → locks <b>$${(pos / lev).toFixed(2)}</b>${lev > size.leverage ? ` (margin saver · liq ≈ ${liquidationPct(lev).toFixed(1)}%)` : ''}${liqGuardNote(trade)}\n` +
@@ -775,4 +908,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };
+module.exports = { PumpAutoTrader, SWEEP, sweepScan, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };

@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
+const { SWEEP, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const manualLimits = require('../engine/manualLimitOrders');
@@ -2919,6 +2919,9 @@ class TelegramBot {
           ? `⭐ A-setups: <b>size ×${ap.aMult()}</b> — exhaust short with funding &lt; 0 + entry ≥ 1% below the signal price · switch short with Bybit retail ≥ 1.18 (⭐ in the DM)`
           : `⭐ A-setups: tagged ⭐ in the trade DM · bigger size <b>off</b>`,
         `📅 Days off (UTC): 🔥 pump shorts <b>${daysLabel(ap.skipDays('exhaust'))}</b> · 🔀 switch trades <b>${daysLabel(ap.skipDays('switch'))}</b>`,
+        c.weakSweep
+          ? `🎯 WEAK sweep entry: <b>ON</b> — ⚪ WEAK pump shorts (pump under ${SWEEP.weakBelowPumpPct}%) don't short at ✅ ENTER: they wait up to ${SWEEP.waitMin / 60}h for a push above the top and a 5-min close back under it · no sweep = no trade${ap.sweeps.size ? ` · waiting now: ${[...ap.sweeps.values()].map(w => escapeHtml(w.symbol)).join(', ')}` : ''}`
+          : `🎯 WEAK sweep entry: <b>off</b> — WEAK pump shorts short at ✅ ENTER like the others`,
         c.beAtPct > 0
           ? `🛡️ Tighter stop: <b>ON</b> — once a trade is <b>+${c.beAtPct}%</b> in profit before TP1, its stop moves from −${PUMP_RULES.slPct}% to <b>${beStopLabel(c)}</b> (nothing is closed; open trades too)`
           : `🛡️ Tighter stop: <b>off</b> — the stop stays at −${PUMP_RULES.slPct}% until TP1 (set: +${beTrigger(c)}% → ${beStopLabel(c)})`,
@@ -2962,6 +2965,7 @@ class TelegramBot {
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
         [Markup.button.callback(`🐋 Crowd skip: ${Number(c.crowdSkipAt) > 0 ? `✅ ${ap.crowdLabel()}` : '⛔ OFF'} ⚙️`, 'ap_crowd')],
         [Markup.button.callback(`⭐ A-setup size: ${ap.aMult() > 1 ? `✅ ×${ap.aMult()}` : '⛔ OFF'} ⚙️`, 'ap_asize')],
+        [Markup.button.callback(`🎯 WEAK: wait for sweep: ${c.weakSweep ? '✅ ON' : '⛔ OFF'}`, 'ap_sweep')],
         [Markup.button.callback(`📅 Trading days: ${ap.skipDays('exhaust').length || ap.skipDays('switch').length ? `🔥 ${daysLabel(ap.skipDays('exhaust'))} · 🔀 ${daysLabel(ap.skipDays('switch'))} off` : 'all on'} ⚙️`, 'ap_days')],
         [Markup.button.callback(`📣 🔥 Pump short posts: ${c.channelExhaust !== false ? '✅' : '⛔'}`, 'ap_ch_exhaust')],
         [Markup.button.callback(`📣 🔀🟢 Switch long posts: ${c.channelLongs !== false ? '✅' : '⛔'}`, 'ap_ch_long'),
@@ -3582,6 +3586,20 @@ class TelegramBot {
         await ctx.replyWithHTML(`🛡️ Tighter stop <b>ON</b> — once an auto trade is <b>+${r1(at)}%</b> in profit before TP1, its stop moves from −${sl}% to <b>${beStopLabel(ap.config)}</b>.\n` +
           `<i>Nothing is closed and the TPs stay. Open auto trades are included. Backtest best: +4.5% → −5%.</i>`);
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+    apAction('ap_sweep', async (ctx, ap) => {
+      await ap.update({ weakSweep: !ap.config.weakSweep });
+      await ack(ctx, `WEAK sweep entry: ${ap.config.weakSweep ? 'ON' : 'OFF'}`);
+      await showAutoPump(ctx, true);
+      if (ap.config.weakSweep) {
+        await ctx.replyWithHTML(`🎯 <b>WEAK sweep entry ON</b>\n` +
+          `⚪ WEAK pump shorts (pump under ${SWEEP.weakBelowPumpPct}%) now wait at ✅ ENTER: short only after price pushes above the top and a 5-minute candle closes back under it, within ${SWEEP.waitMin / 60}h. No sweep = no trade. Stop stays −${PUMP_RULES.slPct}%, same TPs.\n` +
+          `PUMP ONLY / STRONG / PERFECT and switch trades keep the normal entry (the sweep made less on them in the backtest).\n` +
+          `<i>Backtest on WEAK, $150/trade: Jun–Oct +$595 → +$453 (per trade $1.82 → $3.43, losing trades 103 → 34) · Dec–May +$353 → +$218 ($0.74 → $1.13, 168 → 65). ` +
+          `Real WEAK shorts since 10 Oct: −$78 → +$90. Fewer, better trades; the backtest total is lower. You get a DM when a wait starts, when it shorts and when it gives up.</i>`).catch(() => {});
+      } else if (ap.sweeps.size) {
+        await ctx.replyWithHTML(`🎯 WEAK sweep entry OFF for new signals. ${ap.sweeps.size} wait(s) already running finish by the sweep rule: ${[...ap.sweeps.values()].map(w => escapeHtml(w.symbol)).join(', ')}.`).catch(() => {});
+      }
     });
     apAction('ap_half', async (ctx, ap) => {
       await ap.update({ halfOnFresh: !ap.config.halfOnFresh });

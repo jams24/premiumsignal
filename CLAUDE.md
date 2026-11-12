@@ -27,8 +27,9 @@ node --max-old-space-size=8000 src/tests/pumpcheck.js
 Replays the pump-signal history (`backtest/data` Jun–Oct, `backtest/data_early` Dec–May; git-ignored, fill with
 `sh backtest/update.sh`) through the bot's own pump code: `entryVerdict`, the signal-time re-check, `blockReason`
 (BTC pause, spot share, no-spot, days off), the no-spot switch (`switchSide` on the closed-candle 7-day run), TP/stop levels,
-early stop move, executor TP close sizes — with the live /autopump config from the DB (`--defaults` for code defaults;
-`--switch-on` counts switch trades while "switch real trades" is off). $150/trade, fees in. Switch trades enter 15 min
+early stop move, executor TP close sizes, the 🎯 WEAK sweep entry (`sweepScan`, when /autopump has it on) — with the live
+/autopump config from the DB (`--defaults` for code defaults; `--switch-on` counts switch trades while "switch real
+trades" is off; `--weak-sweep` forces the WEAK sweep entry on). $150/trade, fees in. Switch trades enter 15 min
 after the replay signal: the live scanner fires ~15–20 min after the replay's signal, so a replay entry at the signal
 itself overstates longs (the retired runner long showed +$457 there, ≈ $0 with the delay, −$69 live).
 - **MUST PASS before committing** changes to `src/collectors/pumpSignalCheck.js`, `src/engine/pumpAutoTrader.js`,
