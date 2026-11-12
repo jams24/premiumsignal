@@ -1,0 +1,654 @@
+<!-- SMC Playbook tab, inserted into the dashboard's tab-smc panel by src/dashboard.js. Self-contained: CSS scoped under .smc, one IIFE, ids prefixed smc-. -->
+<style>
+/* SMC Playbook tab: the dashboard's own tokens (dark only) plus a few chart colours. Everything is scoped under .smc. */
+.smc { --s-fg: var(--text); --s-muted: var(--text2); --s-faint: var(--muted); --s-line: var(--border); --s-surface: var(--surface); --s-soft: var(--surface2);
+  --s-up: var(--accent); --s-down: var(--danger); --s-liq: var(--gold); --s-sweep: #60a5fa;
+  --s-zone: rgba(239, 68, 68, 0.10); --s-fvg: rgba(245, 158, 11, 0.14); --s-ote: rgba(96, 165, 250, 0.14); --s-disc: rgba(16, 185, 129, 0.10);
+  --s-risk: rgba(239, 68, 68, 0.14); --s-reward: rgba(96, 165, 250, 0.14);
+  max-width: 980px; margin: 0 auto; padding-block: 4px 48px; display: grid; gap: 44px; color: var(--s-fg); font: 400 15px/1.6 var(--font-body); }
+.smc header { display: grid; gap: 12px; }
+.smc .eyebrow { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--s-faint); }
+.smc h1 { font: 700 clamp(24px, 4.6vw, 34px)/1.1 var(--font-body); letter-spacing: -.01em; text-wrap: balance; }
+.smc h2 { font: 600 clamp(18px, 3vw, 21px)/1.25 var(--font-body); text-wrap: balance; display: flex; gap: 12px; align-items: baseline; }
+.smc h2 .n { font: 600 13px/1 var(--font-mono); color: var(--s-up); min-width: 1.6em; }
+.smc h3 { font: 600 16px/1.3 var(--font-body); }
+.smc p { max-width: 70ch; }
+.smc .lede { font-size: 16px; }
+.smc .muted { color: var(--s-muted); }
+.smc .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.smc b { font-weight: 600; }
+
+.smc nav.toc ol { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.smc nav.toc a { display: inline-flex; gap: 8px; align-items: baseline; padding: 6px 12px; border: 1px solid var(--s-line); border-radius: 999px;
+  background: var(--s-surface); color: var(--s-fg); text-decoration: none; font-size: 13px; }
+.smc nav.toc a span { font: 600 11px/1 var(--font-mono); color: var(--s-up); }
+.smc nav.toc a:hover { border-color: var(--s-up); }
+
+.smc section { display: grid; gap: 14px; scroll-margin-top: 16px; }
+.smc .figure { background: var(--s-surface); border: 1px solid var(--s-line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; min-width: 0; }
+.smc .chart { width: 100%; min-width: 0; overflow: hidden; }
+.smc .chart svg { display: block; }
+.smc .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.smc .controls input[type=range] { flex: 1 1 160px; min-width: 120px; accent-color: var(--s-up); }
+.smc button { font: 500 13px/1 var(--font-body); color: var(--s-fg); background: var(--s-soft); border: 1px solid var(--s-line); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+.smc button:hover { border-color: var(--s-up); }
+.smc button:focus-visible, .smc input:focus-visible, .smc a:focus-visible { outline: 2px solid var(--s-sweep); outline-offset: 2px; }
+.smc button.primary { background: var(--s-up); border-color: var(--s-up); color: #04120c; font-weight: 600; }
+.smc .counter { font: 400 12px/1 var(--font-mono); color: var(--s-muted); font-variant-numeric: tabular-nums; min-width: 9em; text-align: right; }
+.smc .caption { font-size: 14.5px; padding: 10px 12px; background: var(--s-soft); border-radius: 6px; min-height: 3.2em; max-width: none; }
+
+.smc ol.notes { list-style: none; display: grid; gap: 2px; }
+.smc ol.notes button { width: 100%; text-align: left; display: grid; grid-template-columns: 4.6em 1fr; gap: 10px; background: transparent; border: 0;
+  border-radius: 6px; padding: 8px 10px; font: 400 14.5px/1.5 var(--font-body); }
+.smc ol.notes button:hover { background: var(--s-soft); }
+.smc ol.notes button .k { font: 500 12px/1.9 var(--font-mono); color: var(--s-faint); }
+.smc ol.notes button.on { background: var(--s-soft); box-shadow: inset 3px 0 0 var(--s-up); }
+
+.smc svg text { font: 500 12px var(--font-body); fill: var(--s-fg); paint-order: stroke; stroke: var(--s-surface); stroke-width: 3.5px; stroke-linejoin: round; }
+.smc svg text.ax { font: 400 10.5px var(--font-mono); fill: var(--s-faint); stroke-width: 0; }
+.smc svg .grid { stroke: var(--s-line); stroke-width: 1; }
+.smc svg .cu { fill: var(--s-up); } .smc svg .cd { fill: var(--s-down); }
+.smc svg .wu { stroke: var(--s-up); stroke-width: 1.2; } .smc svg .wd { stroke: var(--s-down); stroke-width: 1.2; }
+.smc svg .z-supply, .smc svg .z-prem { fill: var(--s-zone); } .smc svg .z-fvg { fill: var(--s-fvg); } .smc svg .z-ote { fill: var(--s-ote); } .smc svg .z-disc { fill: var(--s-disc); }
+.smc svg .l-liq, .smc svg .l-top { stroke: var(--s-liq); stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; }
+.smc svg .l-bos { stroke: var(--s-fg); stroke-width: 1.2; fill: none; }
+.smc svg .l-choch { stroke: var(--s-sweep); stroke-width: 1.5; stroke-dasharray: 7 3; fill: none; }
+.smc svg .l-stop { stroke: var(--s-down); stroke-width: 1.4; stroke-dasharray: 2 3; fill: none; }
+.smc svg .l-tight { stroke: var(--s-muted); stroke-width: 1.4; stroke-dasharray: 2 3; fill: none; }
+.smc svg .l-tp { stroke: var(--s-up); stroke-width: 1.3; stroke-dasharray: 5 3; fill: none; }
+.smc svg .l-entry { stroke: var(--s-sweep); stroke-width: 1.5; fill: none; }
+.smc svg .l-eq { stroke: var(--s-muted); stroke-width: 1.2; stroke-dasharray: 3 3; fill: none; }
+.smc svg .risk { fill: var(--s-risk); } .smc svg .reward { fill: var(--s-reward); }
+.smc svg text.t-liq, .smc svg text.t-top { fill: var(--s-liq); } .smc svg text.t-choch, .smc svg text.t-entry, .smc svg text.t-sweep { fill: var(--s-sweep); }
+.smc svg text.t-stop { fill: var(--s-down); } .smc svg text.t-tp { fill: var(--s-up); }
+.smc svg text.t-tight, .smc svg text.t-eq, .smc svg text.t-struct, .smc svg text.t-zone { fill: var(--s-muted); }
+.smc svg text.t-struct { font: 600 11.5px var(--font-mono); }
+.smc svg .m-sweep { fill: var(--s-sweep); } .smc svg .m-bot { fill: var(--s-fg); } .smc svg .m-stop { fill: var(--s-down); } .smc svg .m-tp { fill: var(--s-up); } .smc svg .m-struct { fill: var(--s-muted); }
+.smc svg circle { stroke: var(--s-surface); stroke-width: 2; }
+
+.smc .drills { display: grid; gap: 24px; }
+.smc .drill { display: grid; gap: 12px; }
+.smc .drill .q { font-weight: 500; }
+.smc .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.smc .choices button[aria-pressed="true"] { border-color: var(--s-fg); }
+.smc .choices button:disabled { cursor: default; opacity: .7; }
+.smc .choices button.right { border-color: var(--s-up); color: var(--s-up); opacity: 1; }
+.smc .fb { padding: 12px 14px; border-radius: 6px; background: var(--s-soft); display: grid; gap: 6px; max-width: none; }
+.smc .fb b { font-size: 15px; }
+.smc .fb.ok b { color: var(--s-up); } .smc .fb.bad b { color: var(--s-down); } .smc .fb.mix b { color: var(--s-liq); }
+.smc .score { font: 600 13px/1 var(--font-mono); color: var(--s-muted); }
+
+.smc .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.smc .card { background: var(--s-surface); border: 1px solid var(--s-line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.smc .card ol { padding-left: 20px; display: grid; gap: 6px; }
+.smc .card ol li::marker { font-family: var(--font-mono); color: var(--s-faint); font-size: 12px; }
+.smc .tag { justify-self: start; font: 600 11px/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; padding: 5px 8px; border-radius: 4px; background: var(--s-soft); color: var(--s-muted); }
+.smc .tag.go { color: var(--s-up); background: var(--accent-dim); } .smc .tag.no { color: var(--s-down); background: var(--danger-dim); }
+
+.smc .table-wrap { overflow-x: auto; background: var(--s-surface); border: 1px solid var(--s-line); border-radius: 10px; }
+.smc table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+.smc th, .smc td { padding: 10px 12px; text-align: left; vertical-align: top; }
+.smc thead th { font: 600 11px/1.3 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--s-faint); border-bottom: 1px solid var(--s-line); }
+.smc tbody tr + tr td { border-top: 1px solid var(--s-line); }
+.smc td.r { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.smc .pos { color: var(--s-up); } .smc .neg { color: var(--s-down); } .smc .mix { color: var(--s-liq); }
+.smc footer { font-size: 13px; color: var(--s-muted); border-top: 1px solid var(--s-line); padding-top: 16px; display: grid; gap: 6px; }
+/* grid tracks must be allowed to shrink, or the 640px table widens the whole tab on phones */
+.smc, .smc header, .smc section, .smc .figure, .smc .drills, .smc .drill { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 520px) { .smc .counter { min-width: 0; text-align: left; } .smc ol.notes button { grid-template-columns: 3.8em 1fr; } }
+@media (prefers-reduced-motion: reduce) { .smc * { scroll-behavior: auto; } }
+</style>
+<div class="smc" id="smc">
+  <header>
+    <div class="eyebrow">Manual trading · smart money concepts (SMC / ICT)</div>
+    <h1>SMC Short Playbook</h1>
+    <p class="lede">How smart-money traders read candles, taught one candle at a time. Press <b>▶ Replay</b> on any chart to watch the setup form, or tap a note to jump to that candle. Then test yourself on the drills at the end.</p>
+    <p class="muted">The lessons use made-up candles so each idea is clean. Lesson 7 is real: BARD on Bybit, 12 Nov 2026, the trade that stopped us out. The last two sections say which parts our own backtests support and which they don't.</p>
+  </header>
+
+  <nav class="toc" aria-label="Lessons">
+    <ol>
+      <li><a href="#smc-structure"><span>1</span>Market structure</a></li>
+      <li><a href="#smc-liquidity"><span>2</span>Liquidity &amp; the sweep</a></li>
+      <li><a href="#smc-breakout"><span>3</span>Sweep or breakout?</a></li>
+      <li><a href="#smc-supply"><span>4</span>Supply zone &amp; FVG</a></li>
+      <li><a href="#smc-premium"><span>5</span>Premium &amp; discount</a></li>
+      <li><a href="#smc-setup"><span>6</span>The full short setup</a></li>
+      <li><a href="#smc-bard"><span>7</span>BARD, 12 Nov</a></li>
+      <li><a href="#smc-drills"><span>8</span>Practice drills</a></li>
+      <li><a href="#smc-checklist"><span>9</span>Our checklist</a></li>
+      <li><a href="#smc-evidence"><span>10</span>What our tests say</a></li>
+    </ol>
+  </nav>
+
+  <section id="smc-structure" data-lesson="structure">
+    <h2><span class="n">1</span>Market structure: who is in control</h2>
+    <p>Everything starts with swings. Higher highs and higher lows mean buyers are in control. Lower highs and lower lows mean sellers are. A <b>BOS</b> (break of structure) is a close past the last swing in the trend's direction. A <b>CHoCH</b> (change of character) is the first close past a swing against the trend, the first warning that control is changing hands.</p>
+  </section>
+
+  <section id="smc-liquidity" data-lesson="liquidity">
+    <h2><span class="n">2</span>Liquidity and the sweep</h2>
+    <p>Above every obvious high sit stop-losses of shorts and buy orders of breakout traders. Below every obvious low sit longs' stops. SMC calls these pools <b>liquidity</b>. Large players need them to fill size, so price often spikes through a pool and reverses. That spike-and-fail is a <b>sweep</b> (also called a swing failure pattern).</p>
+  </section>
+
+  <section id="smc-breakout" data-lesson="breakout">
+    <h2><span class="n">3</span>Sweep or breakout?</h2>
+    <p>The same spike can be the start of a real breakout. The difference is the close. A sweep closes back below the level within a candle or two. A breakout closes above it and stays there. Shorting before the close back below is guessing.</p>
+  </section>
+
+  <section id="smc-supply" data-lesson="supply">
+    <h2><span class="n">4</span>Supply zone (order block) and fair value gap</h2>
+    <p>A strong drop usually starts where sellers placed big orders. SMC marks the last up candle before that drop as an <b>order block</b>, a supply zone. A drop that fast often leaves a <b>fair value gap</b> (FVG): three candles where the third candle's high never reaches the first candle's low. When price comes back up into these areas, sellers often defend them.</p>
+  </section>
+
+  <section id="smc-premium" data-lesson="premium">
+    <h2><span class="n">5</span>Premium and discount</h2>
+    <p>Take the last swing from high to low and split it at 50%. Above the middle is <b>premium</b>, where shorts are taken. Below is <b>discount</b>, where SMC traders look for longs. ICT's favourite short entry is the 62–79% retracement, which he calls the optimal trade entry (OTE).</p>
+  </section>
+
+  <section id="smc-setup" data-lesson="setup">
+    <h2><span class="n">6</span>The full short setup</h2>
+    <p>Now put the pieces together in the order a trader checks them: bearish structure, a bounce into premium or a supply zone, a sweep of the liquidity above, a lower-timeframe CHoCH, then an entry with the stop above the sweep and the target at the liquidity below.</p>
+  </section>
+
+  <section id="smc-bard" data-lesson="bard">
+    <h2><span class="n">7</span>Real example: BARD, 12 Nov 2026</h2>
+    <p>Bybit perp, 5-minute candles, 17:00–19:30 UTC. Our bot shorted this WEAK pump at ENTER and got stopped for −$62. Replay it to see where the sweep rule would have shorted instead, and why a tight SMC stop would also have been hit.</p>
+  </section>
+
+  <section id="smc-drills">
+    <h2><span class="n">8</span>Practice drills</h2>
+    <p>Each chart stops at a decision. Pick an answer, then watch what happened. Drills 1–5 have a right answer. Drill 6 doesn't; it shows the price of the sweep rule.</p>
+    <div class="score" id="smc-score" aria-live="polite">Score: 0 of 5 right</div>
+    <div class="drills" id="smc-drill-list"></div>
+  </section>
+
+  <section id="smc-checklist">
+    <h2><span class="n">9</span>Our manual short checklist</h2>
+    <p>Pump coins and big coins need different handling. Pump coins wick through tight stops: in our tests, every stop tighter than 8% lost money on them. Big coins allow a tight stop, but then the fees eat the edge.</p>
+    <div class="cols">
+      <div class="card">
+        <span class="tag go">Tested · pump coins</span>
+        <h3>WEAK pump short with the 🎯 sweep</h3>
+        <ol>
+          <li>The bot posts ENTER on a WEAK pump (pump under 40%).</li>
+          <li>Mark the 24h high. That's the top, with liquidity above it.</li>
+          <li>Wait for a 5m candle to wick above the top and close back below it. Allow 2 hours.</li>
+          <li>If price closes above and holds for 6 candles, the new high becomes the top. Keep waiting.</li>
+          <li>Short at the close. If that candle closed more than 10 minutes ago, skip it.</li>
+          <li>Stop 8% above entry, never just above the wick. TPs at −5%, −12%, −20%, −30%.</li>
+          <li>No sweep in 2 hours: no trade. You will miss some winners this way.</li>
+        </ol>
+      </div>
+      <div class="card" id="smc-majors-card">
+        <span class="tag no">Tested · loses after fees</span>
+        <h3>Big coins with a tight stop</h3>
+        <p>We tested this on a year of 15m candles (Nov 2025 – Nov 2026) for BTC, ETH, BNB, DOGE, ADA and AVAX. The rule: short when a 15m candle sweeps a 1H swing high and closes back below it, with the stop just above the sweep and a target of 1–3R, using Bybit fees.</p>
+        <ol>
+          <li>Tight stop (median 0.44%), with the bearish 4H and premium filters: <b class="neg">−0.19R per trade</b> over 1,045 trades. It loses in both halves of the year and on all 6 coins.</li>
+          <li>Before fees it makes +0.10R per trade. The 0.11% round-trip fee is a quarter of a 0.44% stop, so fees cost 0.29R a trade.</li>
+          <li>Wider stops (0.6–3%) only get to break-even: +0.05R per trade at 2R, and negative with the next stop setting.</li>
+          <li>The slower version (4H swing high, 1H trigger) loses too: −0.26R per trade.</li>
+        </ol>
+        <p class="muted">A tight stop on a big coin isn't cheap risk: the fee becomes a big part of it. We won't send big-coin signals until a version passes this test.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="smc-evidence">
+    <h2><span class="n">10</span>What our tests say</h2>
+    <p>SMC is popular and easy to draw after the fact. When we turned its rules into exact code and replayed them with fees, most versions lost money. The table lists what we tested and the result.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Setup</th><th>Market and period</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>🎯 Sweep-and-reclaim short, 8% stop, WEAK pumps</td><td>Live auto shorts since 10 Oct</td><td class="r pos">−$78 → +$90</td></tr>
+          <tr><td>Same</td><td>November real trades (BARD, INIT, EDGE, CAP, FLUID …)</td><td class="r pos">−$173.51 → +$116.70</td></tr>
+          <tr><td>Same</td><td>Replay Jun–Oct / Dec–May (fewer trades, better entries)</td><td class="r mix">+$596 → +$453 / +$353 → +$218</td></tr>
+          <tr><td>Same, but stop just above the sweep wick</td><td>Pump coin replay</td><td class="r mix">+$93 / −$36</td></tr>
+          <tr><td>Sweep entry on STRONG / PERFECT or switch shorts</td><td>Pump coin replay</td><td class="r neg">worse in both periods</td></tr>
+          <tr><td>ICT 4H FVG return (the gold video)</td><td>Gold, BTC, ETH, pump coins</td><td class="r neg">gold ≈ 0 to +0.3R, big coins lose</td></tr>
+          <tr><td>New York first hour and Asia range sweep</td><td>BTC, ETH, gold, QQQ (1m)</td><td class="r neg">≈ 0R before fees, loses after</td></tr>
+          <tr><td>Asia range and previous-day high/low sweeps</td><td>Forex majors</td><td class="r neg">loses in both halves</td></tr>
+          <tr id="smc-majors-row"><td>1H swing-high sweep, 15m close back below, tight stop</td><td>BTC, ETH, BNB, DOGE, ADA, AVAX, 12 months</td><td class="r neg">−0.19R per trade (+0.10R before fees)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">The sweep rule's gain comes from a better entry price, not from finding more trades. In the replay, about 2 of every 3 WEAK winners never sweep the top (148 of 224 in Jun–Oct, 222 of 309 in Dec–May), so the rule skips them. It also skips about 4 in 10 losers. On the trades it does take, the result goes from −$91 to +$453 (Jun–Oct) and from −$584 to +$218 (Dec–May).</p>
+  </section>
+
+  <footer>
+    <p>Not financial advice. This tab teaches chart concepts and reports our own backtests. It does not tell you what to trade.</p>
+    <p>Lesson charts 1–6 and the drills use invented candles. BARD candles: Bybit BARDUSDT perpetual, 5m, 12 Nov 2026 17:00–19:30 UTC.</p>
+  </footer>
+</div>
+<script>
+(() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  // closes → [o, h, l, c]; H / L / O pin exact highs, lows, opens where the lesson needs a precise level
+  function gen(closes, o = {}) {
+    const r = rng(o.seed || 11), w = o.wick ?? 0.0022, H = o.H || {}, L = o.L || {}, O = o.O || {};
+    return closes.map((c, i) => {
+      const op = O[i] ?? (i ? closes[i - 1] : c * 0.997);
+      const top = Math.max(op, c), bot = Math.min(op, c), s = w * c;
+      const h = H[i] != null ? Math.max(H[i], top) : top + r() * s;
+      const l = L[i] != null ? Math.min(L[i], bot) : bot - r() * s;
+      return [op, h, l, c];
+    });
+  }
+  function mk(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+  function txt(parent, x, y, s, cls, anchor = 'start') { const t = mk('text', { x, y, class: cls || '', 'text-anchor': anchor }, parent); t.textContent = s; return t; }
+  function ticks(lo, hi, m) {
+    const raw = (hi - lo) / m, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    const s = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p, out = [];
+    for (let v = Math.ceil(lo / s) * s; v <= hi + 1e-12; v += s) out.push(v);
+    return { out, dec: Math.max(0, -Math.floor(Math.log10(s) + 1e-9)) };
+  }
+
+  // n = candles shown; post = show annotations flagged post (drill answers)
+  function draw(host, S, n, post) {
+    const C = S.candles, N = C.length, d = S.digits ?? 1;
+    const W = Math.max(300, Math.floor(host.clientWidth || 640)), H = Math.round(Math.min(420, Math.max(W < 560 ? 340 : 280, W * 0.5)));
+    const padL = 8, padR = W < 480 ? 50 : 60, padT = 22, padB = 24;
+    let lo = Infinity, hi = -Infinity;
+    C.forEach(k => { lo = Math.min(lo, k[2]); hi = Math.max(hi, k[1]); });
+    (S.ann || []).forEach(a => { for (const v of [a.y, a.y0, a.y1, a.stop, a.tp, a.tp2]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+    const pad = (hi - lo) * 0.07; lo -= pad; hi += pad;
+    const slot = (W - padL - padR) / N, X = i => padL + slot * (i + 0.5), Y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
+    const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': S.aria || '' });
+    const tk = ticks(lo, hi, 5);
+    tk.out.forEach(v => { mk('line', { x1: padL, x2: W - padR + 4, y1: Y(v), y2: Y(v), class: 'grid' }, svg); txt(svg, W - padR + 8, Y(v) + 3.5, v.toFixed(tk.dec), 'ax'); });
+    const every = S.xEvery || 5;
+    for (let i = 0; i < N; i += every) txt(svg, X(i), H - 7, S.times ? S.times[i] : String(i + 1), 'ax', 'middle');
+
+    const seen = a => (a.at ?? 0) <= n - 1 && (!a.post || post);
+    const xEnd = (i0, i1) => X(Math.max(i0, Math.min(i1 ?? N - 1, n - 1))) + slot / 2;
+    const anns = (S.ann || []).filter(seen);
+
+    for (const a of anns.filter(a => a.type === 'zone')) {
+      const x1 = X(a.i0) - slot / 2, x2 = xEnd(a.i0, a.i1), yT = Y(Math.max(a.y0, a.y1)), yB = Y(Math.min(a.y0, a.y1));
+      mk('rect', { x: x1, y: yT, width: Math.max(1, x2 - x1), height: Math.max(1, yB - yT), class: 'z-' + a.cls }, svg);
+      if (a.label) {
+        const lp = a.lp || 'in-right';
+        if (lp === 'in-right') txt(svg, x2 - 5, yT + 14, a.label, 't-zone', 'end');
+        else if (lp === 'in-left') txt(svg, x1 + 5, yT + 14, a.label, 't-zone');
+        else if (lp === 'above-left') txt(svg, x1 + 3, yT - 6, a.label, 't-zone');
+        else if (lp === 'bottom-right') txt(svg, x2 - 5, yB - 6, a.label, 't-zone', 'end');
+      }
+    }
+    for (const a of anns.filter(a => a.type === 'box')) {
+      const x1 = X(a.i0) - slot / 2, x2 = xEnd(a.i0, a.i1), w = Math.max(1, x2 - x1);
+      const yE = Y(a.entry), yS = Y(a.stop), yT = Y(a.tp);
+      mk('rect', { x: x1, y: Math.min(yE, yS), width: w, height: Math.abs(yS - yE), class: 'risk' }, svg);
+      mk('rect', { x: x1, y: Math.min(yE, yT), width: w, height: Math.abs(yT - yE), class: 'reward' }, svg);
+      a._x = [x1, x2];
+    }
+    const bw = Math.max(2, Math.min(14, slot * 0.62));
+    for (let i = 0; i < n; i++) {
+      const [o, h, l, c] = C[i], up = c >= o;
+      mk('line', { x1: X(i), x2: X(i), y1: Y(h), y2: Y(l), class: up ? 'wu' : 'wd' }, svg);
+      const y1 = Y(Math.max(o, c)), y2 = Y(Math.min(o, c));
+      mk('rect', { x: X(i) - bw / 2, y: y1, width: bw, height: Math.max(1.2, y2 - y1), class: up ? 'cu' : 'cd' }, svg);
+    }
+    for (const a of anns.filter(a => a.type === 'box')) {
+      const [x1, x2] = a._x, f = v => v.toFixed(d), R = v => Math.abs(a.entry - v) / Math.abs(a.stop - a.entry);
+      mk('line', { x1, x2, y1: Y(a.stop), y2: Y(a.stop), class: 'l-stop' }, svg);
+      mk('line', { x1, x2, y1: Y(a.entry), y2: Y(a.entry), class: 'l-entry' }, svg);
+      mk('line', { x1, x2, y1: Y(a.tp), y2: Y(a.tp), class: 'l-tp' }, svg);
+      txt(svg, x2 - 4, Y(a.stop) - 6, (a.stopLabel || 'Stop') + ' ' + f(a.stop), 't-stop', 'end');
+      txt(svg, x2 - 4, Y(a.entry) - 6, (a.entryLabel || 'Short') + ' ' + f(a.entry), 't-entry', 'end');
+      txt(svg, x2 - 4, Y(a.tp) + 15, (a.tpLabel || 'Target') + ' ' + f(a.tp) + (a.noR ? '' : ` · ${R(a.tp).toFixed(1)}R`), 't-tp', 'end');
+      if (a.tp2 != null) {
+        mk('line', { x1, x2, y1: Y(a.tp2), y2: Y(a.tp2), class: 'l-tp' }, svg);
+        txt(svg, x2 - 4, Y(a.tp2) + 15, (a.tp2Label || 'TP2') + ' ' + f(a.tp2) + (a.noR ? '' : ` · ${R(a.tp2).toFixed(1)}R`), 't-tp', 'end');
+      }
+    }
+    for (const a of anns.filter(a => a.type === 'line')) {
+      const x1 = X(a.i0) - slot * 0.3, x2 = xEnd(a.i0, a.i1) - slot * 0.1, y = Y(a.y);
+      mk('line', { x1, x2, y1: y, y2: y, class: 'l-' + a.cls }, svg);
+      if (!a.label || (a.minW && W < a.minW)) continue;
+      const lp = a.lp || 'mid', below = a.ly === 'below';
+      if (lp === 'mid') txt(svg, (x1 + x2) / 2, below ? y + 15 : y - 6, a.label, 't-' + a.cls, 'middle');
+      else if (lp === 'before') txt(svg, x1 - 5, y + 4, a.label, 't-' + a.cls, 'end');
+      else if (lp === 'after') txt(svg, x2 + 5, y + 4, a.label, 't-' + a.cls);
+      else if (lp === 'end') txt(svg, x2, below ? y + 15 : y - 6, a.label, 't-' + a.cls, 'end');
+    }
+    for (const a of anns.filter(a => a.type === 'mark')) {
+      const x = X(a.i), y = Y(a.y), above = a.pos !== 'below';
+      mk('circle', { cx: x, cy: y, r: a.cls === 'struct' ? 3.5 : 4.5, class: 'm-' + a.cls }, svg);
+      if (!a.label || (a.minW && W < a.minW)) continue;
+      const anchor = a.anchor || (x > W * 0.72 ? 'end' : x < W * 0.2 ? 'start' : 'middle');
+      const dx = anchor === 'end' ? 6 : anchor === 'start' ? -6 : 0;
+      txt(svg, x + dx, above ? y - 10 : y + 19, a.label, 't-' + a.cls, anchor);
+    }
+    host.replaceChildren(svg);
+  }
+
+  function observe(host, fn) {
+    let w = 0, raf = 0;
+    new ResizeObserver(() => { const cw = Math.floor(host.clientWidth); if (cw && cw !== w) { w = cw; cancelAnimationFrame(raf); raf = requestAnimationFrame(fn); } }).observe(host);
+  }
+
+  // ---------- lessons ----------
+  const L = {};
+  L.structure = {
+    aria: 'Uptrend with higher highs and higher lows, a CHoCH, then lower highs and breaks of structure down',
+    candles: gen([100, 101.4, 102.8, 104.0, 103.0, 102.2, 103.6, 105.0, 106.4, 105.4, 104.4, 104.0, 105.4, 107.1, 108.2, 107.0, 105.8, 104.8, 103.0, 104.0, 105.2, 106.0, 105.0, 103.8, 102.4, 101.6, 102.6, 103.6, 102.6, 101.4, 100.4, 99.6],
+      { L: { 5: 101.8, 11: 103.6, 18: 102.7, 25: 101.2 }, H: { 8: 106.9, 14: 108.8, 21: 106.5, 27: 104.0 } }),
+    ann: [
+      { type: 'mark', i: 5, y: 101.8, label: 'HL', cls: 'struct', pos: 'below', at: 6 },
+      { type: 'mark', i: 8, y: 106.9, label: 'HH', cls: 'struct', at: 9 },
+      { type: 'mark', i: 11, y: 103.6, label: 'HL', cls: 'struct', pos: 'below', at: 12 },
+      { type: 'line', y: 106.9, i0: 8, i1: 13, cls: 'bos', label: 'BOS', at: 13 },
+      { type: 'mark', i: 14, y: 108.8, label: 'HH', cls: 'struct', at: 15 },
+      { type: 'line', y: 103.6, i0: 11, i1: 18, cls: 'choch', label: 'CHoCH', at: 18 },
+      { type: 'mark', i: 21, y: 106.5, label: 'LH', cls: 'struct', at: 22 },
+      { type: 'line', y: 102.7, i0: 18, i1: 24, cls: 'bos', label: 'BOS', at: 24 },
+      { type: 'mark', i: 25, y: 101.2, label: 'LL', cls: 'struct', pos: 'below', at: 26 },
+      { type: 'mark', i: 27, y: 104.0, label: 'LH', cls: 'struct', at: 28 },
+      { type: 'line', y: 101.2, i0: 25, i1: 30, cls: 'bos', label: 'BOS', at: 30 },
+    ],
+    notes: [
+      { at: 6, t: 'Each dip stops above the last one: higher lows (HL). Each push goes past the last high: higher highs (HH). Buyers are in control.' },
+      { at: 13, t: 'A close above the last higher high is a BOS in the trend direction. The uptrend is still healthy.' },
+      { at: 18, t: 'This candle closes below the last higher low. That is a CHoCH: the first sign sellers are taking over. From here, longs are off the table.' },
+      { at: 22, t: 'The bounce fails below the old high: a lower high (LH).' },
+      { at: 24, t: 'A close below the CHoCH low: BOS down. Structure is now bearish, lower highs and lower lows.' },
+      { at: 30, t: 'Every new lower low confirms it. In this structure we look for shorts when price bounces into a lower high.' },
+    ],
+  };
+  const liqBase = [100.6, 101.3, 102.2, 103.4, 102.6, 101.6, 100.8, 101.8, 102.9, 103.5, 102.7, 101.7, 100.9, 101.9, 102.8, 103.4, 103.2, 103.6];
+  L.liquidity = {
+    aria: 'Range with equal highs and equal lows; price sweeps the highs, closes back below, then runs to the equal lows',
+    candles: gen(liqBase.concat([103.5, 102.6, 101.6, 100.8, 100.0, 99.2, 99.6]),
+      { O: { 18: 103.6 }, H: { 3: 104.0, 9: 104.05, 18: 104.9 }, L: { 0: 100.3, 6: 100.2, 12: 100.25, 18: 103.4, 22: 99.7 } }),
+    ann: [
+      { type: 'line', y: 104.05, i0: 3, i1: 18, cls: 'liq', label: 'Equal highs · buy-side liquidity', at: 9 },
+      { type: 'line', y: 100.2, i0: 6, i1: 22, cls: 'liq', label: 'Equal lows · sell-side liquidity', ly: 'below', at: 12 },
+      { type: 'mark', i: 18, y: 104.9, label: 'Sweep: wick above, close back below', cls: 'sweep', anchor: 'end', at: 18 },
+      { type: 'box', i0: 19, i1: 24, entry: 103.5, stop: 105.1, tp: 100.25, at: 18 },
+      { type: 'mark', i: 22, y: 99.7, label: 'Sell-side taken', cls: 'tp', pos: 'below', at: 22 },
+    ],
+    notes: [
+      { at: 3, t: 'Every swing high has shorts\' stop-losses and breakout buy orders resting just above it.' },
+      { at: 9, t: 'Two highs at the same price (equal highs) make an obvious pool of orders: buy-side liquidity.' },
+      { at: 12, t: 'Same below the equal lows: longs\' stops and breakout sells. Sell-side liquidity.' },
+      { at: 18, t: 'Price spikes above the equal highs, fills those buy orders, and the candle closes back below. That is a sweep. Big sellers used the buyers\' orders to fill their shorts.' },
+      { at: 19, t: 'Short on the close back below. Stop above the sweep wick. First target: the sell-side liquidity at the equal lows.' },
+      { at: 22, t: 'The equal lows get taken. Target reached, about 2R (twice the risk).' },
+    ],
+  };
+  L.breakout = {
+    aria: 'Same range, but price closes above the equal highs, retests them as support and keeps rising',
+    candles: gen(liqBase.concat([104.6, 105.2, 104.6, 105.6, 106.4, 107.0, 106.6, 107.6]),
+      { O: { 18: 103.6 }, H: { 3: 104.0, 9: 104.05, 18: 104.9 }, L: { 0: 100.3, 6: 100.2, 12: 100.25, 20: 104.2 } }),
+    ann: [
+      { type: 'line', y: 104.05, i0: 3, i1: 25, cls: 'liq', label: 'Equal highs', at: 9 },
+      { type: 'line', y: 100.2, i0: 6, i1: 25, cls: 'liq', label: 'Equal lows', ly: 'below', at: 12 },
+      { type: 'mark', i: 18, y: 104.9, label: 'Closes above the level', cls: 'stop', anchor: 'end', at: 18 },
+      { type: 'mark', i: 20, y: 104.2, label: 'Retest holds', cls: 'tp', pos: 'below', at: 20 },
+    ],
+    notes: [
+      { at: 18, t: 'Same spike as lesson 2, but this candle closes above the equal highs.' },
+      { at: 19, t: 'The next candle stays above too. No close back below means no sweep. A short here is a guess.' },
+      { at: 20, t: 'Price drops back to the old highs and they hold as support. That retest is buyers defending the breakout.' },
+      { at: 23, t: 'Breakout. The bot uses the same idea: if price holds above the top for 6 candles, the new high becomes the level to watch.' },
+      { at: 25, t: 'Rule of thumb: a sweep is a wick through the level and a close back inside within 1–2 candles. Anything else, stand aside.' },
+    ],
+  };
+  L.supply = {
+    aria: 'Last up candle before a strong drop marked as a supply zone, a fair value gap inside the drop, price returning into both and getting rejected',
+    candles: gen([100.0, 100.8, 101.6, 102.3, 103.0, 100.6, 98.8, 98.2, 97.6, 98.4, 99.3, 100.2, 101.0, 101.9, 101.2, 100.2, 99.0, 97.8, 96.9, 96.4, 96.8],
+      { O: { 0: 100.6, 4: 102.3, 5: 103.0, 14: 101.9 }, H: { 4: 103.4, 5: 103.1, 6: 100.9, 13: 102.0, 14: 102.7 }, L: { 0: 99.5, 4: 102.15, 5: 100.4, 6: 98.6, 19: 96.2 } }),
+    ann: [
+      { type: 'zone', y0: 102.3, y1: 103.4, i0: 4, i1: 20, cls: 'supply', label: 'Supply zone (order block)', at: 4 },
+      { type: 'zone', y0: 100.9, y1: 102.15, i0: 5, i1: 20, cls: 'fvg', label: 'Fair value gap', at: 6 },
+      { type: 'line', y: 99.5, i0: 0, i1: 6, cls: 'bos', label: 'BOS', ly: 'below', at: 6 },
+      { type: 'mark', i: 14, y: 102.7, label: 'Rejected in the zone', cls: 'sweep', at: 14 },
+      { type: 'box', i0: 15, i1: 20, entry: 101.2, stop: 103.6, tp: 96.7, at: 14 },
+    ],
+    notes: [
+      { at: 4, t: 'The last green candle before a strong drop. SMC calls it an order block: where sellers loaded up. Mark from its open to its high.' },
+      { at: 6, t: 'The drop is so fast it leaves a gap: this candle\'s high never reaches the low two candles back. That is a bearish FVG. The close below the old low is also a BOS, which makes the zone above valid.' },
+      { at: 12, t: 'Price climbs back into the gap. Gaps often get partly filled before the move continues.' },
+      { at: 14, t: 'It pokes into the supply zone and gets rejected: long upper wick, close back down. Short on the close.' },
+      { at: 15, t: 'Stop above the whole zone: if price closes above it, the idea is wrong. Target below the last low.' },
+      { at: 19, t: 'Target hit, about 1.9R.' },
+    ],
+  };
+  L.premium = {
+    aria: 'A swing from 110 down to 100 split at 50 percent into premium and discount, with a short taken in the 62 to 79 percent band',
+    candles: gen([109.2, 108.6, 107.4, 106.8, 105.5, 104.9, 103.6, 102.8, 101.6, 100.9, 100.4, 101.2, 102.3, 103.6, 104.4, 105.6, 106.6, 106.0, 104.8, 103.5, 102.4, 101.2, 100.3, 99.4, 99.8],
+      { O: { 0: 109.6, 17: 106.6 }, H: { 0: 110.0, 17: 107.3 }, L: { 10: 100.0, 23: 99.1 } }),
+    ann: [
+      { type: 'zone', y0: 105, y1: 110, i0: 10, i1: 24, cls: 'prem', label: 'Premium · shorts', at: 10 },
+      { type: 'zone', y0: 100, y1: 105, i0: 10, i1: 24, cls: 'disc', label: 'Discount · no shorts', at: 10 },
+      { type: 'line', y: 105, i0: 10, i1: 24, cls: 'eq', label: '50%', lp: 'before', at: 10 },
+      { type: 'zone', y0: 106.2, y1: 107.9, i0: 13, i1: 24, cls: 'ote', label: 'OTE 62–79%', lp: 'in-left', at: 13 },
+      { type: 'mark', i: 17, y: 107.3, label: 'Short from premium', cls: 'sweep', anchor: 'end', at: 17 },
+      { type: 'box', i0: 18, i1: 24, entry: 106.0, stop: 107.6, tp: 100.0, at: 17 },
+    ],
+    notes: [
+      { at: 10, t: 'Measure the last swing: 110 high to 100 low. The 50% line splits it. Above is premium (expensive), below is discount (cheap).' },
+      { at: 13, t: 'In a downtrend, shorts are only taken in premium. ICT\'s optimal trade entry (OTE) is the 62–79% retracement of the swing.' },
+      { at: 17, t: 'Price reaches the OTE band and rejects. Short, with the stop above the wick.' },
+      { at: 23, t: 'Shorting from premium leaves room to the low: here about 3.8R. A short in discount has little room left and fights the bounce.' },
+    ],
+  };
+  L.setup = {
+    aria: 'Full short setup: supply zone, equal lows below, inducement high swept into the zone, CHoCH, entry on the retest, targets at the lows',
+    candles: gen([107.4, 105.6, 104.2, 102.9, 102.3, 102.9, 103.6, 102.8, 102.2, 102.9, 103.8, 104.7, 105.6, 105.1, 105.8, 106.0, 104.5, 105.2, 104.0, 103.0, 102.3, 101.5, 100.6, 99.8, 100.2],
+      { O: { 0: 106.2, 15: 105.8 }, H: { 0: 108.0, 12: 106.4, 15: 106.9, 17: 105.5 }, L: { 0: 106.0, 4: 101.9, 8: 101.92, 13: 104.85, 16: 104.3, 23: 99.5 } }),
+    ann: [
+      { type: 'zone', y0: 106.2, y1: 108.0, i0: 0, i1: 24, cls: 'supply', label: 'Supply zone (higher timeframe)', lp: 'above-left', at: 1 },
+      { type: 'line', y: 101.9, i0: 4, i1: 21, cls: 'liq', label: 'Equal lows · target', ly: 'below', at: 8 },
+      { type: 'line', y: 106.4, i0: 12, i1: 15, cls: 'liq', at: 13 },
+      { type: 'mark', i: 12, y: 106.4, label: 'Inducement high', cls: 'struct', anchor: 'end', at: 13 },
+      { type: 'mark', i: 15, y: 106.9, label: 'Sweep', cls: 'sweep', anchor: 'start', at: 15 },
+      { type: 'line', y: 104.85, i0: 13, i1: 16, cls: 'choch', label: 'CHoCH', ly: 'below', at: 16 },
+      { type: 'box', i0: 17, i1: 24, entry: 105.4, stop: 107.1, tp: 101.9, tp2: 99.6, tpLabel: 'TP1', at: 17 },
+    ],
+    notes: [
+      { at: 3, t: 'Start on the higher timeframe: downtrend, with a supply zone left at the top. Only shorts are on the menu.' },
+      { at: 8, t: 'Two equal lows form below: sell-side liquidity. That is where price is likely to go later, so it is the target.' },
+      { at: 12, t: 'Price bounces back toward the supply zone. A small high forms inside the bounce. SMC calls it inducement: early shorts put their stops above it.' },
+      { at: 15, t: 'Price sweeps that high, taps the supply zone and closes back below. Liquidity taken, zone respected.' },
+      { at: 16, t: 'The next candle closes below the bounce\'s last higher low: a CHoCH on the lower timeframe. Sellers are back.' },
+      { at: 17, t: 'Enter on the pullback at 105.4 instead of chasing the CHoCH candle. Stop 107.1 above the sweep, TP1 at the equal lows (2R), TP2 lower (3.4R).' },
+      { at: 21, t: 'TP1 hits when the equal lows are swept.' },
+      { at: 23, t: 'TP2 hits. If the pullback had never come, the trade is simply missed.' },
+    ],
+  };
+  const bardK = [[0.11299,0.12184,0.11036,0.12135],[0.12135,0.12971,0.11987,0.12514],[0.12514,0.12891,0.12232,0.12503],[0.12503,0.12837,0.1223,0.12591],[0.12591,0.13062,0.11959,0.1201],[0.1201,0.12347,0.11836,0.12221],[0.12221,0.12496,0.11721,0.12365],[0.12365,0.12721,0.12227,0.1238],[0.1238,0.12804,0.12345,0.12593],[0.12593,0.13231,0.11336,0.12232],[0.12232,0.12413,0.12011,0.1219],[0.1219,0.126,0.12096,0.12395],[0.12395,0.12694,0.12196,0.12616],[0.12616,0.12624,0.12299,0.12379],[0.12379,0.12925,0.12342,0.12908],[0.12908,0.13424,0.12828,0.13087],[0.13087,0.13281,0.13024,0.13187],[0.13187,0.13431,0.1298,0.13101],[0.13101,0.13958,0.13101,0.13955],[0.13955,0.13955,0.13555,0.13652],[0.13652,0.13771,0.13309,0.13523],[0.13523,0.13789,0.13259,0.13448],[0.13448,0.1347,0.13077,0.13281],[0.13281,0.1344,0.13172,0.1323],[0.1323,0.13504,0.13019,0.1343],[0.1343,0.13661,0.13258,0.13517],[0.13517,0.13521,0.13134,0.13297],[0.13297,0.135,0.13177,0.13324],[0.13324,0.13339,0.12547,0.12639],[0.12639,0.12823,0.12628,0.12721],[0.12721,0.12874,0.12558,0.12806]];
+  L.bard = {
+    aria: 'BARD 5 minute candles: 24h top at 0.13231, bot short at 0.12554 stopped at 18:30, sweep at 18:15 and a sweep short at 0.13087 that survives with an 8 percent stop',
+    candles: bardK, digits: 5, xEvery: 6, speed: 520,
+    times: bardK.map((_, i) => { const m = 17 * 60 + 5 * i; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }),
+    ann: [
+      { type: 'line', y: 0.13231, i0: 9, i1: 30, cls: 'top', label: '24h top 0.13231', lp: 'before', at: 9 },
+      { type: 'mark', i: 13, y: 0.12554, label: 'Bot short 0.12554', cls: 'bot', pos: 'below', at: 13 },
+      { type: 'line', y: 0.13558, i0: 13, i1: 18, cls: 'stop', label: 'its 8% stop 0.13558', lp: 'before', minW: 560, at: 13 },
+      { type: 'mark', i: 15, y: 0.13424, label: 'Sweep', cls: 'sweep', anchor: 'start', at: 15 },
+      { type: 'box', i0: 16, i1: 30, entry: 0.13087, stop: 0.14134, tp: 0.12433, entryLabel: 'Sweep short', stopLabel: '8% stop', tpLabel: 'TP1 −5%', noR: true, at: 16 },
+      { type: 'line', y: 0.13464, i0: 16, i1: 18, cls: 'tight', label: 'tight stop', lp: 'after', minW: 560, at: 17 },
+      { type: 'mark', i: 18, y: 0.13958, label: 'Bot short stopped (−$62)', cls: 'stop', anchor: 'end', at: 18 },
+    ],
+    notes: [
+      { at: 0, t: 'BARD has already pumped from 0.0864 to 0.12 in half an hour. The pump signal is WEAK (under 40%).' },
+      { at: 9, t: 'A wick to 0.13231 sets the 24h high. That is the top the 🎯 sweep rule watches, with buy-side liquidity above it.' },
+      { at: 13, t: 'The bot shorts at ENTER, 0.12554, below a fresh high with no sweep yet. Late longs still have fuel, and our stop sits above their target.' },
+      { at: 15, t: 'Sweep: the candle\'s high 0.13424 takes the 0.13231 top, and it closes back under at 0.13087.' },
+      { at: 16, t: 'The 🎯 rule would short here, around 0.13087. Stop 8% higher at 0.14134. TP1 at −5%, 0.12433.' },
+      { at: 18, t: 'Spike to 0.13958. The bot\'s ENTER short hits its 8% stop: −$62. A tight SMC stop just above the sweep wick (about 0.1346) is gone too. The sweep short\'s 8% stop survives.' },
+      { at: 28, t: 'Dump to 0.12547, just above TP1.' },
+      { at: 30, t: '19:30 close 0.12806: the sweep short would be about +2% and still open. The toggle was off, so this trade was not taken.' },
+    ],
+  };
+
+  function lesson(id) {
+    const S = L[id], sec = document.querySelector(`[data-lesson="${id}"]`), N = S.candles.length;
+    const fig = document.createElement('div'); fig.className = 'figure';
+    fig.innerHTML = `<div class="chart"></div>
+      <div class="controls">
+        <button type="button" class="primary" data-a="play">▶ Replay</button>
+        <button type="button" data-a="prev" aria-label="Previous candle">◀</button>
+        <button type="button" data-a="next" aria-label="Next candle">▶</button>
+        <input type="range" id="smc-rng-${id}" min="1" max="${N}" value="${N}" aria-label="Candles shown">
+        <span class="counter"></span>
+      </div>
+      <p class="caption" aria-live="polite"></p>`;
+    sec.appendChild(fig);
+    const ol = document.createElement('ol'); ol.className = 'notes'; sec.appendChild(ol);
+    const lab = i => S.times ? S.times[i] : 'C' + (i + 1);
+    S.notes.forEach(nt => { const li = document.createElement('li'); li.innerHTML = `<button type="button"><span class="k">${lab(nt.at)}</span><span></span></button>`; li.querySelector('span:last-child').textContent = nt.t; li.firstChild.onclick = () => { stop(); n = nt.at + 1; render(); }; ol.appendChild(li); });
+    const host = fig.querySelector('.chart'), range = fig.querySelector('input'), counter = fig.querySelector('.counter'), cap = fig.querySelector('.caption'), playBtn = fig.querySelector('[data-a=play]');
+    let n = N, timer = null;
+    function render() {
+      draw(host, S, n, true); range.value = n;
+      counter.textContent = (S.times ? S.times[n - 1] + ' · ' : '') + `candle ${n}/${N}`;
+      let cur = -1; S.notes.forEach((nt, k) => { if (nt.at <= n - 1) cur = k; });
+      [...ol.children].forEach((li, k) => li.firstChild.classList.toggle('on', k === cur));
+      cap.textContent = cur >= 0 ? S.notes[cur].t : 'Press Replay to watch it form.';
+    }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } playBtn.textContent = '▶ Replay'; }
+    playBtn.onclick = () => {
+      if (timer) return stop();
+      if (n >= N) n = 1;
+      playBtn.textContent = '❚❚ Pause'; render();
+      timer = setInterval(() => { if (n >= N) return stop(); n++; render(); }, S.speed || 420);
+    };
+    fig.querySelector('[data-a=prev]').onclick = () => { stop(); n = Math.max(1, n - 1); render(); };
+    fig.querySelector('[data-a=next]').onclick = () => { stop(); n = Math.min(N, n + 1); render(); };
+    range.oninput = () => { stop(); n = +range.value; render(); };
+    observe(host, render); render();
+  }
+  ['structure', 'liquidity', 'breakout', 'supply', 'premium', 'setup', 'bard'].forEach(lesson);
+
+  // ---------- drills ----------
+  const D = [
+    { title: 'Downtrend bounce', digits: 2,
+      candles: gen([54.0, 53.2, 52.1, 51.0, 49.9, 49.0, 48.5, 49.3, 50.4, 51.3, 52.0, 51.4, 50.9, 51.6, 52.0, 51.6, 51.9, 51.0, 50.2, 49.4, 48.6, 48.0, 48.3],
+        { O: { 16: 51.6 }, H: { 0: 54.4, 10: 52.3, 14: 52.32, 16: 52.85 }, L: { 6: 48.1, 21: 47.9 } }), d: 16,
+      q: 'Downtrend with lower highs. Price bounces into equal highs, wicks above them, and this candle closes back below. What do you do?',
+      ann: [
+        { type: 'line', y: 52.3, i0: 10, i1: 22, cls: 'liq', label: 'Equal highs', at: 14 },
+        { type: 'box', i0: 17, i1: 22, entry: 51.9, stop: 53.0, tp: 48.1, post: true, at: 16 },
+      ],
+      choices: [
+        { k: 'Short now', v: 'right', fb: 'Bearish structure, the liquidity above the equal highs is taken, and the candle closed back below. Stop above the wick (53.0), target the last low (48.1): about 3.5R.' },
+        { k: 'Wait for more', v: 'ok', fb: 'Not wrong, but every condition is already met. Waiting usually means a worse price.' },
+        { k: 'Skip it', v: 'wrong', fb: 'This is the textbook version: trend down, sweep of equal highs, close back below.' },
+      ],
+      result: 'Price drops to the target five candles later.' },
+    { title: 'Push through the highs', digits: 2,
+      candles: gen([18.0, 18.4, 18.9, 19.3, 19.0, 18.7, 19.1, 19.4, 19.2, 19.0, 19.3, 19.95, 20.3, 19.9, 20.6, 21.2, 21.8, 21.5, 22.3],
+        { O: { 11: 19.3 }, H: { 3: 19.6, 7: 19.62, 11: 20.1 }, L: { 0: 17.8, 5: 18.5, 13: 19.7 } }), d: 11,
+      q: 'Uptrend. Price pushes through the equal highs and this candle closes above them. Short it?',
+      ann: [
+        { type: 'line', y: 19.62, i0: 3, i1: 18, cls: 'liq', label: 'Equal highs', at: 7 },
+        { type: 'mark', i: 13, y: 19.7, label: 'Retest holds', cls: 'tp', pos: 'below', post: true, at: 13 },
+      ],
+      choices: [
+        { k: 'Short now', v: 'wrong', fb: 'No close back below means no sweep. In an uptrend, a close above the highs is a breakout, and a short here becomes the liquidity.' },
+        { k: 'Wait for more', v: 'ok', fb: 'Fine. Waiting shows the retest holding, and then you skip it.' },
+        { k: 'Skip it', v: 'right', fb: 'Uptrend plus a close above the level is a breakout. There is nothing to short.' },
+      ],
+      result: 'Price retests the old highs, holds, and runs another 12%.' },
+    { title: 'Sweep in the discount', digits: 1,
+      candles: gen([70, 71.5, 73.2, 74.6, 73.9, 75.6, 77.8, 79.9, 82.0, 84.1, 85.6, 84.4, 82.6, 81.0, 77.6, 76.4, 77.4, 76.8, 77.3, 78.9, 80.8, 82.6, 84.4, 86.6],
+        { O: { 18: 76.8 }, H: { 10: 86.2, 16: 77.7, 18: 78.1 }, L: { 0: 69.8, 15: 75.9 } }), d: 18,
+      q: 'Uptrend, then a deep pullback. A small high gets swept and this candle closes back below it. Short?',
+      ann: [
+        { type: 'line', y: 77.7, i0: 16, i1: 23, cls: 'liq', label: 'Small high', lp: 'before', at: 17 },
+        { type: 'zone', y0: 69.8, y1: 78.0, i0: 10, i1: 23, cls: 'disc', label: 'Discount half of the range', lp: 'bottom-right', post: true, at: 18 },
+      ],
+      choices: [
+        { k: 'Short now', v: 'wrong', fb: 'Structure is bullish (higher highs) and price is in the discount half of the range. SMC traders would look for a long here, not a short.' },
+        { k: 'Wait for more', v: 'ok', fb: 'Safe, but waiting won\'t turn this into a short. The context is wrong.' },
+        { k: 'Skip it', v: 'right', fb: 'Uptrend plus discount means no shorts, whatever this one candle does.' },
+      ],
+      result: 'Price rallies back to the highs.' },
+    { title: 'Closed above, not below', digits: 2,
+      candles: gen([33.0, 32.4, 31.6, 30.8, 30.2, 30.7, 31.3, 30.9, 30.5, 31.0, 31.35, 31.7, 31.3, 30.7, 30.0, 29.5, 29.8],
+        { O: { 0: 33.2, 11: 31.35, 12: 31.7 }, H: { 0: 33.3, 6: 31.6, 10: 31.62, 11: 31.9, 12: 31.85 }, L: { 4: 29.9, 15: 29.3 } }), d: 11,
+      q: 'Downtrend. This candle wicked above the equal highs, but it closed above them. Short now?',
+      ann: [
+        { type: 'line', y: 31.62, i0: 6, i1: 16, cls: 'liq', label: 'Equal highs', lp: 'before', at: 10 },
+        { type: 'mark', i: 12, y: 31.85, label: 'Closes back below', cls: 'sweep', post: true, at: 12 },
+        { type: 'box', i0: 13, i1: 16, entry: 31.3, stop: 32.0, tp: 29.9, post: true, at: 12 },
+      ],
+      choices: [
+        { k: 'Short now', v: 'wrong', fb: 'Too early. A close above can be the start of a breakout. The sweep is only confirmed when a candle closes back below.' },
+        { k: 'Wait one candle', v: 'right', fb: 'The next candle closes back below the equal highs. Now it is a sweep: short there, stop above the high.' },
+        { k: 'Skip it', v: 'ok', fb: 'Safe, but one more candle would have confirmed the setup.' },
+      ],
+      result: 'Next candle closes back under. Short 31.3, stop 32.0, target 29.9 hit: 2R.' },
+    { title: 'Where does the stop go?', digits: 4,
+      candles: gen([0.620, 0.655, 0.700, 0.760, 0.820, 0.880, 0.920, 0.945, 0.950, 0.915, 0.890, 0.905, 0.945, 0.990, 0.960, 0.920, 0.880, 0.860, 0.840, 0.810, 0.830],
+        { H: { 8: 0.962, 12: 0.981, 13: 1.012, 14: 1.015 }, L: { 19: 0.80 } }), d: 12,
+      q: 'Pump coin, WEAK signal. The sweep is confirmed and you short at 0.945. Where does the stop go?',
+      ann: [
+        { type: 'line', y: 0.962, i0: 8, i1: 20, cls: 'top', label: '24h top', lp: 'before', at: 8 },
+        { type: 'mark', i: 12, y: 0.981, label: 'Sweep', cls: 'sweep', at: 12 },
+        { type: 'line', y: 0.986, i0: 13, i1: 13, cls: 'tight', label: 'tight stop hit', lp: 'after', post: true, at: 13 },
+        { type: 'box', i0: 13, i1: 20, entry: 0.945, stop: 1.0206, tp: 0.8978, tp2: 0.8316, stopLabel: '8% stop', tpLabel: 'TP1 −5%', tp2Label: 'TP2 −12%', noR: true, post: true, at: 12 },
+      ],
+      choices: [
+        { k: 'Just above the wick (0.986)', v: 'wrong', fb: 'Pump coins wick far past the sweep high before they dump. A stop 0.5% above the wick is taken by the very next candle.' },
+        { k: '8% above entry (1.0206)', v: 'right', fb: 'Our tests on pump coins: every stop tighter than 8% lost money. The spike to 1.015 stays under it, then TP1 and TP2 hit.' },
+      ],
+      result: 'The next candle spikes 3% past the sweep high, then the dump: TP1 (−5%) and TP2 (−12%) hit.' },
+    { title: 'ENTER, but no sweep yet', digits: 3, unscored: true,
+      candles: gen([1.40, 1.46, 1.55, 1.63, 1.74, 1.86, 1.95, 2.03, 1.98, 1.95, 1.93, 1.96, 1.98, 1.93, 1.89, 1.86, 1.87, 1.82, 1.79, 1.81, 1.77, 1.74, 1.75],
+        { H: { 7: 2.08, 12: 2.02 } }), d: 10,
+      q: 'WEAK pump. The bot says ENTER at 1.93. The top hasn\'t been swept. What do you do?',
+      ann: [
+        { type: 'line', y: 2.08, i0: 7, i1: 22, cls: 'top', label: '24h top', lp: 'before', at: 7 },
+        { type: 'mark', i: 10, y: 1.93, label: 'ENTER 1.93', cls: 'bot', pos: 'below', at: 10 },
+        { type: 'line', y: 1.8335, i0: 11, i1: 22, cls: 'tp', label: 'TP1 −5% from ENTER', lp: 'end', ly: 'below', post: true, at: 11 },
+      ],
+      choices: [
+        { k: 'Short at ENTER', v: 'mix', fb: 'This time it pays: price never returns to the top and bleeds 10%. The next WEAK ENTER might squeeze to the stop like BARD did.' },
+        { k: 'Wait for the sweep', v: 'mix', fb: 'No sweep came within 2 hours, so no trade. You missed a winner, and that is the cost of the rule.' },
+      ],
+      result: 'No answer is right here. In the replay about 2 of 3 WEAK winners never sweep the top, so the rule skips them; it also skips about 4 in 10 losers, and the trades it takes start from a better price.' },
+  ];
+
+  const list = document.getElementById('smc-drill-list'), scoreEl = document.getElementById('smc-score');
+  const answers = new Map();
+  const updScore = () => { const right = [...answers.values()].filter(v => v === 'right').length; scoreEl.textContent = `Score: ${right} of ${D.filter(x => !x.unscored).length} right`; };
+  D.forEach((S, k) => {
+    const N = S.candles.length, card = document.createElement('div'); card.className = 'figure drill';
+    card.innerHTML = `<h3>Drill ${k + 1} · ${S.title}</h3><div class="chart"></div><p class="q"></p><div class="choices"></div><div class="fb" hidden><b></b><span></span><span class="muted res"></span></div><div><button type="button" class="again" hidden>Try again</button></div>`;
+    card.querySelector('.q').textContent = S.q;
+    list.appendChild(card);
+    const host = card.querySelector('.chart'), fb = card.querySelector('.fb'), again = card.querySelector('.again'), ch = card.querySelector('.choices');
+    let n = S.d + 1, answered = false, timer = null;
+    const render = () => draw(host, S, n, answered);
+    const btns = S.choices.map(c => { const b = document.createElement('button'); b.type = 'button'; b.textContent = c.k; b.setAttribute('aria-pressed', 'false'); ch.appendChild(b); b.onclick = () => choose(c, b); return b; });
+    function choose(c, b) {
+      answered = true; b.setAttribute('aria-pressed', 'true');
+      btns.forEach((x, i) => { x.disabled = true; if (S.choices[i].v === 'right') x.classList.add('right'); });
+      fb.className = 'fb ' + (c.v === 'right' ? 'ok' : c.v === 'wrong' ? 'bad' : 'mix');
+      fb.querySelector('b').textContent = c.v === 'right' ? 'Right' : c.v === 'wrong' ? 'Not this one' : c.v === 'ok' ? 'Acceptable' : 'Depends';
+      fb.querySelector('span').textContent = c.fb; fb.querySelector('.res').textContent = ''; fb.hidden = false; again.hidden = false;
+      if (!S.unscored) { answers.set(k, c.v); updScore(); }
+      const done = () => { fb.querySelector('.res').textContent = 'What happened: ' + S.result; };
+      if (reduce) { n = N; render(); done(); return; }
+      render();
+      timer = setInterval(() => { if (n >= N) { clearInterval(timer); timer = null; done(); return; } n++; render(); }, 260);
+    }
+    again.onclick = () => {
+      if (timer) { clearInterval(timer); timer = null; }
+      answered = false; n = S.d + 1; fb.hidden = true; again.hidden = true;
+      btns.forEach(x => { x.disabled = false; x.classList.remove('right'); x.setAttribute('aria-pressed', 'false'); });
+      if (!S.unscored) { answers.delete(k); updScore(); }
+      render();
+    };
+    observe(host, render); render();
+  });
+})();
+</script>

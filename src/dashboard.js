@@ -465,6 +465,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <button class="tab-btn active" onclick="switchTab('signals',this)">Live Signals</button>
     <button class="tab-btn" onclick="switchTab('trades',this)">Trades & PnL</button>
     <button class="tab-btn" onclick="switchTab('learn',this)">Learn Onchain</button>
+    <button class="tab-btn" data-tab="smc" onclick="switchTab('smc',this)">SMC Playbook</button>
   </div>
 
   <!-- SIGNALS TAB -->
@@ -716,6 +717,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <h3>📈 Technical Analysis — SMC Concepts</h3><span class="edu-arrow">▼</span>
         </div>
         <div class="edu-body">
+
+          <div class="edu-term"><div class="example" style="margin-top:0">Watch these setups form candle by candle, see the real BARD trade, and practise on drills in the <a href="#" style="color:var(--accent)" onclick="switchTab('smc',document.querySelector('[data-tab=smc]'));window.scrollTo(0,0);return false">SMC Playbook</a> tab.</div></div>
+          <hr class="edu-divider">
 
           <div class="edu-term">
             <h4>Candlestick Basics — Reading the Chart</h4>
@@ -1149,6 +1153,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
     </div>
   </div>
+
+  <!-- SMC PLAYBOOK TAB (content: src/web/smcPlaybook.html) -->
+  <div class="tab-panel" id="tab-smc"><!--SMC_PLAYBOOK--></div>
 </div>
 
 <script>
@@ -3396,4 +3403,4 @@ setTimeout(drawSweepChart, 500);
 init();
 </script>
 </body>
-</html>`;
+</html>`.replace('<!--SMC_PLAYBOOK-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'smcPlaybook.html'), 'utf8'));
