@@ -1,0 +1,646 @@
+<!-- Trade Simulator tab, inserted into the dashboard's tab-sim panel by src/dashboard.js. Paper only: it reads candles
+     through /api/sim/* (src/web/simApi.js) and never sends orders. CSS scoped under .sim, one IIFE, ids prefixed sim-. -->
+<style>
+.sim { display: grid; gap: 14px; color: var(--text); font: 400 14px/1.5 var(--font-body); padding-bottom: 40px; }
+.sim * { box-sizing: border-box; }
+.sim .eyebrow { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.sim-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; }
+.sim-head > div { display: grid; gap: 8px; min-width: 0; }
+.sim-head h1 { font: 700 clamp(22px, 4vw, 28px)/1.1 var(--font-body); }
+.sim-head p { color: var(--text2); max-width: 72ch; }
+.sim-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; }
+.sim-seg button { border: 0; border-radius: 0; background: var(--surface); color: var(--text2); padding: 9px 14px; font: 600 12px/1 var(--font-mono); cursor: pointer; }
+.sim-seg button + button { border-left: 1px solid var(--border); }
+.sim-seg button[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); }
+.sim-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: grid; gap: 10px; min-width: 0; align-content: start; }
+.sim-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.sim-row > label { font: 600 11px/1 var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.sim input, .sim select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: 400 13px/1.2 var(--font-mono); min-width: 0; }
+.sim input:focus, .sim select:focus { outline: none; border-color: var(--accent); }
+.sim select#sim-pick { flex: 1 1 260px; max-width: 100%; }
+.sim input#sim-symbol { width: 110px; text-transform: uppercase; }
+.sim .b { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font: 600 12px/1 var(--font-mono); cursor: pointer; white-space: nowrap; }
+.sim .b:hover { border-color: var(--accent); }
+.sim .b:disabled { opacity: .45; cursor: default; }
+.sim .b:focus-visible, .sim-seg button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.sim .b.on { border-color: #60a5fa; color: #60a5fa; }
+.sim .b.go { background: var(--accent); border-color: var(--accent); color: #04120c; }
+.sim .b.red { background: var(--danger); border-color: var(--danger); color: #fff; }
+.sim .b.big { width: 100%; padding: 12px; font-size: 14px; }
+.sim-status { font: 400 12px/1.4 var(--font-mono); color: var(--text2); min-height: 1.4em; }
+.sim-status.bad { color: var(--danger); }
+.sim-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.sim-chartbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; }
+.sim-chartbar .sim-row { gap: 6px; }
+.sim-tf .b { padding: 6px 9px; }
+.sim-clock { font: 500 12px/1.3 var(--font-mono); color: var(--text2); }
+.sim-chart { height: 480px; min-width: 0; border-radius: 6px; overflow: hidden; }
+.sim-hint { font-size: 12.5px; color: var(--gold); min-height: 1.2em; }
+.sim h3 { font: 600 14px/1.3 var(--font-body); display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.sim h3 small { font: 400 12px var(--font-mono); color: var(--muted); }
+.sim-side { display: grid; gap: 14px; min-width: 0; }
+.sim-two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sim-two .b[aria-pressed="true"].short { background: var(--danger-dim); border-color: var(--danger); color: var(--danger); }
+.sim-two .b[aria-pressed="true"].long { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.sim-field { display: grid; gap: 5px; }
+.sim-field > span { font: 600 11px/1 var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.sim-field .sim-row input { flex: 1 1 90px; }
+.sim-checks { display: grid; gap: 4px; border-top: 1px solid var(--border); padding-top: 10px; }
+.sim-checks label, .sim-opt { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--text2); cursor: pointer; }
+.sim-checks input, .sim-opt input { margin-top: 3px; accent-color: var(--accent); }
+.sim-sum { font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); background: var(--bg); border-radius: 6px; padding: 8px 10px; }
+.sim-sum b { color: var(--text); font-weight: 600; }
+.sim-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font: 400 12.5px/1.5 var(--font-mono); }
+.sim-kv dt { color: var(--muted); } .sim-kv dd { margin: 0; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.sim .pos { color: var(--accent); } .sim .neg { color: var(--danger); }
+.sim-pnl { font: 700 24px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.sim-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.sim-stat { background: var(--bg); border-radius: 6px; padding: 8px 10px; }
+.sim-stat span { display: block; font: 600 10.5px/1.2 var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.sim-stat b { font: 700 16px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
+.sim-learn { font-size: 13px; color: var(--text2); background: var(--gold-dim); border-left: 3px solid var(--gold); border-radius: 6px; padding: 8px 10px; }
+.sim-tablewrap { overflow-x: auto; }
+.sim table { border-collapse: collapse; width: 100%; min-width: 620px; font: 400 12px/1.4 var(--font-mono); }
+.sim th, .sim td { padding: 7px 8px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sim th:nth-child(-n+3), .sim td:nth-child(-n+3) { text-align: left; }
+.sim thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+.sim tbody tr + tr td { border-top: 1px solid var(--border); }
+.sim-empty { color: var(--muted); font-size: 13px; }
+@media (max-width: 960px) { .sim-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .sim-chart { height: 360px; } }
+</style>
+
+<div class="sim" id="sim">
+  <div class="sim-head">
+    <div>
+      <div class="eyebrow">Paper trading · real exchange candles · no orders are sent</div>
+      <h1>Trade Simulator</h1>
+      <p>Practise the SMC Playbook on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now.</p>
+    </div>
+    <div class="sim-seg" role="group" aria-label="Mode">
+      <button type="button" id="sim-m-replay" aria-pressed="true">Replay</button>
+      <button type="button" id="sim-m-live" aria-pressed="false">Live</button>
+    </div>
+  </div>
+
+  <div class="sim-card">
+    <div class="sim-row" id="sim-replay-load">
+      <select id="sim-pick" aria-label="Pick a signal or one of our trades"><option value="">Loading recent signals…</option></select>
+      <button type="button" class="b go" id="sim-load-pick">Replay it</button>
+      <span class="sim-status" style="flex-basis:100%;margin:0">or any coin and time:</span>
+      <input id="sim-symbol" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false">
+      <input id="sim-time" type="datetime-local" aria-label="Start time (UTC)">
+      <label for="sim-time" class="sim-status" style="margin:0">UTC</label>
+      <select id="sim-ex" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
+      <button type="button" class="b" id="sim-load-custom">Load replay</button>
+    </div>
+    <div class="sim-row" id="sim-live-load" hidden>
+      <input id="sim-symbol-live" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
+      <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
+      <button type="button" class="b go" id="sim-load-live">Load live chart</button>
+      <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
+    </div>
+    <div class="sim-status" id="sim-status" aria-live="polite"></div>
+  </div>
+
+  <div class="sim-grid">
+    <div class="sim-card">
+      <div class="sim-chartbar">
+        <div class="sim-row sim-tf" role="group" aria-label="Timeframe">
+          <button type="button" class="b" data-tf="1m">1m</button>
+          <button type="button" class="b on" data-tf="5m">5m</button>
+          <button type="button" class="b" data-tf="15m">15m</button>
+          <button type="button" class="b" data-tf="1h">1H</button>
+        </div>
+        <div class="sim-row">
+          <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
+          <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
+          <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
+        </div>
+      </div>
+      <div class="sim-clock" id="sim-clock">No chart loaded</div>
+      <div class="sim-chart" id="sim-chart"></div>
+      <div class="sim-hint" id="sim-hint"></div>
+      <div class="sim-row" id="sim-replay-bar">
+        <button type="button" class="b go" id="sim-play">▶ Play</button>
+        <button type="button" class="b" data-step="1" title="Next 1-minute candle (→ key)">+1m</button>
+        <button type="button" class="b" data-step="5">+5m</button>
+        <button type="button" class="b" data-step="15">+15m</button>
+        <button type="button" class="b" data-step="60">+1h</button>
+        <select id="sim-speed" aria-label="Playback speed"><option value="1">1 min / tick</option><option value="2">2 min / tick</option><option value="5" selected>5 min / tick</option><option value="15">15 min / tick</option></select>
+        <button type="button" class="b" id="sim-until-exit" title="Play until your simulated trade closes">⏩ Play to exit</button>
+      </div>
+    </div>
+
+    <div class="sim-side">
+      <div class="sim-card" id="sim-ticket">
+        <h3>Order ticket <small id="sim-price">–</small></h3>
+        <div class="sim-two" role="group" aria-label="Side">
+          <button type="button" class="b short" id="sim-side-short" aria-pressed="true">Short</button>
+          <button type="button" class="b long" id="sim-side-long" aria-pressed="false">Long</button>
+        </div>
+        <label class="sim-field"><span>Size (position, $)</span><input id="sim-size" type="number" min="1" step="1" value="150" inputmode="decimal"></label>
+        <div class="sim-field">
+          <span>Stop</span>
+          <div class="sim-row"><input id="sim-stop" type="number" step="any" placeholder="price" inputmode="decimal" aria-label="Stop price"></div>
+          <div class="sim-row">
+            <button type="button" class="b" id="sim-stop-8">8% (pump coins)</button>
+            <button type="button" class="b" id="sim-stop-swing">Past 1h high</button>
+            <button type="button" class="b" id="sim-tool-stop">Click chart</button>
+          </div>
+        </div>
+        <div class="sim-field">
+          <span>Targets</span>
+          <select id="sim-plan" aria-label="Target plan">
+            <option value="bot">Bot plan: 5 / 12 / 20 / 30% (close 25 / 50 / 50% / rest)</option>
+            <option value="r2">One target at 2R</option>
+            <option value="price">One target at a price</option>
+          </select>
+          <div class="sim-row" id="sim-tp-row" hidden><input id="sim-tp" type="number" step="any" placeholder="target price" inputmode="decimal" aria-label="Target price"><button type="button" class="b" id="sim-tool-tp">Click chart</button></div>
+          <label class="sim-opt"><input type="checkbox" id="sim-be" checked> Move stop to entry after TP1 (what the bot does)</label>
+        </div>
+        <div class="sim-checks" aria-label="Playbook checklist">
+          <span class="eyebrow">Playbook checklist (saved with the trade)</span>
+          <label><input type="checkbox" id="sim-c1"> Structure broke my way (CHoCH / BOS)</label>
+          <label><input type="checkbox" id="sim-c2"> Price is in premium or a supply zone (discount / demand for longs)</label>
+          <label><input type="checkbox" id="sim-c3"> Liquidity was swept and the candle closed back</label>
+          <label><input type="checkbox" id="sim-c4"> Lower-timeframe CHoCH confirmed the entry</label>
+        </div>
+        <div class="sim-sum" id="sim-sum">Load a chart to see the risk.</div>
+        <button type="button" class="b red big" id="sim-go">Short at market</button>
+      </div>
+
+      <div class="sim-card" id="sim-poscard">
+        <h3>Position <small id="sim-pos-tag">none</small></h3>
+        <div id="sim-pos-body" class="sim-empty">No open simulated trade.</div>
+        <div class="sim-row" id="sim-pos-actions" hidden>
+          <button type="button" class="b" id="sim-close">Close at market</button>
+          <button type="button" class="b" id="sim-to-be">Stop to entry</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sim-card">
+    <h3>Your simulated trades <small>saved in this browser</small></h3>
+    <div class="sim-stats" id="sim-stats"></div>
+    <div class="sim-learn" id="sim-learn" hidden></div>
+    <div class="sim-tablewrap"><table>
+      <thead><tr><th>Closed (UTC)</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>R</th><th>Checks</th><th>How it ended</th></tr></thead>
+      <tbody id="sim-jbody"></tbody>
+    </table></div>
+    <div class="sim-row"><button type="button" class="b" id="sim-jclear">Clear journal</button></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN };
+  const FEE = 0.0005, JKEY = 'sc_sim_journal_v1';
+  const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
+  const S = { load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], pos: null, side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
+  let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
+  const picks = new Map();
+
+  // ---------- small helpers ----------
+  const loadJ = () => { try { return JSON.parse(localStorage.getItem(JKEY)) || []; } catch (e) { return []; } };
+  const saveJ = () => { try { localStorage.setItem(JKEY, JSON.stringify(journal.slice(-300))); } catch (e) { /* private window */ } };
+  let journal = loadJ();
+  const fmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.prec);
+  const usd = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(2);
+  const utc = t => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
+  const precFor = p => p > 0 ? Math.min(8, Math.max(2, 4 - Math.floor(Math.log10(p)))) : 4;
+  const status = (msg, bad) => { const e = $('sim-status'); e.textContent = msg || ''; e.classList.toggle('bad', !!bad); };
+  const hint = msg => { $('sim-hint').textContent = msg || ''; };
+  const price = () => (S.cur >= 0 ? S.base[S.cur][4] : null);
+  const nowT = () => (S.cur >= 0 ? S.base[S.cur][0] + MIN : null);   // close time of the last visible 1m candle
+  const barT = () => S.base[S.cur][0];                               // open time of it (markers must sit on a drawn bar)
+  // like the dashboard's apiFetch (key + 401 handling), but it passes on the server's error message
+  async function api(path, params) {
+    const q = Object.entries(Object.assign({}, params, { key: apiKey, _t: Date.now() })).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const r = await fetch(path + '?' + q, { cache: 'no-store' });
+    if (r.status === 401) { resetConfig(); throw new Error('Invalid key — please log in again'); }
+    const j = await r.json().catch(() => null);
+    if (!r.ok) throw new Error((j && j.error) || 'server error ' + r.status);
+    return j;
+  }
+
+  // ---------- chart ----------
+  function initChart() {
+    const el = $('sim-chart');
+    chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth || 600, height: el.clientHeight || 480,
+      layout: { background: { type: 'solid', color: '#131722' }, textColor: '#9ca3af', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(42,46,57,0.5)' }, horzLines: { color: 'rgba(42,46,57,0.5)' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1e293b' },
+      timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false, rightOffset: 10 },
+    });
+    cs = chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444' });
+    vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    chart.subscribeClick(onChartClick);
+    new ResizeObserver(() => { if (el.clientWidth) chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
+  }
+  const bucket = t => Math.floor(t / TF[S.tf]) * TF[S.tf];
+  const toC = b => ({ time: b.t / 1000, open: b.o, high: b.h, low: b.l, close: b.c });
+  const toV = b => ({ time: b.t / 1000, value: b.v, color: b.c >= b.o ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)' });
+  function bars(upto) {
+    const out = [];
+    for (let i = 0; i <= upto; i++) {
+      const [t, o, h, l, c, v] = S.base[i], b = bucket(t), last = out[out.length - 1];
+      if (last && last.t === b) { last.h = Math.max(last.h, h); last.l = Math.min(last.l, l); last.c = c; last.v += v; }
+      else out.push({ t: b, o, h, l, c, v });
+    }
+    return out;
+  }
+  function lastBar() {
+    const b = bucket(S.base[S.cur][0]); let i = S.cur;
+    while (i > 0 && bucket(S.base[i - 1][0]) === b) i--;
+    const bar = { t: b, o: S.base[i][1], h: -Infinity, l: Infinity, c: S.base[S.cur][4], v: 0 };
+    for (let j = i; j <= S.cur; j++) { bar.h = Math.max(bar.h, S.base[j][2]); bar.l = Math.min(bar.l, S.base[j][3]); bar.v += S.base[j][5]; }
+    return bar;
+  }
+  function redraw(fit) {
+    if (!cs || S.cur < 0) return;
+    const B = bars(S.cur);
+    cs.applyOptions({ priceFormat: { type: 'price', precision: S.prec, minMove: Math.pow(10, -S.prec) } });
+    cs.setData(B.map(toC)); vs.setData(B.map(toV));
+    S.topHi = null;
+    if (fit) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, B.length - 110), to: B.length + 10 });
+    refresh();
+  }
+  function pushLast() { const b = lastBar(); cs.update(toC(b)); vs.update(toV(b)); }
+
+  function drawMarks() {
+    const end = nowT() || 0;
+    cs.setMarkers(S.marks.filter(m => m.t < end).map(m => ({ time: bucket(m.t) / 1000, position: m.pos, color: m.color, shape: m.shape, text: m.text }))
+      .sort((a, b) => a.time - b.time));
+  }
+  function drawTop() {
+    let hi = null;
+    if ($('sim-showtop').checked && S.cur >= 0) {
+      const t0 = S.base[S.cur][0] - 24 * 3600e3; hi = -Infinity;
+      for (let i = S.cur; i >= 0 && S.base[i][0] > t0; i--) hi = Math.max(hi, S.base[i][2]);
+    }
+    if (hi === S.topHi) return;
+    if (topLine) { cs.removePriceLine(topLine); topLine = null; }
+    S.topHi = hi;
+    if (hi != null) topLine = cs.createPriceLine({ price: hi, color: 'rgba(245,158,11,0.75)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '24h high' });
+  }
+  function drawPos() {
+    posLines.forEach(l => cs.removePriceLine(l)); posLines = [];
+    const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
+    const p = S.pos;
+    if (p) {
+      line(p.entry, '#e5e7eb', 0, p.side === 'short' ? 'Short' : 'Long');
+      line(p.stop, '#ef4444', 2, p.stop === p.entry ? 'Stop (entry)' : 'Stop');
+      p.tps.forEach((tp, i) => { if (!tp.hit) line(tp.price, '#10b981', 2, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'); });
+      return;
+    }
+    const px = price(); if (px == null) return;
+    const pl = plan(px);
+    if (pl.stop) line(pl.stop, 'rgba(239,68,68,0.45)', 3, 'stop?', false);
+    pl.tps.forEach((tp, i) => line(tp.price, 'rgba(16,185,129,0.4)', 3, pl.tps.length > 1 ? 'TP' + (i + 1) + '?' : 'target?', false));
+  }
+
+  // ---------- ticket ----------
+  function plan(px) {
+    const short = S.side === 'short', sgn = short ? 1 : -1;
+    const stopIn = parseFloat($('sim-stop').value);
+    const stop = isFinite(stopIn) && (short ? stopIn > px : stopIn < px) ? stopIn : null;
+    const kind = $('sim-plan').value; let tps = [];
+    if (kind === 'bot') tps = BOT_TPS.map((pc, i) => ({ price: px * (1 - sgn * pc / 100), frac: BOT_FR[i] }));
+    else if (kind === 'r2' && stop) { const t = px - sgn * 2 * Math.abs(stop - px); if (t > 0) tps = [{ price: t, frac: 1 }]; }
+    else if (kind === 'price') { const t = parseFloat($('sim-tp').value); if (isFinite(t) && t > 0 && (short ? t < px : t > px)) tps = [{ price: t, frac: 1 }]; }
+    return { stop, tps };
+  }
+  function renderTicket() {
+    const px = price(), short = S.side === 'short';
+    $('sim-side-short').setAttribute('aria-pressed', String(short));
+    $('sim-side-long').setAttribute('aria-pressed', String(!short));
+    $('sim-stop-swing').textContent = short ? 'Past 1h high' : 'Past 1h low';
+    $('sim-tp-row').hidden = $('sim-plan').value !== 'price';
+    const go = $('sim-go');
+    go.className = 'b big ' + (short ? 'red' : 'go');
+    go.textContent = (short ? 'Short' : 'Long') + ' at market' + (px != null ? ' · ' + fmt(px) : '');
+    go.disabled = !!S.pos || px == null;
+    $('sim-price').textContent = px != null ? S.sym + ' ' + fmt(px) : '–';
+    const sum = $('sim-sum');
+    if (px == null) { sum.textContent = 'Load a chart to see the risk.'; return; }
+    if (S.pos) { sum.textContent = 'One simulated trade at a time. Close it to open another.'; return; }
+    const pl = plan(px), size = parseFloat($('sim-size').value) || 0;
+    if (!pl.stop) { sum.innerHTML = short ? 'Set a stop <b>above</b> the price.' : 'Set a stop <b>below</b> the price.'; return; }
+    const riskPct = Math.abs(pl.stop - px) / px, risk = size * riskPct + 2 * size * FEE;
+    const tp1 = pl.tps[0];
+    const gain1 = tp1 ? size * Math.abs(tp1.price - px) / px * (pl.tps.length > 1 ? tp1.frac : 1) : 0;
+    const checks = [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length;
+    sum.innerHTML = `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
+      (tp1 ? `${pl.tps.length > 1 ? 'TP1 (25%)' : 'Target'}: <b>+$${gain1.toFixed(2)}</b> at ${fmt(tp1.price)}` + (pl.tps.length === 1 ? ` · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R` : '') : 'Set a target.') +
+      `<br>Checklist: <b>${checks}/4</b>${checks < 4 ? ' · the playbook waits for all four' : ''}`;
+  }
+
+  // ---------- simulated position ----------
+  function enter() {
+    if (S.pos || S.cur < 0) return;
+    const px = price(), pl = plan(px), size = parseFloat($('sim-size').value);
+    if (!pl.stop) return status(S.side === 'short' ? 'Set a stop above the price first.' : 'Set a stop below the price first.', true);
+    if (!pl.tps.length) return status('Set a target first.', true);
+    if (!(size > 0)) return status('Enter a size in dollars.', true);
+    const k = S.base[S.cur];
+    S.pos = { side: S.side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
+      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * FEE,
+      checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, mode: S.mode, sym: S.sym, ex: S.ex,
+      ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
+    S.marks.push({ t: k[0], pos: S.side === 'short' ? 'aboveBar' : 'belowBar', color: '#e5e7eb', shape: S.side === 'short' ? 'arrowDown' : 'arrowUp', text: (S.side === 'short' ? 'Short ' : 'Long ') + fmt(px) });
+    $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; });  // next trade starts from a clean ticket
+    status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
+    refresh();
+  }
+  function fill(q, px, t, label) {
+    const p = S.pos, gross = q * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry);
+    p.realized += gross - q * p.qty * px * FEE; p.rem -= q; p.fills.push({ q, px, t, label });
+    S.marks.push({ t, pos: p.side === 'short' ? 'belowBar' : 'aboveBar', color: /^TP|Target/.test(label) ? '#10b981' : label === 'Closed by hand' ? '#60a5fa' : '#ef4444', shape: 'circle', text: label });
+  }
+  function evalBar(t, h, l) {
+    const p = S.pos; if (!p) return;
+    const short = p.side === 'short';
+    if (short ? h >= p.stop : l <= p.stop) { fill(p.rem, p.stop, t, p.stop === p.entry ? 'Breakeven stop' : 'Stop'); return finish(t, p.stop === p.entry ? 'Breakeven stop' : 'Stopped'); }
+    for (let i = 0; i < p.tps.length; i++) {
+      const tp = p.tps[i]; if (tp.hit) continue;
+      if (!(short ? l <= tp.price : h >= tp.price)) break;
+      const lastOne = p.tps.every((x, j) => j === i || x.hit);
+      fill(lastOne ? p.rem : p.rem * tp.frac, tp.price, t, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target');
+      tp.hit = true;
+      if (i === 0 && p.be && p.tps.length > 1) p.stop = short ? Math.min(p.stop, p.entry) : Math.max(p.stop, p.entry);
+      if (p.rem <= 1e-9) return finish(t, p.tps.length > 1 ? 'All targets' : 'Target');
+    }
+  }
+  function finish(t, how) {
+    const p = S.pos, risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
+    const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
+    const R = risk > 0 ? p.realized / risk : 0;
+    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, how, prec: S.prec });
+    saveJ();
+    S.pos = null;
+    if (S.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
+    status(`Closed (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R.`);
+    renderJournal();
+  }
+  function unreal(px) { const p = S.pos; return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * FEE : 0; }
+  function renderPos() {
+    const p = S.pos, body = $('sim-pos-body');
+    $('sim-pos-actions').hidden = !p;
+    if (!p) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade.'; return; }
+    const px = price(), total = p.realized + unreal(px), risk = p.qty * Math.abs(p.stop0 - p.entry);
+    $('sim-pos-tag').textContent = `${p.side} ${p.sym}`;
+    body.className = '';
+    const tpTxt = p.tps.map((tp, i) => `${p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'} ${fmt(tp.price)}${tp.hit ? ' ✓' : ''}`).join('<br>');
+    body.innerHTML = `<div class="sim-pnl ${total >= 0 ? 'pos' : 'neg'}">${usd(total)} <small style="font-size:13px">${(risk > 0 ? total / risk : 0).toFixed(2)}R</small></div>
+      <dl class="sim-kv"><dt>Entry</dt><dd>${fmt(p.entry)}</dd><dt>Now</dt><dd>${fmt(px)}</dd>
+      <dt>Stop</dt><dd>${fmt(p.stop)}${p.stop === p.entry ? ' (entry)' : ''}</dd><dt>Targets</dt><dd>${tpTxt}</dd>
+      <dt>Still open</dt><dd>${Math.round(p.rem * 100)}% of $${p.size.toFixed(0)}</dd><dt>Banked</dt><dd class="${p.realized >= 0 ? 'pos' : 'neg'}">${usd(p.realized)}</dd>
+      <dt>Opened</dt><dd>${utc(p.t0)} UTC</dd></dl>`;
+  }
+  function renderJournal() {
+    const J = journal, n = J.length, wins = J.filter(j => j.pnl > 0).length, net = J.reduce((a, j) => a + j.pnl, 0);
+    const avgR = n ? J.reduce((a, j) => a + j.R, 0) / n : 0;
+    const stat = (k, v, cls = '') => `<div class="sim-stat"><span>${k}</span><b class="${cls}">${v}</b></div>`;
+    $('sim-stats').innerHTML = stat('Trades', n) + stat('Win rate', n ? Math.round(wins / n * 100) + '%' : '–') +
+      stat('Net P&L', n ? usd(net) : '–', net >= 0 ? 'pos' : 'neg') + stat('Average R', n ? avgR.toFixed(2) : '–', avgR >= 0 ? 'pos' : 'neg');
+    const full = J.filter(j => j.checks === 4), part = J.filter(j => j.checks < 4);
+    const learn = $('sim-learn');
+    if (full.length && part.length) {
+      const a = full.reduce((s, j) => s + j.R, 0) / full.length, b = part.reduce((s, j) => s + j.R, 0) / part.length;
+      learn.hidden = false;
+      learn.textContent = `All 4 checks ticked: ${full.length} trades, ${a.toFixed(2)}R on average. Fewer checks: ${part.length} trades, ${b.toFixed(2)}R. ` +
+        (a > b ? 'Waiting for the full setup is paying off so far.' : 'So far the full checklist isn\'t beating your other entries. Keep logging; it takes 30+ trades to tell.');
+    } else learn.hidden = true;
+    const rows = J.slice(-25).reverse().map(j => {
+      const f = v => (+v).toFixed(j.prec || 4);
+      return `<tr><td>${utc(j.t1)}</td><td>${j.sym}${j.mode === 'live' ? ' · live' : ''}</td><td>${j.side}</td><td>${f(j.entry)}</td><td>${f(j.exit)}</td>` +
+        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4</td><td>${j.how}</td></tr>`;
+    });
+    $('sim-jbody').innerHTML = rows.join('') || '<tr><td colspan="9" class="sim-empty" style="text-align:left">No simulated trades yet. Load a chart, set a stop, and take your first one.</td></tr>';
+  }
+  function refresh() {
+    if (!cs) return;
+    drawTop(); drawMarks(); drawPos(); renderTicket(); renderPos();
+    const end = nowT();
+    $('sim-clock').textContent = end ? `${S.sym}USDT perp · ${S.ex} · ${S.tf} · ${utc(end)} UTC` +
+      (S.mode === 'replay' ? ` · ${Math.round((S.base.length - 1 - S.cur) / 60)}h of data ahead` : ' · live') : 'No chart loaded';
+    const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1;
+    document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = atEnd || S.cur < 0; });
+    $('sim-until-exit').disabled = atEnd || !S.pos;
+  }
+
+  // ---------- replay ----------
+  function step(n) {
+    if (S.mode !== 'replay' || S.cur < 0) return;
+    for (let i = 0; i < n; i++) {
+      if (S.cur >= S.base.length - 1) { stopPlay(); status('That\'s the end of the loaded candles.'); break; }
+      S.cur++;
+      const k = S.base[S.cur];
+      pushLast();
+      evalBar(k[0], k[2], k[3]);
+      if (S.halt) { S.halt = false; break; }
+    }
+    refresh();
+  }
+  function stopPlay() { if (S.play) clearInterval(S.play); S.play = null; S.untilExit = false; $('sim-play').textContent = '▶ Play'; }
+  function togglePlay() {
+    if (S.play) return stopPlay();
+    if (S.mode !== 'replay' || S.cur < 0) return;
+    $('sim-play').textContent = '❚❚ Pause';
+    S.play = setInterval(() => step(+$('sim-speed').value), 300);
+  }
+  function stopAll() { stopPlay(); if (S.poll) clearInterval(S.poll); S.poll = null; S.load++; }
+
+  function setData(r) {
+    S.base = r.candles; S.sym = r.symbol.replace(/USDT$/, ''); S.ex = r.exchange;
+    S.prec = precFor(r.candles[r.candles.length - 1][4]); S.marks = [];
+    if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
+    $('sim-stop').value = ''; $('sim-tp').value = '';
+  }
+  async function loadReplay(sym, t, ex, extraMarks, label) {
+    if (S.pos) return status('Close your simulated trade before loading another chart.', true);
+    stopAll(); setMode('replay', true);
+    const start = t - 24 * 3600e3, end = Math.min(Date.now(), t + 24 * 3600e3);
+    status(`Loading ${sym} candles around ${utc(t)} UTC…`);
+    const my = ++S.load;
+    try {
+      const r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start, end, exchange: ex || 'auto' });
+      if (my !== S.load) return;   // a newer load started meanwhile
+      if (!r.candles || !r.candles.length) throw new Error('no candles came back for that time');
+      setData(r);
+      let i = -1; for (let j = 0; j < S.base.length; j++) { if (S.base[j][0] + MIN <= t) i = j; else break; }
+      S.cur = Math.max(0, i);
+      S.marks = (extraMarks || []).filter(m => m.t >= S.base[0][0]);
+      redraw(true);
+      status(`${label || S.sym} — paused at ${utc(nowT())} UTC. Read the chart, decide, then press Play or →.`);
+    } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
+  }
+  async function loadLive(sym, ex) {
+    if (S.pos && S.pos.mode !== 'live') return status('Close your simulated trade before loading another chart.', true);
+    stopAll();
+    status(`Loading live ${sym}…`);
+    const my = ++S.load;
+    try {
+      const end = Date.now();
+      const r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: end - 24 * 3600e3, end, exchange: ex || 'auto' });
+      if (my !== S.load) return;
+      if (!r.candles || !r.candles.length) throw new Error('no candles came back');
+      setData(r); S.cur = S.base.length - 1;
+      redraw(true);
+      status(`Live ${S.sym} on ${S.ex}. Paper trades fill at the last price.`);
+      S.poll = setInterval(pollLive, 4000);
+    } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
+  }
+  async function pollLive() {
+    if (S.mode !== 'live' || S.busy || !S.base.length) return;
+    S.busy = true;
+    try {
+      const r = await api('/api/sim/klines', { symbol: S.sym, interval: '1m', start: S.base[S.base.length - 1][0], exchange: S.ex });
+      for (const k of r.candles || []) {
+        const i = S.base.length - 1;
+        if (k[0] === S.base[i][0]) S.base[i] = k; else if (k[0] > S.base[i][0]) S.base.push(k); else continue;
+        S.cur = S.base.length - 1; pushLast();
+        const p = S.pos;
+        if (p) {
+          let h = k[2], l = k[3];
+          if (p.ref && k[0] === p.ref.t) {  // the candle we entered in: count only what traded after the entry
+            const hh = h > p.ref.h ? h : Math.max(p.entry, k[4]), ll = l < p.ref.l ? l : Math.min(p.entry, k[4]);
+            p.ref.h = Math.max(p.ref.h, h); p.ref.l = Math.min(p.ref.l, l); h = hh; l = ll;
+          }
+          evalBar(k[0], h, l);
+        }
+      }
+      refresh();
+    } catch (e) { status('Live update failed: ' + e.message, true); }
+    finally { S.busy = false; }
+  }
+
+  // ---------- picks: recent pump signals + our live trades ----------
+  async function loadPicks() {
+    const sel = $('sim-pick');
+    const [s, t] = await Promise.all([
+      api('/api/sim/signals', { days: 21 }).catch(() => ({ signals: [] })),
+      api('/api/sim/trades', { days: 21 }).catch(() => ({ trades: [] })),
+    ]);
+    picks.clear();
+    const og = (label, items) => items.length ? `<optgroup label="${label}">${items.join('')}</optgroup>` : '';
+    const sig = (s.signals || []).map(x => {
+      picks.set('s' + x.id, { sym: x.symbol, t: x.t, label: `${x.symbol} pump signal ${utc(x.t)}`,
+        marks: [{ t: x.t, pos: 'aboveBar', color: '#f59e0b', shape: 'arrowDown', text: 'Signal' }] });
+      const pump = x.pumpPct != null ? Math.round(x.pumpPct) + '%' : '';
+      return `<option value="s${x.id}">${utc(x.t)} · ${x.symbol} · pump ${pump}${x.pumpPct != null && x.pumpPct < 40 ? ' WEAK' : ''}</option>`;
+    });
+    const tr = (t.trades || []).map(x => {
+      const marks = [{ t: x.t, pos: x.direction === 'short' ? 'aboveBar' : 'belowBar', color: '#f59e0b', shape: x.direction === 'short' ? 'arrowDown' : 'arrowUp', text: 'Real entry' }];
+      if (x.t1) marks.push({ t: x.t1, pos: 'belowBar', color: '#f59e0b', shape: 'circle', text: 'Real exit' + (x.pnl != null ? ' ' + usd(x.pnl) : '') });
+      picks.set('t' + x.id, { sym: x.symbol, t: x.t - 15 * MIN, ex: x.exchange, marks, label: `Trade #${x.id} ${x.symbol} (starts 15 min before the real entry)` });
+      return `<option value="t${x.id}">#${x.id} ${x.symbol} ${x.direction} · ${utc(x.t)} · ${x.pnl != null ? usd(x.pnl) : 'open'}</option>`;
+    });
+    sel.innerHTML = (sig.length || tr.length) ? og('Recent pump signals', sig) + og('Our live trades', tr) : '<option value="">No signals in the last 21 days</option>';
+    return sig.length ? 's' + s.signals[0].id : tr.length ? 't' + t.trades[0].id : null;
+  }
+  function loadPick(key) {
+    const p = picks.get(key); if (!p) return status('Pick a signal or trade first.', true);
+    loadReplay(p.sym, p.t, p.ex, p.marks, p.label);
+  }
+
+  // ---------- modes, tools, inputs ----------
+  function setMode(m, quiet) {
+    if (S.mode === m) return;
+    if (S.pos) { status('Close your simulated trade before switching mode.', true); return; }
+    stopAll(); S.mode = m;
+    $('sim-m-replay').setAttribute('aria-pressed', String(m === 'replay'));
+    $('sim-m-live').setAttribute('aria-pressed', String(m === 'live'));
+    $('sim-replay-load').hidden = m !== 'replay'; $('sim-replay-bar').hidden = m !== 'replay';
+    $('sim-live-load').hidden = m !== 'live';
+    if (!quiet && m === 'live') { const sym = S.sym || 'BTC'; $('sim-symbol-live').value = sym; loadLive(sym, $('sim-ex-live').value); }
+    if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
+  }
+  function setTool(t) {
+    S.tool = S.tool === t ? null : t;
+    $('sim-tool-line').classList.toggle('on', S.tool === 'line');
+    $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
+    $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
+    hint(S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : '');
+  }
+  function onChartClick(param) {
+    if (!S.tool || !param || !param.point) return;
+    const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
+    if (S.tool === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
+    if (S.tool === 'stop') { if (S.pos) { moveStop(p); } else $('sim-stop').value = (+p).toFixed(S.prec); }
+    if (S.tool === 'tp') { $('sim-plan').value = 'price'; $('sim-tp').value = (+p).toFixed(S.prec); }
+    setTool(null); refresh();
+  }
+  function moveStop(p) {
+    const pos = S.pos, px = price();
+    if (pos.side === 'short' ? p <= px : p >= px) return status('A stop that close would fill right away. Pick a level on the other side of the price.', true);
+    pos.stop = p; status(`Stop moved to ${fmt(p)}.`);
+  }
+
+  function start() {
+    if (started) return; started = true;
+    initChart(); renderJournal();
+    const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
+    status('Loading recent signals…');
+    loadPicks().then(first => { if (first) { $('sim-pick').value = first; loadPick(first); } else status('No recent signals. Type a coin and time to replay, or switch to Live.'); })
+      .catch(e => status('Could not load signals: ' + e.message, true));
+  }
+
+  // wiring
+  const tabBtn = document.querySelector('[data-tab="sim"]');
+  if (tabBtn) tabBtn.addEventListener('click', () => requestAnimationFrame(start));
+  $('sim-m-replay').onclick = () => setMode('replay');
+  $('sim-m-live').onclick = () => setMode('live');
+  $('sim-load-pick').onclick = () => loadPick($('sim-pick').value);
+  $('sim-load-custom').onclick = () => {
+    const sym = $('sim-symbol').value.trim(), v = $('sim-time').value;
+    if (!sym) return status('Type a coin, for example BARD.', true);
+    const t = Date.parse(v + ':00Z'); if (!isFinite(t)) return status('Pick a start time.', true);
+    loadReplay(sym, t, $('sim-ex').value, [], `${sym.toUpperCase()} from ${utc(t)} UTC`);
+  };
+  $('sim-load-live').onclick = () => { const sym = $('sim-symbol-live').value.trim(); if (!sym) return status('Type a coin, for example BTC.', true); loadLive(sym, $('sim-ex-live').value); };
+  document.querySelectorAll('#sim .sim-tf .b').forEach(b => b.onclick = () => {
+    S.tf = b.dataset.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x === b));
+    if (S.cur >= 0) redraw(true);
+  });
+  $('sim-tool-line').onclick = () => setTool('line');
+  $('sim-tool-stop').onclick = () => setTool('stop');
+  $('sim-tool-tp').onclick = () => setTool('tp');
+  $('sim-clear-lines').onclick = () => { lvlLines.forEach(l => cs && cs.removePriceLine(l)); lvlLines = []; };
+  $('sim-showtop').onchange = () => { S.topHi = undefined; refresh(); };
+  $('sim-play').onclick = togglePlay;
+  document.querySelectorAll('#sim-replay-bar [data-step]').forEach(b => b.onclick = () => step(+b.dataset.step));
+  $('sim-until-exit').onclick = () => { if (!S.pos) return; S.untilExit = true; if (!S.play) { $('sim-play').textContent = '❚❚ Pause'; S.play = setInterval(() => step(+$('sim-speed').value), 300); } };
+  $('sim-side-short').onclick = () => { S.side = 'short'; $('sim-stop').value = ''; refresh(); };
+  $('sim-side-long').onclick = () => { S.side = 'long'; $('sim-stop').value = ''; refresh(); };
+  $('sim-stop-8').onclick = () => { const px = price(); if (px == null) return; $('sim-stop').value = (px * (S.side === 'short' ? 1.08 : 0.92)).toFixed(S.prec); refresh(); };
+  $('sim-stop-swing').onclick = () => {
+    if (S.cur < 0) return; let hi = -Infinity, lo = Infinity;
+    for (let i = S.cur; i >= 0 && i > S.cur - 60; i--) { hi = Math.max(hi, S.base[i][2]); lo = Math.min(lo, S.base[i][3]); }
+    $('sim-stop').value = (S.side === 'short' ? hi * 1.002 : lo * 0.998).toFixed(S.prec); refresh();
+  };
+  ['sim-stop', 'sim-size', 'sim-tp'].forEach(id => $(id).addEventListener('input', refresh));
+  ['sim-plan', 'sim-c1', 'sim-c2', 'sim-c3', 'sim-c4'].forEach(id => $(id).addEventListener('change', refresh));
+  $('sim-go').onclick = enter;
+  $('sim-close').onclick = () => { if (!S.pos) return; const t = S.mode === 'live' ? Date.now() : barT(); fill(S.pos.rem, price(), t, 'Closed by hand'); finish(t, 'Closed by hand'); S.halt = false; refresh(); };
+  $('sim-to-be').onclick = () => { if (!S.pos) return; moveStop(S.pos.entry); refresh(); };
+  let clearArmed = false;
+  $('sim-jclear').onclick = () => {
+    if (!clearArmed) { clearArmed = true; $('sim-jclear').textContent = 'Click again to delete all simulated trades'; setTimeout(() => { clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; }, 4000); return; }
+    journal = []; saveJ(); clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; renderJournal();
+  };
+  document.addEventListener('keydown', e => {
+    const panel = document.getElementById('tab-sim');
+    if (!panel || !panel.classList.contains('active') || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
+    else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  });
+  renderJournal();
+})();
+</script>

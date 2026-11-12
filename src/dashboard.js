@@ -466,6 +466,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <button class="tab-btn" onclick="switchTab('trades',this)">Trades & PnL</button>
     <button class="tab-btn" onclick="switchTab('learn',this)">Learn Onchain</button>
     <button class="tab-btn" data-tab="smc" onclick="switchTab('smc',this)">SMC Playbook</button>
+    <button class="tab-btn" data-tab="sim" onclick="switchTab('sim',this)">Simulator</button>
   </div>
 
   <!-- SIGNALS TAB -->
@@ -1156,6 +1157,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
   <!-- SMC PLAYBOOK TAB (content: src/web/smcPlaybook.html) -->
   <div class="tab-panel" id="tab-smc"><!--SMC_PLAYBOOK--></div>
+
+  <!-- TRADE SIMULATOR TAB (content: src/web/simulator.html, data: src/web/simApi.js) -->
+  <div class="tab-panel" id="tab-sim"><!--SIMULATOR--></div>
 </div>
 
 <script>
@@ -3403,4 +3407,6 @@ setTimeout(drawSweepChart, 500);
 init();
 </script>
 </body>
-</html>`.replace('<!--SMC_PLAYBOOK-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'smcPlaybook.html'), 'utf8'));
+</html>`
+  .replace('<!--SMC_PLAYBOOK-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'smcPlaybook.html'), 'utf8'))
+  .replace('<!--SIMULATOR-->', () => require('fs').readFileSync(require('path').join(__dirname, 'web', 'simulator.html'), 'utf8'));

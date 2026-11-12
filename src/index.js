@@ -73,6 +73,7 @@ async function main() {
 
   // Start health check + dashboard server
   const dashboardHtml = require('./dashboard');
+  const simApi = require('./web/simApi');
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const key = (url.searchParams.get('key') || '').trim();
@@ -446,6 +447,11 @@ async function main() {
         res.writeHead(500);
         return res.end(JSON.stringify({ error: e.message }));
       }
+    }
+
+    // Trade Simulator tab: read-only candles, pump signals and our live trades (src/web/simApi.js)
+    if (url.pathname.startsWith('/api/sim/') && authed) {
+      return simApi.handle(url, res);
     }
 
     if (url.pathname === '/api/chart' && authed) {
