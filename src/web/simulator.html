@@ -20,6 +20,8 @@
 .sim input:focus, .sim select:focus { outline: none; border-color: var(--accent); }
 .sim select#sim-pick { flex: 1 1 260px; max-width: 100%; }
 .sim input#sim-symbol { width: 110px; text-transform: uppercase; }
+.sim-coins { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sim-coins .b { padding: 6px 9px; font-size: 11px; }
 .sim .b { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font: 600 12px/1 var(--font-mono); cursor: pointer; white-space: nowrap; }
 .sim .b:hover { border-color: var(--accent); }
 .sim .b:disabled { opacity: .45; cursor: default; }
@@ -112,19 +114,22 @@
       <select id="sim-pick" aria-label="Pick a signal or one of our trades"><option value="">Loading recent signals…</option></select>
       <button type="button" class="b go" id="sim-load-pick">Replay it</button>
       <span class="sim-status" style="flex-basis:100%;margin:0">or any coin and time:</span>
-      <input id="sim-symbol" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false">
+      <input id="sim-symbol" list="sim-coin-list" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false">
       <input id="sim-time" type="datetime-local" aria-label="Start time (UTC)">
       <label for="sim-time" class="sim-status" style="margin:0">UTC</label>
       <select id="sim-ex" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
       <button type="button" class="b" id="sim-load-custom">Load replay</button>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins, from the time above:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
     </div>
     <div class="sim-row" id="sim-live-load" hidden>
-      <input id="sim-symbol-live" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
+      <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
       <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
       <button type="button" class="b go" id="sim-load-live">Load live chart</button>
       <button type="button" class="b" id="sim-scan-btn" title="Check the last 48 h of pump-signal coins for SMC setups">🔎 Find setups</button>
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
     </div>
+    <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"></datalist>
     <div class="sim-scan" id="sim-scan" hidden></div>
     <div class="sim-status" id="sim-status" aria-live="polite"></div>
   </div>
@@ -141,6 +146,7 @@
         <div class="sim-row">
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
+          <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
       </div>
@@ -318,7 +324,11 @@
     cs.applyOptions({ priceFormat: { type: 'price', precision: S.prec, minMove: Math.pow(10, -S.prec) } });
     cs.setData(B.map(toC)); vs.setData(B.map(toV));
     S.topHi = null;
-    if (fit) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, B.length - 110), to: B.length + 10 });
+    if (fit) {
+      // a drag or pinch on the price axis turns auto-fit off and it would stay off for the next coin
+      chart.priceScale('right').applyOptions({ autoScale: true });
+      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, B.length - 110), to: B.length + 10 });
+    }
     refresh();
   }
   function pushLast() { const b = lastBar(); cs.update(toC(b)); vs.update(toV(b)); }
@@ -537,7 +547,8 @@
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
   async function loadLive(sym, ex) {
-    if (S.pos && S.pos.mode !== 'live') return status('Close your simulated trade before loading another chart.', true);
+    const coin = String(sym).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '');
+    if (S.pos && (S.pos.mode !== 'live' || S.pos.sym !== coin)) return status('Close your simulated trade before loading another chart.', true);
     stopAll();
     status(`Loading live ${sym}…`);
     const my = ++S.load;
@@ -957,6 +968,12 @@
     const t = Date.parse(v + ':00Z'); if (!isFinite(t)) return status('Pick a start time.', true);
     loadReplay(sym, t, $('sim-ex').value, [], `${sym.toUpperCase()} from ${utc(t)} UTC`);
   };
+  $('sim-fit').onclick = () => { if (S.cur >= 0) redraw(true); };
+  document.querySelectorAll('#sim [data-coin]').forEach(b => b.onclick = () => {
+    const c = b.dataset.coin;
+    if (S.mode === 'live') { $('sim-symbol-live').value = c; return loadLive(c, $('sim-ex-live').value); }
+    $('sim-symbol').value = c; $('sim-load-custom').click();
+  });
   $('sim-load-live').onclick = () => { const sym = $('sim-symbol-live').value.trim(); if (!sym) return status('Type a coin, for example BTC.', true); loadLive(sym, $('sim-ex-live').value); };
   document.querySelectorAll('#sim .sim-tf .b').forEach(b => b.onclick = () => {
     S.tf = b.dataset.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x === b));
