@@ -1806,7 +1806,23 @@ class TradeExecutor {
             const pair = `${trade.symbol}/USDT:USDT`;
             const positions = await this._fetchPositions(exchange, trade.exchange, [pair]);
             const pos = positions.find(p => Math.abs(p.contracts || 0) > 0);
-            if (!pos || Math.abs(pos.contracts) === 0) {
+            // Only a crumb left (under 5% of what the bot tracks — no TP step leaves that little): a stop or close sized a
+            // lot step short closed the trade. Without this the bot kept the trade "open", then booked TP1/TP2 profit at the
+            // TP prices for coins the stop had already closed at entry (INIT #3973, 10 Nov). Close the crumb, then book it
+            // as closed from the real fills like any position closed on the exchange.
+            const crumb = pos && Number(trade.quantity) > 0 && Math.abs(pos.contracts) < Number(trade.quantity) * 0.05;
+            let crumbLeft = null;
+            if (crumb) {
+              const crumbQty = Math.abs(pos.contracts);
+              try {
+                await exchange.createOrder(pair, 'market', isLong ? 'sell' : 'buy', exchange.amountToPrecision(pair, crumbQty), undefined, { reduceOnly: true });
+                logger.warn(`${trade.symbol}: only ${crumbQty} of the tracked ${trade.quantity} left on ${trade.exchange} — closed the leftover`);
+              } catch (e) {
+                crumbLeft = crumbQty;
+                logger.warn(`${trade.symbol}: closing the leftover ${crumbQty} on ${trade.exchange} failed: ${e.message}`);
+              }
+            }
+            if (!pos || Math.abs(pos.contracts) === 0 || crumb) {
               // Position is gone: the resting TP4 limit, the exchange stop, or a manual close on the exchange.
               // Use the real closing fills when we can read them, else the current price.
               const goneExit = (await this._recentCloseFill(exchange, pair, trade).catch(() => null)) || currentPrice;
@@ -1830,7 +1846,8 @@ class TradeExecutor {
                 `${trade.mode === 'paper' ? '📝 PAPER' : '💰 LIVE'} ${byTp ? '🎯 <b>TP4 FILLED ON EXCHANGE</b>' : '🔴 <b>POSITION CLOSED ON EXCHANGE</b>'} $${escapeHtml(trade.symbol)}\n\n` +
                 `PnL (last part): ${pnlEmoji} ${pnlSign}$${netPnl.toFixed(2)} (${pnlSign}${slPnlPct.toFixed(2)}%)\n` +
                 `Entry: $${trade.entry_price} → $${goneExit}\n\n` +
-                (byTp ? `The resting TP4 limit closed the rest of the position.` : `Closed by the exchange stop order or closed manually on the exchange.`)
+                (byTp ? `The resting TP4 limit closed the rest of the position.` : `Closed by the exchange stop order or closed manually on the exchange.`) +
+                (crumbLeft ? `\n\n⚠️ A leftover of ${crumbLeft} ${escapeHtml(trade.symbol)} could not be closed — close it in the ${trade.exchange} app.` : '')
               );
               this.cooldowns.set(trade.symbol.toUpperCase(), { until: this._next1amUTC(), entryPrice: trade.entry_price, lastDir: trade.direction, closedAt: Date.now() });
               updates.push({ trade, action: goneAction, msg: '' });
@@ -2288,10 +2305,12 @@ class TradeExecutor {
           // The exchange TP limit usually fills before this check runs — only close what it hasn't closed already
           let toClose = closeQty;
           let limitFilledQty = 0;
+          let heldQty = null, sentQty = 0;
           try {
             const positions = await this._fetchPositions(exchange, trade.exchange, [pair]);
             const pos = positions.find(p => Math.abs(p.contracts || 0) > 0);
             const actualQty = pos ? Math.abs(pos.contracts) : 0;
+            heldQty = actualQty;
             toClose = Math.min(closeQty, Math.max(0, actualQty - remainQty));
             limitFilledQty = closeQty - toClose;
             if (toClose < closeQty * 0.05) { toClose = 0; limitFilledQty = closeQty; }   // rounding dust
@@ -2314,6 +2333,7 @@ class TradeExecutor {
             const side = isLong ? 'sell' : 'buy';
             const roundedQty = exchange.amountToPrecision(pair, toClose);
             const order = await exchange.createOrder(pair, 'market', side, roundedQty, undefined, { reduceOnly: true });
+            sentQty = Number(roundedQty) || 0;
             fillPrice = order.average || order.price || null;
             if (order.id) {
               try {
@@ -2334,6 +2354,16 @@ class TradeExecutor {
           } else {
             fillPrice = limitPrice;
             logger.info(`Partial close ${(fraction * 100).toFixed(0)}% of ${pair}: already filled by the exchange TP limit @ $${limitPrice} — no market order sent`);
+          }
+          // Track what the exchange really still holds: the market close is rounded down to the lot step, so the
+          // tracked rest can be a step short (INIT #3973: 1670.5 tracked, 1671 held) and a stop sized from it leaves a
+          // coin behind. Only rounding-size gaps (≤5%) are taken over; bigger ones are handled above.
+          if (heldQty != null && remainQty > 0) {
+            const left = Math.max(0, heldQty - sentQty);
+            if (left > 0 && Math.abs(left - remainQty) <= remainQty * 0.05) {
+              remainSize *= left / remainQty;
+              remainQty = left;
+            }
           }
           if (fraction < 1.0 && remainQty > 0) {
             await this.placeTPOrders({ ...trade, quantity: remainQty }, level);
@@ -2519,8 +2549,16 @@ class TradeExecutor {
       const closeSide = trade.direction === 'long' ? 'sell' : 'buy';
 
       // Rounded to the coin's lot step: after a partial close the tracked quantity is fractional (e.g. 13041 × 0.75 =
-      // 9780.75) and Binance rejects that, leaving the old stop in place while the bot believed it had moved
-      const qty = exchange.amountToPrecision(pair, (Number(trade.quantity) || trade.position_size / newSLPrice) * (1 + 1e-9));
+      // 9780.75) and Binance rejects that, leaving the old stop in place while the bot believed it had moved.
+      // Sized to what the exchange holds when that is within 5% of the tracked quantity: rounding down the tracked
+      // 1670.5 gave a 1670 stop on a 1671 position, and the coin it left behind kept the trade "open" (INIT #3973)
+      const tracked = Number(trade.quantity) || trade.position_size / newSLPrice;
+      let held = null;
+      try {
+        const pos = (await this._fetchPositions(exchange, trade.exchange, [pair])).find(p => Math.abs(p.contracts || 0) > 0);
+        if (pos) held = Math.abs(pos.contracts);
+      } catch (e) { /* use the tracked quantity */ }
+      const qty = exchange.amountToPrecision(pair, (held > 0 && Math.abs(held / tracked - 1) <= 0.05 ? held : tracked) * (1 + 1e-9));
       const slPrice = exchange.priceToPrecision(pair, newSLPrice);
 
       // Place new SL FIRST — if it fails, old stop stays as protection
