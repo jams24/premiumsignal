@@ -65,15 +65,18 @@ async function handle(url, res) {
       const want = String(url.searchParams.get('exchange') || 'auto').toLowerCase();
       const order = want === 'bybit' ? ['bybit'] : want === 'binance' ? ['binance'] : ['binance', 'bybit'];
       const errors = [];
+      let emptyAt = null;
       for (const ex of order) {
         try {
           const candles = ex === 'binance' ? await binanceKlines(sym, iv, start, end) : await bybitKlines(sym, iv, start, end);
           if (candles.length) return send(200, { exchange: ex, symbol: sym, interval: iv, candles });
-          errors.push(`${ex}: no candles`);
+          errors.push(`${ex}: no candles`); if (!emptyAt) emptyAt = ex;
         } catch (e) {
           errors.push(`${ex}: ${e.message}`);
         }
       }
+      // a live poll asks from the newest candle on; right at a new minute the exchange can briefly return nothing — that is "no news", not an error
+      if (emptyAt && now - start <= 3 * STEP[iv]) return send(200, { exchange: emptyAt, symbol: sym, interval: iv, candles: [] });
       return send(404, { error: `No ${sym} perpetual candles for that time (${errors.join('; ')})` });
     }
 
