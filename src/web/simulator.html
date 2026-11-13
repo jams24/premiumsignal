@@ -40,6 +40,15 @@
 .sim-clock { font: 500 12px/1.3 var(--font-mono); color: var(--text2); }
 .sim-chart { height: 480px; min-width: 0; border-radius: 6px; overflow: hidden; }
 .sim-chartwrap { position: relative; min-width: 0; }
+.sim-charts.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.sim-cmpbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 4px; }
+.sim-cmpbar input { width: 110px; text-transform: uppercase; }
+.sim-cmpsum { font: 400 12px/1.5 var(--font-mono); color: var(--text2); margin-bottom: 4px; }
+.sim-cmpsum b { color: var(--text); font-weight: 600; }
+.sim-cmpsum.bad { color: var(--danger); }
+#sim-cmp-btn[aria-pressed="true"] { border-color: #60a5fa; color: #60a5fa; }
+.sim-grid.wide { grid-template-columns: minmax(0, 1fr); }   /* two charts: they take the full width, the ticket goes below */
+@media (max-width: 760px) { .sim-charts.two { grid-template-columns: minmax(0, 1fr); } .sim-charts.two #sim-cmp-chart { height: 320px; } }
 .sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
 .sim-legend b { color: var(--text); font-weight: 600; }
 .sim-posblk { display: grid; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
@@ -210,6 +219,7 @@
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
+          <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
       </div>
@@ -223,7 +233,18 @@
       <div class="sim-watch sim-htf" id="sim-htf" hidden></div>
       <div class="sim-watch" id="sim-watch" aria-live="polite" hidden></div>
       <div class="sim-clock" id="sim-clock">No chart loaded</div>
-      <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div></div>
+      <div class="sim-cmpbar" id="sim-cmp-bar" hidden>
+        <span class="sim-status" style="margin:0">Compare with:</span>
+        <input id="sim-cmp-sym" list="sim-coin-list" placeholder="ETH" aria-label="Second chart: symbol" autocomplete="off" spellcheck="false">
+        <button type="button" class="b" id="sim-cmp-load">Load</button>
+        <button type="button" class="b" data-cmp="BTC">BTC</button><button type="button" class="b" data-cmp="ETH">ETH</button><button type="button" class="b" data-cmp="SOL">SOL</button>
+        <button type="button" class="b" id="sim-cmp-close" title="Close the second chart">✕ Close</button>
+      </div>
+      <div class="sim-cmpsum" id="sim-cmp-sum" aria-live="polite" hidden></div>
+      <div class="sim-charts" id="sim-charts">
+        <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div></div>
+        <div class="sim-chartwrap" id="sim-cmp-wrap" hidden><div class="sim-chart" id="sim-cmp-chart"></div><div class="sim-legend" id="sim-cmp-legend"></div></div>
+      </div>
       <div class="sim-hint" id="sim-hint"></div>
       <div class="sim-row" id="sim-replay-bar">
         <button type="button" class="b go" id="sim-play">▶ Play</button>
@@ -357,7 +378,7 @@
   const isFx = () => S.ex === 'fx', realOn = () => R.on && S.mode === 'live' && S.ex !== 'fx';
   const exLabel = ex => (ex === 'fx' ? 'Yahoo forex (about 1–2 min behind, practice only)' : ex);
   const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
-  const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], open: [], side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
+  const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], open: [], side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null, Bt: [], Bc: [] };
   // open simulated trades: live ones on any coins (one per coin, all kept up to date) + at most one replay trade.
   // S.pos is the trade on the chart you are looking at.
   Object.defineProperty(S, 'pos', { get: () => S.open.find(p => p.mode === S.mode && (p.mode === 'replay' || p.sym === S.sym)) || null });
@@ -445,6 +466,8 @@
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     smcLayer = makeLayer(); cs.attachPrimitive(smcLayer);
     chart.subscribeClick(onChartClick);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(false));   // the second chart scrolls and zooms with this one
+    chart.subscribeCrosshairMove(p => cmpCross(p, false));
     chart.subscribeCrosshairMove(param => {   // candle under the cursor; the price-axis label is just the cursor's height
       const el = $('sim-legend'), d = param && param.time != null && param.seriesData ? param.seriesData.get(cs) : null;
       if (!d || d.open == null) { el.hidden = true; return; }
@@ -502,15 +525,208 @@
     const B = bars(S.cur);
     cs.applyOptions({ priceFormat: { type: 'price', precision: S.prec, minMove: Math.pow(10, -S.prec) } });
     cs.setData(B.map(toC)); vs.setData(B.map(toV));
+    S.Bt = B.map(b => b.t); S.Bc = B.map(b => b.c);   // bar times and closes, for the second chart's scroll and crosshair
     S.topHi = null;
     if (fit) {
       // a drag or pinch on the price axis turns auto-fit off and it would stay off for the next coin
       chart.priceScale('right').applyOptions({ autoScale: true });
       chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, B.length - 110), to: B.length + 10 });
     }
+    if (cmp.on) cmpRedraw(fit);
     refresh();
   }
-  function pushLast() { const b = S.tf === '4h' ? bars(S.cur).pop() : lastBar(); cs.update(toC(b)); vs.update(toV(b)); }
+  function pushLast() {
+    const b = S.tf === '4h' ? bars(S.cur).pop() : lastBar(); cs.update(toC(b)); vs.update(toV(b));
+    if (S.Bt.length && S.Bt[S.Bt.length - 1] === b.t) S.Bc[S.Bc.length - 1] = b.c; else { S.Bt.push(b.t); S.Bc.push(b.c); }
+  }
+
+  // ---------- second chart: two coins side by side ----------
+  // The "which one is stronger" check from day-trading streams (BTC vs ETH vs SOL on the same timeframe). The second chart
+  // follows this chart's clock (a replay never shows it the future), its timeframe, scroll, zoom and crosshair, and is
+  // view-only: the ticket, levels and SMC stay on the main chart. The line above both says where each sits in its last
+  // 24 h high–low range.
+  const cmp = { on: false, want: '', sym: '', ex: '', prec: 4, base: [], cur: -1, chart: null, cs: null, vs: null, Bt: [], Bc: [],
+    htf: null, load: 0, poll: null, busy: false, pending: '', ign: { main: 0, cmp: 0 }, xIgn: { main: 0, cmp: 0 } };
+  const atOrBefore = (n, get, t) => { let lo = 0, hi = n - 1, r = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (get(m) <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
+  const cmpFmt = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(cmp.prec);
+  const cmpName = () => (cmp.ex === 'fx' ? `${cmp.sym.slice(0, 3)}/${cmp.sym.slice(3)}` : cmp.sym);
+  function cmpNote(msg, bad) { const el = $('sim-cmp-sum'); el.textContent = msg; el.classList.toggle('bad', !!bad); }
+  function cmpInit() {
+    if (cmp.chart) return;
+    const el = $('sim-cmp-chart');
+    cmp.chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth || 500, height: el.clientHeight || 480,
+      layout: { background: { type: 'solid', color: '#131722' }, textColor: '#9ca3af', fontSize: 11, fontFamily: 'JetBrains Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(42,46,57,0.5)' }, horzLines: { color: 'rgba(42,46,57,0.5)' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1e293b' },
+      timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false, rightOffset: 10 },
+    });
+    cmp.cs = cmp.chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444' });
+    cmp.vs = cmp.chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
+    cmp.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    cmp.chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(true));
+    cmp.chart.subscribeCrosshairMove(p => { cmpLegend(p); cmpCross(p, true); });
+    new ResizeObserver(() => { if (el.clientWidth) cmp.chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
+  }
+  function cmpShow(on) {
+    cmp.on = on;
+    ['sim-cmp-bar', 'sim-cmp-wrap', 'sim-cmp-sum'].forEach(id => { $(id).hidden = !on; });
+    $('sim-charts').classList.toggle('two', on); document.querySelector('#sim .sim-grid').classList.toggle('wide', on);
+    $('sim-cmp-btn').setAttribute('aria-pressed', String(on));
+    if (on) { cmpInit(); if (!cmp.poll) cmp.poll = setInterval(cmpPoll, 4000); }
+    else { cmp.load++; cmp.want = ''; cmp.sym = ''; cmp.base = []; cmp.cur = -1; cmp.Bt = []; cmp.Bc = []; }
+    saveView();
+  }
+  async function cmpOpen(sym) {
+    sym = String(sym || '').trim();
+    if (!cmp.on) cmpShow(true);
+    if (!sym) return cmpNote('Type a coin to compare, for example ETH.', true);
+    $('sim-cmp-sym').value = sym.toUpperCase(); cmp.want = sym;
+    await cmpLoad();
+  }
+  async function cmpLoad() {
+    if (!cmp.on || !cmp.want) return;
+    if (!S.base.length) return cmpNote('Load a chart first: the second one follows its time.', true);
+    const my = ++cmp.load, start = S.base[0][0], end = S.mode === 'live' ? Date.now() : S.base[S.base.length - 1][0] + MIN;
+    cmpNote(`Loading ${cmp.want.toUpperCase()}…`);
+    try {
+      const r = await api('/api/sim/klines', { symbol: cmp.want, interval: '1m', start, end, exchange: 'auto' });
+      if (my !== cmp.load) return;   // closed, or another coin / chart was loaded meanwhile
+      if (!r.candles || !r.candles.length) throw new Error('no candles came back for that time');
+      Object.assign(cmp, { base: r.candles, sym: r.symbol.replace(/USDT$/, ''), ex: r.exchange, htf: null, cur: -1 });
+      cmp.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0);
+      cmpRedraw(true); saveView();
+    } catch (e) {
+      if (my !== cmp.load) return;
+      Object.assign(cmp, { base: [], cur: -1, Bt: [], Bc: [] }); cmp.cs.setData([]); cmp.vs.setData([]); $('sim-cmp-legend').textContent = '';
+      cmpNote(`Could not load ${cmp.want.toUpperCase()}: ${e.message}`, true);
+    }
+  }
+  function cmpAfterMain() {   // a new main chart (coin, time, Live/Replay): the second one reloads for the same time
+    if (cmp.pending) { const s = cmp.pending; cmp.pending = ''; cmpOpen(s); return; }
+    if (cmp.on && cmp.want) { Object.assign(cmp, { base: [], cur: -1 }); cmpLoad(); }
+  }
+  async function cmpHtf() {   // 4H: the coin's hourly history before its first minute, like the main chart's
+    if (!cmp.base.length) return;
+    const H0 = Math.ceil(cmp.base[0][0] / HOUR) * HOUR, key = `${cmp.sym}|${cmp.ex}|${H0}`, my = cmp.load;
+    if (cmp.htf && cmp.htf.key === key) return;
+    cmp.htf = { key, H0, k: [] };   // one try per chart
+    try {
+      const r = await api('/api/sim/klines', { symbol: cmp.sym, interval: '1h', start: H0 - 40 * 24 * HOUR, end: H0 - HOUR, exchange: cmp.ex });
+      if (my !== cmp.load) return;
+      cmp.htf.k = (r.candles || []).filter(c => c[0] < H0);
+      if (S.tf === '4h') cmpRedraw(false);
+    } catch (e) { /* the 4H chart then starts at the minutes */ }
+  }
+  const cmpCut = () => (S.cur < 0 || !cmp.base.length ? -1 : atOrBefore(cmp.base.length, i => cmp.base[i][0], S.base[S.cur][0]));
+  function cmpBars(upto) {
+    const out = [];
+    const add = (t, o, h, l, c, v) => {
+      const b = bucket(t), last = out[out.length - 1];
+      if (last && last.t === b) { last.h = Math.max(last.h, h); last.l = Math.min(last.l, l); last.c = c; last.v += v; }
+      else out.push({ t: b, o, h, l, c, v });
+    };
+    const H = S.tf === '4h' && cmp.htf && cmp.htf.H0 === Math.ceil(cmp.base[0][0] / HOUR) * HOUR ? cmp.htf : null;
+    if (H) for (const k of H.k) add(k[0], k[1], k[2], k[3], k[4], k[5]);
+    for (let i = 0; i <= upto; i++) { const k = cmp.base[i]; if (H && k[0] < H.H0) continue; add(k[0], k[1], k[2], k[3], k[4], k[5]); }
+    return out;
+  }
+  function cmpRedraw(fit) {
+    if (!cmp.on || !cmp.cs || !cmp.base.length) return;
+    cmp.cur = cmpCut();
+    const B = cmp.cur >= 0 ? cmpBars(cmp.cur) : [];
+    cmp.cs.applyOptions({ priceFormat: { type: 'price', precision: cmp.prec, minMove: Math.pow(10, -cmp.prec) } });
+    cmp.cs.setData(B.map(toC)); cmp.vs.setData(B.map(toV));
+    cmp.Bt = B.map(b => b.t); cmp.Bc = B.map(b => b.c);
+    if (fit) cmp.chart.priceScale('right').applyOptions({ autoScale: true });
+    cmp.ign.main = 0; cmpAlign(false); cmpSum(); cmpLegend(null);
+    if (S.tf === '4h') cmpHtf();
+  }
+  function cmpTick() {   // the main chart's clock moved (replay step or live candle): bring the second chart to it
+    if (!cmp.on || !cmp.cs || !cmp.base.length) return;
+    const c = cmpCut();
+    if (c === cmp.cur) return;
+    if (c < cmp.cur || cmp.cur < 0 || S.tf === '4h') return cmpRedraw(false);
+    for (let i = cmp.cur + 1; i <= c; i++) {
+      const b = bucket(cmp.base[i][0]);
+      if (i < c && bucket(cmp.base[i + 1][0]) === b) continue;   // only a bar's latest minute needs drawing
+      let j = i; while (j > 0 && bucket(cmp.base[j - 1][0]) === b) j--;
+      const bar = { t: b, o: cmp.base[j][1], h: -Infinity, l: Infinity, c: cmp.base[i][4], v: 0 };
+      for (let m = j; m <= i; m++) { bar.h = Math.max(bar.h, cmp.base[m][2]); bar.l = Math.min(bar.l, cmp.base[m][3]); bar.v += cmp.base[m][5]; }
+      if (cmp.Bt.length && b < cmp.Bt[cmp.Bt.length - 1]) return cmpRedraw(false);
+      cmp.cs.update(toC(bar)); cmp.vs.update(toV(bar));
+      if (cmp.Bt.length && cmp.Bt[cmp.Bt.length - 1] === b) cmp.Bc[cmp.Bc.length - 1] = bar.c; else { cmp.Bt.push(b); cmp.Bc.push(bar.c); }
+    }
+    cmp.cur = c; cmpSum(); cmpLegend(null);
+  }
+  async function cmpPoll() {   // live: the second coin's own new candles (shown once the main chart's clock reaches them)
+    if (!cmp.on || S.mode !== 'live' || cmp.busy || !cmp.base.length) return;
+    cmp.busy = true; const my = cmp.load;
+    try {
+      const r = await api('/api/sim/klines', { symbol: cmp.sym, interval: '1m', start: cmp.base[cmp.base.length - 1][0], exchange: cmp.ex });
+      if (my !== cmp.load) return;
+      let first = Infinity;
+      for (const k of r.candles || []) {
+        const i = cmp.base.length - 1;
+        if (k[0] === cmp.base[i][0]) { cmp.base[i] = k; first = Math.min(first, i); }
+        else if (k[0] > cmp.base[i][0]) { cmp.base.push(k); first = Math.min(first, i + 1); }
+      }
+      if (first <= cmp.cur) cmp.cur = first - 1;   // the minute on screen changed: draw it again
+      cmpTick();
+    } catch (e) { /* a missed update; the next one comes in 4 s */ }
+    finally { cmp.busy = false; }
+  }
+  function rangeAt(base, upto, end) {   // last 24 h up to the clock: % change and where the price sits in its high–low range
+    let hi = -Infinity, lo = Infinity, open = null, i = upto;
+    for (; i >= 0 && base[i][0] >= end - 24 * HOUR; i--) { hi = Math.max(hi, base[i][2]); lo = Math.min(lo, base[i][3]); open = base[i][1]; }
+    if (open == null) return null;
+    const c = base[upto][4];
+    return { chg: (c / open - 1) * 100, pos: hi > lo ? (c - lo) / (hi - lo) : 0.5, hrs: (end - base[i + 1][0]) / HOUR };
+  }
+  function cmpSum() {
+    if (!cmp.on || cmp.cur < 0 || S.cur < 0) return;
+    const end = S.base[S.cur][0] + MIN, a = rangeAt(S.base, S.cur, end), b = rangeAt(cmp.base, cmp.cur, end);
+    if (!a || !b) return;
+    const mainName = isFx() ? `${S.sym.slice(0, 3)}/${S.sym.slice(3)}` : S.sym;
+    const one = (n, r) => `<b>${n}</b> ${r.chg >= 0 ? '+' : ''}${r.chg.toFixed(2)}%, at <b>${Math.round(r.pos * 100)}%</b> of its range`;
+    const d = a.pos - b.pos;
+    const verdict = Math.abs(d) < 0.1 ? 'about the same place in their ranges'
+      : `<b>${d > 0 ? mainName : cmpName()}</b> is the stronger one, <b>${d > 0 ? cmpName() : mainName}</b> the weaker`;
+    const el = $('sim-cmp-sum'); el.classList.remove('bad');
+    el.innerHTML = `Last ${Math.max(1, Math.round(Math.min(24, a.hrs, b.hrs)))} h to ${utc(end)} UTC: ${one(mainName, a)} · ${one(cmpName(), b)} → ${verdict}.`;
+  }
+  function cmpLegend(p) {
+    const el = $('sim-cmp-legend'), d = p && p.time != null && p.seriesData ? p.seriesData.get(cmp.cs) : null;
+    if (d && d.open != null) {
+      const ch = (d.close / d.open - 1) * 100;
+      el.innerHTML = `<b>${cmpName()}</b> ${utc(p.time * 1000)} · O <b>${cmpFmt(d.open)}</b> H <b>${cmpFmt(d.high)}</b> L <b>${cmpFmt(d.low)}</b> C <b>${cmpFmt(d.close)}</b> ` +
+        `<span class="${ch >= 0 ? 'pos' : 'neg'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</span>`;
+      return;
+    }
+    el.innerHTML = cmp.cur >= 0 ? `<b>${cmpName()}</b> · ${cmp.ex === 'fx' ? 'Yahoo forex' : cmp.ex} · ${S.tf} · ${cmpFmt(cmp.base[cmp.cur][4])}` : '';
+  }
+  function cmpAlign(fromCmp) {   // same zoom and the same last candle on both charts
+    if (!cmp.on || !cmp.chart || !cmp.Bt.length || !S.Bt.length) return;
+    const now = performance.now();
+    if (now < (fromCmp ? cmp.ign.cmp : cmp.ign.main)) return;   // the move we just made ourselves
+    const src = fromCmp ? cmp.chart : chart, dst = fromCmp ? chart : cmp.chart;
+    const r = src.timeScale().getVisibleLogicalRange(); if (!r) return;
+    const j = atOrBefore(cmp.Bt.length, i => cmp.Bt[i], S.Bt[S.Bt.length - 1]); if (j < 0) return;
+    const off = (fromCmp ? -1 : 1) * (j - (S.Bt.length - 1));
+    if (fromCmp) cmp.ign.main = now + 80; else cmp.ign.cmp = now + 80;
+    dst.timeScale().setVisibleLogicalRange({ from: r.from + off, to: r.to + off });
+  }
+  function cmpCross(p, fromCmp) {   // the crosshair on one chart shows the same candle on the other
+    if (!cmp.on || !cmp.chart || typeof cmp.chart.setCrosshairPosition !== 'function') return;
+    const now = performance.now();
+    if (now < (fromCmp ? cmp.xIgn.cmp : cmp.xIgn.main)) return;
+    const dst = fromCmp ? chart : cmp.chart, ser = fromCmp ? cs : cmp.cs, T = fromCmp ? S.Bt : cmp.Bt, C = fromCmp ? S.Bc : cmp.Bc;
+    if (fromCmp) cmp.xIgn.main = now + 60; else cmp.xIgn.cmp = now + 60;
+    const i = p && p.time != null ? atOrBefore(T.length, k => T[k], p.time * 1000) : -1;
+    if (i < 0 || T[i] !== p.time * 1000) return dst.clearCrosshairPosition();
+    dst.setCrosshairPosition(C[i], p.time, ser);
+  }
 
   function drawMarks() {
     const end = nowT() || 0;
@@ -998,6 +1214,7 @@
     const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1;
     document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = atEnd || S.cur < 0; });
     $('sim-until-exit').disabled = atEnd || !S.pos;
+    cmpTick();
   }
 
   // ---------- replay ----------
@@ -1030,7 +1247,7 @@
     S.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0); S.marks = [];   // forex: 210.969 / 1.10278 (pipettes)
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
     $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
-    recomputeFull(); loadHtf();
+    recomputeFull(); loadHtf(); cmpAfterMain();
   }
   const replayOpen = () => S.open.some(p => p.mode === 'replay');
   async function loadReplay(sym, t, ex, extraMarks, label) {
@@ -1823,6 +2040,7 @@
     const v = loadView();   // the chart you had before the reload
     if (v.tf && TF[v.tf]) { S.tf = v.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x.dataset.tf === v.tf)); }
     if (v.real === true) R.on = true;
+    if (typeof v.cmp === 'string' && /^[A-Z0-9]{1,20}$/.test(v.cmp)) cmp.pending = v.cmp;   // the second chart comes back with the first
     const saved = loadPos();
     if (saved.length) { status(`Bringing back your ${saved.length === 1 ? 'open simulated trade' : saved.length + ' open simulated trades'}…`); loadPicks().catch(() => {}); restoreAll(saved); return; }
     if (v.mode === 'live' && /^[A-Z0-9]{1,20}$/.test(v.sym || '')) {
@@ -1841,7 +2059,7 @@
   function loadView() { try { return JSON.parse(localStorage.getItem(VKEY)) || {}; } catch (e) { return {}; } }
   function saveView() {
     if (!started) return;
-    try { localStorage.setItem(VKEY, JSON.stringify({ mode: S.mode, sym: S.sym || '', ex: S.ex || '', tf: S.tf, real: !!R.on, pick: $('sim-pick').value || '' })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(VKEY, JSON.stringify({ mode: S.mode, sym: S.sym || '', ex: S.ex || '', tf: S.tf, real: !!R.on, pick: $('sim-pick').value || '', cmp: cmp.on ? (cmp.sym || cmp.want || '').toUpperCase() : '' })); } catch (e) { /* ignore */ }
   }
   window.addEventListener('pagehide', saveView);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveView(); });
@@ -1861,6 +2079,16 @@
     loadReplay(sym, t, $('sim-ex').value, [], `${sym.toUpperCase()} from ${utc(t)} UTC`);
   };
   $('sim-fit').onclick = () => { if (S.cur >= 0) redraw(true); };
+  $('sim-cmp-btn').onclick = () => {
+    if (cmp.on) return cmpShow(false);
+    // one tap gives a useful pair: BTC ↔ ETH, a forex pair next to EUR/USD (or GBP/USD), anything else next to BTC
+    const def = S.sym === 'BTC' ? 'ETH' : isFx() ? (S.sym === 'EURUSD' ? 'GBPUSD' : 'EURUSD') : 'BTC';
+    cmpOpen(S.base.length ? def : '');
+  };
+  $('sim-cmp-close').onclick = () => cmpShow(false);
+  $('sim-cmp-load').onclick = () => cmpOpen($('sim-cmp-sym').value);
+  $('sim-cmp-sym').addEventListener('keydown', e => { if (e.key === 'Enter') cmpOpen($('sim-cmp-sym').value); });
+  document.querySelectorAll('#sim [data-cmp]').forEach(b => b.onclick = () => cmpOpen(b.dataset.cmp));
   document.querySelectorAll('#sim [data-coin]').forEach(b => b.onclick = () => {
     const c = b.dataset.coin;
     if (S.mode === 'live') { $('sim-symbol-live').value = c; return loadLive(c, $('sim-ex-live').value); }
