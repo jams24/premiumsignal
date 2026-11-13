@@ -2,8 +2,8 @@
 // and our own live trades to replay. It never places, changes or cancels orders.
 const db = require('../db/database');
 
-const STEP = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3 };
-const BYBIT_IV = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240' };
+const STEP = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3, '1d': 86400e3 };
+const BYBIT_IV = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' };
 const MAX_CANDLES = 3000;
 
 // everyday names for the TradFi perps (Binance/Bybit list gold as XAUUSDT, WTI oil as CLUSDT, …).
@@ -65,8 +65,8 @@ function fxPair(s) {   // 'GBPJPY', 'gbp/jpy', 'GBPJPY=X' → 'GBPJPY'; anything
   if (s.length === 10 && s.endsWith('USDT')) s = s.slice(0, 6);
   return s.length === 6 && s.slice(0, 3) !== s.slice(3) && FX_CCY.has(s.slice(0, 3)) && FX_CCY.has(s.slice(3)) ? s : null;
 }
-const FX_IV = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '60m', '4h': '60m' };
-const FX_KEEP_DAYS = { '1m': 30, '5m': 60, '15m': 60, '1h': 729, '4h': 729 };
+const FX_IV = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '60m', '4h': '60m', '1d': '1d' };
+const FX_KEEP_DAYS = { '1m': 30, '5m': 60, '15m': 60, '1h': 729, '4h': 729, '1d': 3650 };
 const fxCache = new Map();   // pair|interval → { at, from, candles }: a live chart asks every 4 s, Yahoo's candle moves once a minute
 
 async function yahooChart(pair, yiv, start, end) {
@@ -101,7 +101,9 @@ async function fxKlines(pair, iv, start, end) {
   for (let i = 0; i < ts.length; i++) {
     const o = q.open && q.open[i], h = q.high && q.high[i], l = q.low && q.low[i], c = q.close && q.close[i];
     if (o == null || h == null || l == null || c == null) continue;
-    const t = Math.floor(ts[i] * 1000 / step) * step;   // Yahoo's newest entry is the latest quote (e.g. 22:29:33): file it under its minute
+    // Yahoo's newest entry is the latest quote (e.g. 22:29:33): file it under its minute. Daily candles start at London
+    // midnight, 23:00 UTC in summer: +2 h files them under their UTC day.
+    const t = Math.floor((ts[i] * 1000 + (iv === '1d' ? 7200e3 : 0)) / step) * step;
     const last = out[out.length - 1];
     if (last && last[0] === t) { last[2] = Math.max(last[2], h); last[3] = Math.min(last[3], l); last[4] = c; }
     else if (!last || t > last[0]) out.push([t, o, h, l, c, 0]);
@@ -132,7 +134,7 @@ async function handle(url, res) {
       const sym = cleanSymbol(url.searchParams.get('symbol'));
       const iv = url.searchParams.get('interval') || '1m';
       if (!sym) return send(400, { error: 'symbol required' });
-      if (!STEP[iv]) return send(400, { error: 'interval must be 1m, 5m, 15m, 1h or 4h' });
+      if (!STEP[iv]) return send(400, { error: 'interval must be 1m, 5m, 15m, 1h, 4h or 1d' });
       const now = Date.now();
       const end = Math.min(Number(url.searchParams.get('end')) || now, now);
       let start = Number(url.searchParams.get('start')) || end - 300 * STEP[iv];
