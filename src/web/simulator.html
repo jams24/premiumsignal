@@ -202,6 +202,7 @@
           <button type="button" class="b on" data-tf="5m">5m</button>
           <button type="button" class="b" data-tf="15m">15m</button>
           <button type="button" class="b" data-tf="1h">1H</button>
+          <button type="button" class="b" data-tf="4h" title="4-hour candles: the chart's own minutes plus the coin's last 40 days of hourly history">4H</button>
         </div>
         <div class="sim-row">
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
@@ -347,7 +348,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN };
+  const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN, '4h': 240 * MIN };
   const FEE = 0.0005, JKEY = 'sc_sim_journal_v1', PKEY = 'sc_sim_live_pos_v1';
   const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
   const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], open: [], side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
@@ -467,10 +468,19 @@
   const toV = b => ({ time: b.t / 1000, value: b.v, color: b.c >= b.o ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)' });
   function bars(upto) {
     const out = [];
-    for (let i = 0; i <= upto; i++) {
-      const [t, o, h, l, c, v] = S.base[i], b = bucket(t), last = out[out.length - 1];
+    const add = (t, o, h, l, c, v) => {
+      const b = bucket(t), last = out[out.length - 1];
       if (last && last.t === b) { last.h = Math.max(last.h, h); last.l = Math.min(last.l, l); last.c = c; last.v += v; }
       else out.push({ t: b, o, h, l, c, v });
+    };
+    // 4H: the chart's own 1m candles cover only a day or two (6–12 bars), so the hours before them come from the coin's
+    // hourly history — the same candles as the Direction line, all before the chart starts, so a replay never sees the future
+    const H = S.tf === '4h' ? htfHours() : null;
+    if (H) for (const k of H.k) add(k[0], k[1], k[2], k[3], k[4], k[5]);
+    for (let i = 0; i <= upto; i++) {
+      const k = S.base[i];
+      if (H && k[0] < H.H0) continue;   // that hour is already in the history
+      add(k[0], k[1], k[2], k[3], k[4], k[5]);
     }
     return out;
   }
@@ -494,7 +504,7 @@
     }
     refresh();
   }
-  function pushLast() { const b = lastBar(); cs.update(toC(b)); vs.update(toV(b)); }
+  function pushLast() { const b = S.tf === '4h' ? bars(S.cur).pop() : lastBar(); cs.update(toC(b)); vs.update(toV(b)); }
 
   function drawMarks() {
     const end = nowT() || 0;
@@ -1181,7 +1191,10 @@
   }
   function paintSmc(g, m, back) {
     const A = smc.A; if (!A || !cs || !(smc.on || coach.open)) return;
-    const show = k => (!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k;
+    // 4H chart: a 15m/5m swing, break or sweep sits inside one candle, so those labels would pile up on the last bars —
+    // keep the zones, premium/discount and levels only (the walk-through still shows whatever it points at)
+    const tiny = S.tf === '4h' && !coach.open;
+    const show = k => (!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k && !(tiny && (k === 'swings' || k === 'structure'));
     const ts = chart.timeScale(), W = m.width;
     const X = t => ts.timeToCoordinate(bucket(t) / 1000);
     const Y = p => cs.priceToCoordinate(p);
@@ -1247,7 +1260,7 @@
       const side = leg ? (leg.dir === -1 ? 'H' : 'L') : null, eq = leg ? (leg.hi + leg.lo) / 2 : 0;
       if (leg) for (const l of A.liq.filter(l => l.kind === 'swing' && l.side === side && (side === 'H' ? l.p >= eq : l.p <= eq)).slice(-4)) line(X(l.t), W, Y(l.p), 'rgba(245,158,11,0.5)', [1, 3]);
       for (const e of A.eqs.filter(e => !e.taken).slice(-4)) { line(X(e.t1), W, Y(e.p), COL.gold, [3, 3], 1.2); tag(e.kind + ' · stops', X(e.t1), Y(e.p) + (e.side === 'H' ? -9 : 9), COL.gold); }
-      for (const s of A.sweeps.slice(-5).reverse()) {
+      if (!tiny) for (const s of A.sweeps.slice(-5).reverse()) {
         line(X(s.levelT), X(s.t), Y(s.p), COL.gold, [1, 2]);
         const x = X(s.t), y = Y(s.wick); if (ok(x, y)) tag('✕ sweep', x, s.dir === -1 ? y - 10 : y + 10, COL.gold, 'center');
       }
@@ -1304,7 +1317,10 @@
     } catch (e) { err = e.message; }
     if (HTF.busy !== key) return;   // another chart was loaded meanwhile
     Object.assign(HTF, { key, busy: null, k, H0, err, at: Date.now(), memo: null });
-    if (S.cur >= 0) { renderHtf(); renderTicket(); }
+    if (S.cur >= 0) { if (S.tf === '4h' && k.length) redraw(true); renderHtf(); renderTicket(); }
+  }
+  function htfHours() {   // this chart's hourly history (the hours before its first 1m candle), or null while it loads
+    return HTF.key && S.base.length && HTF.key === `${S.sym}|${S.ex}|${Math.ceil(S.base[0][0] / HOUR) * HOUR}` ? HTF : null;
   }
   function htfNow() {
     if (!HTF.key || S.cur < 0 || HTF.key !== `${S.sym}|${S.ex}|${Math.ceil(S.base[0][0] / HOUR) * HOUR}`) return null;   // only this chart's own history
