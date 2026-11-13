@@ -378,6 +378,24 @@
   const isFx = () => S.ex === 'fx', realOn = () => R.on && S.mode === 'live' && S.ex !== 'fx';
   const exLabel = ex => (ex === 'fx' ? 'Yahoo forex (about 1–2 min behind, practice only)' : ex);
   const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
+  // each TP closes a share of what is left (the last one closes the rest) → share of the whole position at each TP
+  const sharesOf = fr => { let left = 1; return fr.map((f, i) => { const q = i === fr.length - 1 ? left : left * Math.min(1, f); left -= q; return q; }); };
+  const pctTxt = q => `${+(q * 100).toFixed(1)}%`;
+  // the bot's own stop and TP1–4 (a /api/trade/preview setup) in dollars: what each step books on its share of the position
+  function setupMoney(s) {
+    const pr = precFor(s.entry || s.market), pf = v => (+v).toFixed(pr), E = s.entryType === 'limit' ? +s.entry : +s.market, P = +s.posSize;
+    const sh = Array.isArray(s.closeShares) ? s.closeShares : null, out = [];
+    out.push(`Stop <b>${pf(s.stopLoss)}</b> (${(+s.slPct).toFixed(2)}%) → if hit ≈ <b class="neg">−$${(+s.maxLoss).toFixed(2)}</b> + fees $${(+s.fees).toFixed(2)}`);
+    let all = 0, n = 0;
+    (s.tps || []).forEach((tp, i) => {
+      if (!(tp > 0)) return;
+      const mv = Math.abs(tp / E - 1), q = sh ? sh[i] : null, usd = q != null ? P * mv * q : null;
+      if (usd != null) { all += usd; n++; }
+      out.push(`TP${i + 1} <b>${pf(tp)}</b> (${(mv * 100).toFixed(2)}%)` + (usd != null ? ` · closes ${pctTxt(q)} → <b class="pos">+$${usd.toFixed(2)}</b>` : ''));
+    });
+    if (n > 1) out.push(`All ${n} TPs hit ≈ <b class="pos">+$${all.toFixed(2)}</b> before fees (after TP1 the stop moves to entry)`);
+    return out;
+  }
   const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], open: [], side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null, Bt: [], Bc: [] };
   // open simulated trades: live ones on any coins (one per coin, all kept up to date) + at most one replay trade.
   // S.pos is the trade on the chart you are looking at.
@@ -807,11 +825,14 @@
     const pl = plan(px), size = parseFloat($('sim-size').value) || 0;
     if (!pl.stop) { sum.innerHTML = short ? 'Set a stop <b>above</b> the price.' : 'Set a stop <b>below</b> the price.'; return; }
     const riskPct = Math.abs(pl.stop - px) / px, risk = size * riskPct + 2 * size * feeOf(S.ex);
-    const tp1 = pl.tps[0];
-    const gain1 = tp1 ? size * Math.abs(tp1.price - px) / px * (pl.tps.length > 1 ? tp1.frac : 1) : 0;
+    const tp1 = pl.tps[0], sh = sharesOf(pl.tps.map(t => t.frac));
+    const gain = (t, i) => size * Math.abs(t.price - px) / px * (pl.tps.length > 1 ? sh[i] : 1);
     const checks = [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length;
     sum.innerHTML = `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
-      (tp1 ? `${pl.tps.length > 1 ? 'TP1 (25%)' : 'Target'}: <b>+$${gain1.toFixed(2)}</b> at ${fmt(tp1.price)}` + (pl.tps.length === 1 ? ` · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R` : '') : 'Set a target.') +
+      (!tp1 ? 'Set a target.'
+        : pl.tps.length === 1 ? `Target: <b>+$${gain(tp1, 0).toFixed(2)}</b> at ${fmt(tp1.price)} · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R`
+        : pl.tps.map((t, i) => `TP${i + 1} ${fmt(t.price)} · ${pctTxt(sh[i])} → <b>+$${gain(t, i).toFixed(2)}</b>`).join('<br>') +
+          `<br>All ${pl.tps.length} hit ≈ <b>+$${pl.tps.reduce((a, t, i) => a + gain(t, i), 0).toFixed(2)}</b> before fees`) +
       `<br>Checklist: <b>${checks}/4</b>${checks < 4 ? ' · the playbook waits for all four' : ''}` + htfTicket();
   }
 
@@ -846,6 +867,9 @@
     const short = S.side === 'short', side = short ? 'SHORT' : 'LONG', live = $('sim-r-mode').value === 'live';
     const rp0 = realPlan(), key = rp0 ? JSON.stringify(realBody(rp0)) : '';
     if (R.conf && (R.conf.key !== key || Date.now() - R.conf.at > 90000)) { R.conf = null; renderConf(); }   // inputs changed or too old: review again
+    // ask the bot for its exact stop / TP1–4 (places nothing) once the inputs settle, and again every 30 s while shown
+    if (rp0 && !rp0.errs.length && S.sym && !realOpenOn(S.sym) && !document.hidden && key !== R.pvWant &&
+        (!R.pv || R.pv.key !== key || Date.now() - R.pv.at > 30000)) pvSchedule(key, realBody(rp0));
     $('sim-r-note').innerHTML = R.web
       ? 'Places the order on your exchange through the bot: the same code as <code>/short</code> · <code>/long</code> → ✅. You review it here once; Telegram gets every order.'
       : 'Fills in your <code>/short</code> · <code>/long</code> panel in Telegram; nothing is placed until you tap ✅ there. To place orders from here, send <code>/webtrade on</code> to the bot.';
@@ -865,16 +889,34 @@
     const E = rp.entry || px, pc = v => Math.abs(v / E - 1) * 100, sg = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
     let h = R.web ? `<b>${side} ${esc(S.sym)}</b> · ${live ? '<b>💰 LIVE</b>' : '📝 paper'} · ${esc($('sim-r-ex').value ? $('sim-r-ex').value.toUpperCase() : 'your saved exchange')}<br>` : `Telegram gets a <b>${side} ${esc(S.sym)}</b> panel · ${live ? '<b>💰 LIVE</b>' : '📝 paper'}<br>`;
     h += rp.isLim ? (rp.lim > 0 ? `Entry: limit <b>${fmt(rp.lim)}</b> (${sg((rp.lim / px - 1) * 100)} from ${fmt(px)})` : 'Entry: limit, price not set') : `Entry: market ~<b>${fmt(px)}</b>`;
-    h += '<br>' + (rp.stop > 0 ? `Stop <b>${fmt(rp.stop)}</b> (${pc(rp.stop).toFixed(2)}% away)` : 'Stop: your saved SL setting');
-    h += '<br>' + (rp.tp > 0 ? `TP1 <b>${fmt(rp.tp)}</b> (${pc(rp.tp).toFixed(2)}%)` + (rp.stop > 0 ? ` · ${(Math.abs(rp.tp - E) / Math.abs(rp.stop - E)).toFixed(1)}R` : '') : 'Targets: your saved TP plan');
-    if (rp.margin && rp.lev) {
-      const pos = rp.margin * rp.lev;
-      h += `<br>$${rp.margin} × ${rp.lev}x = <b>$${pos.toFixed(0)}</b> position` + (rp.stop > 0 ? ` · if stopped ≈ <b>−$${(pos * pc(rp.stop) / 100).toFixed(2)}</b> + fees` : '');
-    } else h += `<br>Size: ${rp.margin ? '$' + rp.margin + ' margin' : 'your saved margin'} × ${rp.lev ? rp.lev + 'x' : 'your saved leverage'}`;
-    h += `<br><small style="color:var(--muted)">Prices from the ${esc(S.ex || '')} chart. ${R.web ? 'The review shows the order exchange\'s own price.' : 'The panel shows its own exchange\'s price; check the levels there.'}</small>`;
+    const pv = R.pv && R.pv.key === key ? R.pv : null, s = pv && pv.setup;
+    if (s) {   // the bot's own numbers (your saved settings fill the blanks): stop and every TP in dollars
+      h += '<br>' + setupMoney(s).join('<br>');
+      h += `<br>$${+s.margin} × ${+s.leverage}x = <b>$${(+s.posSize).toFixed(0)}</b> position${s.exLeverage > s.leverage ? ` · margin saver runs ${+s.exLeverage}x` : ''}`;
+      h += `<br><small style="color:var(--muted)">The bot's numbers at ${esc(String(s.exchange).toUpperCase())}'s price now (${(+s.market).toFixed(precFor(s.market))}): what ${R.web ? 'Review' : 'the Telegram panel'} will show.</small>`;
+      (s.errors || []).forEach(e => { h += `<br><span class="neg">⛔ ${esc(e)}</span>`; });
+    } else {
+      h += '<br>' + (rp.stop > 0 ? `Stop <b>${fmt(rp.stop)}</b> (${pc(rp.stop).toFixed(2)}% away)` : 'Stop: your saved SL setting');
+      h += '<br>' + (rp.tp > 0 ? `TP1 <b>${fmt(rp.tp)}</b> (${pc(rp.tp).toFixed(2)}%)` + (rp.stop > 0 ? ` · ${(Math.abs(rp.tp - E) / Math.abs(rp.stop - E)).toFixed(1)}R` : '') : 'Targets: your saved TP plan');
+      if (rp.margin && rp.lev) {
+        const pos = rp.margin * rp.lev;
+        h += `<br>$${rp.margin} × ${rp.lev}x = <b>$${pos.toFixed(0)}</b> position` + (rp.stop > 0 ? ` · if stopped ≈ <b>−$${(pos * pc(rp.stop) / 100).toFixed(2)}</b> + fees` : '');
+      } else h += `<br>Size: ${rp.margin ? '$' + rp.margin + ' margin' : 'your saved margin'} × ${rp.lev ? rp.lev + 'x' : 'your saved leverage'}`;
+      if (!rp.errs.length && !has) h += `<br><small style="color:var(--muted)">${pv && pv.err ? 'Could not get the $ amounts from the bot: ' + esc(pv.err) : 'Getting the stop and TP1–4 in dollars from the bot…'}</small>`;
+      else h += `<br><small style="color:var(--muted)">Prices from the ${esc(S.ex || '')} chart. ${R.web ? 'The review shows the order exchange\'s own price.' : 'The panel shows its own exchange\'s price; check the levels there.'}</small>`;
+    }
     if (has) h += `<br><span class="neg">⛔ You already have a real ${has.limitPrice ? 'limit order' : (has.direction || '').toUpperCase()} on ${esc(S.sym)}. ${R.web ? 'Manage it in Real positions below.' : 'Manage it with /mpositions or /orders.'}</span>`;
     if (rp.errs.length) h += '<br>' + rp.errs.map(e => `<span class="neg">⛔ ${esc(e)}</span>`).join('<br>');
     sum.innerHTML = h;
+  }
+  function pvSchedule(key, body) {
+    R.pvWant = key; clearTimeout(R.pvT);
+    R.pvT = setTimeout(async () => {
+      if (R.pvWant !== key) return;
+      try { const r = await apiPost('/api/trade/preview', body); if (R.pvWant === key) R.pv = { key, at: Date.now(), setup: r.setup }; R.web = !!r.webTrading; }
+      catch (e) { if (R.pvWant === key) R.pv = { key, at: Date.now(), err: e.message }; }
+      finally { if (R.pvWant === key) R.pvWant = null; if (realOn()) renderTicket(); }
+    }, 800);
   }
   // ---- direct: review (the bot's own numbers, nothing placed) → place ----
   async function reviewReal() {
@@ -900,8 +942,7 @@
     h += s.entryType === 'limit'
       ? `<div>Entry: limit <b>${pf(s.entry)}</b> · ${s.onBook ? 'rests on the exchange order book' : 'the bot enters at market when price touches it'} (now ${pf(s.market)})</div>`
       : `<div>Entry: market ~<b>${pf(s.market)}</b></div>`;
-    h += `<div>Stop <b>${pf(s.stopLoss)}</b> (${(+s.slPct).toFixed(2)}%) → if hit ≈ <b>−$${(+s.maxLoss).toFixed(2)}</b> + fees $${(+s.fees).toFixed(2)}</div>`;
-    h += `<div>TP1 ${pf(s.tps[0])} · TP2 ${pf(s.tps[1])} · TP3 ${pf(s.tps[2])} · TP4 ${pf(s.tps[3])}</div>`;
+    h += setupMoney(s).map(x => `<div>${x}</div>`).join('');
     h += `<div>$${+s.margin} × ${+s.leverage}x = <b>$${(+s.posSize).toFixed(2)}</b>${s.exLeverage > s.leverage ? ` · margin saver runs ${+s.exLeverage}x` : ''}${s.freeBalance != null ? ` · free $${(+s.freeBalance).toFixed(2)}` : ''}</div>`;
     (s.warnings || []).forEach(w => { h += `<div class="warn">⚠️ ${esc(w)}</div>`; });
     errs.forEach(e => { h += `<div class="neg">⛔ ${esc(e)}</div>`; });

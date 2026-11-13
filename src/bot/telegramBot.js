@@ -2728,6 +2728,13 @@ class TelegramBot {
       } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
     });
 
+    // Share of the whole position the executor closes at TP1…TP4 (checkOpenTrades: tp1ClosePct at TP1, tp2ClosePct of what
+    // is left at TP2, half the rest at TP3, the rest at TP4), so the dashboard can show each TP in dollars
+    const tpCloseShares = (te) => {
+      const a = Math.min(1, te?.tp1ClosePct ?? 0.33), b = (1 - a) * Math.min(1, te?.tp2ClosePct ?? 0.5), rest = Math.max(0, 1 - a - b);
+      return [a, b, rest / 2, rest / 2];
+    };
+
     // The panel the dashboard asks for, built and checked exactly like /short · /long (saved settings fill the blanks)
     const webSetup = async (o) => {
       const uid = webOwner();
@@ -2753,6 +2760,7 @@ class TelegramBot {
           exLeverage: st.marginSaver ? marginSaverLeverage(s.slPct, { chosen: st.leverage, maxLev: maxLeverageFor(st) }) : st.leverage,
           entryType: st.entryType, entry: s.entry, market: s.market, stopLoss: s.stopLoss, tps: [s.tp1, s.tp2, s.tp3, s.tp4],
           slPct: s.slPct, maxLoss: s.maxLoss, posSize: s.posSize, fees: s.fees, liqPrice: s.liqPrice, exitStyle: st.exitStyle,
+          closeShares: tpCloseShares(mtExec()),
           onBook: st.entryType === 'limit' && manualLimits.wantsRealLimit({ mode: st.mode, exchangeId: st.exchangeId, direction: st.direction, limitPrice: st.limitPrice }, s.market),
           freeBalance: st.liveBalance, errors, warnings: warnings.filter(w => !/^LIVE mode/.test(w)),
         },
