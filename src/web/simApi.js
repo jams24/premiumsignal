@@ -6,9 +6,16 @@ const STEP = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e
 const BYBIT_IV = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240' };
 const MAX_CANDLES = 3000;
 
+// everyday names for the TradFi perps (Binance/Bybit list gold as XAUUSDT, WTI oil as CLUSDT, …).
+// Not SPX (SPXUSDT is the SPX6900 crypto coin; the S&P 500 ETF is SPYUSDT) and not GAS (GASUSDT is NEO's Gas token).
+// None of these names is a listed crypto ticker on Binance or Bybit (checked 13 Nov 2026).
+const ALIAS = { GOLD: 'XAU', XAUUSD: 'XAU', SILVER: 'XAG', XAGUSD: 'XAG', PLATINUM: 'XPT', PALLADIUM: 'XPD',
+  OIL: 'CL', WTI: 'CL', USOIL: 'CL', CRUDE: 'CL', BRENT: 'BZ', UKOIL: 'BZ', NASDAQ: 'QQQ', NAS100: 'QQQ', NDX: 'QQQ',
+  SP500: 'SPY', SPX500: 'SPY', US500: 'SPY', TESLA: 'TSLA', NVIDIA: 'NVDA', APPLE: 'AAPL' };
 function cleanSymbol(s) {
   s = String(s || '').toUpperCase().replace(/[^\p{L}\p{N}]/gu, '').slice(0, 30);   // letters in any script: Binance lists e.g. 龙虾USDT
   if (!s) return null;
+  s = ALIAS[s] || ALIAS[s.replace(/USDT$/, '')] || s;
   return s.endsWith('USDT') ? s : s + 'USDT';
 }
 

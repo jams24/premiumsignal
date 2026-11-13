@@ -41,6 +41,11 @@
 .sim-chartwrap { position: relative; min-width: 0; }
 .sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
 .sim-legend b { color: var(--text); font-weight: 600; }
+.sim-posblk { display: grid; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
+.sim-posblk:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
+.sim-poshead { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font: 600 13px/1.3 var(--font-mono); }
+.sim-poshead small { color: var(--muted); font-weight: 400; }
+.sim-posblk.here .sim-poshead > span:last-child { font-size: 18px; }
 .sim-hint { font-size: 12.5px; color: var(--gold); min-height: 1.2em; }
 .sim h3 { font: 600 14px/1.3 var(--font-body); display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .sim h3 small { font: 400 12px var(--font-mono); color: var(--muted); }
@@ -123,6 +128,7 @@
       <select id="sim-ex" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
       <button type="button" class="b" id="sim-load-custom">Load replay</button>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins, from the time above:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi, from the time above:</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
     </div>
     <div class="sim-row" id="sim-live-load" hidden>
       <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
@@ -132,8 +138,9 @@
       <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option></select>
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
     </div>
-    <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"></datalist>
+    <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"></datalist>
     <div class="sim-scan" id="sim-scan" hidden></div>
     <div class="sim-status" id="sim-status" aria-live="polite"></div>
   </div>
@@ -231,10 +238,6 @@
       <div class="sim-card" id="sim-poscard">
         <h3>Position <small id="sim-pos-tag">none</small></h3>
         <div id="sim-pos-body" class="sim-empty">No open simulated trade.</div>
-        <div class="sim-row" id="sim-pos-actions" hidden>
-          <button type="button" class="b" id="sim-close">Close at market</button>
-          <button type="button" class="b" id="sim-to-be">Stop to entry</button>
-        </div>
       </div>
     </div>
   </div>
@@ -258,7 +261,12 @@
   const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN };
   const FEE = 0.0005, JKEY = 'sc_sim_journal_v1', PKEY = 'sc_sim_live_pos_v1';
   const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
-  const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], pos: null, side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
+  const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], open: [], side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
+  // open simulated trades: live ones on any coins (one per coin, all kept up to date) + at most one replay trade.
+  // S.pos is the trade on the chart you are looking at.
+  Object.defineProperty(S, 'pos', { get: () => S.open.find(p => p.mode === S.mode && (p.mode === 'replay' || p.sym === S.sym)) || null });
+  const liveOpen = () => S.open.filter(p => p.mode === 'live'), MAX_LIVE = 5;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
   let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
   const picks = new Map();
 
@@ -267,9 +275,14 @@
   const saveJ = () => { try { localStorage.setItem(JKEY, JSON.stringify(journal.slice(-300))); } catch (e) { /* private window */ } };
   let journal = loadJ();
   // an open LIVE paper trade is kept in this browser so a reload doesn't lose it (replay trades restart with the replay)
-  const savePos = () => { try { if (S.pos && S.pos.mode === 'live') localStorage.setItem(PKEY, JSON.stringify(S.pos)); } catch (e) { /* private window */ } };
-  const dropPos = () => { try { localStorage.removeItem(PKEY); } catch (e) { /* ignore */ } };
-  const loadPos = () => { try { const p = JSON.parse(localStorage.getItem(PKEY)); return p && p.mode === 'live' && p.sym && p.entry > 0 && p.rem > 0 ? p : null; } catch (e) { return null; } };
+  const PKEY2 = 'sc_sim_live_pos_v2';   // all open live trades (v1 held one)
+  // saved only while trades are open; the list is cleared only when the last one closes (an idle page or tab never wipes it)
+  const savePos = closed => { try { const L = liveOpen(); if (L.length) { localStorage.setItem(PKEY2, JSON.stringify(L)); localStorage.removeItem(PKEY); } else if (closed) { localStorage.removeItem(PKEY2); localStorage.removeItem(PKEY); } } catch (e) { /* private window */ } };
+  const loadPos = () => {
+    let a = [];
+    try { a = JSON.parse(localStorage.getItem(PKEY2)) || []; if (!a.length) { const one = JSON.parse(localStorage.getItem(PKEY)); if (one) a = [one]; } } catch (e) { a = []; }
+    return a.filter(p => p && p.mode === 'live' && p.sym && p.entry > 0 && p.rem > 0);
+  };
   const fmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.prec);
   const usd = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(2);
   const utc = t => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
@@ -278,9 +291,9 @@
   const hint = msg => { $('sim-hint').textContent = msg || ''; };
   const price = () => (S.cur >= 0 ? S.base[S.cur][4] : null);
   // the open trade's own coin may differ from the chart you are looking at (live): use its own last price and precision
-  const onChart = () => !!S.pos && (S.pos.mode !== 'live' || S.pos.sym === S.sym);
-  const posPx = () => (!S.pos ? null : onChart() ? price() : S.pos.last);
-  const pfmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.pos && S.pos.prec != null ? S.pos.prec : S.pos ? precFor(S.pos.entry) : S.prec);
+  const onChart = p => !!p && p.mode === S.mode && (p.mode === 'replay' || p.sym === S.sym);
+  const pxOf = p => (!p ? null : onChart(p) ? price() : p.last);
+  const fmtOf = (p, v) => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(p && p.prec != null ? p.prec : p ? precFor(p.entry) : S.prec);
   const nowT = () => (S.cur >= 0 ? S.base[S.cur][0] + MIN : null);   // close time of the last visible 1m candle
   const barT = () => S.base[S.cur][0];                               // open time of it (markers must sit on a drawn bar)
   // like the dashboard's apiFetch (key + 401 handling), but it passes on the server's error message
@@ -304,7 +317,9 @@
       rightPriceScale: { borderColor: '#1e293b' },
       timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false, rightOffset: 10 },
     });
-    cs = chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444' });
+    cs = chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444',
+      autoscaleInfoProvider: orig => keepLevels(orig()) });
+    ['pointerup', 'touchend', 'wheel'].forEach(ev => el.addEventListener(ev, () => setTimeout(fitHint, 60), { passive: true }));
     vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     smcLayer = makeLayer(); cs.attachPrimitive(smcLayer);
@@ -318,6 +333,20 @@
         `<span class="${ch >= 0 ? 'pos' : 'neg'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</span>` + (cur != null && isFinite(cur) ? ` · cursor ${fmt(cur)}` : '');
     });
     new ResizeObserver(() => { if (el.clientWidth) chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
+  }
+  function keepLevels(r) {   // auto-fit also keeps your stop and next target in view (within ±25% of the price)
+    if (!r || !r.priceRange) return r;
+    const px = price(); if (px == null) return r;
+    const p = S.pos, lv = [];
+    if (p) { lv.push(p.stop); const tp = p.tps.find(t => !t.hit); if (tp) lv.push(tp.price); }
+    else { const pl = plan(px); if (pl.stop) lv.push(pl.stop); if (pl.tps[0]) lv.push(pl.tps[0].price); }
+    for (const v of lv) if (isFinite(v) && Math.abs(v / px - 1) <= 0.25) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
+    return r;
+  }
+  function fitHint() {   // dragging the price axis or the chart up/down switches auto-fit off; say so on the Fit button
+    if (!chart) return;
+    const off = !chart.priceScale('right').options().autoScale, b = $('sim-fit');
+    b.classList.toggle('on', off); b.textContent = off ? '⤢ Fit (chart moved)' : '⤢ Fit';
   }
   const bucket = t => Math.floor(t / TF[S.tf]) * TF[S.tf];
   const toC = b => ({ time: b.t / 1000, open: b.o, high: b.h, low: b.l, close: b.c });
@@ -372,8 +401,8 @@
   function drawPos() {
     posLines.forEach(l => cs.removePriceLine(l)); posLines = [];
     const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
-    const p = S.pos;
-    if (p && !onChart()) return;   // the trade is on another coin; this chart is just for looking
+    const p = S.pos, ps = chart.priceScale('right');
+    if (ps.options().autoScale) ps.applyOptions({ autoScale: true });   // re-fit so the stop / target you just set come into view
     if (p) {
       line(p.entry, '#e5e7eb', 0, p.side === 'short' ? 'Short' : 'Long');
       line(p.stop, '#ef4444', 2, p.stop === p.entry ? 'Stop (entry)' : 'Stop');
@@ -406,11 +435,13 @@
     const go = $('sim-go');
     go.className = 'b big ' + (short ? 'red' : 'go');
     go.textContent = (short ? 'Short' : 'Long') + ' at market' + (px != null ? ' · ' + fmt(px) : '');
-    go.disabled = !!S.pos || px == null;
+    const full = S.mode === 'live' && liveOpen().length >= MAX_LIVE;
+    go.disabled = !!S.pos || px == null || full;
     $('sim-price').textContent = px != null ? S.sym + ' ' + fmt(px) : '–';
     const sum = $('sim-sum');
     if (px == null) { sum.textContent = 'Load a chart to see the risk.'; return; }
-    if (S.pos) { sum.textContent = 'One simulated trade at a time. Close it to open another.'; return; }
+    if (S.pos) { sum.textContent = `You already have a simulated ${S.pos.side} open on ${S.sym}. Close it first, or load another coin to trade that too.`; return; }
+    if (full) { sum.textContent = `${MAX_LIVE} simulated live trades are open. Close one to open another.`; return; }
     const pl = plan(px), size = parseFloat($('sim-size').value) || 0;
     if (!pl.stop) { sum.innerHTML = short ? 'Set a stop <b>above</b> the price.' : 'Set a stop <b>below</b> the price.'; return; }
     const riskPct = Math.abs(pl.stop - px) / px, risk = size * riskPct + 2 * size * FEE;
@@ -425,18 +456,20 @@
   // ---------- simulated position ----------
   function enter() {
     if (S.pos || S.cur < 0) return;
+    if (S.mode === 'live' && liveOpen().length >= MAX_LIVE) return status(`${MAX_LIVE} simulated live trades are open. Close one first.`, true);
     const px = price(), pl = plan(px), size = parseFloat($('sim-size').value);
     if (!pl.stop) return status(S.side === 'short' ? 'Set a stop above the price first.' : 'Set a stop below the price first.', true);
     if (!pl.tps.length) return status('Set a target first.', true);
     if (!(size > 0)) return status('Enter a size in dollars.', true);
     const k = S.base[S.cur];
-    S.pos = { side: S.side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
+    const p = { id: Date.now() + Math.random(), side: S.side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
       tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * FEE,
       checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, mode: S.mode, sym: S.sym, ex: S.ex,
       ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
-    S.pos.prec = S.prec; S.pos.last = px;
+    p.prec = S.prec; p.last = px; p.fails = 0;
+    S.open.push(p);
     S.marks.push(entryMark(S.side, k[0], px));
-    if (S.mode === 'live') { S.pos.chk = k[0]; savePos(); }
+    if (S.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
     $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; }); S.auto = false;  // next trade starts from a clean ticket
     status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
     refresh();
@@ -444,51 +477,59 @@
   const posMarks = p => [entryMark(p.side, p.ref ? p.ref.t : p.t0 - MIN, p.entry)].concat(p.fills.map(f => fillMark(p.side, f.t, f.label)));
   const entryMark = (side, t, px) => ({ t, pos: side === 'short' ? 'aboveBar' : 'belowBar', color: '#e5e7eb', shape: side === 'short' ? 'arrowDown' : 'arrowUp', text: (side === 'short' ? 'Short ' : 'Long ') + fmt(px) });
   const fillMark = (side, t, label) => ({ t, pos: side === 'short' ? 'belowBar' : 'aboveBar', color: /^TP|Target/.test(label) ? '#10b981' : label === 'Closed by hand' ? '#60a5fa' : '#ef4444', shape: 'circle', text: label });
-  function fill(q, px, t, label) {
-    const p = S.pos, gross = q * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry);
+  function fill(p, q, px, t, label) {
+    const gross = q * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry);
     p.realized += gross - q * p.qty * px * FEE; p.rem -= q; p.fills.push({ q, px, t, label });
-    if (onChart()) S.marks.push(fillMark(p.side, t, label));
+    if (onChart(p)) S.marks.push(fillMark(p.side, t, label));
   }
-  function evalBar(t, h, l) {
-    const p = S.pos; if (!p) return;
+  function evalBar(p, t, h, l) {
+    if (!p) return;
     const short = p.side === 'short';
-    if (short ? h >= p.stop : l <= p.stop) { fill(p.rem, p.stop, t, p.stop === p.entry ? 'Breakeven stop' : 'Stop'); return finish(t, p.stop === p.entry ? 'Breakeven stop' : 'Stopped'); }
+    if (short ? h >= p.stop : l <= p.stop) { fill(p, p.rem, p.stop, t, p.stop === p.entry ? 'Breakeven stop' : 'Stop'); return finish(p, t, p.stop === p.entry ? 'Breakeven stop' : 'Stopped'); }
     for (let i = 0; i < p.tps.length; i++) {
       const tp = p.tps[i]; if (tp.hit) continue;
       if (!(short ? l <= tp.price : h >= tp.price)) break;
       const lastOne = p.tps.every((x, j) => j === i || x.hit);
-      fill(lastOne ? p.rem : p.rem * tp.frac, tp.price, t, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target');
+      fill(p, lastOne ? p.rem : p.rem * tp.frac, tp.price, t, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target');
       tp.hit = true;
       if (i === 0 && p.be && p.tps.length > 1) p.stop = short ? Math.min(p.stop, p.entry) : Math.max(p.stop, p.entry);
-      if (p.rem <= 1e-9) return finish(t, p.tps.length > 1 ? 'All targets' : 'Target');
+      if (p.rem <= 1e-9) return finish(p, t, p.tps.length > 1 ? 'All targets' : 'Target');
     }
   }
-  function finish(t, how) {
-    const p = S.pos, risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
+  function finish(p, t, how) {
+    const risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
     const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
     const R = risk > 0 ? p.realized / risk : 0;
     journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: p.prec != null ? p.prec : precFor(p.entry) });
     saveJ();
-    S.pos = null; if (p.mode === 'live') dropPos();
-    if (S.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
-    status(`${p.mode === 'live' && p.sym !== S.sym ? `Your ${p.sym} ${p.side} closed` : 'Closed'} (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R.`);
+    const here = onChart(p);
+    S.open = S.open.filter(x => x !== p); if (p.mode === 'live') savePos(true);
+    if (p.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
+    S.lastClose = `${here ? 'Closed' : `Your ${p.sym} ${p.side} closed`} (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R.`;
+    status(S.lastClose);
     renderJournal();
   }
-  function unreal(px) { const p = S.pos; return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * FEE : 0; }
-  function renderPos() {
-    const p = S.pos, body = $('sim-pos-body');
-    $('sim-pos-actions').hidden = !p;
-    if (!p) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade.'; return; }
-    const px = posPx(), total = p.realized + unreal(px), risk = p.qty * Math.abs(p.stop0 - p.entry), fmt = pfmt;
-    $('sim-pos-tag').textContent = `${p.side} ${p.sym}`;
-    body.className = '';
-    const tpTxt = p.tps.map((tp, i) => `${p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'} ${fmt(tp.price)}${tp.hit ? ' ✓' : ''}`).join('<br>');
-    body.innerHTML = `<div class="sim-pnl ${total >= 0 ? 'pos' : 'neg'}">${usd(total)} <small style="font-size:13px">${(risk > 0 ? total / risk : 0).toFixed(2)}R</small></div>
-      <dl class="sim-kv"><dt>Entry</dt><dd>${fmt(p.entry)}</dd><dt>Now</dt><dd>${fmt(px)}</dd>
-      <dt>Stop</dt><dd>${fmt(p.stop)}${p.stop === p.entry ? ' (entry)' : ''}</dd><dt>Targets</dt><dd>${tpTxt}</dd>
+  function unreal(p, px) { return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * FEE : 0; }
+  function posBlock(p) {
+    const px = pxOf(p), total = p.realized + unreal(p, px), risk = p.qty * Math.abs(p.stop0 - p.entry), f = v => fmtOf(p, v), here = onChart(p);
+    const tpTxt = p.tps.map((tp, i) => `${p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'} ${f(tp.price)}${tp.hit ? ' ✓' : ''}`).join('<br>');
+    return `<div class="sim-posblk${here ? ' here' : ''}">
+      <div class="sim-poshead"><span><b>${p.side} ${esc(p.sym)}</b> <small>${p.mode === 'live' ? 'live' : 'replay'}${here ? ' · this chart' : ''}</small></span>
+        <span class="${total >= 0 ? 'pos' : 'neg'}">${usd(total)} <small>${(risk > 0 ? total / risk : 0).toFixed(2)}R</small></span></div>
+      <dl class="sim-kv"><dt>Entry</dt><dd>${f(p.entry)}</dd><dt>Now</dt><dd>${f(px)}</dd>
+      <dt>Stop</dt><dd>${f(p.stop)}${p.stop === p.entry ? ' (entry)' : ''}</dd><dt>Targets</dt><dd>${tpTxt}</dd>
       <dt>Still open</dt><dd>${Math.round(p.rem * 100)}% of $${p.size.toFixed(0)}</dd><dt>Banked</dt><dd class="${p.realized >= 0 ? 'pos' : 'neg'}">${usd(p.realized)}</dd>
-      <dt>Opened</dt><dd>${utc(p.t0)} UTC</dd></dl>` +
-      (onChart() ? '' : `<div class="sim-status" style="margin-top:8px">Tracked in the background while the chart shows ${esc(S.sym)}. <button type="button" class="b" id="sim-pos-show">Show ${esc(p.sym)} chart</button></div>`);
+      <dt>Opened</dt><dd>${utc(p.t0)} UTC</dd></dl>
+      <div class="sim-row"><button type="button" class="b" data-pclose="${p.id}">Close at market</button><button type="button" class="b" data-pbe="${p.id}">Stop to entry</button>` +
+      (here || p.mode !== 'live' ? '' : `<button type="button" class="b" data-pshow="${p.id}">Show ${esc(p.sym)} chart</button>`) + `</div></div>`;
+  }
+  function renderPos() {
+    const body = $('sim-pos-body'), list = S.open.slice().sort((a, b) => onChart(b) - onChart(a));
+    if (!list.length) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade.'; return; }
+    const total = list.reduce((a, p) => a + p.realized + unreal(p, pxOf(p)), 0);
+    $('sim-pos-tag').textContent = list.length === 1 ? `${list[0].side} ${list[0].sym}` : `${list.length} open · ${usd(total)}`;
+    body.className = '';
+    body.innerHTML = list.map(posBlock).join('');
   }
   function renderJournal() {
     const J = journal, n = J.length, wins = J.filter(j => j.pnl > 0).length, net = J.reduce((a, j) => a + j.pnl, 0);
@@ -531,7 +572,7 @@
       S.cur++;
       const k = S.base[S.cur];
       pushLast();
-      evalBar(k[0], k[2], k[3]);
+      evalBar(S.pos, k[0], k[2], k[3]);
       if (S.halt) { S.halt = false; break; }
       if (smc.pause && (smc.on || coach.open) && !S.untilExit && smc.setT.has(k[0])) {
         stopPlay(); status(`🎯 Paused: the simulator found an A+ ${smc.setT.get(k[0]).side} on this candle. See the line above the chart, or open the coach.`); break;
@@ -555,8 +596,9 @@
     $('sim-stop').value = ''; $('sim-tp').value = '';
     recomputeFull();
   }
+  const replayOpen = () => S.open.some(p => p.mode === 'replay');
   async function loadReplay(sym, t, ex, extraMarks, label) {
-    if (S.pos) return status('Close your simulated trade before loading another chart.', true);
+    if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
     stopAll(); setMode('replay', true);
     const start = t - 24 * 3600e3, end = Math.min(Date.now(), t + 24 * 3600e3);
     status(`Loading ${sym} candles around ${utc(t)} UTC…`);
@@ -574,7 +616,7 @@
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
   async function loadLive(sym, ex) {
-    if (S.pos && S.pos.mode !== 'live') return status('Close your simulated trade before loading another chart.', true);
+    if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
     stopAll();
     status(`Loading live ${sym}…`);
     const my = ++S.load;
@@ -584,47 +626,61 @@
       if (my !== S.load) return;
       if (!r.candles || !r.candles.length) throw new Error('no candles came back');
       setData(r); S.cur = S.base.length - 1; S.pollFails = 0; S.pollErr = false;
-      if (S.pos && S.pos.mode === 'live' && S.pos.sym === S.sym) S.marks = posMarks(S.pos);
+      const own = S.pos;
+      if (own && own.caught) for (const k of S.base) if (k[0] >= (own.chk || 0) && S.open.includes(own)) liveBar(own, k);
+      if (S.pos) S.marks = posMarks(S.pos);
       smc.seen = Infinity; redraw(true);
       smc.seen = smc.A && smc.A.setups.length ? smc.A.setups[smc.A.setups.length - 1].conf : 0;
-      status(S.pos && S.pos.mode === 'live' && S.pos.sym !== S.sym ? `Live ${S.sym} on ${S.ex}. Your ${S.pos.sym} ${S.pos.side} keeps updating in the background.` : `Live ${S.sym} on ${S.ex}. Paper trades fill at the last price.`);
+      const bg = liveOpen().filter(p => p.sym !== S.sym);
+      status(`Live ${S.sym} on ${S.ex}. ` + (bg.length ? `Your ${bg.map(p => p.sym + ' ' + p.side).join(', ')} ${bg.length === 1 ? 'keeps' : 'keep'} updating in the background.` : 'Paper trades fill at the last price.'));
       S.poll = setInterval(pollLive, 4000);
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
-  function liveBar(k, sym) {   // check one live 1m candle of coin `sym` against the open paper trade
-    const p = S.pos; if (!p || p.mode !== 'live' || sym !== p.sym) return;
+  function liveBar(p, k) {   // check one live 1m candle of the trade's own coin
     if (k[0] >= (p.lastT || 0)) { p.last = k[4]; p.lastT = k[0]; }
     let h = k[2], l = k[3];
     if (p.ref && k[0] === p.ref.t) {  // the candle we entered in: count only what traded after the entry
       const hh = h > p.ref.h ? h : Math.max(p.entry, k[4]), ll = l < p.ref.l ? l : Math.min(p.entry, k[4]);
       p.ref.h = Math.max(p.ref.h, h); p.ref.l = Math.min(p.ref.l, l); h = hh; l = ll;
     }
-    evalBar(k[0], h, l);
-    if (S.pos) S.pos.chk = k[0];
+    evalBar(p, k[0], h, l);
+    p.chk = k[0];
   }
-  async function restoreLive(p) {
-    setMode('live', true); $('sim-symbol-live').value = p.sym; $('sim-ex-live').value = p.ex === 'bybit' ? 'bybit' : 'binance';
-    await loadLive(p.sym, p.ex);
-    if (S.mode !== 'live' || S.sym !== p.sym || !S.base.length) {
-      if (!S.pos) status(`Your open simulated ${p.side} on ${p.sym} is still saved, but its chart did not load. Reload the page to try again.`, true);
-      return;
-    }
-    const from = p.chk != null ? p.chk : (p.ref ? p.ref.t : p.t0 - MIN), first = S.base[0][0];
-    let gap = [], gapTf = '';
-    try {   // the page was closed for more than the day the chart shows: fetch the missing candles too
-      if (from < first) {
-        gapTf = first - from <= 48 * 3600e3 ? '1m' : '1h';
-        const r = await api('/api/sim/klines', { symbol: p.sym, interval: gapTf, start: from, end: first - 1, exchange: S.ex });
-        gap = (r.candles || []).filter(k => k[0] >= from && k[0] < first);
+  // every live trade that isn't on the live chart (or hasn't been caught up since a reload) is checked on its own candles
+  async function trackBg() {
+    if (S.tracking) return; S.tracking = true;
+    try {
+      for (const p of liveOpen()) {
+        if (!S.open.includes(p)) continue;
+        if (p.caught && S.mode === 'live' && p.sym === S.sym && S.base.length) continue;   // the chart's own update checks it
+        const from = p.chk != null ? p.chk : (p.ref ? p.ref.t : p.t0 - MIN), now = Date.now();
+        try {
+          if (now - from > 48 * 3600e3) {   // page closed for more than 2 days: walk that part on 1h candles (stop checked first)
+            const r = await api('/api/sim/klines', { symbol: p.sym, interval: '1h', start: from, end: now - 47 * 3600e3, exchange: p.ex });
+            for (const k of r.candles || []) { if (!S.open.includes(p)) break; if (k[0] < from) continue; evalBar(p, k[0], k[2], k[3]); p.chk = k[0] + 3600e3; }
+            if (!S.open.includes(p)) continue;
+          }
+          const r = await api('/api/sim/klines', { symbol: p.sym, interval: '1m', start: p.chk != null ? p.chk : from, exchange: p.ex });
+          for (const k of r.candles || []) { if (!S.open.includes(p)) break; liveBar(p, k); }
+          p.caught = true; p.fails = 0;
+        } catch (e) { p.fails = (p.fails || 0) + 1; if (p.fails === 3) status(`Could not update your ${p.sym} trade: ${e.message} — still retrying every 4 s.`, true); }
       }
-    } catch (e) { status(`Could not fetch the candles you missed for ${p.sym} (${e.message}). Reload to try again.`, true); return; }
-    if (S.pos || S.sym !== p.sym) return;   // something else was opened meanwhile
-    S.pos = p;
-    S.marks = posMarks(p);
-    for (const k of gap) { if (!S.pos) break; if (gapTf === '1m') liveBar(k, p.sym); else { evalBar(k[0], k[2], k[3]); if (S.pos) S.pos.chk = k[0]; } }
-    for (const k of S.base) { if (!S.pos) break; if (k[0] >= from) liveBar(k, p.sym); }
-    if (S.pos) { savePos(); status(`Your open simulated ${p.side} on ${p.sym} is back (opened ${utc(p.t0)} UTC) and checked against every candle since. Updates every 4 s.`); }
-    else status('While the page was closed — ' + $('sim-status').textContent + ' It is in your journal below.');
+      if (liveOpen().length || S.open.length) { savePos(); refresh(); }
+    } finally { S.tracking = false; }
+  }
+  async function restoreAll(list) {
+    for (const p of list) { p.id = p.id || Date.now() + Math.random(); p.caught = false; p.fails = 0; }
+    S.open = S.open.concat(list); S.lastClose = '';
+    const first = list[0];
+    setMode('live', true); $('sim-symbol-live').value = first.sym; $('sim-ex-live').value = first.ex === 'bybit' ? 'bybit' : 'binance';
+    await loadLive(first.sym, first.ex);
+    while (S.tracking) await wait(150);
+    await trackBg();   // catch every trade up on the candles missed while the page was closed
+    const still = list.filter(p => S.open.includes(p)), gone = list.length - still.length;
+    if (still.length && !still.some(p => p.sym === S.sym)) { $('sim-symbol-live').value = still[0].sym; await loadLive(still[0].sym, still[0].ex); }   // show a trade that is still open
+    if (S.pos) S.marks = posMarks(S.pos);
+    if (still.length) status(`Your open simulated ${still.map(p => p.sym + ' ' + p.side).join(', ')} ${still.length === 1 ? 'is' : 'are'} back and checked against every candle since. Updates every 4 s.` + (gone ? ` ${gone} closed while the page was closed — see the journal.` : ''));
+    else status('While the page was closed — ' + (list.length === 1 ? S.lastClose : `all ${list.length} simulated trades closed.`) + ' It is in your journal below.');
     refresh();
   }
   async function pollLive() {
@@ -639,13 +695,7 @@
         const i = S.base.length - 1;
         if (k[0] === S.base[i][0]) S.base[i] = k; else if (k[0] > S.base[i][0]) S.base.push(k); else continue;
         S.cur = S.base.length - 1; pushLast();
-        liveBar(k, S.sym);
-      }
-      const p = S.pos;
-      if (p && p.mode === 'live' && p.sym !== S.sym) {
-        const q = await api('/api/sim/klines', { symbol: p.sym, interval: '1m', start: p.chk != null ? p.chk : p.t0 - MIN, exchange: p.ex });
-        if (my !== S.load || S.pos !== p) return;
-        for (const k of q.candles || []) { if (!S.pos) break; liveBar(k, p.sym); }
+        const p = S.pos; if (p && p.caught) liveBar(p, k);
       }
       savePos();
       refresh();
@@ -806,7 +856,7 @@
     if (!smc.on || !A) { el.hidden = true; return; }
     el.hidden = false;
     const leg = A.leg && !A.leg.dead ? A.leg : null, last = A.setups[A.setups.length - 1];
-    const fresh = last && A.now - last.conf < 30 * MIN;
+    const fresh = last && A.now - last.conf < FRESH;
     const ck = (good, txt) => `<span class="${good ? 'ok' : 'no'}">${good ? '✓' : '○'} ${txt}</span>`;
     let h;
     if (fresh) h = `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)}: entry ${fmt(last.entry)} · stop ${fmt(last.stop)} · target ${fmt(last.target)} · <b>${last.R.toFixed(1)}R</b>` + (S.pos ? '' : '<button type="button" class="b" id="sim-use-setup">Use in ticket</button>');
@@ -960,10 +1010,11 @@
   const setTF = tf => { const b = document.querySelector(`#sim .sim-tf .b[data-tf="${tf}"]`); if (b) b.click(); };
 
   // ---------- live: check recent pump-signal coins for setups ----------
+  const FRESH = 45 * MIN;   // an A+ setup counts as fresh this long after it confirmed (scan list and chart line)
   function scanRow(sym, ex, A) {
     const leg = A.leg && !A.leg.dead ? A.leg : null, last = A.setups[A.setups.length - 1];
     const f = v => (+v).toFixed(precFor(A.price)), age = last ? (A.now - last.conf) / MIN : Infinity;
-    if (age < 45) return { sym, ex, score: 10 - age / 45, txt: `🎯 <b>A+ ${last.side}</b> ${Math.round(age)} min ago · entry ${f(last.entry)} · stop ${f(last.stop)} · target ${f(last.target)} · ${last.R.toFixed(1)}R` };
+    if (age < FRESH / MIN) return { sym, ex, score: 10 - age / 45, txt: `🎯 <b>A+ ${last.side}</b> ${Math.round(age)} min ago · entry ${f(last.entry)} · stop ${f(last.stop)} · target ${f(last.target)} · ${last.R.toFixed(1)}R` };
     if (!leg) return { sym, ex, score: 0, txt: 'no live idea right now' };
     const sh = leg.dir === -1, n = 1 + (leg.prem ? 1 : 0) + (leg.sweep ? 1 : 0);
     const next = leg.sweep ? `waiting for a 1m close ${sh ? 'below' : 'above'} ${leg.trig ? f(leg.trig.p) : 'the last 1m swing'}`
@@ -978,22 +1029,22 @@
     const scope = $('sim-scan-scope').value, since = Date.now() - 48 * 3600e3, list = [], why = {};
     const add = (sym, tag) => { if (!sym) return; if (!why[sym]) { list.push(sym); why[sym] = []; } if (tag && why[sym].indexOf(tag) < 0) why[sym].push(tag); };
     if (S.sym) add(S.sym, 'on chart');
-    if (S.pos && S.pos.mode === 'live') add(S.pos.sym, 'your open trade');
-    for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'signal 48 h');
+    for (const p of liveOpen()) add(p.sym, 'your open trade');
+    for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'bot signal in last 48 h');
     if (scope !== 'signals') {
       box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
       try { if (!tradedCoins) tradedCoins = (await api('/api/sim/coins', {})).coins || []; } catch (e) { tradedCoins = null; status('Could not get the coins we traded: ' + e.message, true); }
       const cut = scope === 'recent' ? Date.now() - 30 * 864e5 : 0;
-      for (const c of tradedCoins || []) if (c.t >= cut) add(c.symbol, `traded ${c.trades}×`);
+      for (const c of tradedCoins || []) if (c.t >= cut) add(c.symbol, `our bot traded it ${c.trades}×`);
     }
-    const rows = []; let next = 0, done = 0;
+    const rows = [], tf = smc.tf; let next = 0, done = 0;
     const scopeTxt = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h', signals: 'pump signals of the last 48 h' }[scope];
     const render = head => {
       rows.sort((a, b) => b.score - a.score);
       // list only coins at 2/4 or better (and fresh A+ setups); 1/4 just means a structure break happened somewhere
       const ideas = rows.filter(r => r.score >= 2), early = rows.filter(r => r.score > 0 && r.score < 2), quiet = rows.filter(r => r.score === 0), none = rows.filter(r => r.score < 0);
       box.innerHTML = `<div class="sim-empty">${head}</div>` +
-        ideas.slice(0, 40).map(r => `<div class="sim-scan-row"><span><b>${esc(r.sym)}</b> · ${r.txt} <small style="opacity:.6">· ${esc(r.why.join(' · '))}</small></span><button type="button" class="b" data-scan="${esc(r.sym)}" data-ex="auto">Load live</button></div>`).join('') +
+        ideas.slice(0, 40).map(r => `<div class="sim-scan-row"><span><b>${esc(r.sym)}</b> · ${r.txt} <small style="opacity:.6">· ${esc(r.why.join(' · '))}</small></span><button type="button" class="b" data-scan="${esc(r.sym)}" data-ex="${esc(r.ex || 'auto')}" data-tf="${r.tf}" title="Opens the same exchange and structure timeframe the scan read, so the chart shows the same setup">Load live</button></div>`).join('') +
         (ideas.length > 40 ? `<div class="sim-empty">…and ${ideas.length - 40} more at 2/4.</div>` : '') +
         (!ideas.length && rows.length ? '<div class="sim-empty">No coin is at 2/4 or better right now.</div>' : '') +
         (early.length ? `<div class="sim-empty">Only 1/4 so far (structure broke, price not in the zone yet): ${early.length} coins.</div>` : '') +
@@ -1009,7 +1060,7 @@
           // Bybit first: a big scan then doesn't use the Binance request budget the live bot needs
           const end = Date.now(), r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: end - 24 * 3600e3, end, exchange: 'bybit-first' });
           if (run !== scanRun) return;
-          rows.push(Object.assign(scanRow(sym, 'auto', SMC.analyze(r.candles, r.candles.length - 1, { tf: smc.tf * MIN })), { why: why[sym] }));
+          rows.push(Object.assign(scanRow(sym, r.exchange, SMC.analyze(r.candles, r.candles.length - 1, { tf: tf * MIN })), { tf, why: why[sym].concat(r.exchange + ' data') }));
         } catch (e) { if (run !== scanRun) return; rows.push({ sym, ex: '', score: -1, txt: '', why: why[sym] }); }
         done++; if (done % 4 === 0 || done === list.length) render(`Checking ${done} of ${list.length} coins… (click ■ Stop scan to stop)`);
         await new Promise(res => setTimeout(res, 120));
@@ -1017,14 +1068,14 @@
     };
     await Promise.all([worker(), worker(), worker()]);
     const stopped = run !== scanRun;
-    render(stopped ? `Stopped after ${done} of ${list.length} coins.` : `${list.length} coins checked at ${hm(Date.now())} UTC on the ${smc.tf}m structure (${scopeTxt}). ${TESTED}`);
+    render(stopped ? `Stopped after ${done} of ${list.length} coins.` : `${list.length} coins checked at ${hm(Date.now())} UTC on the ${tf}m structure (${scopeTxt}). ${TESTED}`);
     scanning = false; btn.textContent = '🔎 Find setups';
   }
 
   // ---------- modes, tools, inputs ----------
   function setMode(m, quiet) {
     if (S.mode === m) return;
-    if (S.pos) { status('Close your simulated trade before switching mode.', true); return; }
+    if (replayOpen()) { status('Close your simulated replay trade before switching mode. Live trades keep running in the background.', true); return; }
     stopAll(); S.mode = m;
     $('sim-m-replay').setAttribute('aria-pressed', String(m === 'replay'));
     $('sim-m-live').setAttribute('aria-pressed', String(m === 'live'));
@@ -1046,14 +1097,15 @@
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
     if (S.tool === 'quiz') { quizAnswer(p); setTool(null); refresh(); return; }
     if (S.tool === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
-    if (S.tool === 'stop') { if (S.pos && !onChart()) status(`Your trade is on ${S.pos.sym}. Show its chart to move the stop there.`, true); else if (S.pos) moveStop(p); else $('sim-stop').value = (+p).toFixed(S.prec); }
+    if (S.tool === 'stop') { if (S.pos) moveStop(S.pos, p); else $('sim-stop').value = (+p).toFixed(S.prec); }
     if (S.tool === 'tp') { $('sim-plan').value = 'price'; $('sim-tp').value = (+p).toFixed(S.prec); }
+    if (S.tool === 'stop' || S.tool === 'tp') chart.priceScale('right').applyOptions({ autoScale: true });   // back to auto-fit; it now keeps that level in view
     setTool(null); refresh();
   }
-  function moveStop(p) {
-    const pos = S.pos, px = posPx();
-    if (pos.side === 'short' ? p <= px : p >= px) return status('A stop that close would fill right away. Pick a level on the other side of the price.', true);
-    pos.stop = p; savePos(); status(`Stop moved to ${pfmt(p)}.`);
+  function moveStop(pos, v) {
+    const px = pxOf(pos);
+    if (pos.side === 'short' ? v <= px : v >= px) return status('A stop that close would fill right away. Pick a level on the other side of the price.', true);
+    pos.stop = v; savePos(); status(`Stop moved to ${fmtOf(pos, v)}${onChart(pos) ? '' : ' on your ' + pos.sym + ' ' + pos.side}.`);
   }
 
   function start() {
@@ -1061,8 +1113,9 @@
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
     initChart(); renderJournal();
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
+    S.track = setInterval(trackBg, 4000);   // live trades keep updating in any mode, on any chart
     const saved = loadPos();
-    if (saved) { status(`Bringing back your open simulated ${saved.side} on ${saved.sym}…`); loadPicks().catch(() => {}); restoreLive(saved); return; }
+    if (saved.length) { status(`Bringing back your ${saved.length === 1 ? 'open simulated trade' : saved.length + ' open simulated trades'}…`); loadPicks().catch(() => {}); restoreAll(saved); return; }
     status('Loading recent signals…');
     loadPicks().then(first => { if (first) { $('sim-pick').value = first; loadPick(first); } else status('No recent signals. Type a coin and time to replay, or switch to Live.'); })
       .catch(e => status('Could not load signals: ' + e.message, true));
@@ -1128,11 +1181,20 @@
   $('sim-scan-btn').onclick = scanCoins;
   $('sim-scan').addEventListener('click', e => {
     const b = e.target.closest('[data-scan]'); if (!b) return;
-    $('sim-symbol-live').value = b.dataset.scan; loadLive(b.dataset.scan, b.dataset.ex || 'auto');
+    const tf = +b.dataset.tf, ex = b.dataset.ex || 'auto';
+    if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.tf = tf; $('sim-smc-tf').value = String(tf); }
+    smc.on = true; $('sim-smc-on').checked = true; saveSmc();
+    $('sim-symbol-live').value = b.dataset.scan; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
+    loadLive(b.dataset.scan, ex).then(() => { const c = $('sim-chart').closest('.sim-card') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   });
-  $('sim-close').onclick = () => { if (!S.pos) return; const t = S.mode === 'live' ? Date.now() : barT(); fill(S.pos.rem, posPx(), t, 'Closed by hand'); finish(t, 'Closed by hand'); S.halt = false; refresh(); };
-  $('sim-to-be').onclick = () => { if (!S.pos) return; moveStop(S.pos.entry); refresh(); };
-  $('sim-pos-body').addEventListener('click', e => { if (e.target.id === 'sim-pos-show' && S.pos) { $('sim-symbol-live').value = S.pos.sym; loadLive(S.pos.sym, S.pos.ex); } });
+  $('sim-pos-body').addEventListener('click', e => {
+    const b = e.target.closest('[data-pclose],[data-pbe],[data-pshow]'); if (!b) return;
+    const id = +(b.dataset.pclose || b.dataset.pbe || b.dataset.pshow), p = S.open.find(x => x.id === id); if (!p) return;
+    if (b.dataset.pshow) { if (S.mode !== 'live') setMode('live', true); $('sim-symbol-live').value = p.sym; loadLive(p.sym, p.ex); return; }
+    if (b.dataset.pclose) { const t = p.mode === 'live' ? Date.now() : barT(); fill(p, p.rem, pxOf(p), t, 'Closed by hand'); finish(p, t, 'Closed by hand'); S.halt = false; }
+    else moveStop(p, p.entry);
+    refresh();
+  });
   let clearArmed = false;
   $('sim-jclear').onclick = () => {
     if (!clearArmed) { clearArmed = true; $('sim-jclear').textContent = 'Click again to delete all simulated trades'; setTimeout(() => { clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; }, 4000); return; }
