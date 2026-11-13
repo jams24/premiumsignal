@@ -125,7 +125,8 @@
       <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
       <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
       <button type="button" class="b go" id="sim-load-live">Load live chart</button>
-      <button type="button" class="b" id="sim-scan-btn" title="Check the last 48 h of pump-signal coins for SMC setups">🔎 Find setups</button>
+      <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the chosen structure timeframe">🔎 Find setups</button>
+      <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option></select>
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
     </div>
@@ -273,6 +274,10 @@
   const status = (msg, bad) => { const e = $('sim-status'); e.textContent = msg || ''; e.classList.toggle('bad', !!bad); };
   const hint = msg => { $('sim-hint').textContent = msg || ''; };
   const price = () => (S.cur >= 0 ? S.base[S.cur][4] : null);
+  // the open trade's own coin may differ from the chart you are looking at (live): use its own last price and precision
+  const onChart = () => !!S.pos && (S.pos.mode !== 'live' || S.pos.sym === S.sym);
+  const posPx = () => (!S.pos ? null : onChart() ? price() : S.pos.last);
+  const pfmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.pos && S.pos.prec != null ? S.pos.prec : S.prec);
   const nowT = () => (S.cur >= 0 ? S.base[S.cur][0] + MIN : null);   // close time of the last visible 1m candle
   const barT = () => S.base[S.cur][0];                               // open time of it (markers must sit on a drawn bar)
   // like the dashboard's apiFetch (key + 401 handling), but it passes on the server's error message
@@ -357,6 +362,7 @@
     posLines.forEach(l => cs.removePriceLine(l)); posLines = [];
     const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
     const p = S.pos;
+    if (p && !onChart()) return;   // the trade is on another coin; this chart is just for looking
     if (p) {
       line(p.entry, '#e5e7eb', 0, p.side === 'short' ? 'Short' : 'Long');
       line(p.stop, '#ef4444', 2, p.stop === p.entry ? 'Stop (entry)' : 'Stop');
@@ -417,18 +423,20 @@
       tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * FEE,
       checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, mode: S.mode, sym: S.sym, ex: S.ex,
       ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
+    S.pos.prec = S.prec; S.pos.last = px;
     S.marks.push(entryMark(S.side, k[0], px));
     if (S.mode === 'live') { S.pos.chk = k[0]; savePos(); }
     $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; }); S.auto = false;  // next trade starts from a clean ticket
     status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
     refresh();
   }
+  const posMarks = p => [entryMark(p.side, p.ref ? p.ref.t : p.t0 - MIN, p.entry)].concat(p.fills.map(f => fillMark(p.side, f.t, f.label)));
   const entryMark = (side, t, px) => ({ t, pos: side === 'short' ? 'aboveBar' : 'belowBar', color: '#e5e7eb', shape: side === 'short' ? 'arrowDown' : 'arrowUp', text: (side === 'short' ? 'Short ' : 'Long ') + fmt(px) });
   const fillMark = (side, t, label) => ({ t, pos: side === 'short' ? 'belowBar' : 'aboveBar', color: /^TP|Target/.test(label) ? '#10b981' : label === 'Closed by hand' ? '#60a5fa' : '#ef4444', shape: 'circle', text: label });
   function fill(q, px, t, label) {
     const p = S.pos, gross = q * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry);
     p.realized += gross - q * p.qty * px * FEE; p.rem -= q; p.fills.push({ q, px, t, label });
-    S.marks.push(fillMark(p.side, t, label));
+    if (onChart()) S.marks.push(fillMark(p.side, t, label));
   }
   function evalBar(t, h, l) {
     const p = S.pos; if (!p) return;
@@ -448,11 +456,11 @@
     const p = S.pos, risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
     const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
     const R = risk > 0 ? p.realized / risk : 0;
-    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: S.prec });
+    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: p.prec != null ? p.prec : S.prec });
     saveJ();
     S.pos = null; if (p.mode === 'live') dropPos();
     if (S.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
-    status(`Closed (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R.`);
+    status(`${p.mode === 'live' && p.sym !== S.sym ? `Your ${p.sym} ${p.side} closed` : 'Closed'} (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R.`);
     renderJournal();
   }
   function unreal(px) { const p = S.pos; return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * FEE : 0; }
@@ -460,7 +468,7 @@
     const p = S.pos, body = $('sim-pos-body');
     $('sim-pos-actions').hidden = !p;
     if (!p) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade.'; return; }
-    const px = price(), total = p.realized + unreal(px), risk = p.qty * Math.abs(p.stop0 - p.entry);
+    const px = posPx(), total = p.realized + unreal(px), risk = p.qty * Math.abs(p.stop0 - p.entry), fmt = pfmt;
     $('sim-pos-tag').textContent = `${p.side} ${p.sym}`;
     body.className = '';
     const tpTxt = p.tps.map((tp, i) => `${p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'} ${fmt(tp.price)}${tp.hit ? ' ✓' : ''}`).join('<br>');
@@ -468,7 +476,8 @@
       <dl class="sim-kv"><dt>Entry</dt><dd>${fmt(p.entry)}</dd><dt>Now</dt><dd>${fmt(px)}</dd>
       <dt>Stop</dt><dd>${fmt(p.stop)}${p.stop === p.entry ? ' (entry)' : ''}</dd><dt>Targets</dt><dd>${tpTxt}</dd>
       <dt>Still open</dt><dd>${Math.round(p.rem * 100)}% of $${p.size.toFixed(0)}</dd><dt>Banked</dt><dd class="${p.realized >= 0 ? 'pos' : 'neg'}">${usd(p.realized)}</dd>
-      <dt>Opened</dt><dd>${utc(p.t0)} UTC</dd></dl>`;
+      <dt>Opened</dt><dd>${utc(p.t0)} UTC</dd></dl>` +
+      (onChart() ? '' : `<div class="sim-status" style="margin-top:8px">Tracked in the background while the chart shows ${esc(S.sym)}. <button type="button" class="b" id="sim-pos-show">Show ${esc(p.sym)} chart</button></div>`);
   }
   function renderJournal() {
     const J = journal, n = J.length, wins = J.filter(j => j.pnl > 0).length, net = J.reduce((a, j) => a + j.pnl, 0);
@@ -554,8 +563,7 @@
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
   async function loadLive(sym, ex) {
-    const coin = String(sym).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/USDT$/, '');
-    if (S.pos && (S.pos.mode !== 'live' || S.pos.sym !== coin)) return status('Close your simulated trade before loading another chart.', true);
+    if (S.pos && S.pos.mode !== 'live') return status('Close your simulated trade before loading another chart.', true);
     stopAll();
     status(`Loading live ${sym}…`);
     const my = ++S.load;
@@ -565,14 +573,16 @@
       if (my !== S.load) return;
       if (!r.candles || !r.candles.length) throw new Error('no candles came back');
       setData(r); S.cur = S.base.length - 1; S.pollFails = 0; S.pollErr = false;
+      if (S.pos && S.pos.mode === 'live' && S.pos.sym === S.sym) S.marks = posMarks(S.pos);
       smc.seen = Infinity; redraw(true);
       smc.seen = smc.A && smc.A.setups.length ? smc.A.setups[smc.A.setups.length - 1].conf : 0;
-      status(`Live ${S.sym} on ${S.ex}. Paper trades fill at the last price.`);
+      status(S.pos && S.pos.mode === 'live' && S.pos.sym !== S.sym ? `Live ${S.sym} on ${S.ex}. Your ${S.pos.sym} ${S.pos.side} keeps updating in the background.` : `Live ${S.sym} on ${S.ex}. Paper trades fill at the last price.`);
       S.poll = setInterval(pollLive, 4000);
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
-  function liveBar(k) {   // check one live 1m candle against the open paper trade
-    const p = S.pos; if (!p || p.mode !== 'live') return;
+  function liveBar(k, sym) {   // check one live 1m candle of coin `sym` against the open paper trade
+    const p = S.pos; if (!p || p.mode !== 'live' || sym !== p.sym) return;
+    if (k[0] >= (p.lastT || 0)) { p.last = k[4]; p.lastT = k[0]; }
     let h = k[2], l = k[3];
     if (p.ref && k[0] === p.ref.t) {  // the candle we entered in: count only what traded after the entry
       const hh = h > p.ref.h ? h : Math.max(p.entry, k[4]), ll = l < p.ref.l ? l : Math.min(p.entry, k[4]);
@@ -599,9 +609,9 @@
     } catch (e) { status(`Could not fetch the candles you missed for ${p.sym} (${e.message}). Reload to try again.`, true); return; }
     if (S.pos || S.sym !== p.sym) return;   // something else was opened meanwhile
     S.pos = p;
-    S.marks = [entryMark(p.side, p.ref ? p.ref.t : p.t0 - MIN, p.entry)].concat(p.fills.map(f => fillMark(p.side, f.t, f.label)));
-    for (const k of gap) { if (!S.pos) break; if (gapTf === '1m') liveBar(k); else { evalBar(k[0], k[2], k[3]); if (S.pos) S.pos.chk = k[0]; } }
-    for (const k of S.base) { if (!S.pos) break; if (k[0] >= from) liveBar(k); }
+    S.marks = posMarks(p);
+    for (const k of gap) { if (!S.pos) break; if (gapTf === '1m') liveBar(k, p.sym); else { evalBar(k[0], k[2], k[3]); if (S.pos) S.pos.chk = k[0]; } }
+    for (const k of S.base) { if (!S.pos) break; if (k[0] >= from) liveBar(k, p.sym); }
     if (S.pos) { savePos(); status(`Your open simulated ${p.side} on ${p.sym} is back (opened ${utc(p.t0)} UTC) and checked against every candle since. Updates every 4 s.`); }
     else status('While the page was closed — ' + $('sim-status').textContent + ' It is in your journal below.');
     refresh();
@@ -618,7 +628,13 @@
         const i = S.base.length - 1;
         if (k[0] === S.base[i][0]) S.base[i] = k; else if (k[0] > S.base[i][0]) S.base.push(k); else continue;
         S.cur = S.base.length - 1; pushLast();
-        liveBar(k);
+        liveBar(k, S.sym);
+      }
+      const p = S.pos;
+      if (p && p.mode === 'live' && p.sym !== S.sym) {
+        const q = await api('/api/sim/klines', { symbol: p.sym, interval: '1m', start: p.chk != null ? p.chk : p.t0 - MIN, exchange: p.ex });
+        if (my !== S.load || S.pos !== p) return;
+        for (const k of q.candles || []) { if (!S.pos) break; liveBar(k, p.sym); }
       }
       savePos();
       refresh();
@@ -931,25 +947,55 @@
       : leg.prem ? `in ${sh ? 'premium' : 'discount'}, waiting for a sweep` : `waiting for a ${sh ? 'bounce above' : 'dip below'} ${f((leg.hi + leg.lo) / 2)}`;
     return { sym, ex, score: n, txt: `${sh ? 'short' : 'long'} idea · <b>${n}/4</b> · ${next}` };
   }
+  let scanRun = 0, scanning = false, tradedCoins = null;
   async function scanCoins() {
     const btn = $('sim-scan-btn'), box = $('sim-scan');
-    if (btn.disabled) return; btn.disabled = true; box.hidden = false;
-    const since = Date.now() - 48 * 3600e3, list = [];
-    if (S.sym) list.push(S.sym);
-    for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since && list.indexOf(p.sym) < 0) list.push(p.sym);
-    const syms = list.slice(0, 15), rows = [];
-    const rowsHtml = () => rows.map(r => `<div class="sim-scan-row"><span><b>${esc(r.sym)}</b> · ${r.txt}</span>` + (r.score >= 0 ? `<button type="button" class="b" data-scan="${esc(r.sym)}" data-ex="${esc(r.ex)}">Load live</button>` : '') + '</div>').join('');
-    if (!syms.length) { box.innerHTML = '<div class="sim-empty">No pump-signal coins in the last 48 hours. Load a coin above and the line over the chart tracks it.</div>'; btn.disabled = false; return; }
-    for (let i = 0; i < syms.length; i++) {
-      box.innerHTML = `<div class="sim-empty">Checking ${esc(syms[i])} (${i + 1} of ${syms.length})…</div>` + rowsHtml();
-      try {
-        const end = Date.now(), r = await api('/api/sim/klines', { symbol: syms[i], interval: '1m', start: end - 24 * 3600e3, end, exchange: 'auto' });
-        rows.push(scanRow(syms[i], r.exchange, SMC.analyze(r.candles, r.candles.length - 1, { tf: smc.tf * MIN })));
-      } catch (e) { rows.push({ sym: syms[i], ex: '', score: -1, txt: 'no data: ' + esc(e.message) }); }
-      rows.sort((a, b) => b.score - a.score);
+    if (scanning) { scanRun++; return; }   // a second click stops the scan
+    const run = ++scanRun; scanning = true; btn.textContent = '■ Stop scan'; box.hidden = false;
+    const scope = $('sim-scan-scope').value, since = Date.now() - 48 * 3600e3, list = [], why = {};
+    const add = (sym, tag) => { if (!sym) return; if (!why[sym]) { list.push(sym); why[sym] = []; } if (tag && why[sym].indexOf(tag) < 0) why[sym].push(tag); };
+    if (S.sym) add(S.sym, 'on chart');
+    if (S.pos && S.pos.mode === 'live') add(S.pos.sym, 'your open trade');
+    for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'signal 48 h');
+    if (scope !== 'signals') {
+      box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
+      try { if (!tradedCoins) tradedCoins = (await api('/api/sim/coins', {})).coins || []; } catch (e) { tradedCoins = null; status('Could not get the coins we traded: ' + e.message, true); }
+      const cut = scope === 'recent' ? Date.now() - 30 * 864e5 : 0;
+      for (const c of tradedCoins || []) if (c.t >= cut) add(c.symbol, `traded ${c.trades}×`);
     }
-    box.innerHTML = `<div class="sim-empty">${syms.length} coins checked at ${hm(Date.now())} UTC on the ${smc.tf}m structure (the loaded coin and the last 48 h of pump signals). ${TESTED}</div>` + rowsHtml();
-    btn.disabled = false;
+    const rows = []; let next = 0, done = 0;
+    const scopeTxt = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h', signals: 'pump signals of the last 48 h' }[scope];
+    const render = head => {
+      rows.sort((a, b) => b.score - a.score);
+      // list only coins at 2/4 or better (and fresh A+ setups); 1/4 just means a structure break happened somewhere
+      const ideas = rows.filter(r => r.score >= 2), early = rows.filter(r => r.score > 0 && r.score < 2), quiet = rows.filter(r => r.score === 0), none = rows.filter(r => r.score < 0);
+      box.innerHTML = `<div class="sim-empty">${head}</div>` +
+        ideas.slice(0, 40).map(r => `<div class="sim-scan-row"><span><b>${esc(r.sym)}</b> · ${r.txt} <small style="opacity:.6">· ${esc(r.why.join(' · '))}</small></span><button type="button" class="b" data-scan="${esc(r.sym)}" data-ex="auto">Load live</button></div>`).join('') +
+        (ideas.length > 40 ? `<div class="sim-empty">…and ${ideas.length - 40} more at 2/4.</div>` : '') +
+        (!ideas.length && rows.length ? '<div class="sim-empty">No coin is at 2/4 or better right now.</div>' : '') +
+        (early.length ? `<div class="sim-empty">Only 1/4 so far (structure broke, price not in the zone yet): ${early.length} coins.</div>` : '') +
+        (quiet.length ? `<div class="sim-empty">No live idea right now: ${quiet.length} coins.</div>` : '') +
+        (none.length ? `<div class="sim-empty">No candles (delisted or renamed): ${none.map(r => esc(r.sym)).join(', ')}.</div>` : '');
+    };
+    if (!list.length) { box.innerHTML = '<div class="sim-empty">No coins to check. Load a coin above and the line over the chart tracks it.</div>'; scanning = false; btn.textContent = '🔎 Find setups'; return; }
+    render(`Checking ${list.length} coins…`);
+    const worker = async () => {
+      while (run === scanRun && next < list.length) {
+        const sym = list[next++];
+        try {
+          // Bybit first: a big scan then doesn't use the Binance request budget the live bot needs
+          const end = Date.now(), r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: end - 24 * 3600e3, end, exchange: 'bybit-first' });
+          if (run !== scanRun) return;
+          rows.push(Object.assign(scanRow(sym, 'auto', SMC.analyze(r.candles, r.candles.length - 1, { tf: smc.tf * MIN })), { why: why[sym] }));
+        } catch (e) { if (run !== scanRun) return; rows.push({ sym, ex: '', score: -1, txt: '', why: why[sym] }); }
+        done++; if (done % 4 === 0 || done === list.length) render(`Checking ${done} of ${list.length} coins… (click ■ Stop scan to stop)`);
+        await new Promise(res => setTimeout(res, 120));
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    const stopped = run !== scanRun;
+    render(stopped ? `Stopped after ${done} of ${list.length} coins.` : `${list.length} coins checked at ${hm(Date.now())} UTC on the ${smc.tf}m structure (${scopeTxt}). ${TESTED}`);
+    scanning = false; btn.textContent = '🔎 Find setups';
   }
 
   // ---------- modes, tools, inputs ----------
@@ -977,14 +1023,14 @@
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
     if (S.tool === 'quiz') { quizAnswer(p); setTool(null); refresh(); return; }
     if (S.tool === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
-    if (S.tool === 'stop') { if (S.pos) { moveStop(p); } else $('sim-stop').value = (+p).toFixed(S.prec); }
+    if (S.tool === 'stop') { if (S.pos && !onChart()) status(`Your trade is on ${S.pos.sym}. Show its chart to move the stop there.`, true); else if (S.pos) moveStop(p); else $('sim-stop').value = (+p).toFixed(S.prec); }
     if (S.tool === 'tp') { $('sim-plan').value = 'price'; $('sim-tp').value = (+p).toFixed(S.prec); }
     setTool(null); refresh();
   }
   function moveStop(p) {
-    const pos = S.pos, px = price();
+    const pos = S.pos, px = posPx();
     if (pos.side === 'short' ? p <= px : p >= px) return status('A stop that close would fill right away. Pick a level on the other side of the price.', true);
-    pos.stop = p; savePos(); status(`Stop moved to ${fmt(p)}.`);
+    pos.stop = p; savePos(); status(`Stop moved to ${pfmt(p)}.`);
   }
 
   function start() {
@@ -1061,8 +1107,9 @@
     const b = e.target.closest('[data-scan]'); if (!b) return;
     $('sim-symbol-live').value = b.dataset.scan; loadLive(b.dataset.scan, b.dataset.ex || 'auto');
   });
-  $('sim-close').onclick = () => { if (!S.pos) return; const t = S.mode === 'live' ? Date.now() : barT(); fill(S.pos.rem, price(), t, 'Closed by hand'); finish(t, 'Closed by hand'); S.halt = false; refresh(); };
+  $('sim-close').onclick = () => { if (!S.pos) return; const t = S.mode === 'live' ? Date.now() : barT(); fill(S.pos.rem, posPx(), t, 'Closed by hand'); finish(t, 'Closed by hand'); S.halt = false; refresh(); };
   $('sim-to-be').onclick = () => { if (!S.pos) return; moveStop(S.pos.entry); refresh(); };
+  $('sim-pos-body').addEventListener('click', e => { if (e.target.id === 'sim-pos-show' && S.pos) { $('sim-symbol-live').value = S.pos.sym; loadLive(S.pos.sym, S.pos.ex); } });
   let clearArmed = false;
   $('sim-jclear').onclick = () => {
     if (!clearArmed) { clearArmed = true; $('sim-jclear').textContent = 'Click again to delete all simulated trades'; setTimeout(() => { clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; }, 4000); return; }

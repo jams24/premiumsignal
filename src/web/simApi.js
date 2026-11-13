@@ -7,7 +7,7 @@ const BYBIT_IV = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240' };
 const MAX_CANDLES = 3000;
 
 function cleanSymbol(s) {
-  s = String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  s = String(s || '').toUpperCase().replace(/[^\p{L}\p{N}]/gu, '').slice(0, 30);   // letters in any script: Binance lists e.g. 龙虾USDT
   if (!s) return null;
   return s.endsWith('USDT') ? s : s + 'USDT';
 }
@@ -22,7 +22,7 @@ async function getJson(u) {
 async function binanceKlines(sym, iv, start, end) {
   const out = [];
   for (let t = start; t < end && out.length < MAX_CANDLES;) {
-    const j = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=${iv}&startTime=${t}&endTime=${end}&limit=1500`);
+    const j = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(sym)}&interval=${iv}&startTime=${t}&endTime=${end}&limit=1500`);
     if (!Array.isArray(j) || !j.length) break;
     for (const k of j) out.push([k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]);
     if (j.length < 1500) break;
@@ -35,7 +35,7 @@ async function bybitKlines(sym, iv, start, end) {
   const out = [];
   for (let t = start; t < end && out.length < MAX_CANDLES;) {
     const e = Math.min(end, t + 999 * STEP[iv]);
-    const j = await getJson(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=${BYBIT_IV[iv]}&start=${t}&end=${e}&limit=1000`);
+    const j = await getJson(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${encodeURIComponent(sym)}&interval=${BYBIT_IV[iv]}&start=${t}&end=${e}&limit=1000`);
     if (j.retCode) throw new Error(j.retMsg || `Bybit error ${j.retCode}`);
     const list = (j.result?.list || []).map(k => [+k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]).reverse();
     for (const k of list) if (!out.length || k[0] > out[out.length - 1][0]) out.push(k);
@@ -63,7 +63,8 @@ async function handle(url, res) {
       let start = Number(url.searchParams.get('start')) || end - 300 * STEP[iv];
       if (end - start > MAX_CANDLES * STEP[iv]) start = end - MAX_CANDLES * STEP[iv];
       const want = String(url.searchParams.get('exchange') || 'auto').toLowerCase();
-      const order = want === 'bybit' ? ['bybit'] : want === 'binance' ? ['binance'] : ['binance', 'bybit'];
+      // 'bybit-first' is for the simulator's many-coin scan: it keeps the Binance request budget for the live bot
+      const order = want === 'bybit' ? ['bybit'] : want === 'binance' ? ['binance'] : want === 'bybit-first' ? ['bybit', 'binance'] : ['binance', 'bybit'];
       const errors = [];
       let emptyAt = null;
       for (const ex of order) {
@@ -89,6 +90,13 @@ async function handle(url, res) {
         signals: r.rows.map(s => ({ id: s.id, symbol: s.symbol, direction: s.direction, score: s.score, pumpPct: s.pump_pct,
           funding: s.funding_rate, price: s.price, t: iso(s.created_at) })),
       });
+    }
+
+    if (url.pathname === '/api/sim/coins') {   // every coin we have traded live, newest first (for the setup scan)
+      const r = await db.query(
+        `SELECT symbol, (ARRAY_AGG(exchange ORDER BY created_at DESC))[1] AS exchange, COUNT(*)::int AS n, MAX(created_at) AS last
+           FROM trades WHERE mode = 'live' GROUP BY symbol ORDER BY MAX(created_at) DESC LIMIT 400`);
+      return send(200, { coins: r.rows.map(c => ({ symbol: c.symbol, exchange: c.exchange, trades: c.n, t: iso(c.last) })) });
     }
 
     if (url.pathname === '/api/sim/trades') {
