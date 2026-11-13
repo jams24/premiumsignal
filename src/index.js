@@ -74,6 +74,7 @@ async function main() {
   // Start health check + dashboard server
   const dashboardHtml = require('./dashboard');
   const simApi = require('./web/simApi');
+  const tradeApi = require('./web/tradeApi');
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const key = (url.searchParams.get('key') || '').trim();
@@ -454,6 +455,12 @@ async function main() {
       return simApi.handle(url, res);
     }
 
+    // Simulator "Real · via Telegram": fills in the owner's /long · /short panel in Telegram (never places an order
+    // itself) and a read-only list of open live positions (src/web/tradeApi.js)
+    if (url.pathname.startsWith('/api/trade/') && authed) {
+      return tradeApi.handle(req, url, res);
+    }
+
     if (url.pathname === '/api/chart' && authed) {
       try {
         let symbol = url.searchParams.get('symbol');
@@ -656,6 +663,7 @@ async function main() {
   await pumpAutoTrader.load().catch(e => logger.error(`Pump auto-trade config load failed: ${e.message}`));
   pumpAutoTrader.restoreSweeps().catch(e => logger.error(`Restoring sweep waits failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
+  tradeApi.attach(bot);
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
   // Channel trade updates: TP / stop / back-to-entry / 48h replies under every posted entry (exhaust short ✅ ENTER
   // replies, and switch longs / shorts when their 📣 channel posts are on), from the levels the channel showed

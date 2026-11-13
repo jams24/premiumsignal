@@ -1,5 +1,6 @@
-<!-- Trade Simulator tab, inserted into the dashboard's tab-sim panel by src/dashboard.js. Paper only: it reads candles
-     through /api/sim/* (src/web/simApi.js) and never sends orders. The SMC overlay, setup finder and coach use
+<!-- Trade Simulator tab, inserted into the dashboard's tab-sim panel by src/dashboard.js. It reads candles
+     through /api/sim/* (src/web/simApi.js) and never sends orders. Its "Real · via Telegram" ticket only fills in the
+     owner's /long · /short panel in Telegram (/api/trade/*, src/web/tradeApi.js); the order is placed there, on ✅. The SMC overlay, setup finder and coach use
      src/web/smcEngine.js (inserted below by dashboard.js). CSS scoped under .sim, one IIFE, ids prefixed sim-. -->
 <style>
 .sim { display: grid; gap: 14px; color: var(--text); font: 400 14px/1.5 var(--font-body); padding-bottom: 40px; }
@@ -77,6 +78,35 @@
 .sim thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
 .sim tbody tr + tr td { border-top: 1px solid var(--border); }
 .sim-empty { color: var(--muted); font-size: 13px; }
+/* ticket: practice (paper) or real (fills in the Telegram /long · /short panel) */
+.sim-tmode { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sim-tmode .b[aria-pressed="true"] { border-color: #60a5fa; color: #60a5fa; }
+.sim-tmode .b.realbtn[aria-pressed="true"] { background: var(--gold-dim); border-color: var(--gold); color: var(--gold); }
+#sim-ticket.real { border-color: var(--gold); }
+#sim-ticket.real .paper-only, #sim-ticket:not(.real) .real-only { display: none !important; }
+.sim-two .b[aria-pressed="true"].pick { border-color: #60a5fa; color: #60a5fa; }
+.sim-rnote { font-size: 12.5px; color: var(--text2); background: var(--gold-dim); border-left: 3px solid var(--gold); border-radius: 6px; padding: 7px 10px; }
+.sim code { font: 600 12px var(--font-mono); color: var(--text); }
+.sim-rres { font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); }
+.sim-rres:empty { display: none; }
+.sim-rres.bad { color: var(--danger); } .sim-rres.ok { color: var(--accent); }
+.sim-linkbtn { background: none; border: 0; padding: 0; color: #60a5fa; font: 400 12px/1.4 var(--font-mono); cursor: pointer; text-decoration: underline; justify-self: start; text-align: left; }
+/* click a price on the chart: copy it or send it to the ticket */
+.sim-pxpop { position: absolute; z-index: 5; display: grid; gap: 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.45); font: 400 12px/1.3 var(--font-mono); width: max-content; max-width: calc(100% - 16px); }
+.sim-pxpop .v { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.sim-pxpop .v b { font: 700 15px/1.2 var(--font-mono); color: var(--text); user-select: all; }
+.sim-pxpop .v small { color: var(--muted); }
+.sim-pxpop .sim-row { gap: 5px; }
+.sim-pxpop .b { padding: 6px 8px; font-size: 11px; }
+.sim [data-px] { cursor: copy; text-decoration: underline dotted; text-underline-offset: 3px; }
+.sim [data-px].copied { color: var(--accent); }
+.sim-hint.tip { color: var(--muted); }
+/* real positions (read-only copy of /mpositions) */
+.sim-rp { display: grid; gap: 3px; padding: 8px 0 0; border-top: 1px solid var(--border); font: 400 12.5px/1.45 var(--font-mono); color: var(--text2); }
+.sim-rp:first-child { border-top: 0; padding-top: 0; }
+.sim-rp .top { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; color: var(--text); }
+.sim-rp small { color: var(--muted); }
+.sim-rp .b { justify-self: start; padding: 5px 8px; font-size: 11px; }
 .sim-smcbar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .sim-watch { font: 400 12.5px/1.6 var(--font-mono); color: var(--text2); background: var(--bg); border: 1px solid transparent; border-radius: 6px; padding: 7px 10px; }
 .sim-watch b { color: var(--text); }
@@ -111,9 +141,9 @@
 <div class="sim" id="sim">
   <div class="sim-head">
     <div>
-      <div class="eyebrow">Paper trading · real exchange candles · no orders are sent</div>
+      <div class="eyebrow">Paper trading · real exchange candles · this page never places an order</div>
       <h1>Trade Simulator</h1>
-      <p>Practise the SMC Playbook on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now.</p>
+      <p>Practise the SMC Playbook on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now. For a real trade, switch the ticket to <b>Real · via Telegram</b>: it fills in your <code>/short</code> · <code>/long</code> panel in Telegram, and you place it there with ✅. Click any price on the chart to copy it or put it in the ticket.</p>
     </div>
     <div class="sim-seg" role="group" aria-label="Mode">
       <button type="button" id="sim-m-replay" aria-pressed="true">Replay</button>
@@ -211,11 +241,29 @@
 
       <div class="sim-card" id="sim-ticket">
         <h3>Order ticket <small id="sim-price">–</small></h3>
+        <div class="sim-tmode" id="sim-tmode" role="group" aria-label="Ticket mode" hidden>
+          <button type="button" class="b" id="sim-tm-paper" aria-pressed="true">Practice (paper)</button>
+          <button type="button" class="b realbtn" id="sim-tm-real" aria-pressed="false">Real · via Telegram</button>
+        </div>
+        <div class="sim-rnote real-only">Fills in your <code>/short</code> · <code>/long</code> panel in Telegram with these levels. Nothing is placed until you tap ✅ there — Live asks "YES" once more.</div>
         <div class="sim-two" role="group" aria-label="Side">
           <button type="button" class="b short" id="sim-side-short" aria-pressed="true">Short</button>
           <button type="button" class="b long" id="sim-side-long" aria-pressed="false">Long</button>
         </div>
-        <label class="sim-field"><span>Size (position, $)</span><input id="sim-size" type="number" min="1" step="1" value="150" inputmode="decimal"></label>
+        <div class="sim-field real-only">
+          <span>Entry</span>
+          <div class="sim-two" role="group" aria-label="Entry type">
+            <button type="button" class="b pick" id="sim-r-mkt" aria-pressed="true">Market</button>
+            <button type="button" class="b pick" id="sim-r-lmt" aria-pressed="false">Limit</button>
+          </div>
+          <div class="sim-row" id="sim-r-lrow" hidden><input id="sim-r-limit" type="number" step="any" placeholder="limit price" inputmode="decimal" aria-label="Limit price"><button type="button" class="b" id="sim-tool-limit">Click chart</button></div>
+        </div>
+        <label class="sim-field paper-only"><span>Size (position, $)</span><input id="sim-size" type="number" min="1" step="1" value="150" inputmode="decimal"></label>
+        <div class="sim-field real-only">
+          <span>Margin $ × leverage</span>
+          <div class="sim-row"><input id="sim-r-margin" type="number" min="1" step="any" placeholder="margin $" inputmode="decimal" aria-label="Margin in dollars"><input id="sim-r-lev" type="number" min="1" max="125" step="1" placeholder="leverage ×" inputmode="numeric" aria-label="Leverage"></div>
+          <span class="sim-empty" style="text-transform:none;letter-spacing:0;font:400 11.5px var(--font-mono)">Blank = your saved /short · /long settings</span>
+        </div>
         <div class="sim-field">
           <span>Stop</span>
           <div class="sim-row"><input id="sim-stop" type="number" step="any" placeholder="price" inputmode="decimal" aria-label="Stop price"></div>
@@ -227,28 +275,43 @@
         </div>
         <div class="sim-field">
           <span>Targets</span>
-          <select id="sim-plan" aria-label="Target plan">
+          <select id="sim-plan" class="paper-only" aria-label="Target plan">
             <option value="bot">Bot plan: 5 / 12 / 20 / 30% (close 25 / 50 / 50% / rest)</option>
             <option value="r2">One target at 2R</option>
             <option value="price">One target at a price</option>
           </select>
+          <select id="sim-r-tp" class="real-only" aria-label="Real target plan">
+            <option value="plan">Your saved Telegram TP plan</option>
+            <option value="price">TP1 at a price (TP2–4 follow, like /tp)</option>
+          </select>
           <div class="sim-row" id="sim-tp-row" hidden><input id="sim-tp" type="number" step="any" placeholder="target price" inputmode="decimal" aria-label="Target price"><button type="button" class="b" id="sim-tool-tp">Click chart</button></div>
-          <label class="sim-opt"><input type="checkbox" id="sim-be" checked> Move stop to entry after TP1 (what the bot does)</label>
+          <label class="sim-opt paper-only"><input type="checkbox" id="sim-be" checked> Move stop to entry after TP1 (what the bot does)</label>
         </div>
-        <div class="sim-checks" aria-label="Playbook checklist">
+        <div class="sim-checks paper-only" aria-label="Playbook checklist">
           <span class="eyebrow">Playbook checklist (saved with the trade)</span>
           <label><input type="checkbox" id="sim-c1"> Structure broke my way (CHoCH / BOS)</label>
           <label><input type="checkbox" id="sim-c2"> Price is in premium or a supply zone (discount / demand for longs)</label>
           <label><input type="checkbox" id="sim-c3"> Liquidity was swept and the candle closed back</label>
           <label><input type="checkbox" id="sim-c4"> Lower-timeframe CHoCH confirmed the entry</label>
         </div>
+        <label class="sim-field real-only"><span>Telegram panel opens in</span>
+          <select id="sim-r-mode" aria-label="Telegram panel mode"><option value="live">💰 Live — real money</option><option value="paper">📝 Paper — try the flow first</option></select></label>
         <div class="sim-sum" id="sim-sum">Load a chart to see the risk.</div>
-        <button type="button" class="b red big" id="sim-go">Short at market</button>
+        <button type="button" class="b red big paper-only" id="sim-go">Short at market</button>
+        <button type="button" class="b red big real-only" id="sim-real-go">📲 Send to Telegram</button>
+        <div class="sim-rres real-only" id="sim-r-res" aria-live="polite"></div>
+        <button type="button" class="sim-linkbtn real-only" id="sim-r-cmd">Copy as a /short command instead</button>
       </div>
 
       <div class="sim-card" id="sim-poscard">
         <h3>Position <small id="sim-pos-tag">none</small></h3>
         <div id="sim-pos-body" class="sim-empty">No open simulated trade.</div>
+      </div>
+
+      <div class="sim-card" id="sim-realpos" hidden>
+        <h3>Real positions <small id="sim-rp-tag">read-only</small></h3>
+        <div id="sim-rp-body" class="sim-empty">Loading…</div>
+        <div class="sim-empty">Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code>. Click a price to copy it.</div>
       </div>
     </div>
   </div>
@@ -279,6 +342,9 @@
   const liveOpen = () => S.open.filter(p => p.mode === 'live'), MAX_LIVE = 5;
   const wait = ms => new Promise(r => setTimeout(r, ms));
   let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
+  // Real ticket (Live mode): fills in the Telegram /long · /short panel; R.data = read-only open live positions
+  const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '' };
+  let pxPop = null;
   const picks = new Map();
 
   // ---------- small helpers ----------
@@ -315,6 +381,26 @@
     const j = await r.json().catch(() => null);
     if (!r.ok) throw new Error((j && j.error) || 'server error ' + r.status);
     return j;
+  }
+  async function apiPost(path, body) {   // JSON body, key in the query like api()
+    const r = await fetch(path + '?key=' + encodeURIComponent(apiKey), { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 401) { resetConfig(); throw new Error('Invalid key — please log in again'); }
+    const j = await r.json().catch(() => null);
+    if (!r.ok) throw new Error((j && j.error) || 'server error ' + r.status);
+    return j;
+  }
+  // copy inside the click itself first (works on http and in every browser), then the async clipboard API with a time
+  // limit (it can wait forever for a permission in some browsers)
+  async function copyText(t) {
+    let ok = false;
+    try {
+      const ta = document.createElement('textarea'), was = document.activeElement;
+      ta.value = t; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+      document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove();
+      if (was && was.focus) was.focus({ preventScroll: true });
+    } catch (e) { ok = false; }
+    if (ok || !(navigator.clipboard && window.isSecureContext)) return ok;
+    try { return await Promise.race([navigator.clipboard.writeText(t).then(() => true), wait(1500).then(() => false)]); } catch (e) { return false; }
   }
 
   // ---------- chart ----------
@@ -414,6 +500,13 @@
     const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
     const p = S.pos, ps = chart.priceScale('right');
     if (ps.options().autoScale) ps.applyOptions({ autoScale: true });   // re-fit so the stop / target you just set come into view
+    if (R.on && S.mode === 'live') {   // the real ticket's levels (what Telegram will get)
+      const rp = realPlan(); if (!rp) return;
+      if (rp.isLim && rp.lim > 0) line(rp.lim, 'rgba(250,204,21,0.6)', 3, 'limit?');
+      if (rp.stop > 0) line(rp.stop, 'rgba(239,68,68,0.55)', 3, 'stop?');
+      if (rp.tp > 0) line(rp.tp, 'rgba(16,185,129,0.55)', 3, 'TP1?');
+      return;
+    }
     if (p) {
       line(p.entry, '#e5e7eb', 0, p.side === 'short' ? 'Short' : 'Long');
       line(p.stop, '#ef4444', 2, p.stop === p.entry ? 'Stop (entry)' : 'Stop');
@@ -442,13 +535,20 @@
     $('sim-side-short').setAttribute('aria-pressed', String(short));
     $('sim-side-long').setAttribute('aria-pressed', String(!short));
     $('sim-stop-swing').textContent = short ? 'Past 1h high' : 'Past 1h low';
-    $('sim-tp-row').hidden = $('sim-plan').value !== 'price';
+    const real = R.on && S.mode === 'live';
+    $('sim-tmode').hidden = S.mode !== 'live';
+    $('sim-ticket').classList.toggle('real', real);
+    $('sim-tm-paper').setAttribute('aria-pressed', String(!real)); $('sim-tm-real').setAttribute('aria-pressed', String(real));
+    $('sim-stop').placeholder = real ? 'price (blank = your saved SL)' : 'price';
+    $('sim-tp-row').hidden = (real ? $('sim-r-tp').value : $('sim-plan').value) !== 'price';
     const go = $('sim-go');
-    go.className = 'b big ' + (short ? 'red' : 'go');
+    go.className = 'b big paper-only ' + (short ? 'red' : 'go');
     go.textContent = (short ? 'Short' : 'Long') + ' at market' + (px != null ? ' · ' + fmt(px) : '');
     const full = S.mode === 'live' && liveOpen().length >= MAX_LIVE;
     go.disabled = !!S.pos || px == null || full;
     $('sim-price').textContent = px != null ? S.sym + ' ' + fmt(px) : '–';
+    if (px != null) $('sim-price').dataset.px = fmt(px); else delete $('sim-price').dataset.px;
+    if (real) return renderReal(px);
     const sum = $('sim-sum');
     if (px == null) { sum.textContent = 'Load a chart to see the risk.'; return; }
     if (S.pos) { sum.textContent = `You already have a simulated ${S.pos.side} open on ${S.sym}. Close it first, or load another coin to trade that too.`; return; }
@@ -462,6 +562,144 @@
     sum.innerHTML = `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
       (tp1 ? `${pl.tps.length > 1 ? 'TP1 (25%)' : 'Target'}: <b>+$${gain1.toFixed(2)}</b> at ${fmt(tp1.price)}` + (pl.tps.length === 1 ? ` · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R` : '') : 'Set a target.') +
       `<br>Checklist: <b>${checks}/4</b>${checks < 4 ? ' · the playbook waits for all four' : ''}` + htfTicket();
+  }
+
+  // ---------- real ticket: fills in the Telegram /long · /short panel (nothing is placed from here) ----------
+  const realOpenOn = sym => (R.data && R.data.positions || []).find(t => t.symbol === sym) || (R.data && R.data.orders || []).find(o => o.symbol === sym) || null;
+  function realPlan() {
+    const px = price(); if (px == null || !S.sym) return null;
+    const short = S.side === 'short', num = id => { const v = $(id).value.trim(); return v === '' ? null : parseFloat(v); };
+    const isLim = R.entry === 'limit', lim = num('sim-r-limit'), stop = num('sim-stop'), tpOn = $('sim-r-tp').value === 'price';
+    const tp = tpOn ? num('sim-tp') : null, margin = num('sim-r-margin'), lev = num('sim-r-lev');
+    const entry = isLim ? (lim > 0 ? lim : null) : px, where = isLim ? 'limit' : 'price', errs = [];
+    if (isLim && !(lim > 0)) errs.push('Set the limit price: type it or click the chart.');
+    if (stop != null && !(stop > 0)) errs.push('The stop must be a positive price.');
+    else if (entry && stop != null && (short ? stop <= entry : stop >= entry)) errs.push(`The stop must be ${short ? 'above' : 'below'} the ${where} for a ${S.side}.`);
+    if (tpOn && !(tp > 0)) errs.push('Set the TP1 price, or pick "Your saved Telegram TP plan".');
+    else if (entry && tp != null && (short ? tp >= entry : tp <= entry)) errs.push(`TP1 must be ${short ? 'below' : 'above'} the ${where}.`);
+    if (margin != null && !(margin > 0 && margin <= 100000)) errs.push('Margin must be a positive number.');
+    if (lev != null && !(lev >= 1 && lev <= 125)) errs.push('Leverage must be 1–125.');
+    return { px, short, isLim, entry, lim, stop, tp, margin, lev: lev != null ? Math.round(lev) : null, errs };
+  }
+  function renderReal(px) {
+    const short = S.side === 'short', side = short ? 'SHORT' : 'LONG', live = $('sim-r-mode').value === 'live';
+    $('sim-r-mkt').setAttribute('aria-pressed', String(R.entry === 'market'));
+    $('sim-r-lmt').setAttribute('aria-pressed', String(R.entry === 'limit'));
+    $('sim-r-lrow').hidden = R.entry !== 'limit';
+    $('sim-r-cmd').textContent = `Copy as a /${S.side} command instead`;
+    const go = $('sim-real-go'), sum = $('sim-sum'), rp = realPlan();
+    go.className = 'b big real-only ' + (short ? 'red' : 'go');
+    go.textContent = R.busy ? 'Sending…' : `📲 Open ${side}${S.sym ? ' ' + S.sym : ''} in Telegram`;
+    const has = S.sym ? realOpenOn(S.sym) : null;
+    go.disabled = R.busy || !rp || rp.errs.length > 0 || !!has;
+    if (!rp) { sum.textContent = 'Load a live chart first.'; return; }
+    const E = rp.entry || px, pc = v => Math.abs(v / E - 1) * 100, sg = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+    let h = `Telegram gets a <b>${side} ${esc(S.sym)}</b> panel · ${live ? '<b>💰 LIVE</b>' : '📝 paper'}<br>`;
+    h += rp.isLim ? (rp.lim > 0 ? `Entry: limit <b>${fmt(rp.lim)}</b> (${sg((rp.lim / px - 1) * 100)} from ${fmt(px)})` : 'Entry: limit, price not set') : `Entry: market ~<b>${fmt(px)}</b>`;
+    h += '<br>' + (rp.stop > 0 ? `Stop <b>${fmt(rp.stop)}</b> (${pc(rp.stop).toFixed(2)}% away)` : 'Stop: your saved SL setting');
+    h += '<br>' + (rp.tp > 0 ? `TP1 <b>${fmt(rp.tp)}</b> (${pc(rp.tp).toFixed(2)}%)` + (rp.stop > 0 ? ` · ${(Math.abs(rp.tp - E) / Math.abs(rp.stop - E)).toFixed(1)}R` : '') : 'Targets: your saved TP plan');
+    if (rp.margin && rp.lev) {
+      const pos = rp.margin * rp.lev;
+      h += `<br>$${rp.margin} × ${rp.lev}x = <b>$${pos.toFixed(0)}</b> position` + (rp.stop > 0 ? ` · if stopped ≈ <b>−$${(pos * pc(rp.stop) / 100).toFixed(2)}</b> + fees` : '');
+    } else h += `<br>Size: ${rp.margin ? '$' + rp.margin + ' margin' : 'your saved margin'} × ${rp.lev ? rp.lev + 'x' : 'your saved leverage'}`;
+    h += `<br><small style="color:var(--muted)">Prices from the ${esc(S.ex || '')} chart. The panel shows its own exchange's price; check the levels there.</small>`;
+    if (has) h += `<br><span class="neg">⛔ You already have a real ${has.limitPrice ? 'limit order' : (has.direction || '').toUpperCase()} on ${esc(S.sym)}. Manage it with /mpositions or /orders.</span>`;
+    if (rp.errs.length) h += '<br>' + rp.errs.map(e => `<span class="neg">⛔ ${esc(e)}</span>`).join('<br>');
+    sum.innerHTML = h;
+  }
+  async function sendReal() {
+    const rp = realPlan(), res = $('sim-r-res');
+    if (!rp || rp.errs.length || R.busy || realOpenOn(S.sym)) return;
+    const body = { symbol: S.sym, direction: S.side, mode: $('sim-r-mode').value, chartExchange: S.ex };
+    if (rp.isLim) body.limitPrice = rp.lim;
+    if (rp.stop > 0) body.slPrice = rp.stop;
+    if (rp.tp > 0) body.tp1Price = rp.tp;
+    if (rp.margin) body.margin = rp.margin;
+    if (rp.lev) body.leverage = rp.lev;
+    R.busy = true; res.className = 'sim-rres real-only'; res.textContent = 'Sending to Telegram…'; renderTicket();
+    try {
+      const r = await apiPost('/api/trade/panel', body), p = r.panel, pf = v => (+v).toFixed(S.prec);
+      if (p) {
+        const errs = p.errors || [];
+        res.className = 'sim-rres real-only ' + (errs.length ? 'bad' : 'ok');
+        res.innerHTML = `📲 Sent. Telegram shows <b>${p.direction === 'long' ? 'LONG' : 'SHORT'} ${esc(S.sym)}</b> on ${esc(String(p.exchange).toUpperCase())} · ${p.mode === 'live' ? '💰 LIVE' : '📝 paper'} · ` +
+          `${p.entryType === 'limit' ? 'limit ' + pf(p.entry) : 'market ~' + pf(p.market)} · $${+p.margin} × ${+p.leverage}x · stop ${pf(p.stopLoss)} · TP1 ${pf(p.tp1)} · max loss −$${(+p.maxLoss).toFixed(2)}<br>` +
+          (errs.length ? `⛔ ${esc(errs[0])}. Fix it in the panel before ✅.` : `Tap ✅ in Telegram to place it${p.mode === 'live' ? ', then "YES — place LIVE order"' : ''}.`) +
+          (p.mode !== body.mode ? `<br>⚠️ It opened in ${esc(p.mode)}: no API keys on ${esc(p.exchange)}?` : '');
+      } else { res.className = 'sim-rres real-only ok'; res.textContent = '📲 Sent. Open Telegram and tap ✅ to place it.'; }
+    } catch (e) { res.className = 'sim-rres real-only bad'; res.textContent = 'Not sent: ' + e.message; }
+    finally { R.busy = false; renderTicket(); }
+  }
+  function copyCmd() {   // the same thing as commands you can paste into Telegram yourself
+    const rp = realPlan(), res = $('sim-r-res'); if (!rp) return;
+    const parts = ['/' + S.side, S.sym];
+    if (rp.margin) { parts.push(String(rp.margin)); if (rp.lev) parts.push(String(rp.lev)); }
+    const cmd = parts.join(' '), more = [];
+    if (rp.stop > 0) more.push('/sl ' + fmt(rp.stop));
+    if (rp.tp > 0) more.push('/tp ' + fmt(rp.tp));
+    if (rp.isLim && rp.lim > 0) more.push('/entry ' + fmt(rp.lim));
+    copyText(cmd).then(ok => {
+      res.className = 'sim-rres real-only';
+      res.innerHTML = (ok ? `Copied <code>${esc(cmd)}</code>.` : `Copy this: <code>${esc(cmd)}</code>`) +
+        (more.length ? ` Then send each (click to copy): ${more.map(m => `<code data-copy="${esc(m)}">${esc(m)}</code>`).join(' · ')}` : '');
+    });
+  }
+
+  // ---------- real positions: read-only copy of /mpositions, polled while Live is open ----------
+  async function loadRealPos() {
+    if (S.mode !== 'live' || document.hidden) return;
+    const tab = document.getElementById('tab-sim'); if (tab && !tab.classList.contains('active')) return;
+    try { R.data = await api('/api/trade/positions'); R.err = null; } catch (e) { R.err = e.message; }
+    renderRealPos(); drawReal(); renderTicket();
+  }
+  function setRealPoll() {
+    const on = S.mode === 'live'; $('sim-realpos').hidden = !on;
+    if (on && !R.poll) { loadRealPos(); R.poll = setInterval(loadRealPos, 15000); }
+    if (!on && R.poll) { clearInterval(R.poll); R.poll = null; }
+    drawReal();
+  }
+  const ageOf = t => { const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
+  function renderRealPos() {
+    const body = $('sim-rp-body'), tag = $('sim-rp-tag');
+    if (R.err) { body.className = 'sim-empty'; body.textContent = 'Could not load: ' + R.err; tag.textContent = 'read-only'; return; }
+    const d = R.data; if (!d) return;
+    const P = d.positions || [], O = d.orders || [];
+    tag.textContent = `read-only · ${P.length} open${O.length ? ' · ' + O.length + ' limit' : ''} · ${hm(d.at || Date.now())} UTC`;
+    if (!P.length && !O.length) { body.className = 'sim-empty'; body.textContent = 'No open live positions or limit orders.'; return; }
+    body.className = '';
+    const pf = (v, ref) => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(precFor(ref || v));
+    const cp = (v, ref) => v == null || !isFinite(v) ? '–' : `<span data-px="${pf(v, ref)}">${pf(v, ref)}</span>`;
+    const chartBtn = (sym, ex) => `<button type="button" class="b" data-rp-chart="${esc(sym)}" data-rp-ex="${esc(ex || '')}">Chart</button>`;
+    body.innerHTML = P.map(t => {
+      const sh = t.direction === 'short', ref = t.entry, tps = t.tps || [], next = tps.find(x => !x.hit);
+      return `<div class="sim-rp"><div class="top"><span class="${sh ? 'neg' : 'pos'}">${sh ? '🔴 SHORT' : '🟢 LONG'} <b>${esc(t.symbol)}</b></span>` +
+        `<small>${esc(t.exchange || '')} · ${esc(t.kind)} · ${+t.leverage}x · ${ageOf(t.opened)}</small></div>` +
+        `<div>Entry ${cp(t.entry, ref)} → now ${cp(t.price, ref)} · <b class="${t.pnl >= 0 ? 'pos' : 'neg'}">${t.pnl == null ? '–' : usd(t.pnl)}</b>${t.pct != null ? ` (${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%)` : ''}</div>` +
+        `<div>Stop ${cp(t.stop, ref)}${t.atBreakeven ? ' (entry)' : ''} · ${next ? 'next TP' + next.n + ' ' + cp(next.price, ref) : 'all TPs hit'} · ${tps.map(x => (x.hit ? '✅' : '⬜') + x.n).join(' ')}</div>` +
+        `<div><small>$${(+t.size).toFixed(2)} open · margin $${(+t.margin).toFixed(2)}${t.realized ? ' · banked ' + usd(t.realized) : ''}</small></div>${chartBtn(t.symbol, t.exchange)}</div>`;
+    }).join('') + O.map(o => `<div class="sim-rp"><div class="top"><span>📍 ${o.direction === 'short' ? 'SHORT' : 'LONG'} <b>${esc(o.symbol)}</b> limit ${cp(o.limitPrice, o.limitPrice)}</span>` +
+        `<small>${esc(o.exchange || '')} · ${o.onBook ? 'on the order book' : 'watched by the bot'} · ${Math.max(0, (o.expiresAt - Date.now()) / 3600e3).toFixed(1)}h left</small></div>` +
+        `<div>Stop ${cp(o.stop, o.limitPrice)} · TP1 ${cp(o.tp1, o.limitPrice)} · $${+o.margin} × ${+o.leverage}x</div>${chartBtn(o.symbol, o.exchange)}</div>`).join('');
+    body.querySelectorAll('[data-rp-chart]').forEach(b => b.onclick = () => openCoin(b.dataset.rpChart, ['binance', 'bybit'].includes(b.dataset.rpEx) ? b.dataset.rpEx : 'auto', smc.tf));
+  }
+  function drawReal() {   // the real trade's levels on its own chart (solid, brighter than the simulated ones)
+    if (!cs) return;
+    const live = S.mode === 'live' && R.data, L = [];
+    const t = live ? (R.data.positions || []).find(x => x.symbol === S.sym) : null;
+    const o = live && !t ? (R.data.orders || []).find(x => x.symbol === S.sym) : null;
+    if (t) {
+      L.push([t.entry, '#facc15', 0, 'REAL ' + t.direction]);
+      if (t.stop) L.push([t.stop, '#f97316', 0, 'REAL stop']);
+      const nx = (t.tps || []).find(x => !x.hit); if (nx) L.push([nx.price, '#22d3ee', 0, 'REAL TP' + nx.n]);
+    } else if (o) {
+      L.push([o.limitPrice, '#facc15', 1, 'REAL limit']);
+      if (o.stop) L.push([o.stop, '#f97316', 1, 'REAL stop']);
+      if (o.tp1) L.push([o.tp1, '#22d3ee', 1, 'REAL TP1']);
+    }
+    const key = S.sym + JSON.stringify(L);
+    if (key === R.lineKey) return;
+    R.lines.forEach(l => cs.removePriceLine(l)); R.lines = []; R.lineKey = key;
+    for (const [p, color, style, title] of L) if (p > 0) R.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 2, lineStyle: style, axisLabelVisible: true, title }));
   }
 
   // ---------- simulated position ----------
@@ -569,7 +807,7 @@
   function refresh() {
     if (!cs) return;
     runSmc();
-    drawTop(); drawMarks(); drawPos(); renderTicket(); renderPos();
+    drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos();
     const end = nowT();
     $('sim-clock').textContent = end ? `${S.sym}USDT perp · ${S.ex} · ${S.tf} · ${utc(end)} UTC` +
       (S.mode === 'replay' ? ` · ${Math.round((S.base.length - 1 - S.cur) / 60)}h of data ahead` : ' · live') : 'No chart loaded';
@@ -607,7 +845,7 @@
     S.base = r.candles; S.sym = r.symbol.replace(/USDT$/, ''); S.ex = r.exchange;
     S.prec = precFor(r.candles[r.candles.length - 1][4]); S.marks = [];
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
-    $('sim-stop').value = ''; $('sim-tp').value = '';
+    $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
     recomputeFull(); loadHtf();
   }
   const replayOpen = () => S.open.some(p => p.mode === 'replay');
@@ -1286,7 +1524,7 @@
   function setMode(m, quiet) {
     if (S.mode === m) return;
     if (replayOpen()) { status('Close your simulated replay trade before switching mode. Live trades keep running in the background.', true); return; }
-    stopAll(); S.mode = m;
+    stopAll(); S.mode = m; setRealPoll();
     $('sim-m-replay').setAttribute('aria-pressed', String(m === 'replay'));
     $('sim-m-live').setAttribute('aria-pressed', String(m === 'live'));
     $('sim-replay-load').hidden = m !== 'replay'; $('sim-replay-bar').hidden = m !== 'replay';
@@ -1294,23 +1532,75 @@
     $('sim-next-setup').hidden = m !== 'replay'; $('sim-pause-wrap').hidden = m !== 'replay';
     if (!quiet && m === 'live') { const sym = S.sym || 'BTC'; $('sim-symbol-live').value = sym; loadLive(sym, $('sim-ex-live').value); }
     if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
+    renderTicket();   // the Practice / Real switch is for Live only
   }
   function setTool(t) {
     S.tool = S.tool === t ? null : t;
     $('sim-tool-line').classList.toggle('on', S.tool === 'line');
     $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
     $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
-    hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : '');
+    $('sim-tool-limit').classList.toggle('on', S.tool === 'limit');
+    hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
+      'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
+    $('sim-hint').classList.toggle('tip', !S.tool);
+  }
+  // a picked price → the ticket (stop / target / limit) or a drawn level. A stop on an open simulated trade moves that
+  // trade's stop (practice only; the real ticket never touches a position).
+  function usePrice(kind, p) {
+    const real = R.on && S.mode === 'live', v = (+p).toFixed(S.prec);
+    if (kind === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
+    if (kind === 'stop') { if (S.pos && !real) moveStop(S.pos, p); else $('sim-stop').value = v; }
+    if (kind === 'tp') { if (real) $('sim-r-tp').value = 'price'; else $('sim-plan').value = 'price'; $('sim-tp').value = v; }
+    if (kind === 'limit') { R.entry = 'limit'; $('sim-r-limit').value = v; }
+    if (kind !== 'line') chart.priceScale('right').applyOptions({ autoScale: true });   // back to auto-fit; it now keeps that level in view
+    refresh();
   }
   function onChartClick(param) {
-    if (!S.tool || !param || !param.point) return;
+    if (!param || !param.point) return;
+    if (!S.tool) { if (S.cur >= 0) openPop(param); return; }
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
     if (S.tool === 'quiz') { quizAnswer(p); setTool(null); refresh(); return; }
-    if (S.tool === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
-    if (S.tool === 'stop') { if (S.pos) moveStop(S.pos, p); else $('sim-stop').value = (+p).toFixed(S.prec); }
-    if (S.tool === 'tp') { $('sim-plan').value = 'price'; $('sim-tp').value = (+p).toFixed(S.prec); }
-    if (S.tool === 'stop' || S.tool === 'tp') chart.priceScale('right').applyOptions({ autoScale: true });   // back to auto-fit; it now keeps that level in view
-    setTool(null); refresh();
+    const t = S.tool; setTool(null); usePrice(t, p);
+  }
+  // click the chart with no tool on: the price there (snapped to the candle's high / low / close / open within 9 px)
+  function closePop() { if (pxPop) { pxPop.remove(); pxPop = null; } }
+  function openPop(param) {
+    closePop();
+    let p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
+    let what = 'chart price';
+    const d = param.seriesData && param.seriesData.get(cs);
+    if (d && d.open != null) {
+      let best = 9;
+      for (const [k, lab] of [['high', 'candle high'], ['low', 'candle low'], ['close', 'candle close'], ['open', 'candle open']]) {
+        const y = cs.priceToCoordinate(d[k]); if (y == null) continue;
+        const dy = Math.abs(y - param.point.y); if (dy < best) { best = dy; p = d[k]; what = lab; }
+      }
+    }
+    const v = (+p).toFixed(S.prec), real = R.on && S.mode === 'live', wrap = $('sim-chart').parentNode;
+    const el = document.createElement('div');
+    el.className = 'sim-pxpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Price ' + v);
+    el.innerHTML = `<div class="v"><b>${v}</b><small>${what}${param.time != null ? ' · ' + hm(param.time * 1000) : ''}</small></div>` +
+      `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="stop">→ Stop</button>` +
+      `<button type="button" class="b" data-a="tp">→ ${real ? 'TP1' : 'Target'}</button>${real ? '<button type="button" class="b" data-a="limit">→ Limit</button>' : ''}` +
+      `<button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>`;
+    wrap.appendChild(el);
+    const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
+    let x = param.point.x + 12, y = param.point.y - h - 10;
+    if (x + w > W - 4) x = Math.max(4, param.point.x - w - 12);
+    if (y < 4) y = Math.min(H - h - 4, param.point.y + 14);
+    el.style.left = Math.max(4, x) + 'px'; el.style.top = Math.max(4, y) + 'px';
+    el.onclick = e => {
+      const a = e.target.closest('[data-a]'); if (!a) return;
+      const act = a.dataset.a;
+      if (act === 'copy') {
+        copyText(v).then(ok => { a.textContent = ok ? 'Copied ✓' : 'Select it ↑'; hint(ok ? `Copied ${v}. In Telegram: /sl ${v} · /tp ${v} · /entry ${v}` : 'The browser blocked copying. Select the number and copy it.'); if (ok) setTimeout(closePop, 600); });
+        return;
+      }
+      closePop();
+      if (act !== 'x') usePrice(act, +v);
+    };
+    pxPop = el;
+    el.querySelector('[data-a="copy"]').focus({ preventScroll: true });
   }
   function moveStop(pos, v) {
     const px = pxOf(pos);
@@ -1322,7 +1612,7 @@
     if (started) return; started = true;
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
     $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early;
-    initChart(); renderJournal();
+    initChart(); renderJournal(); setTool(null); setRealPoll();
     if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
     S.track = setInterval(trackBg, 4000);   // live trades keep updating in any mode, on any chart
@@ -1359,6 +1649,28 @@
   $('sim-tool-line').onclick = () => setTool('line');
   $('sim-tool-stop').onclick = () => setTool('stop');
   $('sim-tool-tp').onclick = () => setTool('tp');
+  $('sim-tool-limit').onclick = () => setTool('limit');
+  $('sim-tm-paper').onclick = () => { R.on = false; refresh(); };
+  $('sim-tm-real').onclick = () => { R.on = true; refresh(); };
+  $('sim-r-mkt').onclick = () => { R.entry = 'market'; refresh(); };
+  $('sim-r-lmt').onclick = () => { R.entry = 'limit'; refresh(); };
+  ['sim-r-limit', 'sim-r-margin', 'sim-r-lev'].forEach(id => $(id).addEventListener('input', refresh));
+  ['sim-r-tp', 'sim-r-mode'].forEach(id => $(id).addEventListener('change', refresh));
+  $('sim-real-go').onclick = sendReal;
+  $('sim-r-cmd').onclick = copyCmd;
+  // any price on the page marked data-px (or a command marked data-copy): click to copy it
+  $('sim').addEventListener('click', e => {
+    const el = e.target.closest('[data-px],[data-copy]'); if (!el) return;
+    const v = el.dataset.px || el.dataset.copy; if (!v) return;
+    copyText(v).then(ok => {
+      el.classList.add('copied'); setTimeout(() => el.classList.remove('copied'), 900);
+      hint(ok ? `Copied ${v}` + (el.dataset.px ? `. In Telegram: /sl ${v} · /tp ${v} · /entry ${v}` : '') : 'The browser blocked copying. Select it and copy.');
+      $('sim-hint').classList.add('tip');
+    });
+  });
+  document.addEventListener('pointerdown', e => { if (pxPop && !pxPop.contains(e.target)) closePop(); }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && pxPop) closePop(); });
+  $('sim-chart').addEventListener('wheel', closePop, { passive: true });
   $('sim-clear-lines').onclick = () => { lvlLines.forEach(l => cs && cs.removePriceLine(l)); lvlLines = []; };
   $('sim-showtop').onchange = () => { S.topHi = undefined; refresh(); };
   $('sim-play').onclick = togglePlay;

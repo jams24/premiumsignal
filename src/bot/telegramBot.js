@@ -1044,22 +1044,22 @@ class TelegramBot {
         symbol,
         exchangeId: exIds.includes(saved.exchangeId) ? saved.exchangeId : exIds[0],
         direction: opts.direction || saved.direction || 'short',
-        mode: saved.mode === 'live' ? 'live' : 'paper',
+        mode: (opts.mode || saved.mode) === 'live' ? 'live' : 'paper',
         margin: opts.margin || saved.margin || te.maxPositionSize || 12,
         leverage: opts.leverage || saved.leverage || te.defaultLeverage || 3,
-        slPct: opts.slPct ?? saved.slPct ?? 0,
+        slPct: opts.slPrice > 0 ? 0 : (opts.slPct ?? saved.slPct ?? 0),
         slAtrMult: MT_SL_ATR.includes(saved.slAtrMult) ? saved.slAtrMult : 3,
-        slRiskUsd: opts.slPct ? 0 : (saved.slRiskUsd || 0),
+        slRiskUsd: opts.slPct || opts.slPrice > 0 ? 0 : (saved.slRiskUsd || 0),
         awaiting: null,
-        customSl: 0,
+        customSl: opts.slPrice > 0 ? opts.slPrice : 0,   // a stop price picked on the dashboard chart
         tpPreset: MT_TP_PRESETS[saved.tpPreset] ? saved.tpPreset : 'default',
         exitStyle: opts.exitStyle || (MT_EXIT_STYLES[saved.exitStyle] ? saved.exitStyle : 'tight'),
         marginSaver: saved.marginSaver !== false,
-        tpPlan: !opts.tpPcts && MT_TP_PCT_PLANS[saved.tpPlan] ? saved.tpPlan : null,
-        tpPcts: opts.tpPcts || MT_TP_PCT_PLANS[saved.tpPlan] || null,
-        customTp1: 0,
-        entryType: 'market',
-        limitPrice: 0,
+        tpPlan: !opts.tpPcts && !(opts.tp1Price > 0) && MT_TP_PCT_PLANS[saved.tpPlan] ? saved.tpPlan : null,
+        tpPcts: opts.tpPcts || (opts.tp1Price > 0 ? null : MT_TP_PCT_PLANS[saved.tpPlan]) || null,
+        customTp1: opts.tp1Price > 0 ? opts.tp1Price : 0,   // TP1 price from the dashboard; TP2–4 follow as with /tp
+        entryType: opts.limitPrice > 0 ? 'limit' : 'market',
+        limitPrice: opts.limitPrice > 0 ? opts.limitPrice : 0,
         market: null,
         liveBalance: null,
         notice: null,
@@ -1131,6 +1131,45 @@ class TelegramBot {
     };
     this.bot.command('long', quickOpen('long'));
     this.bot.command('short', quickOpen('short'));
+
+    // Dashboard → Telegram (src/web/tradeApi.js): the web fills in a /long or /short panel and sends it to the owner's
+    // chat. It is the same panel as the command — nothing is placed until the owner taps ✅ there (and, for Live,
+    // "YES — place LIVE order"). Prices typed on the web come in as the panel's own custom SL / TP1 / limit values.
+    // Not saved as the owner's defaults (transient), like /check's pre-filled panels.
+    this.openPanelFromWeb = async (o) => {
+      const uid = Number(this.pumpAutoTrader?.config?.ownerId) || config.telegram.adminIds[0];
+      if (!uid) throw new Error('No owner Telegram account set (ADMIN_TELEGRAM_IDS)');
+      const te = mtExec();
+      if (!te) throw new Error('Trade executor not ready');
+      const symbol = String(o.symbol || '').toUpperCase();
+      if (!/^[A-Z0-9]{1,20}$/.test(symbol)) throw new Error('Invalid symbol');
+      const exIds = exchangesFor(symbol);
+      if (!exIds.length) throw new Error(`${symbol}/USDT perpetual is not listed on ${Object.keys(te.exchanges).join(', ')}`);
+      const open = (await db.getOpenTrades(te.settingsKey)).find(t => t.symbol === symbol);
+      if (open) return { open: { direction: open.direction, mode: open.mode, exchange: open.exchange } };
+      const ctx = {
+        from: { id: uid }, chat: { id: uid }, state: { user: { role: 'admin' } },
+        replyWithHTML: (text, extra) => this.bot.telegram.sendMessage(uid, text, { parse_mode: 'HTML', ...(extra || {}) }),
+      };
+      await openPanel(ctx, symbol, {
+        direction: o.direction, mode: o.mode, margin: o.margin, leverage: o.leverage,
+        slPrice: o.slPrice, tp1Price: o.tp1Price, limitPrice: o.limitPrice,
+        transient: true,
+        notice: `📲 Filled in on the dashboard${['binance', 'bybit'].includes(o.chartExchange) ? ` (prices from the ${o.chartExchange.toUpperCase()} chart)` : ''} — check the levels, then ✅`,
+      });
+      const st = this.manualTradeState[uid];
+      if (!st || st.symbol !== symbol || !st.market) return { sent: true };
+      const s = computeSetup(st);
+      const { errors } = validateSetup(st, s);
+      return {
+        sent: true,
+        panel: {
+          exchange: st.exchangeId, mode: st.mode, direction: st.direction, margin: st.margin, leverage: st.leverage,
+          entryType: st.entryType, entry: s.entry, market: s.market, stopLoss: s.stopLoss, tp1: s.tp1,
+          maxLoss: s.maxLoss, posSize: s.posSize, errors,
+        },
+      };
+    };
 
     // --- Exact-value inputs: shared by the ✏️ buttons (type the value as a message) and /sl /tp /entry /margin /lev ---
     const num = (raw) => parseFloat(String(raw).replace(/[$,%\s]/g, ''));
@@ -2035,6 +2074,31 @@ class TelegramBot {
         if (/not modified/i.test(e.message)) return;
         await ctx.replyWithHTML(view.text, view.keyboard);
       }
+    };
+
+    // Read-only copy of /mpositions for the dashboard: open LIVE trades with the same price / P&L math, plus pending
+    // limit orders. Managing them (stop, take profit, close, cancel) stays in Telegram.
+    this.livePositionsForWeb = async () => {
+      const trades = (await db.getOpenTrades()).filter(t => t.mode === 'live');
+      const prices = await positionPrices(trades);
+      const num = (v) => (v == null || !isFinite(parseFloat(v)) ? null : parseFloat(v));
+      const positions = trades.map((t) => {
+        const price = prices.get(`${t.exchange}:${t.symbol}`);
+        const p = positionStats(t, price);
+        const c = t.onchain_context || {};
+        return {
+          id: t.id, symbol: t.symbol, exchange: t.exchange, direction: t.direction,
+          kind: c.autoPump ? 'auto pump' : c.manual ? 'manual' : t.source || 'bot',
+          entry: p.entry, price: price || null, pct: p.pct, pnl: p.pct == null ? null : p.total, realized: p.realized,
+          stop: num(t.stop_loss), tps: p.tps, size: p.size, margin: p.margin, leverage: p.lev,
+          atBreakeven: p.atBreakeven, opened: new Date(t.created_at).getTime(),
+        };
+      });
+      const orders = [...this.pendingLimitOrders.values()].filter(o => o.mode === 'live').map(o => ({
+        id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
+        stop: o.stopLoss, tp1: o.tp1, margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
+      }));
+      return { positions, orders };
     };
 
     this.bot.command('mpositions', async (ctx) => {
