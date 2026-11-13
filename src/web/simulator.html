@@ -42,7 +42,7 @@
 .sim-chartwrap { position: relative; min-width: 0; }
 .sim-charts.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .sim-cmpbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 4px; }
-.sim-cmpbar input { width: 110px; text-transform: uppercase; }
+.sim-cmpbar #sim-cmp-sym { width: 110px; text-transform: uppercase; }
 .sim-cmpbar select { width: auto; flex: 0 0 auto; }
 .sim-cmpsum { font: 400 12px/1.5 var(--font-mono); color: var(--text2); margin-bottom: 4px; }
 .sim-cmpsum b { color: var(--text); font-weight: 600; }
@@ -271,6 +271,7 @@
         <button type="button" class="b" id="sim-cmp-load">Load</button>
         <button type="button" class="b" data-cmp="BTC">BTC</button><button type="button" class="b" data-cmp="ETH">ETH</button><button type="button" class="b" data-cmp="SOL">SOL</button>
         <select id="sim-cmp-tf" aria-label="Second chart: timeframe" title="Same as main: both charts scroll and zoom together. Another timeframe: the second chart keeps its own zoom; the crosshair still points at the same moment on both."><option value="">Timeframe: same as main</option><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1H</option><option value="4h">4H</option><option value="1d">1D</option></select>
+        <label class="sim-opt" style="margin:0" title="The same SMC marks as the main chart (zones, premium/discount, structure, sweeps, A+ setups) on the second coin, with the main chart's structure timeframe"><input type="checkbox" id="sim-cmp-smc" checked> SMC</label>
         <button type="button" class="b" id="sim-cmp-close" title="Close the second chart">✕ Close</button>
       </div>
       <div class="sim-cmpsum" id="sim-cmp-sum" aria-live="polite" hidden></div>
@@ -515,7 +516,7 @@
     ['pointerup', 'touchend', 'wheel'].forEach(ev => el.addEventListener(ev, () => setTimeout(fitHint, 60), { passive: true }));
     vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    smcLayer = makeLayer(); cs.attachPrimitive(smcLayer);
+    smcLayer = makeLayer(() => ({ main: true, A: smc.A, chart, cs, bucket, tf: S.tf, base: S.base, cur: S.cur })); cs.attachPrimitive(smcLayer);
     chart.subscribeClick(onChartClick);
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(false));   // the second chart scrolls and zooms with this one
     chart.subscribeCrosshairMove(p => cmpCross(p, false));
@@ -627,7 +628,7 @@
   // view-only: the ticket, levels and SMC stay on the main chart. The line above both says where each sits in its last
   // 24 h high–low range.
   const cmp = { on: false, want: '', sym: '', ex: '', prec: 4, base: [], cur: -1, chart: null, cs: null, vs: null, Bt: [], Bc: [],
-    load: 0, poll: null, busy: false, pending: '', tf: null, ign: { main: 0, cmp: 0 }, xIgn: { main: 0, cmp: 0 } };
+    load: 0, poll: null, smc: true, A: null, layer: null, busy: false, pending: '', tf: null, ign: { main: 0, cmp: 0 }, xIgn: { main: 0, cmp: 0 } };
   const atOrBefore = (n, get, t) => { let lo = 0, hi = n - 1, r = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (get(m) <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
   const cmpFmt = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(cmp.prec);
   const cmpName = () => (cmp.ex === 'fx' ? `${cmp.sym.slice(0, 3)}/${cmp.sym.slice(3)}` : cmp.sym);
@@ -647,6 +648,8 @@
     cmp.cs = cmp.chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444' });
     cmp.vs = cmp.chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     cmp.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    cmp.layer = makeLayer(() => ({ main: false, A: cmp.smc ? cmp.A : null, chart: cmp.chart, cs: cmp.cs, bucket: cbucket, tf: ctf(), base: cmp.base, cur: cmp.cur }));
+    cmp.cs.attachPrimitive(cmp.layer);
     cmp.chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(true));
     cmp.chart.subscribeCrosshairMove(p => { cmpLegend(p); cmpCross(p, true); });
     new ResizeObserver(() => { if (el.clientWidth) cmp.chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
@@ -714,7 +717,7 @@
       cmp.chart.priceScale('right').applyOptions({ autoScale: true });
       if (ctf() !== S.tf) cmp.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, B.length - 110), to: B.length + 10 });   // own timeframe: own zoom
     }
-    cmp.ign.main = 0; cmpAlign(false); cmpSum(); cmpLegend(null);
+    cmp.ign.main = 0; cmpAlign(false); cmpRunSmc(); cmpSum(); cmpLegend(null);
   }
   function cmpTick() {   // the main chart's clock moved (replay step or live candle): bring the second chart to it
     if (!cmp.on || !cmp.cs || !cmp.base.length) return;
@@ -731,7 +734,7 @@
       cmp.cs.update(toC(bar)); cmp.vs.update(toV(bar));
       if (cmp.Bt.length && cmp.Bt[cmp.Bt.length - 1] === b) cmp.Bc[cmp.Bc.length - 1] = bar.c; else { cmp.Bt.push(b); cmp.Bc.push(bar.c); }
     }
-    cmp.cur = c; cmpSum(); cmpLegend(null);
+    cmp.cur = c; cmpRunSmc(); cmpSum(); cmpLegend(null);
   }
   async function cmpPoll() {   // live: the second coin's own new candles (shown once the main chart's clock reaches them)
     if (!cmp.on || S.mode !== 'live' || cmp.busy || !cmp.base.length) return;
@@ -757,6 +760,19 @@
     const c = base[upto][4];
     return { chg: (c / open - 1) * 100, pos: hi > lo ? (c - lo) / (hi - lo) : 0.5, hrs: (end - base[i + 1][0]) / HOUR };
   }
+  function cmpRunSmc() {   // the same SMC read as the main chart (its structure timeframe), on the compare coin up to the main chart's clock
+    cmp.A = cmp.on && cmp.smc && cmp.cur >= 0 && window.SMC ? SMC.analyze(cmp.base, cmp.cur, { tf: smc.tf * MIN }) : null;
+    if (cmp.layer) cmp.layer.update();
+  }
+  function cmpSmcLine() {
+    const A = cmp.A; if (!A) return '';
+    const last = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, head = `<br>SMC ${smc.tf}m on <b>${cmpName()}</b>: `;
+    if (last && A.now - last.conf < FRESH) return head + `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)} · entry ${cmpFmt(last.entry)} · stop ${cmpFmt(last.stop)} · target ${cmpFmt(last.target)} · <b>${last.R.toFixed(1)}R</b>`;
+    if (!leg) return head + 'no live idea right now.';
+    const sh = leg.dir === -1, ck = (ok, t) => `${ok ? '✓' : '○'} ${t}`;
+    return head + `<b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} at ${hm(leg.brk.t)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
+      (leg.sweep && leg.trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${cmpFmt(leg.trig.p)}</b>` : '');
+  }
   function cmpSum() {
     if (!cmp.on || cmp.cur < 0 || S.cur < 0) return;
     const end = S.base[S.cur][0] + MIN, a = rangeAt(S.base, S.cur, end), b = rangeAt(cmp.base, cmp.cur, end);
@@ -767,7 +783,7 @@
     const verdict = Math.abs(d) < 0.1 ? 'about the same place in their ranges'
       : `<b>${d > 0 ? mainName : cmpName()}</b> is the stronger one, <b>${d > 0 ? cmpName() : mainName}</b> the weaker`;
     const el = $('sim-cmp-sum'); el.classList.remove('bad');
-    el.innerHTML = `Last ${Math.max(1, Math.round(Math.min(24, a.hrs, b.hrs)))} h to ${utc(end)} UTC: ${one(mainName, a)} · ${one(cmpName(), b)} → ${verdict}.`;
+    el.innerHTML = `Last ${Math.max(1, Math.round(Math.min(24, a.hrs, b.hrs)))} h to ${utc(end)} UTC: ${one(mainName, a)} · ${one(cmpName(), b)} → ${verdict}.` + cmpSmcLine();
   }
   function cmpLegend(p) {
     const el = $('sim-cmp-legend'), d = p && p.time != null && p.seriesData ? p.seriesData.get(cmp.cs) : null;
@@ -1495,30 +1511,30 @@
   const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   let smcLayer = null;
 
-  function makeLayer() {
+  function makeLayer(getV) {   // getV(): which chart this layer paints (see paintSmc)
     let req = null;
-    const view = z => ({ zOrder: () => z, renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintSmc(sc.context, sc.mediaSize, z === 'bottom')) }) });
+    const view = z => ({ zOrder: () => z, renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintSmc(sc.context, sc.mediaSize, z === 'bottom', getV())) }) });
     const views = [view('bottom'), view('top')];
     return { attached: p => { req = p.requestUpdate; }, detached: () => { req = null; }, paneViews: () => views, updateAllViews: () => {}, update: () => { if (req) req(); } };
   }
-  function setupResult(s) {
-    const B = S.base; let lo = 0, hi = S.cur + 1;
+  function setupResult(s, B, cur) {
+    let lo = 0, hi = cur + 1;
     while (lo < hi) { const md = (lo + hi) >> 1; if (B[md][0] <= s.t) lo = md + 1; else hi = md; }
-    for (let i = lo; i <= S.cur; i++) {
+    for (let i = lo; i <= cur; i++) {
       const k = B[i];
       if (s.dir === -1 ? k[2] >= s.stop : k[3] <= s.stop) return { kind: 'stop', t: k[0] };   // stop first inside a candle
       if (s.dir === -1 ? k[3] <= s.target : k[2] >= s.target) return { kind: 'target', t: k[0] };
     }
     return null;
   }
-  function paintSmc(g, m, back) {
-    const A = smc.A; if (!A || !cs || !(smc.on || coach.open)) return;
+  function paintSmc(g, m, back, V) {   // V: the chart to paint — main or compare: its analysis, chart, series, candle bucket, timeframe, candles
+    const A = V.A, cs = V.cs; if (!A || !cs || (V.main && !(smc.on || coach.open))) return;
     // 4H chart: a 15m/5m swing, break or sweep sits inside one candle, so those labels would pile up on the last bars —
     // keep the zones, premium/discount and levels only (the walk-through still shows whatever it points at)
-    const tiny = (S.tf === '4h' || S.tf === '1d') && !coach.open;
-    const show = k => (!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k && !(tiny && (k === 'swings' || k === 'structure'));
-    const ts = chart.timeScale(), W = m.width;
-    const X = t => ts.timeToCoordinate(bucket(t) / 1000);
+    const tiny = (V.tf === '4h' || V.tf === '1d') && !(V.main && coach.open);
+    const show = k => (!V.main || ((!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k)) && !(tiny && (k === 'swings' || k === 'structure'));   // the walk-through steers the main chart only
+    const ts = V.chart.timeScale(), W = m.width;
+    const X = t => ts.timeToCoordinate(V.bucket(t) / 1000);
     const Y = p => cs.priceToCoordinate(p);
     const ok = (...v) => v.every(x => x != null && isFinite(x));
     const leg = A.leg && !A.leg.dead ? A.leg : null;
@@ -1550,7 +1566,7 @@
       if (leg && leg.sweep && leg.trig) { line(X(leg.trig.t), W, Y(leg.trig.p), COL.blue, [5, 3], 1.5); tag('1m CHoCH level', W - 4, Y(leg.trig.p) + (leg.dir === -1 ? 9 : -9), COL.blue, 'right'); }
       for (const s of A.setups.slice(-4).reverse()) {
         const x = X(s.t), ye = Y(s.entry), ys = Y(s.stop), yt = Y(s.target); if (!ok(x, ye, ys, yt)) continue;
-        const res = setupResult(s), xr = res ? X(res.t) : W;
+        const res = setupResult(s, V.base, V.cur), xr = res ? X(res.t) : W;
         const x2 = Math.min(W, Math.max(x + 24, xr != null ? xr : W));   // the box runs until the stop or target was hit
         g.fillStyle = 'rgba(239,68,68,0.16)'; g.fillRect(x, Math.min(ye, ys), x2 - x, Math.abs(ys - ye));
         g.fillStyle = 'rgba(16,185,129,0.14)'; g.fillRect(x, Math.min(ye, yt), x2 - x, Math.abs(yt - ye));
@@ -2183,6 +2199,7 @@
     if (v.real === true) R.on = true;
     if (typeof v.cmp === 'string' && /^[A-Z0-9]{1,20}$/.test(v.cmp)) cmp.pending = v.cmp;   // the second chart comes back with the first
     if (TF[v.cmpTf]) { cmp.tf = v.cmpTf; $('sim-cmp-tf').value = v.cmpTf; }
+    if (v.cmpSmc === false) { cmp.smc = false; $('sim-cmp-smc').checked = false; }
     const saved = loadPos();
     if (saved.length) { status(`Bringing back your ${saved.length === 1 ? 'open simulated trade' : saved.length + ' open simulated trades'}…`); loadPicks().catch(() => {}); restoreAll(saved); return; }
     if (v.mode === 'live' && /^[A-Z0-9]{1,20}$/.test(v.sym || '')) {
@@ -2201,7 +2218,7 @@
   function loadView() { try { return JSON.parse(localStorage.getItem(VKEY)) || {}; } catch (e) { return {}; } }
   function saveView() {
     if (!started) return;
-    try { localStorage.setItem(VKEY, JSON.stringify({ mode: S.mode, sym: S.sym || '', ex: S.ex || '', tf: S.tf, real: !!R.on, pick: $('sim-pick').value || '', cmp: cmp.on ? (cmp.sym || cmp.want || '').toUpperCase() : '', cmpTf: cmp.tf || '' })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(VKEY, JSON.stringify({ mode: S.mode, sym: S.sym || '', ex: S.ex || '', tf: S.tf, real: !!R.on, pick: $('sim-pick').value || '', cmp: cmp.on ? (cmp.sym || cmp.want || '').toUpperCase() : '', cmpTf: cmp.tf || '', cmpSmc: cmp.smc })); } catch (e) { /* ignore */ }
   }
   window.addEventListener('pagehide', saveView);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveView(); });
@@ -2326,7 +2343,8 @@
   ['sim-plan', 'sim-c1', 'sim-c2', 'sim-c3', 'sim-c4'].forEach(id => $(id).addEventListener('change', refresh));
   $('sim-go').onclick = enter;
   $('sim-smc-on').onchange = () => { smc.on = $('sim-smc-on').checked; saveSmc(); refresh(); };
-  $('sim-smc-tf').onchange = () => { smc.tf = +$('sim-smc-tf').value; saveSmc(); recomputeFull(); refresh(); };
+  $('sim-smc-tf').onchange = () => { smc.tf = +$('sim-smc-tf').value; saveSmc(); recomputeFull(); refresh(); cmpRunSmc(); cmpSum(); };
+  $('sim-cmp-smc').onchange = e => { cmp.smc = e.target.checked; saveView(); cmpRunSmc(); cmpSum(); };
   $('sim-smc-pause').onchange = () => { smc.pause = $('sim-smc-pause').checked; saveSmc(); };
   $('sim-next-setup').onclick = nextSetup;
   $('sim-coach-btn').onclick = () => {
