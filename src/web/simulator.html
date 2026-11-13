@@ -1812,16 +1812,37 @@
     if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
     S.track = setInterval(trackBg, 4000);   // live trades keep updating in any mode, on any chart
+    const v = loadView();   // the chart you had before the reload
+    if (v.tf && TF[v.tf]) { S.tf = v.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x.dataset.tf === v.tf)); }
+    if (v.real === true) R.on = true;
     const saved = loadPos();
     if (saved.length) { status(`Bringing back your ${saved.length === 1 ? 'open simulated trade' : saved.length + ' open simulated trades'}…`); loadPicks().catch(() => {}); restoreAll(saved); return; }
+    if (v.mode === 'live' && /^[A-Z0-9]{1,20}$/.test(v.sym || '')) {
+      const ex = ['binance', 'bybit'].includes(v.ex) ? v.ex : 'auto';
+      setMode('live', true); $('sim-symbol-live').value = v.sym; $('sim-ex-live').value = ex;
+      loadPicks().catch(() => {});
+      loadLive(v.sym, ex);
+      return;
+    }
     status('Loading recent signals…');
-    loadPicks().then(first => { if (first) { $('sim-pick').value = first; loadPick(first); } else status('No recent signals. Type a coin and time to replay, or switch to Live.'); })
+    loadPicks().then(first => { const k = v.pick && picks.has(v.pick) ? v.pick : first; if (k) { $('sim-pick').value = k; loadPick(k); } else status('No recent signals. Type a coin and time to replay, or switch to Live.'); })
       .catch(e => status('Could not load signals: ' + e.message, true));
   }
+  // Remember the chart (Live/Replay, coin, exchange, timeframe, Practice/Real) so a reload opens it again
+  const VKEY = 'sc_sim_view_v1';
+  function loadView() { try { return JSON.parse(localStorage.getItem(VKEY)) || {}; } catch (e) { return {}; } }
+  function saveView() {
+    if (!started) return;
+    try { localStorage.setItem(VKEY, JSON.stringify({ mode: S.mode, sym: S.sym || '', ex: S.ex || '', tf: S.tf, real: !!R.on, pick: $('sim-pick').value || '' })); } catch (e) { /* ignore */ }
+  }
+  window.addEventListener('pagehide', saveView);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveView(); });
 
   // wiring
   const tabBtn = document.querySelector('[data-tab="sim"]');
-  if (tabBtn) tabBtn.addEventListener('click', () => requestAnimationFrame(start));
+  // next frame, so the panel is shown before the chart measures it; the timer covers a reload that opens this tab
+  // before the page paints (start() runs once)
+  if (tabBtn) tabBtn.addEventListener('click', () => { requestAnimationFrame(start); setTimeout(start, 300); });
   $('sim-m-replay').onclick = () => setMode('replay');
   $('sim-m-live').onclick = () => setMode('live');
   $('sim-load-pick').onclick = () => loadPick($('sim-pick').value);

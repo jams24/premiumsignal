@@ -462,9 +462,9 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
   </div>
 
   <div class="tab-nav">
-    <button class="tab-btn active" onclick="switchTab('signals',this)">Live Signals</button>
-    <button class="tab-btn" onclick="switchTab('trades',this)">Trades & PnL</button>
-    <button class="tab-btn" onclick="switchTab('learn',this)">Learn Onchain</button>
+    <button class="tab-btn active" data-tab="signals" onclick="switchTab('signals',this)">Live Signals</button>
+    <button class="tab-btn" data-tab="trades" onclick="switchTab('trades',this)">Trades & PnL</button>
+    <button class="tab-btn" data-tab="learn" onclick="switchTab('learn',this)">Learn Onchain</button>
     <button class="tab-btn" data-tab="smc" onclick="switchTab('smc',this)">SMC Playbook</button>
     <button class="tab-btn" data-tab="sim" onclick="switchTab('sim',this)">Simulator</button>
   </div>
@@ -1366,6 +1366,16 @@ function switchTab(tab, btn) {
   document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
   btn.classList.add('active');
   document.getElementById('tab-' + tab).classList.add('active');
+  try { localStorage.setItem('sc_tab', tab); } catch(e) {}   // a reload comes back to this tab
+}
+
+// After login / on reload: open the tab you were on (a click, so the Simulator and Playbook start as usual)
+function restoreTab() {
+  var t = null;
+  try { t = localStorage.getItem('sc_tab'); } catch(e) {}
+  if (!t || t === 'signals' || !/^[a-z]+$/.test(t)) return;
+  var b = document.querySelector('.tab-btn[data-tab="' + t + '"]');
+  if (b && document.getElementById('tab-' + t)) b.click();
 }
 
 function init() {
@@ -1382,6 +1392,7 @@ function init() {
     refreshAll();
     refreshInterval = setInterval(refreshAll, 300000);
     setInterval(updateTimer, 10000);
+    restoreTab();
   }
 }
 
@@ -1424,6 +1435,7 @@ function saveConfig() {
       refreshAll();
       refreshInterval = setInterval(refreshAll, 300000);
       setInterval(updateTimer, 10000);
+      restoreTab();
     })
     .catch(function(e) {
       errEl.textContent = 'FETCH FAILED: ' + e.message;
