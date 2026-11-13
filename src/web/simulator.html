@@ -85,6 +85,15 @@
 #sim-ticket.real { border-color: var(--gold); }
 #sim-ticket.real .paper-only, #sim-ticket:not(.real) .real-only { display: none !important; }
 .sim-two .b[aria-pressed="true"].pick { border-color: #60a5fa; color: #60a5fa; }
+.sim-rconf { display: grid; gap: 6px; font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); background: var(--surface2); border: 1px solid var(--gold); border-radius: 8px; padding: 10px; }
+.sim-rconf .sim-row { margin-top: 4px; }
+.sim .warn { color: var(--gold); }
+.sim-rp .acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.sim-rp .ask { display: grid; gap: 6px; background: var(--surface2); border: 1px solid var(--gold); border-radius: 6px; padding: 8px; margin-top: 4px; }
+.sim-rp .ask .sim-row { gap: 5px; }
+.sim-rp .ask input { max-width: 150px; }
+.sim-rp .msg { font-size: 12px; } .sim-rp .msg.ok { color: var(--accent); } .sim-rp .msg.bad { color: var(--danger); }
+.sim-pxpop .ask { max-width: 260px; white-space: normal; color: var(--text2); }
 .sim-rnote { font-size: 12.5px; color: var(--text2); background: var(--gold-dim); border-left: 3px solid var(--gold); border-radius: 6px; padding: 7px 10px; }
 .sim code { font: 600 12px var(--font-mono); color: var(--text); }
 .sim-rres { font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); }
@@ -243,9 +252,9 @@
         <h3>Order ticket <small id="sim-price">–</small></h3>
         <div class="sim-tmode" id="sim-tmode" role="group" aria-label="Ticket mode" hidden>
           <button type="button" class="b" id="sim-tm-paper" aria-pressed="true">Practice (paper)</button>
-          <button type="button" class="b realbtn" id="sim-tm-real" aria-pressed="false">Real · via Telegram</button>
+          <button type="button" class="b realbtn" id="sim-tm-real" aria-pressed="false">Real</button>
         </div>
-        <div class="sim-rnote real-only">Fills in your <code>/short</code> · <code>/long</code> panel in Telegram with these levels. Nothing is placed until you tap ✅ there — Live asks "YES" once more.</div>
+        <div class="sim-rnote real-only" id="sim-r-note">Loading…</div>
         <div class="sim-two" role="group" aria-label="Side">
           <button type="button" class="b short" id="sim-side-short" aria-pressed="true">Short</button>
           <button type="button" class="b long" id="sim-side-long" aria-pressed="false">Long</button>
@@ -294,12 +303,18 @@
           <label><input type="checkbox" id="sim-c3"> Liquidity was swept and the candle closed back</label>
           <label><input type="checkbox" id="sim-c4"> Lower-timeframe CHoCH confirmed the entry</label>
         </div>
-        <label class="sim-field real-only"><span>Telegram panel opens in</span>
-          <select id="sim-r-mode" aria-label="Telegram panel mode"><option value="live">💰 Live — real money</option><option value="paper">📝 Paper — try the flow first</option></select></label>
+        <div class="sim-two real-only">
+          <label class="sim-field"><span>Account</span>
+            <select id="sim-r-mode" aria-label="Account"><option value="live">💰 Live — real money</option><option value="paper">📝 Paper — try the flow first</option></select></label>
+          <label class="sim-field"><span>Exchange</span>
+            <select id="sim-r-ex" aria-label="Exchange"><option value="">My saved one</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select></label>
+        </div>
         <div class="sim-sum" id="sim-sum">Load a chart to see the risk.</div>
         <button type="button" class="b red big paper-only" id="sim-go">Short at market</button>
         <button type="button" class="b red big real-only" id="sim-real-go">📲 Send to Telegram</button>
+        <div class="sim-rconf real-only" id="sim-r-conf" role="group" aria-label="Confirm the order" hidden></div>
         <div class="sim-rres real-only" id="sim-r-res" aria-live="polite"></div>
+        <button type="button" class="sim-linkbtn real-only" id="sim-r-tg" hidden>Send it to my Telegram panel instead (confirm there)</button>
         <button type="button" class="sim-linkbtn real-only" id="sim-r-cmd">Copy as a /short command instead</button>
       </div>
 
@@ -311,7 +326,7 @@
       <div class="sim-card" id="sim-realpos" hidden>
         <h3>Real positions <small id="sim-rp-tag">read-only</small></h3>
         <div id="sim-rp-body" class="sim-empty">Loading…</div>
-        <div class="sim-empty">Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code>. Click a price to copy it.</div>
+        <div class="sim-empty" id="sim-rp-note">Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code>. Click a price to copy it.</div>
       </div>
     </div>
   </div>
@@ -343,7 +358,9 @@
   const wait = ms => new Promise(r => setTimeout(r, ms));
   let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
   // Real ticket (Live mode): fills in the Telegram /long · /short panel; R.data = read-only open live positions
-  const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '' };
+  const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '', web: false, conf: null, ui: null, msg: null, pick: null };
+  // a one-time id per request, so a double click can't place an order twice
+  const nonce = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
   let pxPop = null;
   const picks = new Map();
 
@@ -581,20 +598,38 @@
     if (lev != null && !(lev >= 1 && lev <= 125)) errs.push('Leverage must be 1–125.');
     return { px, short, isLim, entry, lim, stop, tp, margin, lev: lev != null ? Math.round(lev) : null, errs };
   }
+  function realBody(rp) {   // what the server gets for preview / open / the Telegram panel
+    const body = { symbol: S.sym, direction: S.side, mode: $('sim-r-mode').value, chartExchange: S.ex };
+    if ($('sim-r-ex').value) body.exchange = $('sim-r-ex').value;
+    if (rp.isLim) body.limitPrice = rp.lim;
+    if (rp.stop > 0) body.slPrice = rp.stop;
+    if (rp.tp > 0) body.tp1Price = rp.tp;
+    if (rp.margin) body.margin = rp.margin;
+    if (rp.lev) body.leverage = rp.lev;
+    return body;
+  }
   function renderReal(px) {
     const short = S.side === 'short', side = short ? 'SHORT' : 'LONG', live = $('sim-r-mode').value === 'live';
+    const rp0 = realPlan(), key = rp0 ? JSON.stringify(realBody(rp0)) : '';
+    if (R.conf && (R.conf.key !== key || Date.now() - R.conf.at > 90000)) { R.conf = null; renderConf(); }   // inputs changed or too old: review again
+    $('sim-r-note').innerHTML = R.web
+      ? 'Places the order on your exchange through the bot: the same code as <code>/short</code> · <code>/long</code> → ✅. You review it here once; Telegram gets every order.'
+      : 'Fills in your <code>/short</code> · <code>/long</code> panel in Telegram; nothing is placed until you tap ✅ there. To place orders from here, send <code>/webtrade on</code> to the bot.';
+    $('sim-r-tg').hidden = !R.web;
     $('sim-r-mkt').setAttribute('aria-pressed', String(R.entry === 'market'));
     $('sim-r-lmt').setAttribute('aria-pressed', String(R.entry === 'limit'));
     $('sim-r-lrow').hidden = R.entry !== 'limit';
     $('sim-r-cmd').textContent = `Copy as a /${S.side} command instead`;
     const go = $('sim-real-go'), sum = $('sim-sum'), rp = realPlan();
     go.className = 'b big real-only ' + (short ? 'red' : 'go');
-    go.textContent = R.busy ? 'Sending…' : `📲 Open ${side}${S.sym ? ' ' + S.sym : ''} in Telegram`;
+    go.textContent = R.busy ? (R.web ? 'Working…' : 'Sending…') : R.web ? `Review ${live ? 'LIVE ' : 'paper '}${side}${S.sym ? ' ' + S.sym : ''}` : `📲 Open ${side}${S.sym ? ' ' + S.sym : ''} in Telegram`;
     const has = S.sym ? realOpenOn(S.sym) : null;
     go.disabled = R.busy || !rp || rp.errs.length > 0 || !!has;
+    go.hidden = !!R.conf;
+    $('sim-r-tg').disabled = go.disabled;
     if (!rp) { sum.textContent = 'Load a live chart first.'; return; }
     const E = rp.entry || px, pc = v => Math.abs(v / E - 1) * 100, sg = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
-    let h = `Telegram gets a <b>${side} ${esc(S.sym)}</b> panel · ${live ? '<b>💰 LIVE</b>' : '📝 paper'}<br>`;
+    let h = R.web ? `<b>${side} ${esc(S.sym)}</b> · ${live ? '<b>💰 LIVE</b>' : '📝 paper'} · ${esc($('sim-r-ex').value ? $('sim-r-ex').value.toUpperCase() : 'your saved exchange')}<br>` : `Telegram gets a <b>${side} ${esc(S.sym)}</b> panel · ${live ? '<b>💰 LIVE</b>' : '📝 paper'}<br>`;
     h += rp.isLim ? (rp.lim > 0 ? `Entry: limit <b>${fmt(rp.lim)}</b> (${sg((rp.lim / px - 1) * 100)} from ${fmt(px)})` : 'Entry: limit, price not set') : `Entry: market ~<b>${fmt(px)}</b>`;
     h += '<br>' + (rp.stop > 0 ? `Stop <b>${fmt(rp.stop)}</b> (${pc(rp.stop).toFixed(2)}% away)` : 'Stop: your saved SL setting');
     h += '<br>' + (rp.tp > 0 ? `TP1 <b>${fmt(rp.tp)}</b> (${pc(rp.tp).toFixed(2)}%)` + (rp.stop > 0 ? ` · ${(Math.abs(rp.tp - E) / Math.abs(rp.stop - E)).toFixed(1)}R` : '') : 'Targets: your saved TP plan');
@@ -602,20 +637,60 @@
       const pos = rp.margin * rp.lev;
       h += `<br>$${rp.margin} × ${rp.lev}x = <b>$${pos.toFixed(0)}</b> position` + (rp.stop > 0 ? ` · if stopped ≈ <b>−$${(pos * pc(rp.stop) / 100).toFixed(2)}</b> + fees` : '');
     } else h += `<br>Size: ${rp.margin ? '$' + rp.margin + ' margin' : 'your saved margin'} × ${rp.lev ? rp.lev + 'x' : 'your saved leverage'}`;
-    h += `<br><small style="color:var(--muted)">Prices from the ${esc(S.ex || '')} chart. The panel shows its own exchange's price; check the levels there.</small>`;
-    if (has) h += `<br><span class="neg">⛔ You already have a real ${has.limitPrice ? 'limit order' : (has.direction || '').toUpperCase()} on ${esc(S.sym)}. Manage it with /mpositions or /orders.</span>`;
+    h += `<br><small style="color:var(--muted)">Prices from the ${esc(S.ex || '')} chart. ${R.web ? 'The review shows the order exchange\'s own price.' : 'The panel shows its own exchange\'s price; check the levels there.'}</small>`;
+    if (has) h += `<br><span class="neg">⛔ You already have a real ${has.limitPrice ? 'limit order' : (has.direction || '').toUpperCase()} on ${esc(S.sym)}. ${R.web ? 'Manage it in Real positions below.' : 'Manage it with /mpositions or /orders.'}</span>`;
     if (rp.errs.length) h += '<br>' + rp.errs.map(e => `<span class="neg">⛔ ${esc(e)}</span>`).join('<br>');
     sum.innerHTML = h;
+  }
+  // ---- direct: review (the bot's own numbers, nothing placed) → place ----
+  async function reviewReal() {
+    const rp = realPlan(), res = $('sim-r-res');
+    if (!rp || rp.errs.length || R.busy || realOpenOn(S.sym)) return;
+    const body = realBody(rp);
+    R.busy = true; res.className = 'sim-rres real-only'; res.textContent = 'Asking the bot for the exact order…'; renderTicket();
+    try {
+      const r = await apiPost('/api/trade/preview', body);
+      R.web = !!r.webTrading;
+      if (!R.web) { R.conf = null; res.className = 'sim-rres real-only bad'; res.textContent = 'Web trading was turned off — send /webtrade on in Telegram, or use the Telegram panel.'; return; }
+      R.conf = { key: JSON.stringify(body), body, setup: r.setup, nonce: nonce(), at: Date.now() };
+      res.textContent = '';
+    } catch (e) { R.conf = null; res.className = 'sim-rres real-only bad'; res.textContent = 'Can\'t place it: ' + e.message; }
+    finally { R.busy = false; renderConf(); renderTicket(); }
+  }
+  function renderConf() {
+    const box = $('sim-r-conf'), c = R.conf;
+    if (!c) { box.hidden = true; box.innerHTML = ''; return; }
+    const s = c.setup, pr = precFor(s.entry || s.market), pf = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(pr);
+    const long = s.direction === 'long', live = s.mode === 'live', errs = s.errors || [];
+    let h = `<div><b>${live ? '💰 LIVE' : '📝 PAPER'} ${long ? 'LONG' : 'SHORT'} ${esc(s.symbol)}</b> on ${esc(String(s.exchange).toUpperCase())}</div>`;
+    h += s.entryType === 'limit'
+      ? `<div>Entry: limit <b>${pf(s.entry)}</b> · ${s.onBook ? 'rests on the exchange order book' : 'the bot enters at market when price touches it'} (now ${pf(s.market)})</div>`
+      : `<div>Entry: market ~<b>${pf(s.market)}</b></div>`;
+    h += `<div>Stop <b>${pf(s.stopLoss)}</b> (${(+s.slPct).toFixed(2)}%) → if hit ≈ <b>−$${(+s.maxLoss).toFixed(2)}</b> + fees $${(+s.fees).toFixed(2)}</div>`;
+    h += `<div>TP1 ${pf(s.tps[0])} · TP2 ${pf(s.tps[1])} · TP3 ${pf(s.tps[2])} · TP4 ${pf(s.tps[3])}</div>`;
+    h += `<div>$${+s.margin} × ${+s.leverage}x = <b>$${(+s.posSize).toFixed(2)}</b>${s.exLeverage > s.leverage ? ` · margin saver runs ${+s.exLeverage}x` : ''}${s.freeBalance != null ? ` · free $${(+s.freeBalance).toFixed(2)}` : ''}</div>`;
+    (s.warnings || []).forEach(w => { h += `<div class="warn">⚠️ ${esc(w)}</div>`; });
+    errs.forEach(e => { h += `<div class="neg">⛔ ${esc(e)}</div>`; });
+    h += `<div class="sim-row">${errs.length ? '' : `<button type="button" class="b big ${long ? 'go' : 'red'}" data-c="place"${R.busy ? ' disabled' : ''}>${R.busy ? 'Placing…' : `✅ Place ${live ? 'LIVE ' : 'paper '}order`}</button>`}<button type="button" class="b" data-c="no">Back</button></div>`;
+    box.innerHTML = h; box.hidden = false;
+  }
+  async function placeReal() {
+    const c = R.conf, res = $('sim-r-res'); if (!c || R.busy) return;
+    R.busy = true; renderConf(); renderTicket(); res.className = 'sim-rres real-only'; res.textContent = 'Placing through the bot…';
+    try {
+      const r = await apiPost('/api/trade/open', Object.assign({}, c.body, { nonce: c.nonce }));
+      const s = c.setup, pr = precFor(s.entry || s.market);
+      res.className = 'sim-rres real-only ok';
+      res.textContent = r.kind === 'limit'
+        ? `📍 Limit order #${r.id} placed${r.onBook ? ' on the exchange order book' : ''}. The bot sets the stop and TPs when it fills. Telegram has the details.`
+        : `✅ ${s.direction === 'long' ? 'LONG' : 'SHORT'} ${s.symbol} opened at ${(+r.entry).toFixed(pr)} with its stop and TPs. Telegram has the details.`;
+    } catch (e) { res.className = 'sim-rres real-only bad'; res.textContent = 'Not placed: ' + e.message; }
+    finally { R.busy = false; R.conf = null; renderConf(); renderTicket(); loadRealPos(); }
   }
   async function sendReal() {
     const rp = realPlan(), res = $('sim-r-res');
     if (!rp || rp.errs.length || R.busy || realOpenOn(S.sym)) return;
-    const body = { symbol: S.sym, direction: S.side, mode: $('sim-r-mode').value, chartExchange: S.ex };
-    if (rp.isLim) body.limitPrice = rp.lim;
-    if (rp.stop > 0) body.slPrice = rp.stop;
-    if (rp.tp > 0) body.tp1Price = rp.tp;
-    if (rp.margin) body.margin = rp.margin;
-    if (rp.lev) body.leverage = rp.lev;
+    const body = realBody(rp);
     R.busy = true; res.className = 'sim-rres real-only'; res.textContent = 'Sending to Telegram…'; renderTicket();
     try {
       const r = await apiPost('/api/trade/panel', body), p = r.panel, pf = v => (+v).toFixed(S.prec);
@@ -649,7 +724,7 @@
   async function loadRealPos() {
     if (S.mode !== 'live' || document.hidden) return;
     const tab = document.getElementById('tab-sim'); if (tab && !tab.classList.contains('active')) return;
-    try { R.data = await api('/api/trade/positions'); R.err = null; } catch (e) { R.err = e.message; }
+    try { R.data = await api('/api/trade/positions'); R.err = null; R.web = !!R.data.webTrading; } catch (e) { R.err = e.message; }
     renderRealPos(); drawReal(); renderTicket();
   }
   function setRealPoll() {
@@ -661,26 +736,117 @@
   const ageOf = t => { const m = Math.max(0, Math.round((Date.now() - t) / 60000)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor(m % 1440 / 60) + 'h'; };
   function renderRealPos() {
     const body = $('sim-rp-body'), tag = $('sim-rp-tag');
+    $('sim-rp-note').innerHTML = R.web
+      ? 'Buttons act on the exchange through the bot (same code as <code>/mpositions</code> · <code>/orders</code>); Telegram gets each one. Click a price to copy it.'
+      : 'Read-only. Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code> — or send <code>/webtrade on</code> to manage them here. Click a price to copy it.';
     if (R.err) { body.className = 'sim-empty'; body.textContent = 'Could not load: ' + R.err; tag.textContent = 'read-only'; return; }
     const d = R.data; if (!d) return;
     const P = d.positions || [], O = d.orders || [];
-    tag.textContent = `read-only · ${P.length} open${O.length ? ' · ' + O.length + ' limit' : ''} · ${hm(d.at || Date.now())} UTC`;
+    tag.textContent = `${R.web ? 'live' : 'read-only'} · ${P.length} open${O.length ? ' · ' + O.length + ' limit' : ''} · ${hm(d.at || Date.now())} UTC`;
+    if (R.ui && (R.ui.type === 'pos' ? P : O).some(x => x.id === R.ui.id)) return;   // you're mid-action: keep that box as it is
+    R.ui = null;
+    if (R.msg && Date.now() - R.msg.at > 30000) R.msg = null;
     if (!P.length && !O.length) { body.className = 'sim-empty'; body.textContent = 'No open live positions or limit orders.'; return; }
     body.className = '';
     const pf = (v, ref) => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(precFor(ref || v));
     const cp = (v, ref) => v == null || !isFinite(v) ? '–' : `<span data-px="${pf(v, ref)}">${pf(v, ref)}</span>`;
     const chartBtn = (sym, ex) => `<button type="button" class="b" data-rp-chart="${esc(sym)}" data-rp-ex="${esc(ex || '')}">Chart</button>`;
+    const A = (a, id, label, cls, dis, title) => `<button type="button" class="b${cls ? ' ' + cls : ''}" data-act="${a}" data-id="${id}"${dis ? ' disabled' : ''}${title ? ` title="${esc(title)}"` : ''}>${label}</button>`;
+    const msgOf = (type, id) => R.msg && R.msg.type === type && R.msg.id === id ? `<div class="msg ${R.msg.ok ? 'ok' : 'bad'}">${esc(R.msg.text)}</div>` : '';
+    const posActs = t => {
+      if (!R.web) return `<div class="acts">${chartBtn(t.symbol, t.exchange)}</div>`;
+      const unreal = (t.pnl || 0) - (t.realized || 0), beWhy = t.atBreakeven ? 'The stop is already at entry' : !(t.pct >= 0.5) ? 'Needs ≥ 0.5% profit first' : '';
+      return `<div class="acts">${A('close', t.id, 'Close', 'red', R.busy)}${A('be', t.id, 'Breakeven', '', R.busy || !!beWhy, beWhy)}${A('stop', t.id, 'Move stop', '', R.busy)}` +
+        `${A('take', t.id, 'Take profit', '', R.busy || !(unreal > 0), unreal > 0 ? '' : 'The open part is not in profit')}${chartBtn(t.symbol, t.exchange)}</div>`;
+    };
+    const ordActs = o => !R.web ? `<div class="acts">${chartBtn(o.symbol, o.exchange)}</div>`
+      : `<div class="acts">${A('mlimit', o.id, 'Move limit', '', R.busy)}${A('cancel', o.id, 'Cancel order', 'red', R.busy)}${chartBtn(o.symbol, o.exchange)}</div>`;
+    const ifHit = (t, v) => ((t.direction === 'long' ? v - t.entry : t.entry - v) / t.entry) * (t.size || 0) + (t.realized || 0);
+    R.ifHit = ifHit;
+    const pickBtn = (sym, a, id) => sym === S.sym ? A(a, id, 'Click chart', '', R.busy) : '';
     body.innerHTML = P.map(t => {
       const sh = t.direction === 'short', ref = t.entry, tps = t.tps || [], next = tps.find(x => !x.hit);
       return `<div class="sim-rp"><div class="top"><span class="${sh ? 'neg' : 'pos'}">${sh ? '🔴 SHORT' : '🟢 LONG'} <b>${esc(t.symbol)}</b></span>` +
         `<small>${esc(t.exchange || '')} · ${esc(t.kind)} · ${+t.leverage}x · ${ageOf(t.opened)}</small></div>` +
         `<div>Entry ${cp(t.entry, ref)} → now ${cp(t.price, ref)} · <b class="${t.pnl >= 0 ? 'pos' : 'neg'}">${t.pnl == null ? '–' : usd(t.pnl)}</b>${t.pct != null ? ` (${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%)` : ''}</div>` +
         `<div>Stop ${cp(t.stop, ref)}${t.atBreakeven ? ' (entry)' : ''} · ${next ? 'next TP' + next.n + ' ' + cp(next.price, ref) : 'all TPs hit'} · ${tps.map(x => (x.hit ? '✅' : '⬜') + x.n).join(' ')}</div>` +
-        `<div><small>$${(+t.size).toFixed(2)} open · margin $${(+t.margin).toFixed(2)}${t.realized ? ' · banked ' + usd(t.realized) : ''}</small></div>${chartBtn(t.symbol, t.exchange)}</div>`;
+        `<div><small>$${(+t.size).toFixed(2)} open · margin $${(+t.margin).toFixed(2)}${t.realized ? ' · banked ' + usd(t.realized) : ''}</small></div>${posActs(t)}${msgOf('pos', t.id)}<div data-ask="pos-${t.id}"></div></div>`;
     }).join('') + O.map(o => `<div class="sim-rp"><div class="top"><span>📍 ${o.direction === 'short' ? 'SHORT' : 'LONG'} <b>${esc(o.symbol)}</b> limit ${cp(o.limitPrice, o.limitPrice)}</span>` +
         `<small>${esc(o.exchange || '')} · ${o.onBook ? 'on the order book' : 'watched by the bot'} · ${Math.max(0, (o.expiresAt - Date.now()) / 3600e3).toFixed(1)}h left</small></div>` +
-        `<div>Stop ${cp(o.stop, o.limitPrice)} · TP1 ${cp(o.tp1, o.limitPrice)} · $${+o.margin} × ${+o.leverage}x</div>${chartBtn(o.symbol, o.exchange)}</div>`).join('');
+        `<div>Stop ${cp(o.stop, o.limitPrice)} · TP1 ${cp(o.tp1, o.limitPrice)} · $${+o.margin} × ${+o.leverage}x</div>${ordActs(o)}${msgOf('ord', o.id)}<div data-ask="ord-${o.id}"></div></div>`).join('');
+    R.pickBtn = pickBtn;
     body.querySelectorAll('[data-rp-chart]').forEach(b => b.onclick = () => openCoin(b.dataset.rpChart, ['binance', 'bybit'].includes(b.dataset.rpEx) ? b.dataset.rpEx : 'auto', smc.tf));
+    askBox();
+  }
+  // ---- managing a real position / limit from the card (needs /webtrade on) ----
+  const realPos = id => (R.data && R.data.positions || []).find(x => x.id === id);
+  const realOrd = id => (R.data && R.data.orders || []).find(x => x.id === id);
+  function askBox() {   // draws the open action box (R.ui) under its position / order
+    document.querySelectorAll('#sim-rp-body [data-ask]').forEach(el => { el.innerHTML = ''; el.className = ''; });
+    const u = R.ui; if (!u) return;
+    const el = document.querySelector(`#sim-rp-body [data-ask="${u.type}-${u.id}"]`); if (!el) return;
+    const t = u.type === 'pos' ? realPos(u.id) : realOrd(u.id); if (!t) { R.ui = null; return; }
+    const pr = precFor(t.entry || t.limitPrice), pf = v => (+v).toFixed(pr), side = `${t.direction === 'long' ? 'LONG' : 'SHORT'} ${esc(t.symbol)}`;
+    const yes = (a, label, cls) => `<button type="button" class="b ${cls || 'go'}" data-act="${a}" data-id="${u.id}"${R.busy ? ' disabled' : ''}>${R.busy ? 'Working…' : label}</button>`;
+    const no = `<button type="button" class="b" data-act="no" data-id="${u.id}">Back</button>`;
+    let h = '';
+    if (u.kind === 'close') h = `<div>Close the ${side} at market now? P&amp;L ≈ <b class="${t.pnl >= 0 ? 'pos' : 'neg'}">${usd(t.pnl || 0)}</b></div><div class="sim-row">${yes('yes-close', 'Yes, close it', 'red')}${no}</div>`;
+    if (u.kind === 'be') h = `<div>Move the stop ${pf(t.stop)} → <b>${pf(t.entry)}</b> (entry)? The rest can't end in a loss then (fees aside), but a dip to entry ends it.</div><div class="sim-row">${yes('yes-be', 'Yes, move it')}${no}</div>`;
+    if (u.kind === 'take') {
+      const un = (t.pnl || 0) - (t.realized || 0);
+      h = `<div>Take profit at market (the rest stays open, stop and TPs unchanged):</div><div class="sim-row">${[25, 50, 75].map(p => yes('take-' + p, `${p}% ≈ ${usd(un * p / 100)}`)).join('')}${no}</div>`;
+    }
+    if (u.kind === 'stop' || u.kind === 'mlimit') {
+      const isStop = u.kind === 'stop', v = u.val != null ? u.val : (isStop ? t.stop : t.limitPrice), n = parseFloat(v);
+      const note = isStop ? (n > 0 ? `If hit ≈ <b>${usd(R.ifHit(t, n))}</b>` : 'Type the new stop price.')
+        : `The old order is cancelled and a new one placed at this price (fresh 24h). ${t.slFixed ? `Stop stays at ${pf(t.stop)}.` : 'Stop and TPs keep their distance from the limit.'}`;
+      h = `<div>${isStop ? `New stop for the ${side} (now ${pf(t.stop)}):` : `New limit price (now ${pf(t.limitPrice)}):`}</div>` +
+        `<div class="sim-row"><input type="number" step="any" inputmode="decimal" data-askin="1" value="${esc(n > 0 ? (+n).toFixed(pr) : '')}" aria-label="${isStop ? 'New stop price' : 'New limit price'}">${R.pickBtn(t.symbol, isStop ? 'pick-stop' : 'pick-limit', u.id)}</div>` +
+        `<div data-asknote="1">${note}</div><div class="sim-row">${yes(isStop ? 'yes-stop' : 'yes-mlimit', isStop ? 'Move stop' : 'Move limit')}${no}</div>`;
+    }
+    if (u.kind === 'cancel') h = `<div>Cancel the ${side} limit at ${pf(t.limitPrice)}?</div><div class="sim-row">${yes('yes-cancel', 'Yes, cancel it', 'red')}${no}</div>`;
+    el.className = 'ask'; el.innerHTML = h;
+  }
+  async function manage(type, action, id, extra) {
+    if (R.busy) return;
+    R.busy = true; askBox();
+    try {
+      const r = await apiPost('/api/trade/manage', Object.assign({ action, id, nonce: nonce() }, extra || {}));
+      const text = r.moved ? `📍 Limit moved ${(+r.moved.from).toFixed(precFor(r.moved.from))} → ${(+r.moved.to).toFixed(precFor(r.moved.to))} (new order #${r.id}${r.onBook ? ', on the order book' : ''})`
+        : r.text ? r.text.split('\n').filter(Boolean).slice(0, 3).join(' · ') : 'Done.';
+      R.msg = { type, id: r.moved ? r.id : id, ok: true, text, at: Date.now() };
+      hint((r.text || 'Done.').split('\n')[0].replace(/^🌐.*$/, '').trim() || 'Done.'); $('sim-hint').classList.add('tip');
+    } catch (e) { R.msg = { type, id, ok: false, text: e.message, at: Date.now() }; }
+    finally { R.busy = false; R.ui = null; await loadRealPos(); }
+  }
+  function onRealAct(e) {
+    const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+    const a = b.dataset.act, id = +b.dataset.id, t = realPos(id), o = realOrd(id);
+    const type = ['cancel', 'mlimit', 'yes-cancel', 'yes-mlimit', 'pick-limit'].includes(a) ? 'ord' : 'pos';
+    const val = () => { const i = b.closest('.ask') && b.closest('.ask').querySelector('[data-askin]'); return i ? parseFloat(i.value) : NaN; };
+    if (['close', 'be', 'stop', 'take', 'cancel', 'mlimit'].includes(a)) { R.msg = null; R.ui = { type, id, kind: a }; renderRealPos(); askBox(); return; }
+    if (a === 'no') { R.ui = null; if (S.tool === 'rstop' || S.tool === 'rlimit') setTool(null); renderRealPos(); return; }
+    if (a === 'pick-stop' || a === 'pick-limit') { R.pick = { type, id }; setTool(a === 'pick-stop' ? 'rstop' : 'rlimit'); return; }
+    if (a === 'yes-close' && t) return manage('pos', 'close', id);
+    if (a === 'yes-be' && t) return manage('pos', 'breakeven', id);
+    if (a.startsWith('take-') && t) return manage('pos', 'take', id, { pct: +a.slice(5) });
+    if (a === 'yes-cancel' && o) return manage('ord', 'cancel', id);
+    if (a === 'yes-stop' || a === 'yes-mlimit') {
+      const v = val(); if (!(v > 0)) return hint('Type a price first, or use Click chart.');
+      return a === 'yes-stop' ? manage('pos', 'stop', id, { price: v }) : manage('ord', 'move_limit', id, { price: v });
+    }
+  }
+  // a chart pick (popup button or Click chart) for a real stop / limit: ask right in the popup
+  function realAsk(el, kind, v) {
+    const t = kind === 'stop' ? (R.data && R.data.positions || []).find(x => x.symbol === S.sym) : (R.data && R.data.orders || []).find(x => x.symbol === S.sym);
+    if (!t) { el.innerHTML = '<div class="ask">No real position or order on this coin any more.</div>'; return; }
+    const pr = precFor(t.entry || t.limitPrice), pf = x => (+x).toFixed(pr), n = +v;
+    el.innerHTML = kind === 'stop'
+      ? `<div class="ask">Move the REAL stop on ${t.direction.toUpperCase()} ${esc(t.symbol)} ${pf(t.stop)} → <b>${pf(n)}</b>? If hit ≈ <b>${usd(R.ifHit ? R.ifHit(t, n) : 0)}</b></div>`
+      : `<div class="ask">Move the REAL limit ${pf(t.limitPrice)} → <b>${pf(n)}</b>? The old order is cancelled and a new one placed.</div>`;
+    el.innerHTML += `<div class="sim-row"><button type="button" class="b go" data-ra="yes">${kind === 'stop' ? 'Yes, move stop' : 'Yes, move limit'}</button><button type="button" class="b" data-ra="no">No</button></div>`;
+    el._ra = () => manage(kind === 'stop' ? 'pos' : 'ord', kind === 'stop' ? 'stop' : 'move_limit', t.id, { price: n });   // run by openPop's click handler
+    const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
   }
   function drawReal() {   // the real trade's levels on its own chart (solid, brighter than the simulated ones)
     if (!cs) return;
@@ -1540,6 +1706,7 @@
     $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
     $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
     $('sim-tool-limit').classList.toggle('on', S.tool === 'limit');
+    if (S.tool === 'rstop' || S.tool === 'rlimit') { hint(`Click the chart where the REAL ${S.tool === 'rstop' ? 'stop' : 'limit'} goes. You confirm it next.`); $('sim-hint').classList.remove('tip'); return; }
     hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
       'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
     $('sim-hint').classList.toggle('tip', !S.tool);
@@ -1558,13 +1725,14 @@
   function onChartClick(param) {
     if (!param || !param.point) return;
     if (!S.tool) { if (S.cur >= 0) openPop(param); return; }
+    if (S.tool === 'rstop' || S.tool === 'rlimit') { const k = S.tool === 'rstop' ? 'stop' : 'limit'; setTool(null); if (S.cur >= 0) openPop(param, k); return; }
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
     if (S.tool === 'quiz') { quizAnswer(p); setTool(null); refresh(); return; }
     const t = S.tool; setTool(null); usePrice(t, p);
   }
   // click the chart with no tool on: the price there (snapped to the candle's high / low / close / open within 9 px)
   function closePop() { if (pxPop) { pxPop.remove(); pxPop = null; } }
-  function openPop(param) {
+  function openPop(param, realKind) {   // realKind 'stop' | 'limit': straight to "move the REAL … here?"
     closePop();
     let p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
     let what = 'chart price';
@@ -1577,30 +1745,37 @@
       }
     }
     const v = (+p).toFixed(S.prec), real = R.on && S.mode === 'live', wrap = $('sim-chart').parentNode;
+    const live = S.mode === 'live' && R.web && R.data;
+    const rPos = live && (R.data.positions || []).some(x => x.symbol === S.sym), rOrd = live && (R.data.orders || []).some(x => x.symbol === S.sym);
     const el = document.createElement('div');
     el.className = 'sim-pxpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Price ' + v);
     el.innerHTML = `<div class="v"><b>${v}</b><small>${what}${param.time != null ? ' · ' + hm(param.time * 1000) : ''}</small></div>` +
       `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="stop">→ Stop</button>` +
       `<button type="button" class="b" data-a="tp">→ ${real ? 'TP1' : 'Target'}</button>${real ? '<button type="button" class="b" data-a="limit">→ Limit</button>' : ''}` +
-      `<button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>`;
+      `<button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>` +
+      (rPos || rOrd ? `<div class="sim-row">${rPos ? '<button type="button" class="b" data-a="rstop" style="border-color:#f97316;color:#f97316">→ REAL stop</button>' : ''}${rOrd ? '<button type="button" class="b" data-a="rlimit" style="border-color:#facc15;color:#facc15">→ REAL limit</button>' : ''}</div>` : '');
     wrap.appendChild(el);
+    if (realKind && (realKind === 'stop' ? rPos : rOrd)) realAsk(el, realKind, +v);
     const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
     let x = param.point.x + 12, y = param.point.y - h - 10;
     if (x + w > W - 4) x = Math.max(4, param.point.x - w - 12);
     if (y < 4) y = Math.min(H - h - 4, param.point.y + 14);
     el.style.left = Math.max(4, x) + 'px'; el.style.top = Math.max(4, y) + 'px';
     el.onclick = e => {
+      const ra = e.target.closest('[data-ra]');
+      if (ra) { const f = el._ra; closePop(); if (ra.dataset.ra === 'yes' && f) f(); return; }
       const a = e.target.closest('[data-a]'); if (!a) return;
       const act = a.dataset.a;
       if (act === 'copy') {
         copyText(v).then(ok => { a.textContent = ok ? 'Copied ✓' : 'Select it ↑'; hint(ok ? `Copied ${v}. In Telegram: /sl ${v} · /tp ${v} · /entry ${v}` : 'The browser blocked copying. Select the number and copy it.'); if (ok) setTimeout(closePop, 600); });
         return;
       }
+      if (act === 'rstop' || act === 'rlimit') { e.stopPropagation(); realAsk(el, act === 'rstop' ? 'stop' : 'limit', +v); return; }
       closePop();
       if (act !== 'x') usePrice(act, +v);
     };
     pxPop = el;
-    el.querySelector('[data-a="copy"]').focus({ preventScroll: true });
+    const first = el.querySelector('[data-ra="yes"]') || el.querySelector('[data-a="copy"]'); if (first) first.focus({ preventScroll: true });
   }
   function moveStop(pos, v) {
     const px = pxOf(pos);
@@ -1655,8 +1830,17 @@
   $('sim-r-mkt').onclick = () => { R.entry = 'market'; refresh(); };
   $('sim-r-lmt').onclick = () => { R.entry = 'limit'; refresh(); };
   ['sim-r-limit', 'sim-r-margin', 'sim-r-lev'].forEach(id => $(id).addEventListener('input', refresh));
-  ['sim-r-tp', 'sim-r-mode'].forEach(id => $(id).addEventListener('change', refresh));
-  $('sim-real-go').onclick = sendReal;
+  ['sim-r-tp', 'sim-r-mode', 'sim-r-ex'].forEach(id => $(id).addEventListener('change', refresh));
+  $('sim-real-go').onclick = () => (R.web ? reviewReal() : sendReal());
+  $('sim-r-tg').onclick = () => { R.conf = null; renderConf(); sendReal(); };
+  $('sim-r-conf').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || b.disabled) return; if (b.dataset.c === 'place') placeReal(); else { R.conf = null; renderConf(); renderTicket(); } };
+  $('sim-rp-body').addEventListener('click', onRealAct);
+  $('sim-rp-body').addEventListener('input', e => {   // typed stop / limit: keep it across refreshes, update the "if hit"
+    if (!e.target.matches('[data-askin]') || !R.ui) return;
+    R.ui.val = e.target.value;
+    const t = realPos(R.ui.id), n = parseFloat(e.target.value), note = e.target.closest('.ask').querySelector('[data-asknote]');
+    if (R.ui.kind === 'stop' && t && note) note.innerHTML = n > 0 ? `If hit ≈ <b>${usd(R.ifHit(t, n))}</b>` : 'Type the new stop price.';
+  });
   $('sim-r-cmd').onclick = copyCmd;
   // any price on the page marked data-px (or a command marked data-copy): click to copy it
   $('sim').addEventListener('click', e => {

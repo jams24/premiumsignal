@@ -139,6 +139,7 @@ class TelegramBot {
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
       'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check', 'autopump', 'tightstop',
+      'webtrade',
     ]);
     const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_|ap_)/;
     const PUBLIC_COMMANDS = new Set([
@@ -1022,27 +1023,30 @@ class TelegramBot {
       } catch (e) { logger.warn(`Saving manual trade prefs failed: ${e.message}`); }
     };
 
-    const openPanel = async (ctx, symbol, opts = {}) => {
-      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+    // A panel's state for user `uid`: their saved /short · /long settings + `opts`. Shared by openPanel and the dashboard's
+    // direct orders (webTrade below). → { st }, or { html, keyboard?, open? } when no panel can open (what openPanel replies).
+    const panelState = async (uid, symbol, opts = {}) => {
       const te = mtExec();
-      if (!te) return ctx.replyWithHTML('⚠️ Trade executor not ready.');
-      if (!/^[A-Z0-9]{1,20}$/.test(symbol)) return ctx.replyWithHTML('⚠️ Invalid symbol.');
+      if (!te) return { html: '⚠️ Trade executor not ready.' };
+      if (!/^[A-Z0-9]{1,20}$/.test(symbol)) return { html: '⚠️ Invalid symbol.' };
       const exIds = exchangesFor(symbol);
       if (!exIds.length) {
-        return ctx.replyWithHTML(`⚠️ ${escapeHtml(symbol)}/USDT perpetual not found on ${Object.keys(te.exchanges).join(', ')}.`);
+        return { html: `⚠️ ${escapeHtml(symbol)}/USDT perpetual not found on ${Object.keys(te.exchanges).join(', ')}.` };
       }
       const open = (await db.getOpenTrades(te.settingsKey)).find(t => t.symbol === symbol);
       if (open) {
-        return ctx.replyWithHTML(
-          `⚠️ You already have an open <b>${open.direction.toUpperCase()}</b> on ${escapeHtml(symbol)} (${open.mode}).`,
-          Markup.inlineKeyboard([[Markup.button.callback(`❌ Close ${symbol}`, `mt_close_${open.id}`)]])
-        );
+        return {
+          open,
+          html: `⚠️ You already have an open <b>${open.direction.toUpperCase()}</b> on ${escapeHtml(symbol)} (${open.mode}).`,
+          keyboard: Markup.inlineKeyboard([[Markup.button.callback(`❌ Close ${symbol}`, `mt_close_${open.id}`)]]),
+        };
       }
-      const prev = this.manualTradeState[ctx.from.id];
-      const saved = (await db.getManualPrefs(ctx.from.id).catch(() => null)) || {};
+      const prev = this.manualTradeState[uid];
+      const saved = (await db.getManualPrefs(uid).catch(() => null)) || {};
       const st = {
         symbol,
-        exchangeId: exIds.includes(saved.exchangeId) ? saved.exchangeId : exIds[0],
+        // opts.exchangeId: the dashboard's exchange pick; else the saved one if the coin is listed there
+        exchangeId: exIds.includes(opts.exchangeId) ? opts.exchangeId : exIds.includes(saved.exchangeId) ? saved.exchangeId : exIds[0],
         direction: opts.direction || saved.direction || 'short',
         mode: (opts.mode || saved.mode) === 'live' ? 'live' : 'paper',
         margin: opts.margin || saved.margin || te.maxPositionSize || 12,
@@ -1068,7 +1072,7 @@ class TelegramBot {
         noPersist: !!opts.transient,
       };
       const notices = [];
-      if (saved.exchangeId && st.exchangeId !== saved.exchangeId) {
+      if (saved.exchangeId && st.exchangeId !== saved.exchangeId && !exIds.includes(saved.exchangeId)) {
         st.preferredExchange = saved.exchangeId;
         notices.push(`${escapeHtml(symbol)} isn't listed on ${saved.exchangeId.toUpperCase()} — using ${st.exchangeId.toUpperCase()}`);
       }
@@ -1089,6 +1093,14 @@ class TelegramBot {
       }
       if (opts.notice) notices.push(opts.notice);
       st.notice = notices.join('\n') || null;
+      return { st };
+    };
+
+    const openPanel = async (ctx, symbol, opts = {}) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      const r = await panelState(ctx.from.id, symbol, opts);
+      if (!r.st) return r.keyboard ? ctx.replyWithHTML(r.html, r.keyboard) : ctx.replyWithHTML(r.html);
+      const { st } = r;
       // Values typed in the command (/short RLC 20 5) count as applied settings and are saved too
       // transient = pre-filled by /check: shown in the panel but not saved as the user's defaults
       const hasArgs = !opts.transient && (opts.direction || opts.margin || opts.leverage || opts.slPct != null);
@@ -2097,6 +2109,7 @@ class TelegramBot {
       const orders = [...this.pendingLimitOrders.values()].filter(o => o.mode === 'live').map(o => ({
         id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
         stop: o.stopLoss, tp1: o.tp1, margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
+        slFixed: !!o.slFixed,   // a typed stop stays put when the dashboard moves the limit
       }));
       return { positions, orders };
     };
@@ -2676,6 +2689,202 @@ class TelegramBot {
         ctx.replyWithHTML(`🚨 ${escapeHtml(e.message)}`).catch(() => {});
       }
     });
+
+    // === Dashboard direct trading (src/web/tradeApi.js) ===
+    // The Simulator's Real ticket and Real positions card act without a tap in Telegram, through the code the Telegram
+    // buttons run: open → executeManual (→ openManualTrade, or the real limit order), close → closeTradeNow, stop →
+    // slCheck + updateExchangeSL, breakeven → breakevenCheck, take profit → takeCheck + takeProfitNow, limit → cancelPending.
+    // Off until the owner sends /webtrade on; every action is reported in the owner's chat. Live trades/orders only.
+    const WEB_KEEP_BUTTONS = /^(mt_pos_refresh_new|mt_cancelorder_\d+)$/;
+    const plainText = (html) => String(html || '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    const webOwner = () => Number(this.pumpAutoTrader?.config?.ownerId) || config.telegram.adminIds[0];
+    const webSend = (uid, html, markup) => {
+      // only buttons that work outside a panel (positions, cancel order): a panel's own buttons need its Telegram state
+      const rows = (markup?.inline_keyboard || []).map(r => r.filter(b => WEB_KEEP_BUTTONS.test(b.callback_data || ''))).filter(r => r.length);
+      return this.bot.telegram.sendMessage(uid, `🌐 <i>From the dashboard</i>\n${html}`, { parse_mode: 'HTML', ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}) })
+        .catch(e => logger.warn(`[WEB TRADE] Telegram notice failed: ${e.message}`));
+    };
+    const posKb = () => Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]).reply_markup;
+
+    let webSwitch = { on: false, at: 0 };
+    const webTradingOn = async () => {
+      if (Date.now() - webSwitch.at > 5000) webSwitch = { on: (await db.getWebTrading().catch(() => ({}))).on === true, at: Date.now() };
+      return webSwitch.on;
+    };
+    this.bot.command('webtrade', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      const arg = (ctx.message.text.trim().split(/\s+/)[1] || '').toLowerCase();
+      try {
+        if (arg === 'on' || arg === 'off') {
+          await db.saveWebTrading({ on: arg === 'on', by: ctx.from.id, at: new Date().toISOString() });
+          webSwitch = { on: arg === 'on', at: Date.now() };
+          logger.info(`[WEB TRADE] web trading turned ${arg} by ${ctx.from.id}`);
+        }
+        await ctx.replyWithHTML((await webTradingOn())
+          ? '🌐 <b>Web trading is ON</b>\n\nThe dashboard (Simulator → Live → Real) opens, closes and edits your live trades directly — no ✅ here. ' +
+            'Same order code as /short · /long and /mpositions; every action is reported in this chat.\n\nTurn off: <code>/webtrade off</code>'
+          : '🌐 <b>Web trading is OFF</b>\n\nThe dashboard shows your positions and can fill in a /short · /long panel for you to confirm here.\n\n' +
+            'Turn on: <code>/webtrade on</code> — then anyone with your dashboard key can trade this account, so keep the key private.');
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+
+    // The panel the dashboard asks for, built and checked exactly like /short · /long (saved settings fill the blanks)
+    const webSetup = async (o) => {
+      const uid = webOwner();
+      if (!uid) return { error: 'No owner Telegram account set (ADMIN_TELEGRAM_IDS)' };
+      const r = await panelState(uid, String(o.symbol || '').toUpperCase(), {
+        direction: o.direction, mode: o.mode, margin: o.margin, leverage: o.leverage, exchangeId: o.exchange,
+        slPrice: o.slPrice, slPct: o.slPct, tp1Price: o.tp1Price, tpPcts: o.tpPcts, limitPrice: o.limitPrice,
+        exitStyle: o.exitStyle, transient: true,
+      });
+      if (r.open) return { open: { id: r.open.id, direction: r.open.direction, mode: r.open.mode, exchange: r.open.exchange } };
+      if (!r.st) return { error: plainText(r.html).replace(/^⚠️\s*/, '') };
+      const st = r.st;
+      st.panelMsg = null;   // never touch the owner's Telegram panel
+      if (o.marginSaver != null) st.marginSaver = !!o.marginSaver;
+      if (o.mode === 'live' && st.mode !== 'live') return { error: `No API keys on ${st.exchangeId.toUpperCase()} — a live order can't be placed there.` };
+      await refreshMarket(st, true);
+      const s = computeSetup(st);
+      const { errors, warnings } = validateSetup(st, s);
+      return {
+        uid, st, s, errors,
+        setup: {
+          symbol: st.symbol, exchange: st.exchangeId, mode: st.mode, direction: st.direction, margin: st.margin, leverage: st.leverage,
+          exLeverage: st.marginSaver ? marginSaverLeverage(s.slPct, { chosen: st.leverage, maxLev: maxLeverageFor(st) }) : st.leverage,
+          entryType: st.entryType, entry: s.entry, market: s.market, stopLoss: s.stopLoss, tps: [s.tp1, s.tp2, s.tp3, s.tp4],
+          slPct: s.slPct, maxLoss: s.maxLoss, posSize: s.posSize, fees: s.fees, liqPrice: s.liqPrice, exitStyle: st.exitStyle,
+          onBook: st.entryType === 'limit' && manualLimits.wantsRealLimit({ mode: st.mode, exchangeId: st.exchangeId, direction: st.direction, limitPrice: st.limitPrice }, s.market),
+          freeBalance: st.liveBalance, errors, warnings: warnings.filter(w => !/^LIVE mode/.test(w)),
+        },
+      };
+    };
+
+    const webBusy = new Set();   // symbols with a dashboard order in flight
+    const webOpen = async (o) => {
+      const w = await webSetup(o);
+      if (!w.st) return w;
+      if (w.errors.length) return { errors: w.errors, setup: w.setup };
+      const { uid, st } = w;
+      if (webBusy.has(st.symbol)) return { error: `An order for ${st.symbol} is already being placed.` };
+      webBusy.add(st.symbol);
+      try {
+        const before = new Set(this.pendingLimitOrders.keys());
+        const msgs = [];
+        const say = (html, extra) => { msgs.push(html); return webSend(uid, html, extra?.reply_markup); };
+        // executeManual reports through ctx: here every message goes to the owner's chat. from.id is not the owner's id,
+        // so the owner's own open /short · /long panel (manualTradeState) is left alone.
+        const ctx = {
+          from: { id: `web:${uid}` }, chat: { id: uid }, state: { user: { role: 'admin' } },
+          editMessageText: (html, extra) => say(html, extra), replyWithHTML: (html, extra) => say(html, extra), answerCbQuery: async () => true,
+        };
+        logger.info(`[WEB TRADE] direct ${st.mode} ${st.direction} ${st.symbol} on ${st.exchangeId}${st.entryType === 'limit' ? ` limit ${st.limitPrice}` : ' market'}`);
+        await executeManual(ctx, st);
+        const text = plainText(msgs[msgs.length - 1]);
+        const order = [...this.pendingLimitOrders.values()].find(x => !before.has(x.id) && x.symbol === st.symbol);
+        if (order) return { ok: true, kind: 'limit', id: order.id, onBook: !!order.real, text, setup: w.setup };
+        const trade = (await db.getOpenTrades(mtExec().settingsKey)).find(t => t.symbol === st.symbol);
+        if (trade) return { ok: true, kind: 'trade', id: trade.id, entry: parseFloat(trade.entry_price), text, setup: w.setup };
+        return { error: text || 'Not placed — see Telegram for the reason.' };
+      } finally {
+        webBusy.delete(st.symbol);
+      }
+    };
+
+    const cancelWord = (o, r) => (r === 'cancelled' ? `Limit #${o.id} ${o.symbol} cancelled${o.real ? ` on ${o.exchangeId}` : ''}`
+      : r === 'filled' ? `Limit #${o.id} ${o.symbol} had already filled — it is now an open trade with its stop and TPs`
+      : r === 'busy' ? `Limit #${o.id} ${o.symbol} is being checked right now — try again in a few seconds`
+      : r === 'gone' ? `Limit #${o.id} ${o.symbol} was already filled, expired or cancelled`
+      : `Limit #${o.id} ${o.symbol}: could not confirm the cancel on ${o.exchangeId} — try again or cancel it in the exchange app`);
+
+    const webManage = async (a) => {
+      const uid = webOwner();
+      if (!uid) return { error: 'No owner Telegram account set (ADMIN_TELEGRAM_IDS)' };
+      const done = async (html, log) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, posKb()); return { ok: true, text: plainText(html) }; };
+
+      if (a.action === 'cancel' || a.action === 'move_limit') {
+        await loadPendingOrders();
+        const o = this.pendingLimitOrders.get(a.id);
+        if (!o) return { error: 'That limit order already filled, expired or was cancelled.' };
+        if (o.mode !== 'live') return { error: 'Only live orders are managed from the dashboard.' };
+        if (a.action === 'cancel') {
+          const r = await cancelPending(o);
+          if (r !== 'cancelled') return { error: cancelWord(o, r) };
+          return done(`❌ ${escapeHtml(cancelWord(o, r))}`, `cancelled limit #${o.id} ${o.symbol}`);
+        }
+        // Move = check the new order first, cancel the old one, place the new one through the normal path.
+        // Levels the user typed stay where they are; the others keep their distance from the limit (like a fill).
+        const spec = {
+          symbol: o.symbol, direction: o.direction, mode: o.mode, margin: o.margin, leverage: o.leverage, exchange: o.exchangeId,
+          exitStyle: o.exitStyle, marginSaver: o.marginSaver !== false, limitPrice: a.price,
+          ...(o.slFixed ? { slPrice: o.stopLoss } : { slPct: Math.abs(o.stopLoss / o.limitPrice - 1) * 100 }),
+          ...(o.tpFixed ? { tp1Price: o.tp1 } : { tpPcts: [o.tp1, o.tp2, o.tp3, o.tp4].map(v => Math.abs(v / o.limitPrice - 1) * 100) }),
+        };
+        const w = await webSetup(spec);
+        if (!w.st) return w;
+        if (w.errors.length) return { errors: w.errors, setup: w.setup };
+        const r = await cancelPending(o);
+        if (r !== 'cancelled') return { error: `${cancelWord(o, r)} — the new limit was not placed.` };
+        logger.info(`[WEB TRADE] moving limit #${o.id} ${o.symbol} ${o.limitPrice} → ${a.price}: old one cancelled`);
+        const res = await webOpen(spec);
+        if (res.ok) return { ...res, moved: { oldId: o.id, from: o.limitPrice, to: a.price } };
+        const why = res.error || (res.errors || [])[0] || 'unknown reason';
+        await webSend(uid, `🚨 Limit #${o.id} ${escapeHtml(o.symbol)} was cancelled to move it, but the new one at $${fmtP(a.price)} was <b>NOT placed</b>: ${escapeHtml(why)}`, posKb());
+        return { error: `Old limit #${o.id} cancelled, but the new one was NOT placed: ${why}` };
+      }
+
+      const t = await getOpenTradeById(a.id);
+      if (!t) return { error: 'That position is already closed.' };
+      if (t.mode !== 'live') return { error: 'Only live positions are managed from the dashboard.' };
+      const executor = executorForSource(t.source);
+      if (!executor) return { error: `No executor for source "${t.source}".` };
+      const dir = t.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+
+      if (a.action === 'close') {   // as mt_closeok
+        const r = await executor.closeTradeNow(t, 'manual_close');
+        return done(
+          `${r.pnlUsd >= 0 ? '✅' : '❌'} <b>CLOSED</b> — ${escapeHtml(t.symbol)}\n\n${dir} · 💰 LIVE\n` +
+          `Entry $${fmtP(parseFloat(t.entry_price))} → Exit $${fmtP(r.exitPrice)}\nP&L: <b>${fmtUsd(r.pnlUsd)}</b> (${fmtPct(r.pnlPct)} on remaining)`,
+          `closed ${t.symbol} #${t.id} → ${r.pnlUsd}`);
+      }
+      if (a.action === 'stop') {   // as mt_slok: exchange first, then the DB
+        const r = await slCheck(t.id, a.price);
+        if (r.error) return { error: r.error };
+        const ok = await executor.updateExchangeSL(r.t, r.sl);
+        if (ok !== true) return { error: `The exchange rejected the new stop — the old stop $${fmtP(r.st.sl)} is still in place. Nothing changed.` };
+        await db.updateTradeStopLoss(r.t.id, r.sl);
+        return done(
+          `✅ <b>${escapeHtml(t.symbol)} stop moved</b>\nSL $${fmtP(r.st.sl)} → <b>$${fmtP(r.sl)}</b> · ${fmtUsd(r.pnl)} if it fills\n` +
+          `<i>Placed on the exchange and enforced by the bot every minute. The plan's own moves (e.g. stop → entry at TP1) still apply.</i>`,
+          `stop ${t.symbol} #${t.id} ${r.st.sl} → ${r.sl}`);
+      }
+      if (a.action === 'breakeven') {   // breakevenCheck, then exchange first like 🛡 Take + breakeven
+        const b = await breakevenCheck(t.id);
+        if (b.error) return { error: b.error };
+        const ok = await executor.updateExchangeSL(b.t, b.st.entry);
+        if (ok !== true) return { error: `The exchange rejected the breakeven stop — the stop is still $${fmtP(b.st.sl)}. Nothing changed.` };
+        await db.updateTradeStopLoss(t.id, b.st.entry);
+        return done(`🛡 <b>${escapeHtml(t.symbol)} stop moved to breakeven</b>\nSL $${fmtP(b.st.sl)} → <b>$${fmtP(b.st.entry)}</b> (entry)`,
+          `breakeven ${t.symbol} #${t.id} ${b.st.sl} → ${b.st.entry}`);
+      }
+      if (a.action === 'take') {   // as mt_tkok with a % of the position
+        const r = await takeCheck(t.id, 'p', a.pct);
+        if (r.error) return { error: r.error };
+        if (!executor.takeProfitNow) return { error: `Take profit isn't available for source "${t.source}".` };
+        const res = await executor.takeProfitNow(t.id, r.fraction);
+        return done(
+          `✅ <b>${escapeHtml(t.symbol)} — profit taken</b>\n\nClosed ${(res.fraction * 100).toFixed(0)}% ($${res.size.toFixed(2)}) @ $${fmtP(res.price)} → banked <b>${fmtUsd(res.pnl)}</b>\n` +
+          `Still open: $${Number(res.remainingSize).toFixed(2)} · TPs re-placed for the rest · SL unchanged`,
+          `take ${a.pct}% ${t.symbol} #${t.id} → ${res.pnl}`);
+      }
+      return { error: 'Unknown action' };
+    };
+
+    this.webTrade = {
+      isOn: webTradingOn,
+      preview: async (o) => { const w = await webSetup(o); return w.st ? { setup: w.setup } : w; },
+      open: webOpen,
+      manage: webManage,
+    };
 
     this.bot.command('mclose', async (ctx) => {
       if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
