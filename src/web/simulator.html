@@ -172,6 +172,7 @@
       <button type="button" class="b" id="sim-load-custom">Load replay</button>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins, from the time above:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi, from the time above:</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices; 1m candles only for the last 30 days. Practice only: the bot can't trade forex.">Forex (practice only), from the time above:</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
     </div>
     <div class="sim-row" id="sim-live-load" hidden>
       <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
@@ -182,13 +183,14 @@
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices, about 1–2 minutes behind, no volume. Practice only: the bot can't trade forex.">Forex (practice only · ~1–2 min behind):</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Alerts:</span>
         <button type="button" class="b" id="sim-alert-btn" aria-pressed="false" title="While this page is open, checks the coins picked in the menu above every minute and alerts you (sound + notification) when a new A+ setup appears">🔔 Alert me</button>
         <select id="sim-alert-side" aria-label="Which setups to alert on"><option value="both">A+ shorts + longs</option><option value="short">A+ shorts only</option><option value="long">A+ longs only</option><option value="a3">A+++ longs only (deep discount / demand zone)</option></select>
         <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-alert-early" checked> heads-up at 3/4 (sweep done, waiting for the 1m trigger)</label>
         <span class="sim-status" id="sim-alert-info" style="margin:0">Off.</span></div>
     </div>
-    <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"></datalist>
+    <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"><option value="GBPJPY"><option value="EURUSD"><option value="GBPUSD"><option value="USDJPY"><option value="EURJPY"><option value="AUDUSD"><option value="USDCAD"><option value="USDCHF"><option value="NZDUSD"><option value="EURGBP"><option value="GBPAUD"></datalist>
     <div class="sim-scan" id="sim-alerts" hidden></div>
     <div class="sim-scan" id="sim-scan" hidden></div>
     <div class="sim-status" id="sim-status" aria-live="polite"></div>
@@ -350,6 +352,10 @@
   const $ = id => document.getElementById(id);
   const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN, '4h': 240 * MIN };
   const FEE = 0.0005, JKEY = 'sc_sim_journal_v1', PKEY = 'sc_sim_live_pos_v1';
+  // forex (Yahoo prices, practice only): cost ≈ a retail spread + commission, ~1–2 pips a round trip, not the perp's 0.05% taker fee
+  const FX_FEE = 0.00004, feeOf = ex => (ex === 'fx' ? FX_FEE : FEE);
+  const isFx = () => S.ex === 'fx', realOn = () => R.on && S.mode === 'live' && S.ex !== 'fx';
+  const exLabel = ex => (ex === 'fx' ? 'Yahoo forex (about 1–2 min behind, practice only)' : ex);
   const BOT_TPS = [5, 12, 20, 30], BOT_FR = [0.25, 0.5, 0.5, 1];
   const S = { auto: false, load: 0, mode: 'replay', sym: '', ex: '', base: [], cur: -1, tf: '5m', marks: [], open: [], side: 'short', tool: null, prec: 4, play: null, untilExit: false, halt: false, poll: null, busy: false, topHi: null };
   // open simulated trades: live ones on any coins (one per coin, all kept up to date) + at most one replay trade.
@@ -527,7 +533,7 @@
     const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
     const p = S.pos, ps = chart.priceScale('right');
     if (ps.options().autoScale) ps.applyOptions({ autoScale: true });   // re-fit so the stop / target you just set come into view
-    if (R.on && S.mode === 'live') {   // the real ticket's levels (what Telegram will get)
+    if (realOn()) {   // the real ticket's levels (what Telegram will get)
       const rp = realPlan(); if (!rp) return;
       if (rp.isLim && rp.lim > 0) line(rp.lim, 'rgba(250,204,21,0.6)', 3, 'limit?');
       if (rp.stop > 0) line(rp.stop, 'rgba(239,68,68,0.55)', 3, 'stop?');
@@ -562,10 +568,12 @@
     $('sim-side-short').setAttribute('aria-pressed', String(short));
     $('sim-side-long').setAttribute('aria-pressed', String(!short));
     $('sim-stop-swing').textContent = short ? 'Past 1h high' : 'Past 1h low';
-    const real = R.on && S.mode === 'live';
+    const real = realOn();
     $('sim-tmode').hidden = S.mode !== 'live';
     $('sim-ticket').classList.toggle('real', real);
     $('sim-tm-paper').setAttribute('aria-pressed', String(!real)); $('sim-tm-real').setAttribute('aria-pressed', String(real));
+    $('sim-tm-real').disabled = isFx();
+    $('sim-tm-real').title = isFx() ? 'Forex is practice only: the bot trades crypto perps on Binance and Bybit' : '';
     $('sim-stop').placeholder = real ? 'price (blank = your saved SL)' : 'price';
     $('sim-tp-row').hidden = (real ? $('sim-r-tp').value : $('sim-plan').value) !== 'price';
     const go = $('sim-go');
@@ -582,7 +590,7 @@
     if (full) { sum.textContent = `${MAX_LIVE} simulated live trades are open. Close one to open another.`; return; }
     const pl = plan(px), size = parseFloat($('sim-size').value) || 0;
     if (!pl.stop) { sum.innerHTML = short ? 'Set a stop <b>above</b> the price.' : 'Set a stop <b>below</b> the price.'; return; }
-    const riskPct = Math.abs(pl.stop - px) / px, risk = size * riskPct + 2 * size * FEE;
+    const riskPct = Math.abs(pl.stop - px) / px, risk = size * riskPct + 2 * size * feeOf(S.ex);
     const tp1 = pl.tps[0];
     const gain1 = tp1 ? size * Math.abs(tp1.price - px) / px * (pl.tps.length > 1 ? tp1.frac : 1) : 0;
     const checks = [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length;
@@ -888,7 +896,7 @@
     if (!(size > 0)) return status('Enter a size in dollars.', true);
     const k = S.base[S.cur];
     const p = { id: Date.now() + Math.random(), side: S.side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
-      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * FEE,
+      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * feeOf(S.ex), fee: feeOf(S.ex),
       checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, mode: S.mode, sym: S.sym, ex: S.ex,
       ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
     p.prec = S.prec; p.last = px; p.fails = 0; p.htf = htfAgree(S.side);
@@ -904,7 +912,7 @@
   const fillMark = (side, t, label) => ({ t, pos: side === 'short' ? 'belowBar' : 'aboveBar', color: /^TP|Target/.test(label) ? '#10b981' : label === 'Closed by hand' ? '#60a5fa' : '#ef4444', shape: 'circle', text: label });
   function fill(p, q, px, t, label) {
     const gross = q * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry);
-    p.realized += gross - q * p.qty * px * FEE; p.rem -= q; p.fills.push({ q, px, t, label });
+    p.realized += gross - q * p.qty * px * (p.fee != null ? p.fee : FEE); p.rem -= q; p.fills.push({ q, px, t, label });
     if (onChart(p)) S.marks.push(fillMark(p.side, t, label));
   }
   function evalBar(p, t, h, l) {
@@ -934,7 +942,7 @@
     status(S.lastClose);
     renderJournal();
   }
-  function unreal(p, px) { return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * FEE : 0; }
+  function unreal(p, px) { return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * (p.fee != null ? p.fee : FEE) : 0; }
   function posBlock(p) {
     const px = pxOf(p), total = p.realized + unreal(p, px), risk = p.qty * Math.abs(p.stop0 - p.entry), f = v => fmtOf(p, v), here = onChart(p);
     const tpTxt = p.tps.map((tp, i) => `${p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'} ${f(tp.price)}${tp.hit ? ' ✓' : ''}`).join('<br>');
@@ -985,7 +993,7 @@
     runSmc();
     drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos();
     const end = nowT();
-    $('sim-clock').textContent = end ? `${S.sym}USDT perp · ${S.ex} · ${S.tf} · ${utc(end)} UTC` +
+    $('sim-clock').textContent = end ? (isFx() ? `${S.sym.slice(0, 3)}/${S.sym.slice(3)} forex · Yahoo, practice only` : `${S.sym}USDT perp · ${S.ex}`) + ` · ${S.tf} · ${utc(end)} UTC` +
       (S.mode === 'replay' ? ` · ${Math.round((S.base.length - 1 - S.cur) / 60)}h of data ahead` : ' · live') : 'No chart loaded';
     const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1;
     document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = atEnd || S.cur < 0; });
@@ -1019,7 +1027,7 @@
 
   function setData(r) {
     S.base = r.candles; S.sym = r.symbol.replace(/USDT$/, ''); S.ex = r.exchange;
-    S.prec = precFor(r.candles[r.candles.length - 1][4]); S.marks = [];
+    S.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0); S.marks = [];   // forex: 210.969 / 1.10278 (pipettes)
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
     $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
     recomputeFull(); loadHtf();
@@ -1060,7 +1068,7 @@
       smc.seen = Infinity; redraw(true);
       smc.seen = smc.A && smc.A.setups.length ? smc.A.setups[smc.A.setups.length - 1].conf : 0;
       const bg = liveOpen().filter(p => p.sym !== S.sym);
-      status(`Live ${S.sym} on ${S.ex}. ` + (bg.length ? `Your ${bg.map(p => p.sym + ' ' + p.side).join(', ')} ${bg.length === 1 ? 'keeps' : 'keep'} updating in the background.` : 'Paper trades fill at the last price.'));
+      status(`Live ${S.sym} on ${exLabel(S.ex)}. ` + (r.closed ? 'The forex market is closed (weekend): this is its last session. ' : '') + (bg.length ? `Your ${bg.map(p => p.sym + ' ' + p.side).join(', ')} ${bg.length === 1 ? 'keeps' : 'keep'} updating in the background.` : 'Paper trades fill at the last price.'));
       S.poll = setInterval(pollLive, 4000);
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
@@ -1117,7 +1125,7 @@
     try {
       const r = await api('/api/sim/klines', { symbol: S.sym, interval: '1m', start: S.base[S.base.length - 1][0], exchange: S.ex });
       if (my !== S.load) return;   // another coin was loaded while this update was on its way
-      if (S.pollErr) status(`Live ${S.sym} on ${S.ex} — updating again.`);
+      if (S.pollErr) status(`Live ${S.sym} on ${exLabel(S.ex)} — updating again.`);
       S.pollFails = 0; S.pollErr = false;
       for (const k of r.candles || []) {
         const i = S.base.length - 1;
@@ -1383,7 +1391,7 @@
     [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = true; });
     S.auto = true;
     const tgt = x.tgtKind === 'leg' ? 'the end of the leg' : 'at 2R';
-    status(R.on
+    status(realOn()
       ? `Real ticket filled from the A+ ${x.side}: stop ${fmt(x.stop)} just past the sweep wick, TP1 ${fmt(x.target)} (${tgt}; the bot closes its TP1 share there and TP2–4 follow, like /tp), market entry. Check the margin, then ${R.web ? 'Review' : 'open it in Telegram'}.`
       : `Ticket filled from the A+ ${x.side}: stop just past the sweep wick, target ${tgt}. It fills at the current price when you press the button.`);
     refresh();
@@ -1474,7 +1482,7 @@
     if (ls) {
       const size = parseFloat($('sim-size').value) || 150, rk = Math.abs(ls.stop - ls.entry) / ls.entry;
       h7 = `<p><b>Entry</b> ${fmt(ls.entry)} (the trigger close) · <b>Stop</b> ${fmt(ls.stop)}, just ${w.ab} the sweep wick · <b>Target</b> ${fmt(ls.target)}, ${ls.tgtKind === 'leg' ? `the ${w.end} of the move, where the next stops sit` : `2R (the ${w.end} of the move was too close)`}.</p>` +
-        `<p>Risk ${(rk * 100).toFixed(1)}% · reward ${(Math.abs(ls.target - ls.entry) / ls.entry * 100).toFixed(1)}% → <b>${ls.R.toFixed(1)}R</b>. On $${size.toFixed(0)} the stop costs about $${(size * rk + 2 * size * FEE).toFixed(2)} with fees.` +
+        `<p>Risk ${(rk * 100).toFixed(1)}% · reward ${(Math.abs(ls.target - ls.entry) / ls.entry * 100).toFixed(1)}% → <b>${ls.R.toFixed(1)}R</b>. On $${size.toFixed(0)} the stop costs about $${(size * rk + 2 * size * feeOf(S.ex)).toFixed(2)} with fees.` +
         (ls.R < 1.5 ? ' Under 1.5R: many traders pass on this one.' : '') + '</p>' +
         (rk > 0.08 ? `<p>⚠ This stop is wider than the bot's 8%. To risk the same dollars as an 8% stop on $${size.toFixed(0)}, trade about <b>$${(size * 0.08 / rk).toFixed(0)}</b> instead.</p>` : '') +
         (S.pos ? '' : '<button type="button" class="b go" id="sim-coach-use">Load this plan into the ticket</button>');
@@ -1735,7 +1743,7 @@
   // a picked price → the ticket (stop / target / limit) or a drawn level. A stop on an open simulated trade moves that
   // trade's stop (practice only; the real ticket never touches a position).
   function usePrice(kind, p) {
-    const real = R.on && S.mode === 'live', v = (+p).toFixed(S.prec);
+    const real = realOn(), v = (+p).toFixed(S.prec);
     if (kind === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
     if (kind === 'stop') { if (S.pos && !real) moveStop(S.pos, p); else $('sim-stop').value = v; }
     if (kind === 'tp') { if (real) $('sim-r-tp').value = 'price'; else $('sim-plan').value = 'price'; $('sim-tp').value = v; }
@@ -1765,7 +1773,7 @@
         const dy = Math.abs(y - param.point.y); if (dy < best) { best = dy; p = d[k]; what = lab; }
       }
     }
-    const v = (+p).toFixed(S.prec), real = R.on && S.mode === 'live', wrap = $('sim-chart').parentNode;
+    const v = (+p).toFixed(S.prec), real = realOn(), wrap = $('sim-chart').parentNode;
     const live = S.mode === 'live' && R.web && R.data;
     const rPos = live && (R.data.positions || []).some(x => x.symbol === S.sym), rOrd = live && (R.data.orders || []).some(x => x.symbol === S.sym);
     const el = document.createElement('div');
