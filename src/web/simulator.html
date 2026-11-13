@@ -1378,9 +1378,14 @@
     if (!x || S.pos) return;
     S.side = x.side; $('sim-stop').value = (+x.stop).toFixed(S.prec);
     $('sim-plan').value = 'price'; $('sim-tp').value = (+x.target).toFixed(S.prec);
+    // Real ticket too: same stop, the target as TP1 (TP2–4 follow like /tp), entry at market like the plan
+    $('sim-r-tp').value = 'price'; R.entry = 'market'; R.conf = null; renderConf();
     [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = true; });
     S.auto = true;
-    status(`Ticket filled from the A+ ${x.side}: stop just past the sweep wick, target ${x.tgtKind === 'leg' ? 'the end of the leg' : 'at 2R'}. It fills at the current price when you press the button.`);
+    const tgt = x.tgtKind === 'leg' ? 'the end of the leg' : 'at 2R';
+    status(R.on
+      ? `Real ticket filled from the A+ ${x.side}: stop ${fmt(x.stop)} just past the sweep wick, TP1 ${fmt(x.target)} (${tgt}; the bot closes its TP1 share there and TP2–4 follow, like /tp), market entry. Check the margin, then ${R.web ? 'Review' : 'open it in Telegram'}.`
+      : `Ticket filled from the A+ ${x.side}: stop just past the sweep wick, target ${tgt}. It fills at the current price when you press the button.`);
     refresh();
   }
   function nextSetup() {
