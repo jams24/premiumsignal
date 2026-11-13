@@ -3018,10 +3018,12 @@ class TradeExecutor {
     const pnlSign = pnlUsd >= 0 ? '+' : '';
 
     if (action === 'tp1') {
-      const locked = trade._partialPnl != null ? trade._partialPnl : pnlUsd * 0.33;
+      // The share partialClosePosition really closed at TP1 (the /onchaintrade TP1 setting, 25% on the pump executor)
+      const closedPct = Math.round((this.tp1ClosePct ?? 0.33) * 100);
+      const locked = trade._partialPnl != null ? trade._partialPnl : pnlUsd * (closedPct / 100);
       const lockedSign = locked >= 0 ? '+' : '';
       const fillTag = trade._partialFillPrice ? `\n📊 Fill: $${trade._partialFillPrice.toPrecision(6)}` : '';
-      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\n💰 Locked: ${lockedSign}$${locked.toFixed(2)} (33% closed)\nEntry: $${trade.entry_price} → $${currentPrice}${fillTag}\n\n🔒 SL moved to breakeven ($${trade.entry_price})\n🎯 67% running for TP2/TP3/TP4.`;
+      return `${modeTag} ✅ <b>TP1 HIT</b> $${escapeHtml(trade.symbol)}\n\n💰 Locked: ${lockedSign}$${locked.toFixed(2)} (${closedPct}% closed)\nEntry: $${trade.entry_price} → $${currentPrice}${fillTag}\n\n🔒 SL moved to breakeven ($${trade.entry_price})\n🎯 ${100 - closedPct}% running for TP2/TP3/TP4.`;
     }
     if (action === 'tp2') {
       const locked = trade._partialPnl != null ? trade._partialPnl : pnlUsd * 0.5;
