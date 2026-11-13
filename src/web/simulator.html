@@ -38,6 +38,9 @@
 .sim-tf .b { padding: 6px 9px; }
 .sim-clock { font: 500 12px/1.3 var(--font-mono); color: var(--text2); }
 .sim-chart { height: 480px; min-width: 0; border-radius: 6px; overflow: hidden; }
+.sim-chartwrap { position: relative; min-width: 0; }
+.sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
+.sim-legend b { color: var(--text); font-weight: 600; }
 .sim-hint { font-size: 12.5px; color: var(--gold); min-height: 1.2em; }
 .sim h3 { font: 600 14px/1.3 var(--font-body); display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .sim h3 small { font: 400 12px var(--font-mono); color: var(--muted); }
@@ -160,7 +163,7 @@
       </div>
       <div class="sim-watch" id="sim-watch" aria-live="polite" hidden></div>
       <div class="sim-clock" id="sim-clock">No chart loaded</div>
-      <div class="sim-chart" id="sim-chart"></div>
+      <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div></div>
       <div class="sim-hint" id="sim-hint"></div>
       <div class="sim-row" id="sim-replay-bar">
         <button type="button" class="b go" id="sim-play">▶ Play</button>
@@ -277,7 +280,7 @@
   // the open trade's own coin may differ from the chart you are looking at (live): use its own last price and precision
   const onChart = () => !!S.pos && (S.pos.mode !== 'live' || S.pos.sym === S.sym);
   const posPx = () => (!S.pos ? null : onChart() ? price() : S.pos.last);
-  const pfmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.pos && S.pos.prec != null ? S.pos.prec : S.prec);
+  const pfmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.pos && S.pos.prec != null ? S.pos.prec : S.pos ? precFor(S.pos.entry) : S.prec);
   const nowT = () => (S.cur >= 0 ? S.base[S.cur][0] + MIN : null);   // close time of the last visible 1m candle
   const barT = () => S.base[S.cur][0];                               // open time of it (markers must sit on a drawn bar)
   // like the dashboard's apiFetch (key + 401 handling), but it passes on the server's error message
@@ -306,6 +309,14 @@
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     smcLayer = makeLayer(); cs.attachPrimitive(smcLayer);
     chart.subscribeClick(onChartClick);
+    chart.subscribeCrosshairMove(param => {   // candle under the cursor; the price-axis label is just the cursor's height
+      const el = $('sim-legend'), d = param && param.time != null && param.seriesData ? param.seriesData.get(cs) : null;
+      if (!d || d.open == null) { el.hidden = true; return; }
+      const ch = (d.close / d.open - 1) * 100, cur = param.point ? cs.coordinateToPrice(param.point.y) : null;
+      el.hidden = false;
+      el.innerHTML = `${utc(param.time * 1000)} · O <b>${fmt(d.open)}</b> H <b>${fmt(d.high)}</b> L <b>${fmt(d.low)}</b> C <b>${fmt(d.close)}</b> ` +
+        `<span class="${ch >= 0 ? 'pos' : 'neg'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</span>` + (cur != null && isFinite(cur) ? ` · cursor ${fmt(cur)}` : '');
+    });
     new ResizeObserver(() => { if (el.clientWidth) chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
   }
   const bucket = t => Math.floor(t / TF[S.tf]) * TF[S.tf];
@@ -456,7 +467,7 @@
     const p = S.pos, risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
     const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
     const R = risk > 0 ? p.realized / risk : 0;
-    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: p.prec != null ? p.prec : S.prec });
+    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: p.prec != null ? p.prec : precFor(p.entry) });
     saveJ();
     S.pos = null; if (p.mode === 'live') dropPos();
     if (S.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
@@ -690,6 +701,16 @@
     const views = [view('bottom'), view('top')];
     return { attached: p => { req = p.requestUpdate; }, detached: () => { req = null; }, paneViews: () => views, updateAllViews: () => {}, update: () => { if (req) req(); } };
   }
+  function setupResult(s) {
+    const B = S.base; let lo = 0, hi = S.cur + 1;
+    while (lo < hi) { const md = (lo + hi) >> 1; if (B[md][0] <= s.t) lo = md + 1; else hi = md; }
+    for (let i = lo; i <= S.cur; i++) {
+      const k = B[i];
+      if (s.dir === -1 ? k[2] >= s.stop : k[3] <= s.stop) return { kind: 'stop', t: k[0] };   // stop first inside a candle
+      if (s.dir === -1 ? k[3] <= s.target : k[2] >= s.target) return { kind: 'target', t: k[0] };
+    }
+    return null;
+  }
   function paintSmc(g, m, back) {
     const A = smc.A; if (!A || !cs || !(smc.on || coach.open)) return;
     const show = k => (!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k;
@@ -726,11 +747,13 @@
       if (leg && leg.sweep && leg.trig) { line(X(leg.trig.t), W, Y(leg.trig.p), COL.blue, [5, 3], 1.5); tag('1m CHoCH level', W - 4, Y(leg.trig.p) + (leg.dir === -1 ? 9 : -9), COL.blue, 'right'); }
       for (const s of A.setups.slice(-4).reverse()) {
         const x = X(s.t), ye = Y(s.entry), ys = Y(s.stop), yt = Y(s.target); if (!ok(x, ye, ys, yt)) continue;
-        const x2 = Math.min(W, x + 110);
+        const res = setupResult(s), xr = res ? X(res.t) : W;
+        const x2 = Math.min(W, Math.max(x + 24, xr != null ? xr : W));   // the box runs until the stop or target was hit
         g.fillStyle = 'rgba(239,68,68,0.16)'; g.fillRect(x, Math.min(ye, ys), x2 - x, Math.abs(ys - ye));
         g.fillStyle = 'rgba(16,185,129,0.14)'; g.fillRect(x, Math.min(ye, yt), x2 - x, Math.abs(yt - ye));
         line(x, x2, ys, COL.red, [], 1.5); line(x, x2, ye, COL.text, [], 1); line(x, x2, yt, COL.green, [], 1.5);
-        tag('A+ ' + s.side + ' · ' + s.R.toFixed(1) + 'R', x, s.dir === -1 ? ys - 10 : ys + 10, COL.gold);
+        tag('A+ ' + s.side + ' · ' + s.R.toFixed(1) + 'R' + (!res ? ' · open' : res.kind === 'stop' ? ' · ✗ stopped ' + hm(res.t) : ' · ✓ target ' + hm(res.t)),
+          x, s.dir === -1 ? ys - 10 : ys + 10, !res ? COL.gold : res.kind === 'stop' ? '#fca5a5' : '#6ee7b7');
       }
     }
     if (show('range') && leg) {
