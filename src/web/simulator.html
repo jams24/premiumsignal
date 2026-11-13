@@ -84,6 +84,8 @@
 .sim-watch .no { white-space: nowrap; }
 .sim-watch.hot { border-color: var(--gold); background: var(--gold-dim); color: var(--text); }
 .sim-watch .b { padding: 5px 9px; margin-left: 6px; }
+.sim-htf .hu { color: var(--accent); white-space: nowrap; } .sim-htf .hd { color: var(--danger); white-space: nowrap; }
+.sim-htf a { color: var(--text2); margin-left: 6px; }
 .sim-coach { border-color: rgba(96,165,250,0.45); }
 .sim-coach h4 { font: 600 15px/1.3 var(--font-body); }
 .sim-coach-text { display: grid; gap: 8px; font-size: 13.5px; line-height: 1.6; color: var(--text2); }
@@ -100,6 +102,8 @@
 .sim-scan { display: grid; gap: 6px; }
 .sim-scan-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; background: var(--bg); border-radius: 6px; padding: 8px 10px; font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); }
 .sim-scan-row b { color: var(--text); }
+.sim-scan-row.hot { outline: 1px solid var(--gold); background: var(--gold-dim); color: var(--text); }
+#sim-alert-btn[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-dim); color: var(--text); }
 @media (max-width: 960px) { .sim-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .sim-chart { height: 360px; } }
 </style>
@@ -139,8 +143,14 @@
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
+      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Alerts:</span>
+        <button type="button" class="b" id="sim-alert-btn" aria-pressed="false" title="While this page is open, checks the coins picked in the menu above every minute and alerts you (sound + notification) when a new A+ setup appears">🔔 Alert me</button>
+        <select id="sim-alert-side" aria-label="Which setups to alert on"><option value="both">A+ shorts + longs</option><option value="short">A+ shorts only</option><option value="long">A+ longs only</option><option value="a3">A+++ longs only (deep discount / demand zone)</option></select>
+        <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-alert-early" checked> heads-up at 3/4 (sweep done, waiting for the 1m trigger)</label>
+        <span class="sim-status" id="sim-alert-info" style="margin:0">Off.</span></div>
     </div>
     <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"></datalist>
+    <div class="sim-scan" id="sim-alerts" hidden></div>
     <div class="sim-scan" id="sim-scan" hidden></div>
     <div class="sim-status" id="sim-status" aria-live="polite"></div>
   </div>
@@ -168,6 +178,7 @@
         <button type="button" class="b" id="sim-next-setup" title="Jump forward to the next setup the simulator finds">⏭ Next setup</button>
         <label class="sim-opt" style="margin:0" id="sim-pause-wrap"><input type="checkbox" id="sim-smc-pause" checked> Pause on setups</label>
       </div>
+      <div class="sim-watch sim-htf" id="sim-htf" hidden></div>
       <div class="sim-watch" id="sim-watch" aria-live="polite" hidden></div>
       <div class="sim-clock" id="sim-clock">No chart loaded</div>
       <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div></div>
@@ -450,7 +461,7 @@
     const checks = [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length;
     sum.innerHTML = `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
       (tp1 ? `${pl.tps.length > 1 ? 'TP1 (25%)' : 'Target'}: <b>+$${gain1.toFixed(2)}</b> at ${fmt(tp1.price)}` + (pl.tps.length === 1 ? ` · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R` : '') : 'Set a target.') +
-      `<br>Checklist: <b>${checks}/4</b>${checks < 4 ? ' · the playbook waits for all four' : ''}`;
+      `<br>Checklist: <b>${checks}/4</b>${checks < 4 ? ' · the playbook waits for all four' : ''}` + htfTicket();
   }
 
   // ---------- simulated position ----------
@@ -466,7 +477,7 @@
       tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * FEE,
       checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, mode: S.mode, sym: S.sym, ex: S.ex,
       ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
-    p.prec = S.prec; p.last = px; p.fails = 0;
+    p.prec = S.prec; p.last = px; p.fails = 0; p.htf = htfAgree(S.side);
     S.open.push(p);
     S.marks.push(entryMark(S.side, k[0], px));
     if (S.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
@@ -500,7 +511,7 @@
     const risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
     const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
     const R = risk > 0 ? p.realized / risk : 0;
-    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, auto: !!p.auto, how, prec: p.prec != null ? p.prec : precFor(p.entry) });
+    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, htf: p.htf || 0, auto: !!p.auto, how, prec: p.prec != null ? p.prec : precFor(p.entry) });
     saveJ();
     const here = onChart(p);
     S.open = S.open.filter(x => x !== p); if (p.mode === 'live') savePos(true);
@@ -538,17 +549,20 @@
     $('sim-stats').innerHTML = stat('Trades', n) + stat('Win rate', n ? Math.round(wins / n * 100) + '%' : '–') +
       stat('Net P&L', n ? usd(net) : '–', net >= 0 ? 'pos' : 'neg') + stat('Average R', n ? avgR.toFixed(2) : '–', avgR >= 0 ? 'pos' : 'neg');
     const full = J.filter(j => j.checks === 4), part = J.filter(j => j.checks < 4);
-    const learn = $('sim-learn');
+    const learn = $('sim-learn'), aR = a => a.reduce((s, j) => s + j.R, 0) / a.length;
+    let msg = '';
     if (full.length && part.length) {
-      const a = full.reduce((s, j) => s + j.R, 0) / full.length, b = part.reduce((s, j) => s + j.R, 0) / part.length;
-      learn.hidden = false;
-      learn.textContent = `All 4 checks ticked: ${full.length} trades, ${a.toFixed(2)}R on average. Fewer checks: ${part.length} trades, ${b.toFixed(2)}R. ` +
+      const a = aR(full), b = aR(part);
+      msg = `All 4 checks ticked: ${full.length} trades, ${a.toFixed(2)}R on average. Fewer checks: ${part.length} trades, ${b.toFixed(2)}R. ` +
         (a > b ? 'Waiting for the full setup is paying off so far.' : 'So far the full checklist isn\'t beating your other entries. Keep logging; it takes 30+ trades to tell.');
-    } else learn.hidden = true;
+    }
+    const w4 = J.filter(j => j.htf === 1), a4 = J.filter(j => j.htf === -1);
+    if (w4.length >= 3 && a4.length >= 3) msg += (msg ? ' ' : '') + `With the 4H trend: ${w4.length} trades, ${aR(w4).toFixed(2)}R. Against it: ${a4.length} trades, ${aR(a4).toFixed(2)}R.`;
+    learn.hidden = !msg; learn.textContent = msg;
     const rows = J.slice(-25).reverse().map(j => {
       const f = v => (+v).toFixed(j.prec || 4);
       return `<tr><td>${utc(j.t1)}</td><td>${j.sym}${j.mode === 'live' ? ' · live' : ''}</td><td>${j.side}</td><td>${f(j.entry)}</td><td>${f(j.exit)}</td>` +
-        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4${j.auto ? ' auto' : ''}</td><td>${j.how}</td></tr>`;
+        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4${j.htf === 1 ? ' · 4H ✓' : j.htf === -1 ? ' · 4H ✗' : ''}${j.auto ? ' auto' : ''}</td><td>${j.how}</td></tr>`;
     });
     $('sim-jbody').innerHTML = rows.join('') || '<tr><td colspan="9" class="sim-empty" style="text-align:left">No simulated trades yet. Load a chart, set a stop, and take your first one.</td></tr>';
   }
@@ -594,7 +608,7 @@
     S.prec = precFor(r.candles[r.candles.length - 1][4]); S.marks = [];
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
     $('sim-stop').value = ''; $('sim-tp').value = '';
-    recomputeFull();
+    recomputeFull(); loadHtf();
   }
   const replayOpen = () => S.open.some(p => p.mode === 'replay');
   async function loadReplay(sym, t, ex, extraMarks, label) {
@@ -849,7 +863,7 @@
       if (smc.seen !== Infinity) smc.seen = Math.max(smc.seen, l.conf);
     }
     if (smcLayer) smcLayer.update();
-    renderWatch(); renderCoach();
+    renderHtf(); renderWatch(); renderCoach();
   }
   function renderWatch() {
     const el = $('sim-watch'), A = smc.A;
@@ -869,6 +883,76 @@
     el.classList.toggle('hot', !!fresh);
     el.innerHTML = h;
     const u = $('sim-use-setup'); if (u) u.onclick = () => useSetup(last);
+  }
+  // ---------- top-down: the coin's 4H and 1H direction (lesson 7 in the Playbook) ----------
+  // Hourly candles: older history from the exchange, the chart's own 1m candles (up to the replay clock) for the rest,
+  // so a replay never sees the future. 4H candles are built from the hours (00/04/08… UTC); the last one is still forming.
+  const HOUR = 60 * MIN, HTF = { key: null, busy: null, k: [], H0: 0, err: null, at: 0, memo: null, st: null };
+  async function loadHtf() {
+    if (!S.sym || !S.base.length) return;
+    const H0 = Math.ceil(S.base[0][0] / HOUR) * HOUR, key = `${S.sym}|${S.ex}|${H0}`;
+    if ((HTF.key === key && !(HTF.err && Date.now() - HTF.at > 120e3)) || HTF.busy === key) return;
+    HTF.busy = key;
+    let k = [], err = null;
+    try {
+      const r = await api('/api/sim/klines', { symbol: S.sym, interval: '1h', start: H0 - 40 * 24 * HOUR, end: H0 - HOUR, exchange: S.ex });
+      k = (r.candles || []).filter(c => c[0] < H0);
+    } catch (e) { err = e.message; }
+    if (HTF.busy !== key) return;   // another chart was loaded meanwhile
+    Object.assign(HTF, { key, busy: null, k, H0, err, at: Date.now(), memo: null });
+    if (S.cur >= 0) { renderHtf(); renderTicket(); }
+  }
+  function htfNow() {
+    if (!HTF.key || S.cur < 0 || HTF.key !== `${S.sym}|${S.ex}|${Math.ceil(S.base[0][0] / HOUR) * HOUR}`) return null;   // only this chart's own history
+    const memo = `${HTF.key}|${S.cur}|${S.base.length}|${S.base[S.cur][4]}`;
+    if (HTF.memo === memo) return HTF.st;
+    const hrs = HTF.k.slice();
+    for (let i = 0; i <= S.cur; i++) {
+      const c = S.base[i]; if (c[0] < HTF.H0) continue;
+      const t = Math.floor(c[0] / HOUR) * HOUR, L = hrs[hrs.length - 1];
+      if (!L || L[0] !== t) hrs.push([t, c[1], c[2], c[3], c[4], c[5]]);
+      else { if (c[2] > L[2]) L[2] = c[2]; if (c[3] < L[3]) L[3] = c[3]; L[4] = c[4]; L[5] += c[5]; }
+    }
+    const px = S.base[S.cur][4];
+    const one = h => {
+      if (hrs.length < 12) return null;
+      const A = SMC.analyze(hrs, hrs.length - 1, { tf: h * HOUR });
+      let H = null, L = null;
+      for (let q = A.swings.length - 1; q >= 0 && (H == null || L == null); q--) { const w = A.swings[q]; if (w.side === 'H' && H == null) H = w.p; if (w.side === 'L' && L == null) L = w.p; }
+      return { trend: A.trend, brk: A.breaks[A.breaks.length - 1] || null, pos: H != null && L != null && H > L ? (px - L) / (H - L) : null };
+    };
+    HTF.st = { h4: one(4), h1: one(1) }; HTF.memo = memo;
+    return HTF.st;
+  }
+  const htfAgree = side => { const st = htfNow(), t4 = st && st.h4 ? st.h4.trend : 0, d = side === 'short' ? -1 : 1; return t4 === d ? 1 : t4 === -d ? -1 : 0; };
+  const htfTicket = () => { const a = htfAgree(S.side); return a ? `<br>4H trend: <b>${a === 1 ? 'with' : 'against'}</b> your ${S.side} ${a === 1 ? '✓' : '✗'}` : ''; };
+  function renderHtf() {
+    const el = $('sim-htf');
+    if (!smc.on || S.cur < 0 || !S.base.length) { el.hidden = true; return; }
+    el.hidden = false; loadHtf();
+    el.title = 'From the coin\'s 1H candles, with 4H candles built from them. Practice, not a signal: on 204 coins our bot traded (Sep–Nov 2026), A+ setups with the 4H trend did no better than against it.';
+    const help = '<a href="#" id="sim-htf-help" title="Which timeframe is for what: SMC Playbook, lesson 7">which timeframe for what?</a>';
+    const st = htfNow();
+    if (!st) el.innerHTML = 'Direction · reading the 1H and 4H history…' + help;
+    else if (!st.h4) el.innerHTML = `Direction · ${HTF.err ? 'could not read the 1H history: ' + esc(HTF.err) : 'not enough 1H history for this coin yet'}.` + help;
+    else {
+      const arrow = t => t === -1 ? '<span class="hd">▼ down</span>' : t === 1 ? '<span class="hu">▲ up</span>' : '<span class="no">– no break yet</span>';
+      const one = (lab, x) => `<b>${lab}</b> ${arrow(x.trend)}` + (x.brk ? ` <span class="no">since the ${x.brk.kind} ${utc(x.brk.conf)}</span>` : '');
+      const h4 = st.h4, p = h4.pos;
+      const where = p == null ? '' : ' · ' + (p > 1 ? 'price above its last swing high' : p < 0 ? 'price below its last swing low' : `price ${Math.round(p * 100)}% up its range = <b>${p >= 0.5 ? 'premium' : 'discount'}</b>`);
+      let v;
+      if (!h4.trend) v = 'No 4H break yet (a new coin or a quiet range): use the 24h high and low as the big levels.';
+      else {
+        const sh = h4.trend === -1, past = p != null && (sh ? p > 1 : p < 0), inZ = p != null && !past && (sh ? p >= 0.5 : p <= 0.5);
+        v = `4H favours <b>${sh ? 'shorts' : 'longs'}</b>` + (past ? `, but price is ${sh ? 'above its last swing high: a 4H close up there flips it to up' : 'below its last swing low: a 4H close down there flips it to down'}`
+          : inZ ? ` and price is in its ${sh ? 'premium' : 'discount'} ✓` : ` but price is in its ${sh ? 'discount' : 'premium'}: wait for a bounce`);
+        const leg = smc.A && smc.A.leg && !smc.A.leg.dead ? smc.A.leg : null;
+        if (leg) v += leg.dir === h4.trend ? ` · <span class="ok">your ${smc.tf}m ${leg.dir === -1 ? 'short' : 'long'} idea goes with it</span>` : ` · <span class="no">your ${smc.tf}m ${leg.dir === -1 ? 'short' : 'long'} idea is against it</span>`;
+      }
+      el.innerHTML = `Direction · ${one('4H', h4)}${where} · ${st.h1 ? one('1H', st.h1) : ''}<br>${v}` + help;
+    }
+    const a = $('sim-htf-help');
+    if (a) a.onclick = e => { e.preventDefault(); const b = document.querySelector('[data-tab=smc]'); if (b) b.click(); setTimeout(() => { const s = document.getElementById('smc-tf'); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); };
   }
   function useSetup(x) {
     if (!x || S.pos) return;
@@ -894,7 +978,7 @@
   // ---------- SMC coach: walks through the current chart one step at a time ----------
   const coach = { open: false, step: 0, quiz: false, fb: null, right: 0, tries: 0 };
   const LAYERS = ['swings', 'structure', 'range', 'zones', 'liq', 'setup', 'setup'];
-  const TESTED = 'Practice, not signals: replayed on 140 pump-signal charts (13 Oct – 12 Nov 2026), these exact rules lost after fees (15m: −0.04R a trade over 242 setups; 5m: −0.16R over 403).';
+  const TESTED = 'Practice, not signals: on the 207 coins our bot traded (14 Oct – 13 Nov 2026) these exact rules lost after fees (15m: −0.18R a trade over 6,014 setups; 5m: −0.12R over 6,834), no better than entering at a random time with the same stop and target.';
   function coachSteps(A) {
     const tfN = smc.tf + 'm', leg = A.leg && !A.leg.dead ? A.leg : null, lb = A.breaks[A.breaks.length - 1];
     const sh = leg ? leg.dir === -1 : lb ? lb.dir === -1 : true;
@@ -1022,21 +1106,26 @@
     return { sym, ex, score: n, txt: `${sh ? 'short' : 'long'} idea · <b>${n}/4</b> · ${next}` };
   }
   let scanRun = 0, scanning = false, tradedCoins = null;
-  async function scanCoins() {
-    const btn = $('sim-scan-btn'), box = $('sim-scan');
-    if (scanning) { scanRun++; return; }   // a second click stops the scan
-    const run = ++scanRun; scanning = true; btn.textContent = '■ Stop scan'; box.hidden = false;
-    const scope = $('sim-scan-scope').value, since = Date.now() - 48 * 3600e3, list = [], why = {};
+  async function coinList(scope, onChartToo) {   // the coins Find setups and the alerts check
+    const since = Date.now() - 48 * 3600e3, list = [], why = {};
     const add = (sym, tag) => { if (!sym) return; if (!why[sym]) { list.push(sym); why[sym] = []; } if (tag && why[sym].indexOf(tag) < 0) why[sym].push(tag); };
-    if (S.sym) add(S.sym, 'on chart');
+    if (onChartToo && S.sym) add(S.sym, 'on chart');
     for (const p of liveOpen()) add(p.sym, 'your open trade');
     for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'bot signal in last 48 h');
     if (scope !== 'signals') {
-      box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
       try { if (!tradedCoins) tradedCoins = (await api('/api/sim/coins', {})).coins || []; } catch (e) { tradedCoins = null; status('Could not get the coins we traded: ' + e.message, true); }
       const cut = scope === 'recent' ? Date.now() - 30 * 864e5 : 0;
       for (const c of tradedCoins || []) if (c.t >= cut) add(c.symbol, `our bot traded it ${c.trades}×`);
     }
+    return { list, why };
+  }
+  async function scanCoins() {
+    const btn = $('sim-scan-btn'), box = $('sim-scan');
+    if (scanning) { scanRun++; return; }   // a second click stops the scan
+    const run = ++scanRun; scanning = true; btn.textContent = '■ Stop scan'; box.hidden = false;
+    const scope = $('sim-scan-scope').value;
+    if (scope !== 'signals') box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
+    const { list, why } = await coinList(scope, true);
     const rows = [], tf = smc.tf; let next = 0, done = 0;
     const scopeTxt = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h', signals: 'pump signals of the last 48 h' }[scope];
     const render = head => {
@@ -1071,6 +1160,127 @@
     render(stopped ? `Stopped after ${done} of ${list.length} coins.` : `${list.length} coins checked at ${hm(Date.now())} UTC on the ${tf}m structure (${scopeTxt}). ${TESTED}`);
     scanning = false; btn.textContent = '🔎 Find setups';
   }
+
+  // ---------- alerts: while the page is open, check the coins every minute for new A+ setups ----------
+  const AKEY = 'sc_sim_alert_v1';
+  const AL = { on: false, side: 'both', early: true, cache: new Map(), seen: new Map(), skip: new Map(), list: [], run: 0, timer: null, ctx: null, cycle: 0, title: document.title };
+  const ALERT_NOTE = 'Practice alerts while this page is open (checked every minute on closed 1m candles). Tested on the 207 coins our bot traded (14 Oct – 13 Nov 2026): ' +
+    'A+ longs −0.31R a trade, shorts −0.05R (15m), no better than entering at a random time with the same stop and target; A+++ longs (deep discount / demand zone) −0.32R. ' +
+    'About half move 1R your way before the stop. Paper-trade them and let your journal show whether your picks do better.';
+  const saveAlert = () => { try { localStorage.setItem(AKEY, JSON.stringify({ on: AL.on, side: AL.side, early: AL.early })); } catch (e) { /* ignore */ } };
+  try { Object.assign(AL, JSON.parse(localStorage.getItem(AKEY)) || {}); } catch (e) { /* ignore */ }
+  function spot(x) {   // where the sweep wick sat in the move (1 = the far end), and whether it reached the order-block zone
+    const sh = x.dir === -1, w = x.sweep.wick, rng = x.hi - x.lo;
+    return { sh, depth: rng > 0 ? (sh ? w - x.lo : x.hi - w) / rng : 0, zone: !!x.zone && (sh ? w >= x.zone.bot : w <= x.zone.top) };
+  }
+  const isA3 = x => { const p = spot(x); return !p.sh && (p.depth >= 0.75 || p.zone); };   // the user's A+++ long: deep discount or demand zone
+  function whereOf(x) {
+    const { sh, depth, zone } = spot(x);
+    return (depth >= 0.75 ? (sh ? 'top of premium' : 'bottom of discount') : (sh ? 'mid premium' : 'mid discount')) + (zone ? (sh ? ', in supply zone' : ', in demand zone') : '');
+  }
+  function makeAlert(kind, sym, ex, x, px) {
+    const sh = x.dir === -1, side = sh ? 'short' : 'long', f = v => (+v).toFixed(precFor(px)), where = whereOf(x), a3 = isA3(x);
+    const a = { kind, sym, ex, tf: smc.tf, t: Date.now(), side };
+    if (kind === 'aplus') return Object.assign(a, { title: `🎯 ${sym} ${a3 ? 'A+++' : 'A+'} ${side}`, body: `entry ${f(x.entry)} · stop ${f(x.stop)} · target ${f(x.target)} · ${x.R.toFixed(1)}R · wick ${where}` });
+    return Object.assign(a, { title: `⚠️ ${sym} ${a3 ? 'A+++ ' : ''}${side} 3/4`, body: `swept ${f(x.sweep.wick)} (${where}) · A+ if a 1m candle closes ${sh ? 'below' : 'above'} ${f(x.trig.p)}` });
+  }
+  function beep(n) {
+    const c = AL.ctx; if (!c) return;
+    try {
+      if (c.state === 'suspended') c.resume();
+      for (let i = 0; i < n; i++) {
+        const o = c.createOscillator(), g = c.createGain(), t = c.currentTime + i * 0.28;
+        o.frequency.value = 880; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+        o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.24);
+      }
+    } catch (e) { /* no sound */ }
+  }
+  function ping(title, body, a) {
+    beep(a && a.kind === 'heads' ? 1 : 2);
+    document.title = '🔔 ' + title + ' · ' + AL.title;
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        const n = new Notification(title, { body, tag: a ? a.sym + a.kind : 'sim-alerts' });
+        n.onclick = () => { window.focus(); n.close(); if (a) openCoin(a.sym, a.ex, a.tf); };
+      }
+    } catch (e) { /* notifications not allowed */ }
+  }
+  function addAlert(a, quiet) {
+    AL.list.unshift(a); if (AL.list.length > 40) AL.list.length = 40;
+    if (!quiet) ping(a.title, a.body, a);
+    renderAlerts();
+  }
+  function renderAlerts() {
+    const box = $('sim-alerts');
+    if (!AL.on && !AL.list.length) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = `<div class="sim-empty">${esc(ALERT_NOTE)}</div>` +
+      (AL.list.length ? AL.list.map(a => `<div class="sim-scan-row${a.kind === 'aplus' ? ' hot' : ''}"><span>${hm(a.t)} UTC · <b>${esc(a.title)}</b> · ${esc(a.body)}</span><button type="button" class="b" data-scan="${esc(a.sym)}" data-ex="${esc(a.ex)}" data-tf="${a.tf}">Load live</button></div>`).join('') +
+        '<div class="sim-row"><button type="button" class="b" id="sim-alert-clear">Clear the list</button></div>'
+        : '<div class="sim-empty">No alerts yet. The first check lists what is set up right now; after that you hear a sound for each new one.</div>');
+    const c = $('sim-alert-clear'); if (c) c.onclick = () => { AL.list = []; renderAlerts(); };
+  }
+  function checkAlerts(sym, ex, A, quiet) {
+    const want = x => AL.side === 'both' || AL.side === (x.dir === -1 ? 'short' : 'long') || (AL.side === 'a3' && isA3(x)), prev = AL.seen.get(sym) || { conf: 0, heads: '' };
+    const last = A.setups[A.setups.length - 1];
+    if (last && last.conf > prev.conf) {
+      if (want(last) && A.now - last.conf <= 10 * MIN) addAlert(makeAlert('aplus', sym, ex, last, A.price), quiet);
+      prev.conf = last.conf;
+    }
+    const leg = A.leg && !A.leg.dead ? A.leg : null;
+    if (leg && leg.prem && leg.sweep && leg.trig) {
+      const key = leg.brk.t + '|' + leg.sweep.wickT;
+      if (key !== prev.heads) { prev.heads = key; if (AL.early && want(leg)) addAlert(makeAlert('heads', sym, ex, leg, A.price), quiet); }
+    }
+    AL.seen.set(sym, prev);
+  }
+  async function alertCoin(sym, quiet) {
+    const now = Date.now(); if ((AL.skip.get(sym) || 0) > now) return;
+    let e = AL.cache.get(sym);
+    if (!e || now - e.c[e.c.length - 1][0] > 6 * 3600e3) {   // first look (or a long pause): the last 24 h, Bybit first to spare the bot's Binance budget
+      const r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: now - 24 * 3600e3, end: now, exchange: 'bybit-first' });
+      if (!r.candles || r.candles.length < 300) { AL.skip.set(sym, now + 30 * MIN); return; }
+      e = { ex: r.exchange, c: r.candles }; AL.cache.set(sym, e);
+    } else {   // after that only the new candles
+      const r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: e.c[e.c.length - 1][0], exchange: e.ex });
+      for (const k of r.candles || []) { const i = e.c.length - 1; if (k[0] === e.c[i][0]) e.c[i] = k; else if (k[0] > e.c[i][0]) e.c.push(k); }
+      let drop = 0; const cut = now - 26 * 3600e3; while (drop < e.c.length && e.c[drop][0] < cut) drop++; if (drop > 60) e.c.splice(0, drop);
+    }
+    const last = e.c.length - 1, upto = e.c[last][0] + MIN > Date.now() ? last - 1 : last;   // closed candles only: a forming candle can still undo a trigger
+    checkAlerts(sym, e.ex, SMC.analyze(e.c, upto, { tf: smc.tf * MIN }), quiet);
+  }
+  async function alertCycle() {
+    const run = AL.run, t0 = Date.now(), first = AL.cycle === 0, before = AL.list.length;
+    AL.timer = null;
+    const { list } = await coinList($('sim-scan-scope').value, false);
+    if (run !== AL.run) return;
+    let next = 0, fails = 0;
+    $('sim-alert-info').textContent = `Checking ${list.length} coins…`;
+    const worker = async () => { while (run === AL.run && next < list.length) { const sym = list[next++]; try { await alertCoin(sym, first); } catch (e) { fails++; } } };
+    await Promise.all([worker(), worker()]);   // no timers inside: a background tab slows timers down, not network replies
+    if (run !== AL.run) return;
+    AL.cycle++;
+    if (first && AL.list.length > before) ping(`${AL.list.length - before} setups right now`, 'Listed under the coin buttons. New ones from here on make a sound.', null);
+    $('sim-alert-info').textContent = `On · ${list.length} coins on the ${smc.tf}m structure · checked ${hm(Date.now())} UTC` + (fails ? ` · ${fails} could not be read` : '') + ' · runs while this page is open';
+    AL.timer = setTimeout(alertCycle, Math.max(5000, 60000 - (Date.now() - t0)));
+  }
+  function setAlerts(on, byClick) {
+    AL.on = on; saveAlert(); AL.run++; clearTimeout(AL.timer); AL.timer = null;
+    $('sim-alert-btn').setAttribute('aria-pressed', String(on)); $('sim-alert-btn').textContent = on ? '🔔 Alerts on' : '🔔 Alert me';
+    if (on) {
+      if (byClick) {   // sound and notifications need a click to be allowed
+        try { AL.ctx = AL.ctx || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* no sound */ }
+        try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { /* ignore */ }
+      }
+      AL.cycle = 0; AL.seen.clear(); alertCycle();
+    } else $('sim-alert-info').textContent = 'Off.';
+    renderAlerts();
+  }
+  window.addEventListener('focus', () => { document.title = AL.title; });
+  document.addEventListener('pointerdown', () => { if (AL.on && !AL.ctx) try { AL.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* no sound */ } });
+  $('sim-alert-btn').onclick = () => setAlerts(!AL.on, true);
+  $('sim-alert-side').onchange = () => { AL.side = $('sim-alert-side').value; saveAlert(); };
+  $('sim-alert-early').onchange = () => { AL.early = $('sim-alert-early').checked; saveAlert(); };
 
   // ---------- modes, tools, inputs ----------
   function setMode(m, quiet) {
@@ -1111,7 +1321,9 @@
   function start() {
     if (started) return; started = true;
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
+    $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early;
     initChart(); renderJournal();
+    if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
     S.track = setInterval(trackBg, 4000);   // live trades keep updating in any mode, on any chart
     const saved = loadPos();
@@ -1179,14 +1391,17 @@
     coach.quiz = true; smc.hide = LAYERS[coach.step]; if (S.tool !== 'quiz') setTool('quiz'); refresh();
   };
   $('sim-scan-btn').onclick = scanCoins;
-  $('sim-scan').addEventListener('click', e => {
-    const b = e.target.closest('[data-scan]'); if (!b) return;
-    const tf = +b.dataset.tf, ex = b.dataset.ex || 'auto';
+  function openCoin(sym, ex, tf) {   // Load live from a scan row / alert: same exchange and structure timeframe, overlay on, chart in view
+    ex = ex || 'auto'; tf = +tf;
+    if (S.mode !== 'live') { if (S.open.some(p => p.mode === 'replay')) return status('Close your simulated replay trade first.', true); setMode('live', true); }
     if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.tf = tf; $('sim-smc-tf').value = String(tf); }
     smc.on = true; $('sim-smc-on').checked = true; saveSmc();
-    $('sim-symbol-live').value = b.dataset.scan; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
-    loadLive(b.dataset.scan, ex).then(() => { const c = $('sim-chart').closest('.sim-card') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
-  });
+    $('sim-symbol-live').value = sym; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
+    loadLive(sym, ex).then(() => { const c = $('sim-chart').closest('.sim-card') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  }
+  ['sim-scan', 'sim-alerts'].forEach(id => $(id).addEventListener('click', e => {
+    const b = e.target.closest('[data-scan]'); if (b) openCoin(b.dataset.scan, b.dataset.ex, b.dataset.tf);
+  }));
   $('sim-pos-body').addEventListener('click', e => {
     const b = e.target.closest('[data-pclose],[data-pbe],[data-pshow]'); if (!b) return;
     const id = +(b.dataset.pclose || b.dataset.pbe || b.dataset.pshow), p = S.open.find(x => x.id === id); if (!p) return;

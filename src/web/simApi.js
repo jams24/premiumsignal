@@ -29,10 +29,13 @@ async function getJson(u) {
 async function binanceKlines(sym, iv, start, end) {
   const out = [];
   for (let t = start; t < end && out.length < MAX_CANDLES;) {
-    const j = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(sym)}&interval=${iv}&startTime=${t}&endTime=${end}&limit=1500`);
+    // ask only for the candles needed: Binance charts weight by limit (≤99 → 1, ≤499 → 2, ≤1000 → 5, more → 10), and the
+    // bot shares this IP's budget — a 4 s chart update or an alert check then costs 1, not 10
+    const lim = Math.max(1, Math.min(1500, Math.floor((end - t) / STEP[iv]) + 1));
+    const j = await getJson(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(sym)}&interval=${iv}&startTime=${t}&endTime=${end}&limit=${lim}`);
     if (!Array.isArray(j) || !j.length) break;
     for (const k of j) out.push([k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]);
-    if (j.length < 1500) break;
+    if (j.length < lim) break;
     t = j[j.length - 1][0] + STEP[iv];
   }
   return out;

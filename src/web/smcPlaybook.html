@@ -94,7 +94,10 @@
 .smc .pos { color: var(--s-up); } .smc .neg { color: var(--s-down); } .smc .mix { color: var(--s-liq); }
 .smc footer { font-size: 13px; color: var(--s-muted); border-top: 1px solid var(--s-line); padding-top: 16px; display: grid; gap: 6px; }
 /* grid tracks must be allowed to shrink, or the 640px table widens the whole tab on phones */
-.smc, .smc header, .smc section, .smc .figure, .smc .drills, .smc .drill { grid-template-columns: minmax(0, 1fr); }
+.smc .sub { display: grid; gap: 14px; min-width: 0; }
+.smc .sub h3 { display: flex; gap: 10px; align-items: baseline; }
+.smc .sub h3 .tf { font: 600 12px/1 var(--font-mono); color: var(--s-sweep); padding: 4px 7px; border-radius: 4px; background: var(--s-soft); }
+.smc, .smc header, .smc section, .smc .figure, .smc .drills, .smc .drill, .smc .sub { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 520px) { .smc .counter { min-width: 0; text-align: left; } .smc ol.notes button { grid-template-columns: 3.8em 1fr; } }
 @media (prefers-reduced-motion: reduce) { .smc * { scroll-behavior: auto; } }
 </style>
@@ -104,7 +107,7 @@
     <h1>SMC Short Playbook</h1>
     <p class="lede">How smart-money traders read candles, taught one candle at a time. Press <b>▶ Replay</b> on any chart to watch the setup form, or tap a note to jump to that candle. Then test yourself on the drills at the end.</p>
     <p><a href="#" onclick="document.querySelector('[data-tab=sim]').click();window.scrollTo(0,0);return false">Practise on real charts in the Simulator tab →</a></p>
-    <p class="muted">The lessons use made-up candles so each idea is clean. Lesson 7 is real: BARD on Bybit, 12 Nov 2026, the trade that stopped us out. The last two sections say which parts our own backtests support and which they don't.</p>
+    <p class="muted">The lessons use made-up candles so each idea is clean. Lesson 9 is real: BARD on Bybit, 12 Nov 2026, the trade that stopped us out. The last two sections say which parts our own backtests support and which they don't.</p>
   </header>
 
   <nav class="toc" aria-label="Lessons">
@@ -115,10 +118,12 @@
       <li><a href="#smc-supply"><span>4</span>Supply zone &amp; FVG</a></li>
       <li><a href="#smc-premium"><span>5</span>Premium &amp; discount</a></li>
       <li><a href="#smc-setup"><span>6</span>The full short setup</a></li>
-      <li><a href="#smc-bard"><span>7</span>BARD, 12 Nov</a></li>
-      <li><a href="#smc-drills"><span>8</span>Practice drills</a></li>
-      <li><a href="#smc-checklist"><span>9</span>Our checklist</a></li>
-      <li><a href="#smc-evidence"><span>10</span>What our tests say</a></li>
+      <li><a href="#smc-tf"><span>7</span>Timeframes</a></li>
+      <li><a href="#smc-retest"><span>8</span>Zone retest</a></li>
+      <li><a href="#smc-bard"><span>9</span>BARD, 12 Nov</a></li>
+      <li><a href="#smc-drills"><span>10</span>Practice drills</a></li>
+      <li><a href="#smc-checklist"><span>11</span>Our checklist</a></li>
+      <li><a href="#smc-evidence"><span>12</span>What our tests say</a></li>
     </ol>
   </nav>
 
@@ -152,20 +157,103 @@
     <p>Now put the pieces together in the order a trader checks them: bearish structure, a bounce into premium or a supply zone, a sweep of the liquidity above, a lower-timeframe CHoCH, then an entry with the stop above the sweep and the target at the liquidity below.</p>
   </section>
 
+  <section id="smc-tf">
+    <h2><span class="n">7</span>Timeframes: direction, zone, entry</h2>
+    <p>SMC traders read one move on three charts, each about four times faster than the one above. The slow chart decides the <b>direction</b>, the middle chart finds the <b>zone</b> and the sweep, and the fast chart times the <b>entry</b>. This is called top-down analysis. Lesson 6 already used it: the supply zone came from the higher timeframe and the CHoCH from the lower one.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>How long you hold</th><th>Direction (slow)</th><th>Zone and sweep (middle)</th><th>Entry trigger (fast)</th></tr></thead>
+        <tbody>
+          <tr><td>Scalp: minutes to an hour</td><td>1H</td><td>15m or 5m</td><td>1m</td></tr>
+          <tr><td>Day trade: a few hours</td><td>4H</td><td>1H or 15m</td><td>5m or 1m</td></tr>
+          <tr><td>Swing: days</td><td>Daily</td><td>4H</td><td>1H or 15m</td></tr>
+          <tr><td>Our pump shorts: 1–24 hours</td><td>The pump and its 24h high (the bot does this)</td><td>5m sweep of the 24h high</td><td>5m close back below</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cols">
+      <div class="card">
+        <span class="tag">1 · Slow chart</span>
+        <h3>Direction: which way</h3>
+        <ol>
+          <li>Read two things only: the last BOS or CHoCH (who is in control) and where price sits in the last leg (premium or discount).</li>
+          <li>Shorts when it's bearish and price is in its premium. Longs the other way round.</li>
+          <li>It changes a few times a week, not every hour. If it flips, stop looking for that side.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag">2 · Middle chart</span>
+        <h3>Zone: where</h3>
+        <ol>
+          <li>Find the supply zone and the liquidity (equal highs, the last high) inside the slow chart's premium.</li>
+          <li>Wait for a candle to sweep it and close back.</li>
+          <li>Targets come from here or the slow chart: the start of the bounce, then the leg's low.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag">3 · Fast chart</span>
+        <h3>Entry: when</h3>
+        <ol>
+          <li>Only after the middle chart's sweep candle has closed.</li>
+          <li>Enter on the first close past the last swing before the sweep (the CHoCH). Stop just past the sweep wick.</li>
+          <li>Never take direction from this chart. It flips both ways many times an hour.</li>
+        </ol>
+      </div>
+    </div>
+    <p>The three charts below are the same move. Step 1 is the 4H. Step 2 zooms into one 4H candle on the 15m. Step 3 zooms into one 15m candle on the 1m.</p>
+    <div class="sub" data-lesson="tf4h"><h3><span class="tf">4H</span>Step 1 · Direction</h3></div>
+    <div class="sub" data-lesson="tf15"><h3><span class="tf">15m</span>Step 2 · Zone and sweep</h3></div>
+    <div class="sub" data-lesson="tf1"><h3><span class="tf">1m</span>Step 3 · Entry</h3></div>
+    <div class="card">
+      <span class="tag">In the Simulator</span>
+      <h3>Which control is which step</h3>
+      <ol>
+        <li><b>Direction line</b> under the chart: the coin's 4H and 1H, the last break and premium or discount. That's step 1.</li>
+        <li><b>Structure 15m or 5m</b> (the SMC overlay): the leg, the zone, the liquidity and the sweep. That's step 2. Use 15m for gold and big coins, 5m for fast pump coins.</li>
+        <li><b>The 1m candles</b> are step 3. When the watch line says "waiting for a 1m close below …", switch the chart to 1m.</li>
+        <li>The <b>1m / 5m / 15m / 1H</b> buttons only change how the candles are drawn. They don't change the overlay.</li>
+        <li>Each paper trade saves whether the 4H agreed with it (4H ✓ or ✗ in your journal), so your own results show whether it helps you.</li>
+      </ol>
+    </div>
+    <p class="muted"><b>What our test says.</b> On 204 coins our bot traded (14 Sep – 13 Nov 2026), the simulator's 15m A+ shorts made −0.09R a trade with the 4H trend and −0.03R against it. A+ longs made −0.21R with the 4H trend and −0.33R against it, the worst group. Random entries did the same with or without the 4H trend. So on our coins, agreeing with the slow chart kept you out of the worst longs. It didn't make the setup profitable.</p>
+  </section>
+
+  <section id="smc-retest">
+    <h2><span class="n">8</span>Zone retest: the version in the group charts</h2>
+    <p>The NZDJPY, USDCHF, oil and Nikkei charts from the Telegram group use the same SMC idea with fewer steps. Mark the order block at the top of a move (the grey box), wait for a break of structure, then put a sell limit at the box's edge for the first return. The stop goes above the box and the target is the recent low. There's no sweep and no lower-timeframe CHoCH.</p>
+    <div class="sub" data-lesson="retest"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Zone retest (group charts)</th><th>Our A+ setup (lessons 6 and 7)</th></tr></thead>
+        <tbody>
+          <tr><td>Direction</td><td>Break of structure on the same chart</td><td>The same, plus the slow chart</td></tr>
+          <tr><td>Where</td><td>First return to the order block</td><td>Premium of the leg, or the supply zone</td></tr>
+          <tr><td>Liquidity sweep</td><td>Not needed</td><td>Needed: a wick past a high, then a close back</td></tr>
+          <tr><td>Entry</td><td>Sell limit already waiting at the zone edge</td><td>Close of the fast-chart CHoCH after the sweep</td></tr>
+          <tr><td>Stop</td><td>Just above the zone</td><td>Just above the sweep wick</td></tr>
+          <tr><td>Target</td><td>The recent low, about 3R</td><td>The leg's low, or 2R</td></tr>
+          <tr><td>Charts</td><td>1H and 4H on forex, oil and indices</td><td>15m and 5m on pump coins</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Skipping the sweep and the CHoCH gets a better price and a bigger R when the zone holds. When price runs straight through the box, the stop is hit with no warning. Our version waits for confirmation: fewer fills and a worse price, but it skips some of the run-throughs.</p>
+    <p class="muted"><b>What our test says.</b> We tested the zone retest on 18 forex, metal, oil and index markets (Nov 2023 – Oct 2026, spreads in). On the 4H it made −0.04R a trade over 5,017 trades, about the same as random entries (−0.05R). Gold was the one exception: +0.26R on the 4H, and +0.14R on an unseen 2022–24 period, but only with forex-tight spreads. With crypto perp fees it lost (−0.13R). The group's winning screenshots are the trades that worked. Nobody posts the stops.</p>
+  </section>
+
   <section id="smc-bard" data-lesson="bard">
-    <h2><span class="n">7</span>Real example: BARD, 12 Nov 2026</h2>
+    <h2><span class="n">9</span>Real example: BARD, 12 Nov 2026</h2>
     <p>Bybit perp, 5-minute candles, 17:00–19:30 UTC. Our bot shorted this WEAK pump at ENTER and got stopped for −$62. Replay it to see where the sweep rule would have shorted instead, and why a tight SMC stop would also have been hit.</p>
   </section>
 
   <section id="smc-drills">
-    <h2><span class="n">8</span>Practice drills</h2>
+    <h2><span class="n">10</span>Practice drills</h2>
     <p>Each chart stops at a decision. Pick an answer, then watch what happened. Drills 1–5 have a right answer. Drill 6 doesn't; it shows the price of the sweep rule.</p>
     <div class="score" id="smc-score" aria-live="polite">Score: 0 of 5 right</div>
     <div class="drills" id="smc-drill-list"></div>
   </section>
 
   <section id="smc-checklist">
-    <h2><span class="n">9</span>Our manual short checklist</h2>
+    <h2><span class="n">11</span>Our manual short checklist</h2>
     <p>Pump coins and big coins need different handling. Pump coins wick through tight stops: in our tests, every stop tighter than 8% lost money on them. Big coins allow a tight stop, but then the fees eat the edge.</p>
     <div class="cols">
       <div class="card">
@@ -197,7 +285,7 @@
   </section>
 
   <section id="smc-evidence">
-    <h2><span class="n">10</span>What our tests say</h2>
+    <h2><span class="n">12</span>What our tests say</h2>
     <p>SMC is popular and easy to draw after the fact. When we turned its rules into exact code and replayed them with fees, most versions lost money. The table lists what we tested and the result.</p>
     <div class="table-wrap">
       <table>
@@ -212,6 +300,10 @@
           <tr><td>New York first hour and Asia range sweep</td><td>BTC, ETH, gold, QQQ (1m)</td><td class="r neg">≈ 0R before fees, loses after</td></tr>
           <tr><td>Asia range and previous-day high/low sweeps</td><td>Forex majors</td><td class="r neg">loses in both halves</td></tr>
           <tr id="smc-majors-row"><td>1H swing-high sweep, 15m close back below, tight stop</td><td>BTC, ETH, BNB, DOGE, ADA, AVAX, 12 months</td><td class="r neg">−0.19R per trade (+0.10R before fees)</td></tr>
+          <tr><td>The Simulator's A+ setup (lesson 6 rules), 15m structure</td><td>207 coins our bot traded, 14 Oct – 13 Nov 2026</td><td class="r neg">−0.18R per trade, same as random entries</td></tr>
+          <tr><td>Same, only with the 4H trend (lesson 7)</td><td>204 traded coins, 14 Sep – 13 Nov 2026</td><td class="r neg">shorts −0.09R, longs −0.21R per trade</td></tr>
+          <tr><td>Zone retest, sell limit at the zone edge (lesson 8)</td><td>18 forex, metal, oil and index markets, 4H, Nov 2023 – Oct 2026</td><td class="r neg">−0.04R per trade (random −0.05R)</td></tr>
+          <tr><td>Same, gold only</td><td>Gold 4H 2023–26, then PAXG 2022–24 unseen</td><td class="r mix">+0.26R, then +0.14R with tight spreads; −0.13R with perp fees</td></tr>
         </tbody>
       </table>
     </div>
@@ -220,7 +312,7 @@
 
   <footer>
     <p>Not financial advice. This tab teaches chart concepts and reports our own backtests. It does not tell you what to trade.</p>
-    <p>Lesson charts 1–6 and the drills use invented candles. BARD candles: Bybit BARDUSDT perpetual, 5m, 12 Nov 2026 17:00–19:30 UTC.</p>
+    <p>Lesson charts 1–8 and the drills use invented candles. BARD candles: Bybit BARDUSDT perpetual, 5m, 12 Nov 2026 17:00–19:30 UTC.</p>
   </footer>
 </div>
 <script>
@@ -463,6 +555,102 @@
       { at: 23, t: 'TP2 hits. If the pullback had never come, the trade is simply missed.' },
     ],
   };
+  // lesson 7: one move on three timeframes. The 15m chart is 4H candles 16–17 zoomed in, the 1m chart is 15m candles 14–15.
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const clock = (startMin, step, n, day) => Array.from({ length: n }, (_, i) => {
+    const m = startMin + step * i;
+    return (day ? DAYS[Math.floor(m / 1440) % 7] + ' ' : '') + String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  });
+  L.tf4h = {
+    aria: '4 hour chart: higher high, CHoCH down, lower high with a supply zone, lower low, then a bounce into premium that wicks into the supply zone',
+    candles: gen([104.0, 106.2, 108.8, 110.6, 108.3, 105.9, 103.6, 105.45, 106.6, 104.0, 101.8, 99.2, 97.0, 98.6, 100.1, 102.0, 104.9, 101.4],
+      { O: { 0: 102.6 }, H: { 3: 111.4, 8: 107.6, 16: 106.85, 17: 105.1 }, L: { 0: 102.2, 6: 103.1, 12: 96.4, 16: 101.9, 17: 101.0 } }),
+    times: clock(0, 240, 18, true), xEvery: 6,
+    ann: [
+      { type: 'mark', i: 3, y: 111.4, label: 'HH', cls: 'struct', at: 5 },
+      { type: 'mark', i: 6, y: 103.1, label: 'HL', cls: 'struct', pos: 'below', at: 8 },
+      { type: 'line', y: 103.1, i0: 6, i1: 10, cls: 'choch', label: 'CHoCH', ly: 'below', at: 10 },
+      { type: 'mark', i: 8, y: 107.6, label: 'LH', cls: 'struct', at: 10 },
+      { type: 'zone', y0: 105.45, y1: 107.6, i0: 8, i1: 17, cls: 'supply', label: 'Supply zone', lp: 'in-left', at: 10 },
+      { type: 'mark', i: 12, y: 96.4, label: 'LL', cls: 'struct', pos: 'below', at: 14 },
+      { type: 'zone', y0: 102.0, y1: 105.45, i0: 12, i1: 17, cls: 'prem', label: 'Premium', lp: 'in-left', at: 14 },
+      { type: 'line', y: 102.0, i0: 12, i1: 17, cls: 'eq', label: '50%', lp: 'before', at: 14 },
+      { type: 'mark', i: 16, y: 106.85, label: 'Into the zone', cls: 'sweep', anchor: 'end', at: 16 },
+    ],
+    notes: [
+      { at: 5, t: 'The 4H makes a higher high at 111.4. Buyers are in control.' },
+      { at: 10, t: 'This 4H candle closes below the last higher low (103.1): CHoCH. The 4H now says short. The last up candle before the drop, 105.45 to 107.6, is the supply zone.' },
+      { at: 14, t: 'A lower low at 96.4. Measure the leg from the lower high (107.6) to 96.4: the 50% line is 102.0. Above it is premium.' },
+      { at: 15, t: 'Price bounces back to 102. On the 4H you just wait. Shorts are allowed once price is in premium, under the supply zone.' },
+      { at: 16, t: 'Price is in premium and wicks into the supply zone. Open the 15m to see this candle in detail (step 2).' },
+      { at: 17, t: 'The next 4H candle drops to 101.4. On the 4H the whole entry is hidden inside one candle. That is why you need the faster charts.' },
+    ],
+  };
+  L.tf15 = {
+    aria: '15 minute chart of the bounce: rising steps, equal highs inside the 4 hour supply zone, a sweep candle that closes back below, then a drop to the start of the bounce',
+    candles: gen([102.4, 102.9, 103.6, 103.2, 104.0, 104.7, 104.3, 104.9, 105.4, 104.95, 105.15, 105.45, 105.05, 105.30, 105.35, 104.90, 104.4, 104.6, 103.9, 103.2, 102.7, 102.1, 101.8, 101.9],
+      { wick: 0.0012, O: { 0: 102.0 }, H: { 8: 105.70, 11: 105.72, 14: 106.85 }, L: { 0: 101.9, 14: 105.1, 22: 101.6 } }),
+    digits: 2, times: clock(16 * 60, 15, 24), xEvery: 4,
+    ann: [
+      { type: 'zone', y0: 105.45, y1: 107.6, i0: 0, i1: 23, cls: 'supply', label: '4H supply zone', lp: 'in-left', at: 0 },
+      { type: 'line', y: 102.0, i0: 0, i1: 23, cls: 'eq', label: '4H 50%', at: 0 },
+      { type: 'line', y: 105.72, i0: 8, i1: 14, cls: 'liq', label: 'Equal highs', at: 11 },
+      { type: 'mark', i: 14, y: 106.85, label: 'Sweep, close back below', cls: 'sweep', anchor: 'end', at: 14 },
+      { type: 'box', i0: 15, i1: 23, entry: 105.10, stop: 106.95, tp: 101.95, entryLabel: 'Short (from the 1m)', tpLabel: 'TP1', at: 15 },
+    ],
+    notes: [
+      { at: 4, t: 'Inside the 4H bounce, the 15m looks bullish: higher highs and higher lows. That is normal. It is the 4H pullback, so don\'t take direction from it.' },
+      { at: 11, t: 'Two equal highs at about 105.7, just inside the 4H supply zone. Early shorts\' stops and breakout buys sit above them: liquidity.' },
+      { at: 14, t: 'This candle spikes to 106.85, takes the equal highs and closes back below at 105.35. The sweep is confirmed. Switch to the 1m for the entry (step 3).' },
+      { at: 15, t: 'The 1m entry happens inside this candle: short 105.10, stop 106.95 above the wick.' },
+      { at: 21, t: 'TP1 at the start of the bounce (101.95), the 15m sell-side liquidity: 1.7R. The 4H low at 96.4 is the bigger target.' },
+    ],
+  };
+  L.tf1 = {
+    aria: '1 minute chart of the sweep candle: a swing low, a spike to 106.85, the 15 minute close, then a close below the swing low as the entry',
+    candles: gen([105.45, 105.60, 105.50, 105.35, 105.28, 105.62, 105.95, 106.30, 106.55, 106.05, 105.80, 105.95, 105.65, 105.50, 105.35, 105.42, 105.10, 105.22, 104.95, 105.05, 104.80, 104.70, 104.85, 104.55],
+      { wick: 0.0006, O: { 0: 105.30 }, H: { 8: 106.85 }, L: { 4: 105.20 } }),
+    digits: 2, times: clock(19 * 60 + 30, 1, 24), xEvery: 5,
+    ann: [
+      { type: 'zone', y0: 105.45, y1: 107.6, i0: 0, i1: 23, cls: 'supply', label: '4H supply zone', at: 0 },
+      { type: 'line', y: 105.72, i0: 0, i1: 23, cls: 'liq', label: '15m equal highs', lp: 'end', at: 0 },
+      { type: 'mark', i: 4, y: 105.20, label: 'Last 1m swing low', cls: 'struct', pos: 'below', anchor: 'start', at: 7 },
+      { type: 'mark', i: 8, y: 106.85, label: 'Sweep wick', cls: 'sweep', at: 8 },
+      { type: 'line', y: 105.20, i0: 4, i1: 16, cls: 'choch', label: '1m CHoCH', ly: 'below', at: 16 },
+      { type: 'line', y: 106.95, i0: 16, i1: 23, cls: 'stop', label: 'Stop 106.95', lp: 'end', at: 16 },
+      { type: 'line', y: 105.10, i0: 16, i1: 23, cls: 'entry', label: 'Short 105.10', lp: 'end', ly: 'below', at: 16 },
+    ],
+    notes: [
+      { at: 7, t: 'The last 1m swing low before the spike is 105.20 (confirmed three candles later). Mark it: it is the trigger level.' },
+      { at: 8, t: 'The spike into the 4H zone. This wick, 106.85, is the sweep the 15m showed.' },
+      { at: 14, t: 'The 15m candle closes here at 105.35, back below the equal highs. Only now is the sweep confirmed. Before this close it could still have become a breakout.' },
+      { at: 16, t: 'A 1m close below 105.20: CHoCH. Short 105.10 at the close, stop 106.95 just above the wick. The targets come from the slower charts: 101.95 (15m, 1.7R) and 96.4 (the 4H low, 4.7R).' },
+      { at: 23, t: 'The 1m only times the entry. If the 4H had been bullish, this same 1m CHoCH would just be a dip in an uptrend.' },
+    ],
+  };
+  // lesson 8: the group charts' zone retest, a resting sell limit at the order block's edge
+  L.retest = {
+    aria: 'Rise, last up candle marked as a supply zone, break of structure, first return fills a sell limit at the zone edge, target the recent low',
+    candles: gen([100.0, 100.5, 101.1, 101.6, 102.2, 101.0, 99.9, 99.2, 98.7, 99.1, 99.6, 100.3, 100.9, 101.4, 101.2, 100.6, 99.9, 99.2, 98.6, 98.8],
+      { O: { 0: 99.6, 4: 101.6 }, H: { 4: 102.6, 13: 101.75 }, L: { 0: 99.5, 8: 98.4, 18: 98.35 } }),
+    ann: [
+      { type: 'mark', i: 4, y: 102.6, label: 'Last up candle', cls: 'struct', at: 4 },
+      { type: 'zone', y0: 101.6, y1: 102.6, i0: 4, i1: 19, cls: 'supply', label: 'Supply zone (the grey box)', at: 7 },
+      { type: 'line', y: 99.5, i0: 0, i1: 7, cls: 'bos', label: 'BOS', ly: 'below', at: 7 },
+      { type: 'mark', i: 8, y: 98.4, label: 'Recent low', cls: 'struct', pos: 'below', at: 10 },
+      { type: 'box', i0: 13, i1: 19, entry: 101.6, stop: 102.7, tp: 98.4, entryLabel: 'Sell limit', tpLabel: 'Recent low', at: 12 },
+      { type: 'mark', i: 13, y: 101.75, label: 'Filled at the edge', cls: 'sweep', anchor: 'end', at: 13 },
+      { type: 'mark', i: 18, y: 98.35, label: 'Target hit', cls: 'tp', pos: 'below', at: 18 },
+    ],
+    notes: [
+      { at: 4, t: 'The last up candle before the drop. The group\'s grey box runs from its body bottom (101.6) to its high (102.6). That is the order block.' },
+      { at: 7, t: 'A close below the low the move started from: break of structure. The box above is now a supply zone.' },
+      { at: 10, t: 'The recent low, 98.4, becomes the target.' },
+      { at: 12, t: 'The order is placed before price gets back: sell limit at the zone edge (101.6), stop just above the box (102.7), target the recent low. About 2.9R, with no sweep and no lower-timeframe CHoCH.' },
+      { at: 13, t: 'The first return to the box fills the order.' },
+      { at: 18, t: 'Target hit. When it works, the entry beats ours because it waits for nothing. When price runs straight through the box, the stop is hit with no warning.' },
+    ],
+  };
   const bardK = [[0.11299,0.12184,0.11036,0.12135],[0.12135,0.12971,0.11987,0.12514],[0.12514,0.12891,0.12232,0.12503],[0.12503,0.12837,0.1223,0.12591],[0.12591,0.13062,0.11959,0.1201],[0.1201,0.12347,0.11836,0.12221],[0.12221,0.12496,0.11721,0.12365],[0.12365,0.12721,0.12227,0.1238],[0.1238,0.12804,0.12345,0.12593],[0.12593,0.13231,0.11336,0.12232],[0.12232,0.12413,0.12011,0.1219],[0.1219,0.126,0.12096,0.12395],[0.12395,0.12694,0.12196,0.12616],[0.12616,0.12624,0.12299,0.12379],[0.12379,0.12925,0.12342,0.12908],[0.12908,0.13424,0.12828,0.13087],[0.13087,0.13281,0.13024,0.13187],[0.13187,0.13431,0.1298,0.13101],[0.13101,0.13958,0.13101,0.13955],[0.13955,0.13955,0.13555,0.13652],[0.13652,0.13771,0.13309,0.13523],[0.13523,0.13789,0.13259,0.13448],[0.13448,0.1347,0.13077,0.13281],[0.13281,0.1344,0.13172,0.1323],[0.1323,0.13504,0.13019,0.1343],[0.1343,0.13661,0.13258,0.13517],[0.13517,0.13521,0.13134,0.13297],[0.13297,0.135,0.13177,0.13324],[0.13324,0.13339,0.12547,0.12639],[0.12639,0.12823,0.12628,0.12721],[0.12721,0.12874,0.12558,0.12806]];
   L.bard = {
     aria: 'BARD 5 minute candles: 24h top at 0.13231, bot short at 0.12554 stopped at 18:30, sweep at 18:15 and a sweep short at 0.13087 that survives with an 8 percent stop',
@@ -526,7 +714,7 @@
     range.oninput = () => { stop(); n = +range.value; render(); };
     observe(host, render); render();
   }
-  ['structure', 'liquidity', 'breakout', 'supply', 'premium', 'setup', 'bard'].forEach(lesson);
+  ['structure', 'liquidity', 'breakout', 'supply', 'premium', 'setup', 'tf4h', 'tf15', 'tf1', 'retest', 'bard'].forEach(lesson);
 
   // ---------- drills ----------
   const D = [
