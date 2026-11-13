@@ -50,6 +50,13 @@
 #sim-cmp-btn[aria-pressed="true"] { border-color: #60a5fa; color: #60a5fa; }
 .sim-grid.wide { grid-template-columns: minmax(0, 1fr); }   /* two charts: they take the full width, the ticket goes below */
 @media (max-width: 760px) { .sim-charts.two { grid-template-columns: minmax(0, 1fr); } .sim-charts.two #sim-cmp-chart { height: 320px; } }
+/* ⛶ full screen: the chart card covers the page; the charts take all the height the bars above them leave */
+.sim-card.full { position: fixed; inset: 0; z-index: 95; border: 0; border-radius: 0; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.sim-card.full > * { flex: 0 0 auto; }
+.sim-card.full .sim-charts { flex: 1 1 auto; min-height: 320px; display: grid; grid-auto-rows: minmax(0, 1fr); gap: 8px; }
+.sim-card.full .sim-chartwrap { height: 100%; min-height: 0; }
+.sim-card.full .sim-chart, .sim-card.full .sim-charts.two #sim-cmp-chart { height: 100%; }
+#sim-full.on { border-color: #60a5fa; color: #60a5fa; }
 .sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
 .sim-legend b { color: var(--text); font-weight: 600; }
 .sim-posblk { display: grid; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
@@ -206,9 +213,10 @@
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices, about 1–2 minutes behind, no volume. Practice only: the bot can't trade forex.">Forex (practice only · ~1–2 min behind):</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Alerts:</span>
-        <button type="button" class="b" id="sim-alert-btn" aria-pressed="false" title="While this page is open, checks the coins picked in the menu above every minute and alerts you (sound + notification) when a new A+ setup appears">🔔 Alert me</button>
+        <button type="button" class="b" id="sim-alert-btn" aria-pressed="false" title="While this page is open, checks the coins picked in the menu above, plus the coin on your chart and the compare chart, every minute and alerts you (sound + notification) when a new A+ setup appears">🔔 Alert me</button>
         <select id="sim-alert-side" aria-label="Which setups to alert on"><option value="both">A+ shorts + longs</option><option value="short">A+ shorts only</option><option value="long">A+ longs only</option><option value="a3">A+++ longs only (deep discount / demand zone)</option></select>
         <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-alert-early" checked> heads-up at 3/4 (sweep done, waiting for the 1m trigger)</label>
+        <label class="sim-opt" style="margin:0" title="The coin on your chart and the compare chart: price reaching the demand zone (long idea) or supply zone (short idea) of the move that made the last break, first time. Only these coins: across every coin we traded it would fire about every 1–2 minutes."><input type="checkbox" id="sim-alert-zone" checked> price reaches the demand / supply zone (coins on your charts)</label>
         <span class="sim-status" id="sim-alert-info" style="margin:0">Off.</span></div>
     </div>
     <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"><option value="GBPJPY"><option value="EURUSD"><option value="GBPUSD"><option value="USDJPY"><option value="EURJPY"><option value="AUDUSD"><option value="USDCAD"><option value="USDCHF"><option value="NZDUSD"><option value="EURGBP"><option value="GBPAUD"></datalist>
@@ -242,6 +250,7 @@
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
+          <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
           <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
@@ -1860,7 +1869,7 @@
   function listsPop(on) {
     if (LS.pop === on) return; LS.pop = on;
     $('sim-lists').classList.toggle('pop', on); $('sim-lists-shade').hidden = !on;
-    document.documentElement.style.overflow = on ? 'hidden' : '';   // the page behind stays still while you scroll the window
+    pageLock();   // the page behind stays still while you scroll the window
     if (!$('sim-lists').hidden) listsShow();
   }
   $('sim-lists-pop').onclick = () => listsPop(!LS.pop);
@@ -1872,6 +1881,7 @@
     const since = Date.now() - 48 * 3600e3, list = [], why = {};
     const add = (sym, tag) => { if (!sym) return; if (!why[sym]) { list.push(sym); why[sym] = []; } if (tag && why[sym].indexOf(tag) < 0) why[sym].push(tag); };
     if (onChartToo && S.sym) add(S.sym, 'on chart');
+    if (onChartToo && cmp.on && cmp.sym) add(cmp.sym, 'compare chart');
     for (const p of liveOpen()) add(p.sym, 'your open trade');
     for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'bot signal in last 48 h');
     if (scope !== 'signals') {
@@ -1928,11 +1938,12 @@
 
   // ---------- alerts: while the page is open, check the coins every minute for new A+ setups ----------
   const AKEY = 'sc_sim_alert_v1';
-  const AL = { on: false, side: 'both', early: true, cache: new Map(), seen: new Map(), skip: new Map(), list: [], run: 0, timer: null, ctx: null, cycle: 0, title: document.title };
+  const AL = { on: false, side: 'both', early: true, zone: true, cache: new Map(), seen: new Map(), skip: new Map(), list: [], run: 0, timer: null, ctx: null, cycle: 0, title: document.title };
   const ALERT_NOTE = 'Practice alerts while this page is open (checked every minute on closed 1m candles). Tested on the 207 coins our bot traded (14 Oct – 13 Nov 2026): ' +
     'A+ longs −0.31R a trade, shorts −0.05R (15m), no better than entering at a random time with the same stop and target; A+++ longs (deep discount / demand zone) −0.32R. ' +
-    'About half move 1R your way before the stop. Paper-trade them and let your journal show whether your picks do better.';
-  const saveAlert = () => { try { localStorage.setItem(AKEY, JSON.stringify({ on: AL.on, side: AL.side, early: AL.early })); } catch (e) { /* ignore */ } };
+    'About half move 1R your way before the stop. Zone alerts: buying the first touch of a demand zone lost −0.12 to −0.29R a trade in three months (it reached 1R before a stop under the zone about half the time); fading a 15m supply zone −0.13R vs −0.17R for a random short. Zone alerts are for the coins on your charts only. ' +
+    'Checks the coins picked in the menu, plus the coin on your chart and the compare chart. Paper-trade them and let your journal show whether your picks do better.';
+  const saveAlert = () => { try { localStorage.setItem(AKEY, JSON.stringify({ on: AL.on, side: AL.side, early: AL.early, zone: AL.zone })); } catch (e) { /* ignore */ } };
   try { Object.assign(AL, JSON.parse(localStorage.getItem(AKEY)) || {}); } catch (e) { /* ignore */ }
   function spot(x) {   // where the sweep wick sat in the move (1 = the far end), and whether it reached the order-block zone
     const sh = x.dir === -1, w = x.sweep.wick, rng = x.hi - x.lo;
@@ -1944,8 +1955,11 @@
     return (depth >= 0.75 ? (sh ? 'top of premium' : 'bottom of discount') : (sh ? 'mid premium' : 'mid discount')) + (zone ? (sh ? ', in supply zone' : ', in demand zone') : '');
   }
   function makeAlert(kind, sym, ex, x, px) {
-    const sh = x.dir === -1, side = sh ? 'short' : 'long', f = v => (+v).toFixed(precFor(px)), where = whereOf(x), a3 = isA3(x);
+    const sh = x.dir === -1, side = sh ? 'short' : 'long', f = v => (+v).toFixed(precFor(px));
     const a = { kind, sym, ex, tf: smc.tf, t: Date.now(), side };
+    if (kind === 'zone') return Object.assign(a, { title: `🧱 ${sym} at the ${sh ? 'supply' : 'demand'} zone`,   // no sweep yet: nothing to place
+      body: `${f(x.zone.bot)}–${f(x.zone.top)} · ${side} idea (${smc.tf}m), first touch · next: a sweep, then a 1m close ${sh ? 'below' : 'above'} the last 1m swing` });
+    const where = whereOf(x), a3 = isA3(x);
     if (kind === 'aplus') return Object.assign(a, { title: `🎯 ${sym} ${a3 ? 'A+++' : 'A+'} ${side}`, body: `entry ${f(x.entry)} · stop ${f(x.stop)} · target ${f(x.target)} · ${x.R.toFixed(1)}R · wick ${where}` });
     return Object.assign(a, { title: `⚠️ ${sym} ${a3 ? 'A+++ ' : ''}${side} 3/4`, body: `swept ${f(x.sweep.wick)} (${where}) · A+ if a 1m candle closes ${sh ? 'below' : 'above'} ${f(x.trig.p)}` });
   }
@@ -1961,7 +1975,7 @@
     } catch (e) { /* no sound */ }
   }
   function ping(title, body, a) {
-    beep(a && a.kind === 'heads' ? 1 : 2);
+    beep(a && (a.kind === 'heads' || a.kind === 'zone') ? 1 : 2);
     document.title = '🔔 ' + title + ' · ' + AL.title;
     try {
       if ('Notification' in window && Notification.permission === 'granted') {
@@ -1995,6 +2009,15 @@
       prev.conf = last.conf;
     }
     const leg = A.leg && !A.leg.dead ? A.leg : null;
+    // price reached the zone of the move that made the last break (demand for a long idea, supply for a short), first time,
+    // and hasn't closed through it
+    if (leg && leg.zone && leg.inZone) {
+      const key = leg.brk.t + '|' + leg.zone.t, z = leg.zone, held = leg.dir === -1 ? A.price <= z.top : A.price >= z.bot;
+      const side = AL.side === 'both' || AL.side === (leg.dir === -1 ? 'short' : 'long') || (AL.side === 'a3' && leg.dir === 1);
+      // only for the coins on your charts: across every coin we traded this fires ~960 times a day (15m, ~4.6 per coin)
+      const mine = sym === S.sym || (cmp.on && sym === cmp.sym);
+      if (key !== prev.zone) { prev.zone = key; if (AL.zone && mine && side && held && A.now - leg.inZone.t <= 15 * MIN) addAlert(makeAlert('zone', sym, ex, leg, A.price), quiet); }
+    }
     if (leg && leg.prem && leg.sweep && leg.trig) {
       const key = leg.brk.t + '|' + leg.sweep.wickT;
       if (key !== prev.heads) { prev.heads = key; if (AL.early && want(leg)) addAlert(makeAlert('heads', sym, ex, leg, A.price), quiet); }
@@ -2019,7 +2042,7 @@
   async function alertCycle() {
     const run = AL.run, t0 = Date.now(), first = AL.cycle === 0, before = AL.list.length;
     AL.timer = null;
-    const { list } = await coinList($('sim-scan-scope').value, false);
+    const { list } = await coinList($('sim-scan-scope').value, true);   // + the coin on your chart and the compare chart
     if (run !== AL.run) return;
     let next = 0, fails = 0;
     $('sim-alert-info').textContent = `Checking ${list.length} coins…`;
@@ -2048,6 +2071,7 @@
   $('sim-alert-btn').onclick = () => setAlerts(!AL.on, true);
   $('sim-alert-side').onchange = () => { AL.side = $('sim-alert-side').value; saveAlert(); };
   $('sim-alert-early').onchange = () => { AL.early = $('sim-alert-early').checked; saveAlert(); };
+  $('sim-alert-zone').onchange = () => { AL.zone = $('sim-alert-zone').checked; saveAlert(); };
 
   // ---------- modes, tools, inputs ----------
   function setMode(m, quiet) {
@@ -2149,7 +2173,7 @@
   function start() {
     if (started) return; started = true;
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
-    $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early;
+    $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early; $('sim-alert-zone').checked = AL.zone !== false;
     initChart(); renderJournal(); setTool(null); setRealPoll();
     if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
@@ -2197,6 +2221,36 @@
     loadReplay(sym, t, $('sim-ex').value, [], `${sym.toUpperCase()} from ${utc(t)} UTC`);
   };
   $('sim-fit').onclick = () => { if (S.cur >= 0) redraw(true); };
+  // ⛶ full screen like TradingView: the chart card covers the page, and the browser's own full screen hides its bars
+  // where it allows that (not on iPhone: there the card just fills the window)
+  const full = { on: false, y: 0, real: false };
+  const pageLock = () => { document.documentElement.style.overflow = full.on || LS.pop ? 'hidden' : ''; };
+  function setFull(on) {
+    if (full.on === on) return;
+    const card = $('sim-chart').closest('.sim-card'), b = $('sim-full'), d = document;
+    if (on) { full.y = window.scrollY; listsPop(false); closePop(); }
+    full.on = on; card.classList.toggle('full', on); pageLock();
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); b.textContent = on ? '✕ Exit full screen' : '⛶ Full screen';
+    if (on) {
+      const el = d.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
+      full.real = false;
+      if (req) try { const r = req.call(el); full.real = true; if (r && r.catch) r.catch(() => { full.real = false; }); } catch (e) { full.real = false; }
+    } else {
+      const fsEl = d.fullscreenElement || d.webkitFullscreenElement, ex = d.exitFullscreen || d.webkitExitFullscreen;
+      if (fsEl && ex) try { const r = ex.call(d); if (r && r.catch) r.catch(() => {}); } catch (e) { /* ignore */ }
+      full.real = false; requestAnimationFrame(() => window.scrollTo(0, full.y));   // back where you were on the page
+    }
+  }
+  $('sim-full').onclick = () => setFull(!full.on);
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, () => {   // Esc in the browser's full screen
+    if (full.on && full.real && !(document.fullscreenElement || document.webkitFullscreenElement)) setFull(false);
+  }));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && full.on && !pxPop && !LS.pop) setFull(false);
+    else if (e.key === 'F' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) {
+      const panel = document.getElementById('tab-sim'); if (panel && panel.classList.contains('active')) { e.preventDefault(); setFull(!full.on); }
+    }
+  });
   $('sim-cmp-btn').onclick = () => {
     if (cmp.on) return cmpShow(false);
     // one tap gives a useful pair: BTC ↔ ETH, a forex pair next to EUR/USD (or GBP/USD), anything else next to BTC
