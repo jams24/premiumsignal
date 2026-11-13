@@ -14,7 +14,9 @@
 .sim-seg button { border: 0; border-radius: 0; background: var(--surface); color: var(--text2); padding: 9px 14px; font: 600 12px/1 var(--font-mono); cursor: pointer; }
 .sim-seg button + button { border-left: 1px solid var(--border); }
 .sim-seg button[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); }
-.sim-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: grid; gap: 10px; min-width: 0; align-content: start; }
+.sim-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: grid; gap: 10px; min-width: 0; align-content: start;
+  grid-template-columns: minmax(0, 1fr); }   /* the column never grows to fit a chart drawn wider (after full screen or a narrower window), so the chart can shrink back */
+.sim-charts { min-width: 0; }
 .sim-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
 .sim-row > label { font: 600 11px/1 var(--font-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .sim input, .sim select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: 400 13px/1.2 var(--font-mono); min-width: 0; }
@@ -57,6 +59,10 @@
 .sim-card.full .sim-chartwrap { height: 100%; min-height: 0; }
 .sim-card.full .sim-chart, .sim-card.full .sim-charts.two #sim-cmp-chart { height: 100%; }
 #sim-full.on { border-color: #60a5fa; color: #60a5fa; }
+.sim-drawbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.sim-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; flex: 0 0 auto; }
+.sim-swatch.on { border-color: #fff; box-shadow: 0 0 0 1px #000 inset; }
+.sim-chart.drawing { cursor: crosshair; touch-action: none; }
 .sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
 .sim-legend b { color: var(--text); font-weight: 600; }
 .sim-posblk { display: grid; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
@@ -249,11 +255,22 @@
         <div class="sim-row">
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
+          <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe.">✏️ Draw</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
           <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
+      </div>
+      <div class="sim-drawbar" id="sim-drawbar" hidden>
+        <button type="button" class="b on" data-draw="pen" title="Press and drag on the chart">✏️ Pencil</button>
+        <button type="button" class="b" data-draw="zig" title="Click each turn; double-click, Enter or ✓ Finish to end it">〰 Zig-zag</button>
+        <button type="button" class="b" data-draw="line" title="Click the start and the end">／ Line</button>
+        <span style="display:flex;gap:5px;align-items:center"><button type="button" class="sim-swatch on" data-color="#f59e0b" style="background:#f59e0b" aria-label="Gold"></button><button type="button" class="sim-swatch" data-color="#60a5fa" style="background:#60a5fa" aria-label="Blue"></button><button type="button" class="sim-swatch" data-color="#10b981" style="background:#10b981" aria-label="Green"></button><button type="button" class="sim-swatch" data-color="#ef4444" style="background:#ef4444" aria-label="Red"></button><button type="button" class="sim-swatch" data-color="#e5e7eb" style="background:#e5e7eb" aria-label="White"></button></span>
+        <button type="button" class="b" id="sim-draw-undo">↶ Undo</button>
+        <button type="button" class="b" id="sim-draw-clear">Clear drawings</button>
+        <button type="button" class="b go" id="sim-draw-done">✓ Done</button>
+        <span class="sim-status" id="sim-draw-hint" style="margin:0;flex-basis:100%"></span>
       </div>
       <div class="sim-smcbar">
         <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-smc-on" checked> SMC overlay</label>
@@ -517,6 +534,7 @@
     vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     smcLayer = makeLayer(() => ({ main: true, A: smc.A, chart, cs, bucket, tf: S.tf, base: S.base, cur: S.cur })); cs.attachPrimitive(smcLayer);
+    drawLayer = makeDrawLayer(); cs.attachPrimitive(drawLayer);
     chart.subscribeClick(onChartClick);
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(false));   // the second chart scrolls and zooms with this one
     chart.subscribeCrosshairMove(p => cmpCross(p, false));
@@ -1358,7 +1376,7 @@
   function setData(r) {
     S.base = r.candles; S.sym = r.symbol.replace(/USDT$/, ''); S.ex = r.exchange;
     S.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0); S.marks = [];   // forex: 210.969 / 1.10278 (pipettes)
-    if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = [];
+    if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = []; DR.cur = null; DR.hover = null;
     $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
     recomputeFull(); loadHtf(); cmpAfterMain();
   }
@@ -2103,7 +2121,154 @@
     if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
     renderTicket();   // the Practice / Real switch is for Live only
   }
+  // ---------- ✏️ drawing: pencil, zig-zag, straight line ----------
+  // Points are kept as [time, price], so a drawing stays on the same candles and prices when you scroll, zoom or change
+  // timeframe. Saved in this browser per coin (Live and Replay share them). The chart doesn't scroll while drawing.
+  const DR = { on: false, kind: 'pen', color: '#f59e0b', all: {}, cur: null, hover: null, down: false, lastPx: null, key: 'sc_sim_draw_v1', armed: false };
+  try { DR.all = JSON.parse(localStorage.getItem(DR.key)) || {}; } catch (e) { DR.all = {}; }
+  let drawLayer = null;
+  const saveDraw = () => { try { localStorage.setItem(DR.key, JSON.stringify(DR.all)); } catch (e) { /* full or private: kept until reload */ } };
+  const myDrawings = () => (S.sym && DR.all[S.sym]) || [];
+  function tToX(t) {   // a time → x on the main chart, between candles and past either end too
+    const Bt = S.Bt, n = Bt.length, st = TF[S.tf]; if (!n || !chart) return null;
+    let l;
+    if (t <= Bt[0]) l = (t - Bt[0]) / st;
+    else if (t >= Bt[n - 1]) l = n - 1 + (t - Bt[n - 1]) / st;
+    else { const i = atOrBefore(n, k => Bt[k], t); l = i + (t - Bt[i]) / Math.max(1, Bt[i + 1] - Bt[i]); }
+    return chart.timeScale().logicalToCoordinate(l);
+  }
+  function xToT(x) {
+    const Bt = S.Bt, n = Bt.length, st = TF[S.tf]; if (!n || !chart) return null;
+    const l = chart.timeScale().coordinateToLogical(x); if (l == null || !isFinite(l)) return null;
+    if (l <= 0) return Bt[0] + l * st;
+    if (l >= n - 1) return Bt[n - 1] + (l - n + 1) * st;
+    const i = Math.floor(l); return Bt[i] + (l - i) * (Bt[i + 1] - Bt[i]);
+  }
+  function makeDrawLayer() {
+    let req = null;
+    const view = { zOrder: () => 'top', renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintDraw(sc.context)) }) };
+    return { attached: p => { req = p.requestUpdate; }, detached: () => { req = null; }, paneViews: () => [view], updateAllViews: () => {}, update: () => { if (req) req(); } };
+  }
+  function paintDraw(g) {
+    if (!cs || !S.sym) return;
+    const list = myDrawings().slice();
+    if (DR.cur) list.push(DR.hover && DR.cur.k !== 'pen' ? Object.assign({}, DR.cur, { pts: DR.cur.pts.concat([DR.hover]) }) : DR.cur);
+    if (!list.length) return;
+    g.save(); g.lineJoin = 'round'; g.lineCap = 'round'; g.font = '600 10px "JetBrains Mono", monospace'; g.textBaseline = 'middle';
+    for (const d of list) {
+      const P = d.pts.map(([t, p]) => [tToX(t), cs.priceToCoordinate(p)]);
+      g.strokeStyle = d.c; g.lineWidth = d.k === 'pen' ? 2 : 1.8; g.beginPath();
+      let on = false;
+      for (const [x, y] of P) { if (x == null || y == null) { on = false; continue; } if (!on) { g.moveTo(x, y); on = true; } else g.lineTo(x, y); }
+      g.stroke();
+      if (d.k === 'pen') continue;
+      g.fillStyle = d.c;
+      P.forEach(([x, y]) => { if (x != null && y != null) { g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill(); } });
+      for (let i = 1; i < P.length; i++) {   // each leg's move in %, at its end
+        const [x, y] = P[i]; if (x == null || y == null) continue;
+        const ch = (d.pts[i][1] / d.pts[i - 1][1] - 1) * 100, txt = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`, w = g.measureText(txt).width + 8, up = d.pts[i][1] >= d.pts[i - 1][1];
+        const yy = y + (up ? -12 : 12);
+        g.fillStyle = 'rgba(19,23,34,0.88)'; g.fillRect(x - w / 2, yy - 7, w, 14);
+        g.fillStyle = d.c; g.textAlign = 'center'; g.fillText(txt, x, yy + .5);
+      }
+    }
+    g.restore();
+  }
+  const drawRedraw = () => { if (drawLayer) drawLayer.update(); };
+  function drawHint() {
+    const n = myDrawings().length;
+    $('sim-draw-hint').textContent = !DR.on ? '' :
+      (DR.kind === 'pen' ? 'Pencil: press and drag on the chart.' : DR.kind === 'zig' ? (DR.cur ? `Zig-zag: ${DR.cur.pts.length} point${DR.cur.pts.length > 1 ? 's' : ''} — click the next turn; double-click, Enter or ✓ Finish to end it, Esc to drop it.` : 'Zig-zag: click each turn (each leg shows its % move); double-click, Enter or ✓ Finish to end it.')
+        : (DR.cur ? 'Line: click where it ends.' : 'Line: click where it starts, then where it ends.')) +
+      ` The chart doesn't scroll while drawing — ✓ Done when you're finished. ${n ? `${n} drawing${n > 1 ? 's' : ''} on ${S.sym}.` : ''}`;
+    $('sim-draw-done').textContent = DR.cur && DR.cur.k !== 'pen' ? '✓ Finish line' : '✓ Done';
+    $('sim-draw-undo').disabled = !n && !DR.cur;
+  }
+  function drawMode(on) {
+    DR.on = on; DR.cur = null; DR.hover = null; DR.down = false;
+    if (on && S.tool) setTool(null);
+    if (on) closePop();
+    $('sim-drawbar').hidden = !on; $('sim-draw-btn').classList.toggle('on', on); $('sim-draw-btn').setAttribute('aria-pressed', String(on));
+    $('sim-chart').classList.toggle('drawing', on);
+    if (chart) chart.applyOptions({ handleScroll: !on, handleScale: !on });
+    drawHint(); drawRedraw();
+  }
+  function drawFinish() {   // keep the drawing in progress (if it has a shape) and save it
+    const d = DR.cur; DR.cur = null; DR.hover = null; DR.down = false;
+    if (d && S.sym && d.pts.length >= 2) { (DR.all[S.sym] = DR.all[S.sym] || []).push(d); if (DR.all[S.sym].length > 80) DR.all[S.sym].shift(); saveDraw(); }
+    drawHint(); drawRedraw();
+  }
+  function drawPoint(e) {   // the pointer → [time, price] and pixel, or null outside the candle area
+    const el = $('sim-chart'), r = el.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    const ts = chart.timeScale(), pw = ts.width(), ph = el.clientHeight - ts.height();
+    if (x < 0 || y < 0 || x > pw || y > ph) return null;
+    const t = xToT(x), p = cs.coordinateToPrice(y);
+    if (t == null || p == null || !isFinite(p)) return null;
+    return { pt: [Math.round(t), +(+p).toPrecision(8)], x, y };
+  }
+  (() => {
+    const el = $('sim-chart');
+    el.addEventListener('pointerdown', e => {
+      if (!DR.on || !chart || (e.button != null && e.button !== 0)) return;
+      const q = drawPoint(e); if (!q) return;
+      e.preventDefault();
+      if (DR.kind === 'pen') {
+        DR.cur = { k: 'pen', c: DR.color, pts: [q.pt] }; DR.down = true; DR.lastPx = [q.x, q.y];
+        try { el.setPointerCapture(e.pointerId); } catch (er) { /* ignore */ }
+      } else {
+        if (!DR.cur) DR.cur = { k: DR.kind, c: DR.color, pts: [q.pt] };
+        else {
+          const L = DR.cur.pts[DR.cur.pts.length - 1], lx = tToX(L[0]), ly = cs.priceToCoordinate(L[1]);
+          if (lx == null || ly == null || Math.hypot(q.x - lx, q.y - ly) > 4) DR.cur.pts.push(q.pt);   // a double-click's second press adds nothing
+          if (DR.kind === 'line' && DR.cur.pts.length >= 2) return drawFinish();
+        }
+      }
+      drawHint(); drawRedraw();
+    }, true);
+    el.addEventListener('pointermove', e => {
+      if (!DR.on || !DR.cur) return;
+      const q = drawPoint(e); if (!q) return;
+      if (DR.cur.k === 'pen') {
+        if (!DR.down) return;
+        if (Math.hypot(q.x - DR.lastPx[0], q.y - DR.lastPx[1]) < 3) return;   // fewer points, same line
+        DR.cur.pts.push(q.pt); DR.lastPx = [q.x, q.y];
+      } else DR.hover = q.pt;
+      drawRedraw();
+    }, true);
+    const up = () => { if (DR.on && DR.cur && DR.cur.k === 'pen' && DR.down) drawFinish(); };
+    el.addEventListener('pointerup', up, true); el.addEventListener('pointercancel', up, true);
+    el.addEventListener('dblclick', e => { if (DR.on && DR.cur && DR.cur.k === 'zig') { e.preventDefault(); drawFinish(); } }, true);
+    el.addEventListener('pointerleave', () => { if (DR.hover) { DR.hover = null; drawRedraw(); } });
+  })();
+  document.addEventListener('keydown', e => {
+    if (!DR.on || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'Enter' && DR.cur) { e.preventDefault(); drawFinish(); }
+    else if (e.key === 'Escape' && DR.cur) { DR.cur = null; DR.hover = null; DR.down = false; drawHint(); drawRedraw(); }
+    else if ((e.key === 'z' || e.key === 'Z') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('sim-draw-undo').click(); }
+  });
+  $('sim-draw-btn').onclick = () => drawMode(!DR.on);
+  document.querySelectorAll('#sim-drawbar [data-draw]').forEach(b => b.onclick = () => {
+    if (DR.cur) drawFinish();
+    DR.kind = b.dataset.draw; document.querySelectorAll('#sim-drawbar [data-draw]').forEach(x => x.classList.toggle('on', x === b)); drawHint();
+  });
+  document.querySelectorAll('#sim-drawbar [data-color]').forEach(b => b.onclick = () => {
+    DR.color = b.dataset.color; if (DR.cur) DR.cur.c = DR.color;
+    document.querySelectorAll('#sim-drawbar [data-color]').forEach(x => x.classList.toggle('on', x === b)); drawRedraw();
+  });
+  $('sim-draw-undo').onclick = () => {
+    if (DR.cur) { if (DR.cur.k !== 'pen' && DR.cur.pts.length > 1) DR.cur.pts.pop(); else DR.cur = null; }
+    else if (myDrawings().length) { DR.all[S.sym].pop(); if (!DR.all[S.sym].length) delete DR.all[S.sym]; saveDraw(); }
+    drawHint(); drawRedraw();
+  };
+  $('sim-draw-clear').onclick = () => {
+    const n = myDrawings().length; if (!n) return;
+    if (!DR.armed) { DR.armed = true; $('sim-draw-clear').textContent = `Click again to delete ${n} drawing${n > 1 ? 's' : ''}`; setTimeout(() => { DR.armed = false; $('sim-draw-clear').textContent = 'Clear drawings'; }, 4000); return; }
+    DR.armed = false; $('sim-draw-clear').textContent = 'Clear drawings'; delete DR.all[S.sym]; DR.cur = null; saveDraw(); drawHint(); drawRedraw();
+  };
+  $('sim-draw-done').onclick = () => { if (DR.cur && DR.cur.k !== 'pen') drawFinish(); else drawMode(false); };
+
   function setTool(t) {
+    if (t && DR.on) drawMode(false);
     S.tool = S.tool === t ? null : t;
     $('sim-tool-line').classList.toggle('on', S.tool === 'line');
     $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
@@ -2126,7 +2291,7 @@
     refresh();
   }
   function onChartClick(param) {
-    if (!param || !param.point) return;
+    if (!param || !param.point || DR.on) return;   // drawing: the pointer handlers below own the clicks
     if (!S.tool) { if (S.cur >= 0) openPop(param); return; }
     if (S.tool === 'rstop' || S.tool === 'rlimit') { const k = S.tool === 'rstop' ? 'stop' : 'limit'; setTool(null); if (S.cur >= 0) openPop(param, k); return; }
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
@@ -2263,7 +2428,7 @@
     if (full.on && full.real && !(document.fullscreenElement || document.webkitFullscreenElement)) setFull(false);
   }));
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && full.on && !pxPop && !LS.pop) setFull(false);
+    if (e.key === 'Escape' && full.on && !pxPop && !LS.pop && !DR.cur) setFull(false);
     else if (e.key === 'F' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) {
       const panel = document.getElementById('tab-sim'); if (panel && panel.classList.contains('active')) { e.preventDefault(); setFull(!full.on); }
     }
