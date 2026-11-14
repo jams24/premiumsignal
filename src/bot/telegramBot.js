@@ -821,7 +821,9 @@ class TelegramBot {
       try {
         const balances = await mtExec().getAllBalances();
         const bal = balances?.[st.exchangeId];
-        st.liveBalance = bal && !bal.error ? (bal.free || 0) : null;
+        // Bybit's unified account reports free = 0 through ccxt (53a1c67): use the wallet total then, like a market entry
+        st.liveBalance = bal && !bal.error ? (bal.free > 0 ? bal.free : (bal.total || 0)) : null;
+        st.liveBalanceWord = bal && !bal.error && !(bal.free > 0) && bal.total > 0 ? 'balance' : 'free';
       } catch (e) { st.liveBalance = null; }
     };
 
@@ -877,7 +879,7 @@ class TelegramBot {
       if (s.rr > 0 && s.rr < 1) warnings.push(`R:R is below 1 (1:${s.rr.toFixed(2)})`);
       if (st.mode === 'live') {
         if (st.liveBalance != null && st.margin > st.liveBalance) {
-          warnings.push(`Margin $${st.margin} > free $${st.liveBalance.toFixed(2)} on ${st.exchangeId} — size will be scaled down`);
+          warnings.push(`Margin $${st.margin} > ${st.liveBalanceWord || 'free'} $${st.liveBalance.toFixed(2)} on ${st.exchangeId} — size will be scaled down`);
         }
         warnings.push('LIVE mode — real funds');
       }
@@ -927,7 +929,7 @@ class TelegramBot {
       }
 
       const balLine = st.mode === 'live'
-        ? `💼 Free on ${st.exchangeId.toUpperCase()}: ${st.liveBalance != null ? `<b>$${st.liveBalance.toFixed(2)}</b>` : 'unavailable'}`
+        ? `💼 ${st.liveBalanceWord === 'balance' ? 'Balance' : 'Free'} on ${st.exchangeId.toUpperCase()}: ${st.liveBalance != null ? `<b>$${st.liveBalance.toFixed(2)}</b>` : 'unavailable'}`
         : `💼 Paper balance: <b>$${(te.paperBalance ?? 0).toFixed(2)}</b>`;
       const tpLine = (n, emoji, price, extra = '') => {
         const pct = s.profitPct(price);

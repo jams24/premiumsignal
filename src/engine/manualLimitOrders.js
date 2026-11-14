@@ -72,10 +72,11 @@ async function placeEntryLimit(te, cfg) {
     liqGuard = { mmrPct: mmrUsed, mmrKnown: mmrPct != null, from, to: leverage, slPct: +slPct.toFixed(2) };
   }
 
-  // Scale down to the free balance (same rule as a market order); the exchange rejects it anyway if still too big
+  // Scale down to the free balance (same rule as a market order); the exchange rejects it anyway if still too big.
+  // Bybit's unified account reports free = 0 through ccxt, so then the wallet total is used — as for a market entry.
   try {
     const bal = (await te.getAllBalances())?.[cfg.exchangeId];
-    const free = bal && !bal.error ? (bal.free || 0) : null;
+    const free = bal && !bal.error ? (bal.free > 0 ? bal.free : (bal.total || 0)) : null;
     if (free != null && positionSize / leverage > free * 0.9) {
       const maxSize = free * 0.9 * leverage;
       if (maxSize < 5) throw new Error(`Not enough free margin on ${cfg.exchangeId}: $${free.toFixed(2)}`);
