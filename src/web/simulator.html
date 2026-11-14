@@ -59,6 +59,18 @@
 .sim-card.full .sim-chartwrap { height: 100%; min-height: 0; }
 .sim-card.full .sim-chart, .sim-card.full .sim-charts.two #sim-cmp-chart { height: 100%; }
 #sim-full.on { border-color: #60a5fa; color: #60a5fa; }
+/* full screen toolbar: 🪙 the loader drops down inside the chart card, 🎫 the ticket column slides in on the right */
+.sim-fpanel { display: grid; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
+.sim-fpanel .sim-seg { justify-self: start; }
+.sim-fslot:empty { display: none; }
+.sim-recent { gap: 6px; }
+.sim-recent .b { padding: 6px 9px; }
+#sim-coin-btn.on, #sim-side-btn.on { border-color: #60a5fa; color: #60a5fa; }
+.sim-fdrawer { display: none; }
+.sim-card.full.with-side { padding-right: 384px; }
+.sim-card.full.with-side .sim-fdrawer { display: grid; position: fixed; top: 0; right: 0; bottom: 0; width: 372px; overflow-y: auto; overscroll-behavior: contain; background: var(--bg); border-left: 1px solid var(--border); padding: 10px; gap: 10px; align-content: start; z-index: 2; }
+.sim-fdrawer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 600 12px/1 var(--font-mono); color: var(--text2); }
+@media (max-width: 760px) { .sim-card.full.with-side { padding-right: 12px; } .sim-card.full.with-side .sim-fdrawer { width: 100%; border-left: 0; } }
 .sim-drawbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
 .sim-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; flex: 0 0 auto; }
 .sim-swatch.on { border-color: #fff; box-shadow: 0 0 0 1px #000 inset; }
@@ -181,9 +193,9 @@
 .sim-lists-body { display: grid; gap: 10px; align-content: start; max-height: min(340px, 50vh); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .sim-lists-body.fixed { height: min(340px, 50vh); }
 .sim-lists.fold .sim-lists-body { display: none; }
-.sim-lists.pop { position: fixed; z-index: 90; top: 4vh; left: 50%; transform: translateX(-50%); width: min(1100px, calc(100vw - 32px)); max-height: 92vh; background: var(--surface); padding: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+.sim-lists.pop { position: fixed; z-index: 97; top: 4vh; left: 50%; transform: translateX(-50%); width: min(1100px, calc(100vw - 32px)); max-height: 92vh; background: var(--surface); padding: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
 .sim-lists.pop .sim-lists-body { display: grid; flex: 1 1 auto; min-height: 0; height: auto; max-height: none; }
-.sim-shade { position: fixed; inset: 0; z-index: 89; background: rgba(0,0,0,.55); }
+.sim-shade { position: fixed; inset: 0; z-index: 96; background: rgba(0,0,0,.55); }   /* above the full-screen chart (95): the list pops up over it */
 /* ⏱ when the coin moves: busy / quiet hours and weekdays from its 1H history */
 .sim-rhythm-d { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 18px; margin-top: 8px; }
 .sim-rhythm-d figure { margin: 0; max-width: 540px; }
@@ -227,7 +239,7 @@
       <h1>Trade Simulator</h1>
       <p>Practise the SMC Playbook on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now. For a real trade, switch the ticket to <b>Real · via Telegram</b>: it fills in your <code>/short</code> · <code>/long</code> panel in Telegram, and you place it there with ✅. Click any price on the chart to copy it or put it in the ticket.</p>
     </div>
-    <div class="sim-seg" role="group" aria-label="Mode">
+    <div class="sim-seg" role="group" aria-label="Mode" id="sim-mode-seg">
       <button type="button" id="sim-m-replay" aria-pressed="true">Replay</button>
       <button type="button" id="sim-m-live" aria-pressed="false">Live</button>
     </div>
@@ -252,7 +264,7 @@
       <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
       <button type="button" class="b go" id="sim-load-live">Load live chart</button>
       <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the chosen structure timeframe">🔎 Find setups</button>
-      <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option></select>
+      <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option><option value="top">top 50 coins by volume + signals 48 h</option></select>
       <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
       <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
@@ -305,6 +317,7 @@
           <button type="button" class="b" data-tf="1d" title="Daily candles (UTC days): the chart's own minutes plus up to 1,000 days of the coin's daily history">1D</button>
         </div>
         <div class="sim-row">
+          <button type="button" class="b" id="sim-coin-btn" aria-expanded="false" title="Change coin or signal. In full screen the loader opens here, above the chart; you can also just start typing a coin name.">🪙 Coin</button>
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
           <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe.">✏️ Draw</button>
@@ -312,9 +325,14 @@
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
           <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
           <button type="button" class="b" id="sim-news-btn" title="This week's economic news (CPI, jobs, FOMC…) and the next Fed rate decisions, in UTC like the chart">📅 News</button>
+          <button type="button" class="b" id="sim-lists-btn" title="Open the alert / setup list in a big window (works in full screen too)" hidden>🔔 Alerts</button>
+          <button type="button" class="b" id="sim-side-btn" aria-pressed="false" title="Order ticket, your position and real positions on the right, without leaving full screen" hidden>🎫 Ticket</button>
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
+        <div class="sim-row sim-recent" id="sim-recent" hidden></div>
       </div>
+      <div class="sim-fpanel" id="sim-fpanel" hidden></div>
+      <div class="sim-fslot" id="sim-fslot"></div>
       <div class="sim-drawbar" id="sim-drawbar" hidden>
         <button type="button" class="b on" data-draw="pen" title="Press and drag on the chart">✏️ Pencil</button>
         <button type="button" class="b" data-draw="zig" title="Click each turn; double-click, Enter or ✓ Finish to end it">〰 Zig-zag</button>
@@ -362,9 +380,10 @@
         <select id="sim-speed" aria-label="Playback speed"><option value="1">1 min / tick</option><option value="2">2 min / tick</option><option value="5" selected>5 min / tick</option><option value="15">15 min / tick</option></select>
         <button type="button" class="b" id="sim-until-exit" title="Play until your simulated trade closes">⏩ Play to exit</button>
       </div>
+      <div class="sim-fdrawer" id="sim-fdrawer"><div class="sim-fdrawer-bar">Ticket · positions <button type="button" class="b" id="sim-side-close">✕ Close</button></div></div>
     </div>
 
-    <div class="sim-side">
+    <div class="sim-side" id="sim-side">
       <div class="sim-card sim-coach" id="sim-coach" hidden>
         <h3>SMC coach <small id="sim-coach-n"></small></h3>
         <div class="sim-steps" id="sim-coach-bar"></div>
@@ -1481,7 +1500,7 @@
   const replayOpen = () => S.open.some(p => p.mode === 'replay');
   async function loadReplay(sym, t, ex, extraMarks, label) {
     if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
-    stopAll(); setMode('replay', true);
+    stopAll(); setMode('replay', true); coinPanel(false);
     const start = t - 24 * 3600e3, end = Math.min(Date.now(), t + 24 * 3600e3);
     status(`Loading ${sym} candles around ${utc(t)} UTC…`);
     const my = ++S.load;
@@ -1493,13 +1512,13 @@
       let i = -1; for (let j = 0; j < S.base.length; j++) { if (S.base[j][0] + MIN <= t) i = j; else break; }
       S.cur = Math.max(0, i);
       S.marks = (extraMarks || []).filter(m => m.t >= S.base[0][0]);
-      redraw(true);
+      redraw(true); recentAdd(S.sym, ex);
       status(`${label || S.sym} — paused at ${utc(nowT())} UTC. Read the chart, decide, then press Play or →.`);
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
   async function loadLive(sym, ex) {
     if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
-    stopAll();
+    stopAll(); coinPanel(false);
     status(`Loading live ${sym}…`);
     const my = ++S.load;
     try {
@@ -1511,7 +1530,7 @@
       const own = S.pos;
       if (own && own.caught) for (const k of S.base) if (k[0] >= (own.chk || 0) && S.open.includes(own)) liveBar(own, k);
       if (S.pos) S.marks = posMarks(S.pos);
-      smc.seen = Infinity; redraw(true);
+      smc.seen = Infinity; redraw(true); recentAdd(S.sym, ex);
       smc.seen = smc.A && smc.A.setups.length ? smc.A.setups[smc.A.setups.length - 1].conf : 0;
       const bg = liveOpen().filter(p => p.sym !== S.sym);
       status(`Live ${S.sym} on ${exLabel(S.ex)}. ` + (r.closed ? 'The forex market is closed (weekend): this is its last session. ' : '') + (bg.length ? `Your ${bg.map(p => p.sym + ' ' + p.side).join(', ')} ${bg.length === 1 ? 'keeps' : 'keep'} updating in the background.` : 'Paper trades fill at the last price.'));
@@ -2091,7 +2110,9 @@
   try { LS.fold = !!(JSON.parse(localStorage.getItem(LS.key)) || {}).fold; } catch (e) { /* ignore */ }
   function listsShow() {
     const scanOn = !$('sim-scan').hidden, any = scanOn || !$('sim-alerts').hidden;
-    $('sim-lists').hidden = !any; if (!any) { listsPop(false); return; }
+    $('sim-lists').hidden = !any; $('sim-lists-btn').hidden = !any; if (!any) { listsPop(false); return; }
+    const nA = $('sim-alerts').hidden ? 0 : $('sim-alerts').querySelectorAll('[data-scan]').length, nS = scanOn ? $('sim-scan').querySelectorAll('[data-scan]').length : 0;
+    $('sim-lists-btn').textContent = nA ? `🔔 Alerts ${nA}` : `🔎 Setups${nS ? ' ' + nS : ''}`;
     $('sim-lists-body').classList.toggle('fixed', scanOn);   // a scan gets the full height at once, so rows coming in never push the page down
     $('sim-lists').classList.toggle('fold', LS.fold && !LS.pop);
     $('sim-lists-sum').innerHTML = [scanOn && LS.scan, !$('sim-alerts').hidden && LS.alerts].filter(Boolean).join('<br>');
@@ -2110,7 +2131,7 @@
   $('sim-lists-fold').onclick = () => listsFold(!LS.fold);
   $('sim-lists-shade').onclick = () => listsPop(false);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && LS.pop) { e.preventDefault(); listsPop(false); } });   // preventDefault: full screen stays
-  let scanRun = 0, scanning = false, tradedCoins = null;
+  let scanRun = 0, scanning = false, tradedCoins = null, topCoins = null;
   async function coinList(scope, onChartToo) {   // the coins Find setups and the alerts check
     const since = Date.now() - 48 * 3600e3, list = [], why = {};
     const add = (sym, tag) => { if (!sym) return; if (!why[sym]) { list.push(sym); why[sym] = []; } if (tag && why[sym].indexOf(tag) < 0) why[sym].push(tag); };
@@ -2118,7 +2139,10 @@
     if (onChartToo && cmp.on && cmp.sym) add(cmp.sym, 'compare chart');
     for (const p of liveOpen()) add(p.sym, 'your open trade');
     for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'bot signal in last 48 h');
-    if (scope !== 'signals') {
+    if (scope === 'top') {   // the 50 biggest USDT perps by 24h volume (INJ, SOL, DOGE…), refreshed every 30 min
+      try { if (!topCoins || Date.now() - topCoins.at > 30 * 60e3) topCoins = { at: Date.now(), coins: (await api('/api/sim/top', {})).coins || [] }; } catch (e) { topCoins = null; status('Could not get the top coins: ' + e.message, true); }
+      for (const c of (topCoins && topCoins.coins) || []) add(c.symbol, `#${c.rank} by 24h volume`);
+    } else if (scope !== 'signals') {
       try { if (!tradedCoins) tradedCoins = (await api('/api/sim/coins', {})).coins || []; } catch (e) { tradedCoins = null; status('Could not get the coins we traded: ' + e.message, true); }
       const cut = scope === 'recent' ? Date.now() - 30 * 864e5 : 0;
       for (const c of tradedCoins || []) if (c.t >= cut) add(c.symbol, `our bot traded it ${c.trades}×`);
@@ -2133,7 +2157,7 @@
     if (scope !== 'signals') box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
     const { list, why } = await coinList(scope, true);
     const rows = [], tf = smc.tf; let next = 0, done = 0;
-    const scopeTxt = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h', signals: 'pump signals of the last 48 h' }[scope];
+    const scopeTxt = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h', top: 'the 50 biggest coins by 24h volume + pump signals of the last 48 h', signals: 'pump signals of the last 48 h' }[scope];
     const render = (head, short) => {
       rows.sort((a, b) => b.score - a.score);
       // list only coins at 2/4 or better (and fresh A+ setups); 1/4 just means a structure break happened somewhere
@@ -2319,7 +2343,7 @@
     $('sim-next-setup').hidden = m !== 'replay'; $('sim-pause-wrap').hidden = m !== 'replay';
     if (!quiet && m === 'live') { const sym = S.sym || 'BTC'; $('sim-symbol-live').value = sym; loadLive(sym, $('sim-ex-live').value); }
     if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
-    renderTicket();   // the Practice / Real switch is for Live only
+    renderTicket(); renderRecent();   // the Practice / Real switch is for Live only; recent coins load in this mode
   }
   // ---------- ✏️ drawing: pencil, zig-zag, straight line ----------
   // Points are kept as [time, price], so a drawing stays on the same candles and prices when you scroll, zoom or change
@@ -2868,7 +2892,7 @@
     if (full.on === on) return;
     const card = $('sim-chart').closest('.sim-card'), b = $('sim-full'), d = document;
     if (on) { full.y = window.scrollY; listsPop(false); closePop(); }
-    full.on = on; card.classList.toggle('full', on); pageLock();
+    full.on = on; card.classList.toggle('full', on); pageLock(); onFull(on);
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); b.textContent = on ? '✕ Exit full screen' : '⛶ Full screen';
     if (on) {
       const el = d.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
@@ -2885,11 +2909,87 @@
     if (full.on && full.real && !(document.fullscreenElement || document.webkitFullscreenElement)) setFull(false);
   }));
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && full.on && !e.defaultPrevented && !pxPop && !LS.pop && !DR.cur && !NW.pop && !QK.on) setFull(false);   // Esc that closed something above doesn't also leave full screen
+    if (e.key === 'Escape' && full.on && !e.defaultPrevented && !pxPop && !LS.pop && !DR.cur && !NW.pop && !QK.on && !FS.coin) setFull(false);   // Esc that closed something above doesn't also leave full screen
     else if (e.key === 'F' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) {
       const panel = document.getElementById('tab-sim'); if (panel && panel.classList.contains('active')) { e.preventDefault(); setFull(!full.on); }
     }
   });
+  // ---------- the chart toolbar in full screen: 🪙 loader, 🎫 ticket column, 🔔 list, recent coins ----------
+  // The loader rows, the status line and the ticket column are moved into the full-screen card and back: the same
+  // elements, so every button and field keeps working. Outside full screen 🪙 scrolls up to the loader instead.
+  const FS = { coin: false, side: false, key: 'sc_sim_full_v1', homes: new Map() };
+  try { FS.side = !!(JSON.parse(localStorage.getItem(FS.key)) || {}).side; } catch (e) { /* ignore */ }
+  function park(el, into) {   // into: move el there, leaving a marker where it lived · no into: put it back
+    if (!el) return;
+    if (into) { if (!FS.homes.has(el)) { const m = document.createComment('sim-home'); el.parentNode.insertBefore(m, el); FS.homes.set(el, m); } into.appendChild(el); return; }
+    const m = FS.homes.get(el); if (m) { m.parentNode.insertBefore(el, m); m.remove(); FS.homes.delete(el); }
+  }
+  function coinPanel(on) {
+    on = !!on && full.on;
+    if (FS.coin === on) return; FS.coin = on;
+    const p = $('sim-fpanel'); p.hidden = !on;
+    ['sim-mode-seg', 'sim-replay-load', 'sim-live-load'].forEach(id => park($(id), on ? p : null));
+    $('sim-coin-btn').classList.toggle('on', on); $('sim-coin-btn').setAttribute('aria-expanded', String(on));
+  }
+  function focusSymbol(ch) {
+    const inp = S.mode === 'live' ? $('sim-symbol-live') : $('sim-symbol');
+    if (ch != null) inp.value = ch;
+    inp.focus({ preventScroll: true }); if (ch == null) inp.select();
+  }
+  $('sim-coin-btn').onclick = () => {
+    if (full.on) { coinPanel(!FS.coin); if (FS.coin) focusSymbol(); return; }
+    $('sim-replay-load').closest('.sim-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => focusSymbol(), 400);
+  };
+  const withSide = () => $('sim-chart').closest('.sim-card').classList.contains('with-side');
+  function sideDrawer(on) {
+    on = !!on && full.on;
+    if (withSide() === on) return;
+    park($('sim-side'), on ? $('sim-fdrawer') : null);
+    $('sim-chart').closest('.sim-card').classList.toggle('with-side', on);
+    $('sim-side-btn').classList.toggle('on', on); $('sim-side-btn').setAttribute('aria-pressed', String(on));
+  }
+  const sideSave = on => { FS.side = on; sideDrawer(on); try { localStorage.setItem(FS.key, JSON.stringify({ side: on })); } catch (e) { /* ignore */ } };
+  $('sim-side-btn').onclick = () => sideSave(!withSide());
+  $('sim-side-close').onclick = () => sideSave(false);
+  $('sim-lists-btn').onclick = () => { coinPanel(false); listsPop(true); };
+  $('sim-scan-btn').addEventListener('click', () => { if (full.on) { coinPanel(false); listsPop(true); } });   // the setup list fills in over the chart
+  function onFull(on) {   // from setFull: status line and ticket follow the chart into full screen, and come back after
+    $('sim-side-btn').hidden = !on;
+    if (on) { park($('sim-status'), $('sim-fslot')); sideDrawer(FS.side); }
+    else { coinPanel(false); sideDrawer(false); park($('sim-status')); }
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && FS.coin && !e.defaultPrevented) { e.preventDefault(); coinPanel(false); return; }   // full screen stays
+    // full screen: start typing a coin name anywhere (like TradingView) → the loader opens with it
+    if (!full.on || FS.coin || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (!/^[a-z]$/i.test(e.key) || (e.key === 'F' && e.shiftKey) || pxPop || LS.pop || NW.pop || QK.on || DR.on) return;
+    e.preventDefault(); coinPanel(true); focusSymbol(e.key.toUpperCase());
+  });
+  // Enter in the coin box loads it
+  $('sim-symbol-live').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('sim-load-live').click(); } });
+  $('sim-symbol').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('sim-load-custom').click(); } });
+  // recent coins: one click loads them again (Live: now · Replay: from the time in the loader)
+  const RC = { key: 'sc_sim_recent_v1', list: [] };
+  try { RC.list = (JSON.parse(localStorage.getItem(RC.key)) || []).filter(x => x && typeof x.sym === 'string' && /^[A-Z0-9]{1,20}$/.test(x.sym)).slice(0, 8); } catch (e) { RC.list = []; }
+  function recentAdd(sym, ex) {
+    if (!sym) return;
+    RC.list = [{ sym, ex: ['binance', 'bybit'].includes(ex) ? ex : 'auto' }].concat(RC.list.filter(x => x.sym !== sym)).slice(0, 8);
+    try { localStorage.setItem(RC.key, JSON.stringify(RC.list)); } catch (e) { /* ignore */ }
+    renderRecent();
+  }
+  function renderRecent() {
+    const el = $('sim-recent'), list = RC.list.filter(x => x.sym !== S.sym).slice(0, 6);
+    el.hidden = !list.length;
+    el.innerHTML = list.length ? `<span class="sim-status" style="margin:0">Recent:</span>` + list.map(x =>
+      `<button type="button" class="b" data-recent="${esc(x.sym)}" data-rex="${esc(x.ex)}" title="${S.mode === 'live' ? 'Load live' : 'Replay from the time in the loader'}">${esc(x.sym)}</button>`).join('') : '';
+  }
+  $('sim-recent').addEventListener('click', e => {
+    const b = e.target.closest('[data-recent]'); if (!b) return;
+    const sym = b.dataset.recent, ex = b.dataset.rex, setEx = id => { if ([...$(id).options].some(o => o.value === ex)) $(id).value = ex; };
+    if (S.mode === 'live') { $('sim-symbol-live').value = sym; setEx('sim-ex-live'); loadLive(sym, $('sim-ex-live').value); }
+    else { $('sim-symbol').value = sym; setEx('sim-ex'); $('sim-load-custom').click(); }
+  });
+  renderRecent();
   $('sim-cmp-btn').onclick = () => {
     if (cmp.on) return cmpShow(false);
     // one tap gives a useful pair: BTC ↔ ETH, a forex pair next to EUR/USD (or GBP/USD), anything else next to BTC
@@ -2987,7 +3087,7 @@
     if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.tf = tf; $('sim-smc-tf').value = String(tf); }
     smc.on = true; $('sim-smc-on').checked = true; saveSmc();
     $('sim-symbol-live').value = sym; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
-    loadLive(sym, ex).then(() => { const c = $('sim-chart').closest('.sim-card') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    loadLive(sym, ex).then(() => { if (full.on) return; const c = $('sim-chart').closest('.sim-card') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   }
   ['sim-scan', 'sim-alerts'].forEach(id => $(id).addEventListener('click', e => {
     const b = e.target.closest('[data-scan]'); if (b) openCoin(b.dataset.scan, b.dataset.ex, b.dataset.tf);

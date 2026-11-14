@@ -198,6 +198,31 @@ async function newsEvents() {
 
 const iso = d => (d ? new Date(d).getTime() : null);
 
+// The 50 biggest USDT perps by 24h volume, for the simulator's setup scan and alerts ("top coins" choice). Bybit's one
+// public ticker call (Binance's all-symbol ticker costs 40 of the bot's shared request budget, so it is only the
+// fallback); cached 30 min. Stablecoin perps are left out.
+const TOP = { at: 0, list: null, p: null };
+const STABLE = /^(USDC|FDUSD|TUSD|USDE|BUSD|DAI|USD1|USDD|PYUSD|RLUSD|XUSD|USDP|EUR|EURI)$/;
+async function topCoins() {
+  if (TOP.list && Date.now() - TOP.at < 30 * 60e3) return TOP.list;
+  if (!TOP.p) TOP.p = (async () => {
+    let rows;
+    try {
+      const j = await getJson('https://api.bybit.com/v5/market/tickers?category=linear');
+      if (j.retCode) throw new Error(j.retMsg || `Bybit error ${j.retCode}`);
+      rows = (j.result?.list || []).filter(t => /USDT$/.test(t.symbol)).map(t => ({ symbol: t.symbol.replace(/USDT$/, ''), vol: +t.turnover24h, chg: +t.price24hPcnt * 100 }));
+    } catch (e) {
+      const j = await getJson('https://fapi.binance.com/fapi/v1/ticker/24hr');
+      rows = (Array.isArray(j) ? j : []).filter(t => /USDT$/.test(t.symbol)).map(t => ({ symbol: t.symbol.replace(/USDT$/, ''), vol: +t.quoteVolume, chg: +t.priceChangePercent }));
+    }
+    const list = rows.filter(r => r.vol > 0 && !STABLE.test(r.symbol)).sort((a, b) => b.vol - a.vol).slice(0, 50)
+      .map((r, i) => ({ symbol: r.symbol, rank: i + 1, volUsd: Math.round(r.vol), chgPct: +r.chg.toFixed(2) }));
+    if (list.length) { TOP.list = list; TOP.at = Date.now(); }
+    return list;
+  })().finally(() => { TOP.p = null; });
+  return TOP.p;
+}
+
 // Answers every /api/sim/* request (the caller has already checked the dashboard key).
 async function handle(url, res) {
   const send = (code, obj) => {
@@ -265,6 +290,8 @@ async function handle(url, res) {
            FROM trades WHERE mode = 'live' GROUP BY symbol ORDER BY MAX(created_at) DESC LIMIT 400`);
       return send(200, { coins: r.rows.map(c => ({ symbol: c.symbol, exchange: c.exchange, trades: c.n, t: iso(c.last) })) });
     }
+
+    if (url.pathname === '/api/sim/top') return send(200, { coins: await topCoins() });   // biggest USDT perps by 24h volume
 
     if (url.pathname === '/api/sim/trades') {
       const days = Math.min(60, Math.max(1, parseInt(url.searchParams.get('days'), 10) || 14));
