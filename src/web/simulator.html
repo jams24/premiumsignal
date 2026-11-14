@@ -130,6 +130,13 @@
 .sim-pxpop .v small { color: var(--muted); }
 .sim-pxpop .sim-row { gap: 5px; }
 .sim-pxpop .b { padding: 6px 8px; font-size: 11px; }
+/* ⚡ quick limit from the chart: limit → stop → TP1 → confirm, in a small bar on the chart */
+.sim-qbar { border-color: var(--gold); max-width: min(420px, calc(100% - 16px)); z-index: 6; }
+.sim-qbar .m { color: var(--muted); white-space: normal; }
+.sim-qbar .err { color: var(--danger); white-space: normal; }
+.sim-qbar .ok { color: var(--accent); white-space: normal; }
+.sim-qbar .sim-rconf { border: 0; padding: 0; background: none; }
+.sim-pxpop .b.quick { border-color: var(--gold); color: var(--gold); }
 .sim [data-px] { cursor: copy; text-decoration: underline dotted; text-underline-offset: 3px; }
 .sim [data-px].copied { color: var(--accent); }
 .sim-hint.tip { color: var(--muted); }
@@ -177,6 +184,38 @@
 .sim-lists.pop { position: fixed; z-index: 90; top: 4vh; left: 50%; transform: translateX(-50%); width: min(1100px, calc(100vw - 32px)); max-height: 92vh; background: var(--surface); padding: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
 .sim-lists.pop .sim-lists-body { display: grid; flex: 1 1 auto; min-height: 0; height: auto; max-height: none; }
 .sim-shade { position: fixed; inset: 0; z-index: 89; background: rgba(0,0,0,.55); }
+/* ⏱ when the coin moves: busy / quiet hours and weekdays from its 1H history */
+.sim-rhythm-d { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 18px; margin-top: 8px; }
+.sim-rhythm-d figure { margin: 0; max-width: 540px; }
+.sim-rhythm-d figcaption { font: 600 11.5px/1.4 var(--font-mono); color: var(--text); margin-bottom: 2px; }
+.sim-rhythm-d svg { width: 100%; height: auto; display: block; }
+.sim-rhythm-d svg .ax { font: 400 9px var(--font-mono); fill: var(--muted); }
+.sim-rhythm-d svg .vl { font: 600 9px var(--font-mono); fill: var(--text2); }
+.sim-rhythm-d svg .nw { font: 700 9px var(--font-mono); fill: var(--text); }
+.sim-rhythm-d .note { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.sim-rhythm-d .note b { color: var(--text2); }
+/* 📅 news calendar: a line under the clock, a window with the week's list (above full screen too) */
+.sim-newsline { font: 400 12px/1.5 var(--font-mono); color: var(--text2); background: var(--bg); border: 1px solid transparent; border-radius: 6px; padding: 5px 10px; cursor: pointer; text-align: left; width: 100%; }
+.sim-newsline b { color: var(--text); }
+.sim-newsline.soon { border-color: var(--gold); background: var(--gold-dim); color: var(--text); }
+.sim-newsline.now { border-color: var(--danger); background: var(--danger-dim); color: var(--text); }
+.sim-news-shade { z-index: 100; }
+.sim-news { position: fixed; z-index: 101; top: 4vh; left: 50%; transform: translateX(-50%); width: min(780px, calc(100vw - 32px)); max-height: 92vh; display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+.sim-news-bar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.sim-news-bar h3 { margin: 0 auto 0 0; font: 600 14px/1.3 var(--font-mono); color: var(--text); }
+.sim-news-bar select { width: auto; }
+.sim-news-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1 1 auto; font: 400 12px/1.45 var(--font-mono); color: var(--text2); padding-right: 4px; }
+.sim-news-day { position: sticky; top: 0; z-index: 1; background: var(--surface); color: var(--text); font-weight: 600; padding: 8px 0 3px; border-bottom: 1px solid var(--border); }
+.sim-news-row { display: grid; grid-template-columns: 44px 10px 34px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid rgba(42,46,57,.6); }
+.sim-news-row.past { opacity: .5; }
+.sim-news-row.next { background: var(--gold-dim); }
+.sim-news-row b { color: var(--text); font-weight: 600; }
+.sim-news-row .fp { color: var(--muted); }
+.sim-news-row .when { color: var(--muted); white-space: nowrap; text-align: right; }
+.sim-imp { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.sim-imp.High { background: #ef4444; } .sim-imp.Medium { background: #f97316; } .sim-imp.Low { background: #eab308; } .sim-imp.Holiday { background: #6b7280; }
+.sim-news-foot { font: 400 11.5px/1.5 var(--font-mono); color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
+.sim-news-foot b { color: var(--text2); }
 @media (max-width: 960px) { .sim-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .sim-chart { height: 360px; } }
 </style>
@@ -226,6 +265,19 @@
         <span class="sim-status" id="sim-alert-info" style="margin:0">Off.</span></div>
     </div>
     <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"><option value="GBPJPY"><option value="EURUSD"><option value="GBPUSD"><option value="USDJPY"><option value="EURJPY"><option value="AUDUSD"><option value="USDCAD"><option value="USDCHF"><option value="NZDUSD"><option value="EURGBP"><option value="GBPAUD"></datalist>
+    <div class="sim-shade sim-news-shade" id="sim-news-shade" hidden></div>
+    <div class="sim-news" id="sim-news" role="dialog" aria-label="News calendar" hidden>
+      <div class="sim-news-bar">
+        <h3>📅 News calendar</h3>
+        <select id="sim-news-imp" aria-label="Which news"><option value="high">Red only (high impact)</option><option value="med">Red + orange</option><option value="all">All news</option></select>
+        <select id="sim-news-cur" aria-label="Which currencies"><option value="usd">USD only</option><option value="big">USD, EUR, GBP, JPY, CNY</option><option value="all">All currencies</option></select>
+        <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-news-lines"> lines on chart</label>
+        <label class="sim-opt" style="margin:0" title="A sound (and a browser notification if allowed) 15 minutes before red news in the currencies you picked, while this page is open"><input type="checkbox" id="sim-news-warn"> warn me 15 min before red news</label>
+        <button type="button" class="b" id="sim-news-close">✕ Close</button>
+      </div>
+      <div class="sim-news-body" id="sim-news-body"></div>
+      <div class="sim-news-foot" id="sim-news-foot"></div>
+    </div>
     <div class="sim-shade" id="sim-lists-shade" hidden></div>
     <div class="sim-lists" id="sim-lists" hidden>
       <div class="sim-lists-bar">
@@ -259,6 +311,7 @@
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
           <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
+          <button type="button" class="b" id="sim-news-btn" title="This week's economic news (CPI, jobs, FOMC…) and the next Fed rate decisions, in UTC like the chart">📅 News</button>
           <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-showtop" checked> 24h high</label>
         </div>
       </div>
@@ -280,8 +333,11 @@
         <label class="sim-opt" style="margin:0" id="sim-pause-wrap"><input type="checkbox" id="sim-smc-pause" checked> Pause on setups</label>
       </div>
       <div class="sim-watch sim-htf" id="sim-htf" hidden></div>
+      <div class="sim-watch" id="sim-rhythm" hidden></div>
       <div class="sim-watch" id="sim-watch" aria-live="polite" hidden></div>
       <div class="sim-clock" id="sim-clock">No chart loaded</div>
+      <button type="button" class="sim-newsline" id="sim-news-next" hidden></button>
+      <div class="sim-watch hot" id="sim-pend" aria-live="polite" hidden></div>
       <div class="sim-cmpbar" id="sim-cmp-bar" hidden>
         <span class="sim-status" style="margin:0">Compare with:</span>
         <input id="sim-cmp-sym" list="sim-coin-list" placeholder="ETH" aria-label="Second chart: symbol" autocomplete="off" spellcheck="false">
@@ -535,6 +591,7 @@
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     smcLayer = makeLayer(() => ({ main: true, A: smc.A, chart, cs, bucket, tf: S.tf, base: S.base, cur: S.cur })); cs.attachPrimitive(smcLayer);
     drawLayer = makeDrawLayer(); cs.attachPrimitive(drawLayer);
+    newsLayer = makeNewsLayer(); cs.attachPrimitive(newsLayer);
     chart.subscribeClick(onChartClick);
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(false));   // the second chart scrolls and zooms with this one
     chart.subscribeCrosshairMove(p => cmpCross(p, false));
@@ -1025,7 +1082,10 @@
   }
   function renderConf() {
     const box = $('sim-r-conf'), c = R.conf;
-    if (!c) { box.hidden = true; box.innerHTML = ''; return; }
+    if (!c) { box.hidden = true; box.innerHTML = ''; } else { box.innerHTML = confHtml(c); box.hidden = false; }
+    quickConfSync();
+  }
+  function confHtml(c) {   // the bot's exact order with Place / Back: the ticket and the chart's ⚡ quick bar both show it
     const s = c.setup, pr = precFor(s.entry || s.market), pf = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(pr);
     const long = s.direction === 'long', live = s.mode === 'live', errs = s.errors || [];
     let h = `<div><b>${live ? '💰 LIVE' : '📝 PAPER'} ${long ? 'LONG' : 'SHORT'} ${esc(s.symbol)}</b> on ${esc(String(s.exchange).toUpperCase())}</div>`;
@@ -1037,7 +1097,7 @@
     (s.warnings || []).forEach(w => { h += `<div class="warn">⚠️ ${esc(w)}</div>`; });
     errs.forEach(e => { h += `<div class="neg">⛔ ${esc(e)}</div>`; });
     h += `<div class="sim-row">${errs.length ? '' : `<button type="button" class="b big ${long ? 'go' : 'red'}" data-c="place"${R.busy ? ' disabled' : ''}>${R.busy ? 'Placing…' : `✅ Place ${live ? 'LIVE ' : 'paper '}order`}</button>`}<button type="button" class="b" data-c="no">Back</button></div>`;
-    box.innerHTML = h; box.hidden = false;
+    return h;
   }
   async function placeReal() {
     const c = R.conf, res = $('sim-r-res'); if (!c || R.busy) return;
@@ -1241,18 +1301,54 @@
     if (!pl.stop) return status(S.side === 'short' ? 'Set a stop above the price first.' : 'Set a stop below the price first.', true);
     if (!pl.tps.length) return status('Set a target first.', true);
     if (!(size > 0)) return status('Enter a size in dollars.', true);
-    const k = S.base[S.cur];
-    const p = { id: Date.now() + Math.random(), side: S.side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
-      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: $('sim-be').checked, rem: 1, realized: -size * feeOf(S.ex), fee: feeOf(S.ex),
-      checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, mode: S.mode, sym: S.sym, ex: S.ex,
-      ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
-    p.prec = S.prec; p.last = px; p.fails = 0; p.htf = htfAgree(S.side);
-    S.open.push(p);
-    S.marks.push(entryMark(S.side, k[0], px));
-    if (S.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
+    makePos(S.side, px, pl, size, S.base[S.cur], { be: $('sim-be').checked, checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto });
     $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; }); S.auto = false;  // next trade starts from a clean ticket
     status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
     refresh();
+  }
+  // a simulated trade on this chart, entered at px on candle k (the ticket's market button, or a practice limit that filled)
+  function makePos(side, px, pl, size, k, o) {
+    const p = { id: Date.now() + Math.random(), side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
+      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: o.be, rem: 1, realized: -size * feeOf(S.ex), fee: feeOf(S.ex),
+      checks: o.checks, auto: o.auto, mode: S.mode, sym: S.sym, ex: S.ex,
+      ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
+    p.prec = S.prec; p.last = px; p.fails = 0; p.htf = htfAgree(side);
+    S.open.push(p);
+    S.marks.push(entryMark(side, k[0], px));
+    if (S.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
+    return p;
+  }
+  // ---------- practice limit orders (⚡ from the chart) ----------
+  // Like the bot's off-book limits: the order fills at its price when a candle touches it (from below or above). One per
+  // chart, checked only while that chart is open; loading another chart cancels it.
+  let QP = [];
+  const pendHere = () => QP.find(o => o.mode === S.mode && o.sym === S.sym) || null;
+  function pendDrop(o) {
+    if (cs) o.lines.forEach(l => cs.removePriceLine(l));
+    QP = QP.filter(x => x !== o);
+  }
+  function pendCheck(k) {   // one candle of this chart: did a waiting practice limit fill? (true = it became the trade)
+    const o = pendHere(); if (!o || S.pos) return false;
+    let h = k[2], l = k[3];
+    if (o.ref) {   // live: the candle it was placed in counts only from then on (new highs / lows)
+      if (k[0] < o.ref.t) return false;
+      if (k[0] === o.ref.t) { h = h > o.ref.h ? h : -Infinity; l = l < o.ref.l ? l : Infinity; o.ref.h = Math.max(o.ref.h, k[2]); o.ref.l = Math.min(o.ref.l, k[3]); }
+    }
+    if (!(o.above ? h >= o.lim : l <= o.lim)) return false;
+    pendDrop(o);
+    const p = makePos(o.side, o.lim, { stop: o.stop, tps: o.tps }, o.size, k, { be: o.be, checks: o.checks, auto: false });
+    // the rest of this candle after the fill is unknown: replay checks only the stop on it (the worse case), from the next candle on as usual
+    if (S.mode === 'replay') evalBar(p, k[0], o.side === 'short' ? k[2] : p.entry, o.side === 'short' ? p.entry : k[3]);
+    status(`⚡ Practice limit filled: ${o.side} at ${fmt(o.lim)}.` + (S.open.includes(p) ? '' : ' The same candle reached the stop.'));
+    return true;
+  }
+  function renderPend() {
+    const el = $('sim-pend'), o = pendHere(), px = S.cur >= 0 ? price() : null;
+    if (!o) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = `⏳ Practice limit <b>${o.side.toUpperCase()}</b> at <b>${fmt(o.lim)}</b> · stop ${fmt(o.stop)} · TP1 ${fmt(o.tps[0].price)} (closes all there)` +
+      ` · fills when price touches it${px != null ? ` (now ${fmt(px)}, ${(Math.abs(px / o.lim - 1) * 100).toFixed(2)}% away)` : ''}<button type="button" class="b" id="sim-pend-x">Cancel</button>`;
+    $('sim-pend-x').onclick = () => { pendDrop(o); renderPend(); status('Practice limit cancelled.'); };
   }
   const posMarks = p => [entryMark(p.side, p.ref ? p.ref.t : p.t0 - MIN, p.entry)].concat(p.fills.map(f => fillMark(p.side, f.t, f.label)));
   const entryMark = (side, t, px) => ({ t, pos: side === 'short' ? 'aboveBar' : 'belowBar', color: '#e5e7eb', shape: side === 'short' ? 'arrowDown' : 'arrowUp', text: (side === 'short' ? 'Short ' : 'Long ') + fmt(px) });
@@ -1338,7 +1434,7 @@
   function refresh() {
     if (!cs) return;
     runSmc();
-    drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos();
+    drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos(); renderPend(); renderRhythm();
     const end = nowT();
     $('sim-clock').textContent = end ? (isFx() ? `${S.sym.slice(0, 3)}/${S.sym.slice(3)} forex · Yahoo, practice only` : `${S.sym}USDT perp · ${S.ex}`) + ` · ${S.tf} · ${utc(end)} UTC` +
       (S.mode === 'replay' ? ` · ${Math.round((S.base.length - 1 - S.cur) / 60)}h of data ahead` : ' · live') : 'No chart loaded';
@@ -1356,7 +1452,7 @@
       S.cur++;
       const k = S.base[S.cur];
       pushLast();
-      evalBar(S.pos, k[0], k[2], k[3]);
+      if (!pendCheck(k)) evalBar(S.pos, k[0], k[2], k[3]);
       if (S.halt) { S.halt = false; break; }
       if (smc.pause && (smc.on || coach.open) && !S.untilExit && smc.setT.has(k[0])) {
         stopPlay(); status(`🎯 Paused: the simulator found an A+ ${smc.setT.get(k[0]).side} on this candle. See the line above the chart, or open the coach.`); break;
@@ -1377,6 +1473,8 @@
     S.base = r.candles; S.sym = r.symbol.replace(/USDT$/, ''); S.ex = r.exchange;
     S.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0); S.marks = [];   // forex: 210.969 / 1.10278 (pipettes)
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = []; DR.cur = null; DR.hover = null;
+    if (QK.on) quickEnd();
+    if (QP.length) { QP.slice().forEach(pendDrop); setTimeout(() => hint('Your waiting practice limit was cancelled: practice limits wait only on their own chart.'), 0); }
     $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
     recomputeFull(); loadHtf(); cmpAfterMain();
   }
@@ -1479,6 +1577,7 @@
         const i = S.base.length - 1;
         if (k[0] === S.base[i][0]) S.base[i] = k; else if (k[0] > S.base[i][0]) S.base.push(k); else continue;
         S.cur = S.base.length - 1; pushLast();
+        pendCheck(k);
         const p = S.pos; if (p && p.caught) liveBar(p, k);
       }
       savePos();
@@ -1673,7 +1772,7 @@
     } catch (e) { err = e.message; }
     if (HTF.busy !== key) return;   // another chart was loaded meanwhile
     Object.assign(HTF, { key, busy: null, k, H0, err, at: Date.now(), memo: null });
-    if (S.cur >= 0) { if ((S.tf === '4h' || S.tf === '1h') && k.length) redraw(true); renderHtf(); renderTicket(); }
+    if (S.cur >= 0) { if ((S.tf === '4h' || S.tf === '1h') && k.length) redraw(true); renderHtf(); renderTicket(); renderRhythm(); }
   }
   function htfHours() {   // this chart's hourly history (the hours before its first 1m candle), or null while it loads
     return HTF.key && S.base.length && HTF.key === `${S.sym}|${S.ex}|${Math.ceil(S.base[0][0] / HOUR) * HOUR}` ? { k: HTF.k, step: HOUR } : null;
@@ -1730,6 +1829,107 @@
     const a = $('sim-htf-help');
     if (a) a.onclick = e => { e.preventDefault(); const b = document.querySelector('[data-tab=smc]'); if (b) b.click(); setTimeout(() => { const s = document.getElementById('smc-tf'); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); };
   }
+  // ---------- ⏱ when the coin moves ----------
+  // From the coin's 1H history before the chart (up to 120 days, so a replay never sees later candles): its typical
+  // move in each UTC hour and on each weekday (median high–low range), where its biggest hours fell, and whether the
+  // hour pattern held in both halves of the period. How much it moves, not which way.
+  const RH = { memo: null, st: null, html: '', open: false, key: 'sc_sim_rhythm_v1' };
+  try { RH.open = !!(JSON.parse(localStorage.getItem(RH.key)) || {}).open; } catch (e) { /* closed */ }
+  const median = a => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const hh = h => String(h % 24).padStart(2, '0');
+  const DAYN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function rhythmStats(k) {
+    const hrs = Array.from({ length: 24 }, () => []), half = [Array.from({ length: 24 }, () => []), Array.from({ length: 24 }, () => [])], all = [], days = new Map();
+    if (k.length < 24 * 14) return null;
+    const mid = (k[0][0] + k[k.length - 1][0]) / 2;
+    for (const c of k) {
+      if (!(c[1] > 0) || !(c[2] >= c[3])) continue;
+      const r = (c[2] - c[3]) / c[1] * 100, h = new Date(c[0]).getUTCHours();
+      hrs[h].push(r); half[c[0] < mid ? 0 : 1][h].push(r); all.push([h, r]);
+      const day = Math.floor(c[0] / 86400e3), D = days.get(day);
+      if (!D) days.set(day, { o: c[1], h: c[2], l: c[3], n: 1, wd: new Date(c[0]).getUTCDay() }); else { if (c[2] > D.h) D.h = c[2]; if (c[3] < D.l) D.l = c[3]; D.n++; }
+    }
+    const byH = hrs.map(median);
+    if (byH.some(v => v == null)) return null;
+    const wd = Array.from({ length: 7 }, () => []);
+    for (const D of days.values()) if (D.n >= 20) wd[D.wd].push((D.h - D.l) / D.o * 100);
+    const byD = wd.map(median);
+    const cut = all.map(x => x[1]).sort((a, b) => a - b)[Math.floor(all.length * 0.95)], big = Array(24).fill(0);
+    let nBig = 0; for (const [h, r] of all) if (r >= cut) { big[h]++; nBig++; }
+    const win = (a, most) => { let bi = 0, bv = null; for (let i = 0; i < 24; i++) { const v = a[i] + a[(i + 1) % 24] + a[(i + 2) % 24]; if (bv == null || (most ? v > bv : v < bv)) { bv = v; bi = i; } } return bi; };
+    const busy = win(byH, true), quiet = win(byH, false), bigW = win(big, true);
+    const rank = a => { const r = Array(a.length); a.map((v, i) => [v, i]).sort((x, y) => x[0] - y[0]).forEach(([, i], j) => { r[i] = j; }); return r; };
+    const r0 = rank(half[0].map(a => median(a) || 0)), r1 = rank(half[1].map(a => median(a) || 0));
+    const rho = 1 - 6 * r0.reduce((s, v, i) => s + (v - r1[i]) ** 2, 0) / (24 * (24 * 24 - 1));   // 1 = the same hours were busy in both halves
+    return { byH, byD, big, nBig, busy, quiet, bigW, bigShare: (big[bigW] + big[(bigW + 1) % 24] + big[(bigW + 2) % 24]) / Math.max(1, nBig),
+      rho, base: median(byH), days: Math.round((k[k.length - 1][0] - k[0][0]) / 86400e3) + 1 };
+  }
+  const niceTop = v => [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 150, 200, 300, 500].find(x => x >= v) || v;
+  const pctT = v => (v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + '%';
+  function rhBars(vals, o) {   // one series of columns: emphasised ones lighter, value labels on the highest and lowest only
+    const n = vals.length, slot = o.slot, bw = Math.min(o.bw, slot - 2), L = 30, T = 16, H = 80, B = T + H, W = L + n * slot + 2;
+    const ok = vals.map((v, i) => [v, i]).filter(x => x[0] != null), top = niceTop(Math.max(...ok.map(x => x[0])));
+    const hiI = ok.reduce((a, b) => (b[0] > a[0] ? b : a))[1], loI = ok.reduce((a, b) => (b[0] < a[0] ? b : a))[1];
+    let s = `<svg viewBox="0 0 ${W} ${B + 16}" role="img" aria-label="${esc(o.aria)}">`;
+    for (const g of [top / 2, top]) { const y = B - g / top * H; s += `<line x1="${L}" x2="${W}" y1="${y}" y2="${y}" stroke="#1e293b" stroke-width="1"/><text class="ax" x="${L - 4}" y="${y + 3}" text-anchor="end">${pctT(g)}</text>`; }
+    s += `<line x1="${L}" x2="${W}" y1="${B}" y2="${B}" stroke="#334155" stroke-width="1"/>`;
+    vals.forEach((v, i) => {
+      const x0 = L + i * slot, x = x0 + (slot - bw) / 2, cx = x0 + slot / 2;
+      if (v != null) {
+        const ht = Math.max(1, v / top * H), y = B - ht, r = Math.min(3, bw / 2, ht);
+        s += `<path d="M${x},${B}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${B}Z" fill="${o.hi.has(i) ? '#93c5fd' : '#3b82f6'}"/>`;
+        const lab = [i === o.now ? 'now' : '', i === hiI || i === loI ? pctT(v) : ''].filter(Boolean).join(' ');
+        if (lab) s += `<text class="${i === o.now ? 'nw' : 'vl'}" x="${cx}" y="${y - 4}" text-anchor="middle">${lab}</text>`;
+      }
+      if (o.xl[i]) s += `<text class="ax" x="${cx}" y="${B + 12}" text-anchor="middle">${o.xl[i]}</text>`;
+      s += `<rect x="${x0}" y="${T - 14}" width="${slot}" height="${H + 28}" fill="transparent"><title>${esc(o.tip(i, v))}</title></rect>`;
+    });
+    return s + '</svg>';
+  }
+  function renderRhythm() {
+    const el = $('sim-rhythm');
+    if (S.cur < 0 || !S.base.length) { el.hidden = true; RH.html = ''; return; }
+    el.hidden = false; loadHtf();
+    const hk = htfHours(), set = h => { if (h !== RH.html) { RH.html = h; el.innerHTML = h; } };
+    if (!hk) return set('⏱ When it moves · reading the 1H history…');
+    const memo = HTF.key + '|' + HTF.at;
+    if (RH.memo !== memo) { RH.st = rhythmStats(hk.k); RH.memo = memo; }
+    const st = RH.st, sym = esc(S.sym);
+    if (!st) return set(`⏱ When it moves · ${HTF.err ? 'could not read the 1H history: ' + esc(HTF.err) : 'needs at least 14 days of 1H history (this coin has less)'}`);
+    const nh = new Date(nowT()).getUTCHours(), ratio = st.byH[nh] / st.base;
+    const nowTxt = ratio >= 1.25 ? '<b>busy</b>' : ratio <= 0.8 ? '<b>quiet</b>' : 'normal', to = (st.busy - nh + 24) % 24;
+    const dOk = st.byD.map((v, i) => [v, i]).filter(x => x[0] != null);
+    const dHi = dOk.length >= 5 ? dOk.reduce((a, b) => (b[0] > a[0] ? b : a))[1] : null, dLo = dOk.length >= 5 ? dOk.reduce((a, b) => (b[0] < a[0] ? b : a))[1] : null;
+    const steady = st.rho >= 0.6 ? '<span class="ok">steady ✓</span>' : st.rho >= 0.3 ? 'loose' : '<span class="no">no steady pattern</span>';
+    let h = `⏱ When ${sym} moves · last ${st.days} days, UTC · busiest <b>${hh(st.busy)}–${hh(st.busy + 3)}</b> (~${pctT((st.byH[st.busy] + st.byH[(st.busy + 1) % 24] + st.byH[(st.busy + 2) % 24]) / 3)}/h)` +
+      ` · quietest <b>${hh(st.quiet)}–${hh(st.quiet + 3)}</b> (~${pctT((st.byH[st.quiet] + st.byH[(st.quiet + 1) % 24] + st.byH[(st.quiet + 2) % 24]) / 3)}/h)` +
+      (dHi != null ? ` · busiest day <b>${DAYN[dHi]}</b>, quietest <b>${DAYN[dLo]}</b>` : '') +
+      ` · now ${hh(nh)}:00 is a ${nowTxt} hour${to > 0 && to <= 6 ? ` (busy hours in ${to} h)` : to === 0 || (nh - st.busy + 24) % 24 < 3 ? ' (its busy hours)' : ''} · pattern ${steady}` +
+      `<button type="button" class="b" data-rh="1" aria-expanded="${RH.open}">${RH.open ? '▴ less' : '▾ details'}</button>`;
+    if (RH.open) {
+      const win3 = i => new Set([i, (i + 1) % 24, (i + 2) % 24]);
+      const hours = rhBars(st.byH, { slot: 14, bw: 11, hi: win3(st.busy), now: nh, xl: st.byH.map((v, i) => (i % 3 ? '' : hh(i))),
+        aria: `${S.sym} typical move per UTC hour; busiest ${hh(st.busy)} to ${hh(st.busy + 3)}, quietest ${hh(st.quiet)} to ${hh(st.quiet + 3)}`,
+        tip: (i, v) => `${hh(i)}:00–${hh(i + 1)}:00 UTC · typical move ${pctT(v)} · ${st.big[i]} of its ${st.nBig} biggest hours` });
+      const order = [1, 2, 3, 4, 5, 6, 0], dv = order.map(i => st.byD[i]);
+      const days = dOk.length >= 5 ? rhBars(dv, { slot: 40, bw: 24, hi: new Set(dHi != null ? [order.indexOf(dHi)] : []), now: order.indexOf(new Date(nowT()).getUTCDay()), xl: order.map(i => DAYN[i]),
+        aria: `${S.sym} typical day range per weekday; busiest ${DAYN[dHi]}, quietest ${DAYN[dLo]}`,
+        tip: (j, v) => `${DAYN[order[j]]} (UTC day) · typical range ${v == null ? '–' : pctT(v)}` }) : '<div class="m">Not enough full days yet.</div>';
+      h += `<div class="sim-rhythm-d"><figure><figcaption>Typical move in each hour (UTC) · lighter = busiest 3 hours</figcaption>${hours}</figure>` +
+        `<figure><figcaption>Typical day range by weekday (UTC days)</figcaption>${days}</figure>` +
+        `<div class="note">The median high–low range of ${sym}'s 1H candles in each hour of the day, and of its whole UTC days by weekday, over the ${st.days} days before this chart. ` +
+        `<b>Size, not direction</b>: busy hours swing harder both ways, so a stop or a target is reached sooner. ` +
+        `Its biggest 5% of hours (${st.nBig}) fell most often at <b>${hh(st.bigW)}–${hh(st.bigW + 3)} UTC</b> (${Math.round(st.bigShare * 100)}% of them; 13% would be chance). ` +
+        `Pattern ${st.rho >= 0.6 ? 'steady: the same hours were busy in the first and the second half of the period' : st.rho >= 0.3 ? 'loose: the busy hours only partly repeated between the first and second half' : 'not steady: the busy hours changed between the first and second half, so don\'t lean on them'} (rank match ${st.rho.toFixed(2)}). ` +
+        `Most coins are busy around 13–16 UTC (US market open) and 00–02 UTC (Asia's day starts); news (📅) adds its own spikes. A rhythm, not a signal.</div></div>`;
+    }
+    set(h);
+  }
+  $('sim-rhythm').addEventListener('click', e => {
+    if (!e.target.closest('[data-rh]')) return;
+    RH.open = !RH.open; try { localStorage.setItem(RH.key, JSON.stringify({ open: RH.open })); } catch (err) { /* ignore */ }
+    renderRhythm();
+  });
   function useSetup(x) {
     if (!x || S.pos) return;
     S.side = x.side; $('sim-stop').value = (+x.stop).toFixed(S.prec);
@@ -1909,7 +2109,7 @@
   $('sim-lists-pop').onclick = () => listsPop(!LS.pop);
   $('sim-lists-fold').onclick = () => listsFold(!LS.fold);
   $('sim-lists-shade').onclick = () => listsPop(false);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && LS.pop) listsPop(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && LS.pop) { e.preventDefault(); listsPop(false); } });   // preventDefault: full screen stays
   let scanRun = 0, scanning = false, tradedCoins = null;
   async function coinList(scope, onChartToo) {   // the coins Find setups and the alerts check
     const since = Date.now() - 48 * 3600e3, list = [], why = {};
@@ -2101,7 +2301,7 @@
     renderAlerts();
   }
   window.addEventListener('focus', () => { document.title = AL.title; });
-  document.addEventListener('pointerdown', () => { if (AL.on && !AL.ctx) try { AL.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* no sound */ } });
+  document.addEventListener('pointerdown', () => { if ((AL.on || NW.warn) && !AL.ctx) try { AL.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* no sound */ } });
   $('sim-alert-btn').onclick = () => setAlerts(!AL.on, true);
   $('sim-alert-side').onchange = () => { AL.side = $('sim-alert-side').value; saveAlert(); };
   $('sim-alert-early').onchange = () => { AL.early = $('sim-alert-early').checked; saveAlert(); };
@@ -2243,7 +2443,7 @@
   document.addEventListener('keydown', e => {
     if (!DR.on || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
     if (e.key === 'Enter' && DR.cur) { e.preventDefault(); drawFinish(); }
-    else if (e.key === 'Escape' && DR.cur) { DR.cur = null; DR.hover = null; DR.down = false; drawHint(); drawRedraw(); }
+    else if (e.key === 'Escape' && DR.cur) { e.preventDefault(); DR.cur = null; DR.hover = null; DR.down = false; drawHint(); drawRedraw(); }
     else if ((e.key === 'z' || e.key === 'Z') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('sim-draw-undo').click(); }
   });
   $('sim-draw-btn').onclick = () => drawMode(!DR.on);
@@ -2269,11 +2469,14 @@
 
   function setTool(t) {
     if (t && DR.on) drawMode(false);
+    const was = S.tool;
     S.tool = S.tool === t ? null : t;
+    if (QK.on && QK.stage === 'pick' && (was === 'qstop' || was === 'qtp') && S.tool !== 'qstop' && S.tool !== 'qtp') quickEnd();   // another tool: the quick order is dropped
     $('sim-tool-line').classList.toggle('on', S.tool === 'line');
     $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
     $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
     $('sim-tool-limit').classList.toggle('on', S.tool === 'limit');
+    if (S.tool === 'qstop' || S.tool === 'qtp') { $('sim-hint').classList.remove('tip'); hint(S.tool === 'qstop' ? `⚡ Limit ${fmt(QK.lim)}: click the chart where the stop goes (below for a long, above for a short). Esc cancels.` : `⚡ Limit ${fmt(QK.lim)} · stop ${fmt(QK.stop)} = ${quickSide()}: click the chart where TP1 goes. Esc cancels.`); return; }
     if (S.tool === 'rstop' || S.tool === 'rlimit') { hint(`Click the chart where the REAL ${S.tool === 'rstop' ? 'stop' : 'limit'} goes. You confirm it next.`); $('sim-hint').classList.remove('tip'); return; }
     hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
       'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
@@ -2292,6 +2495,8 @@
   }
   function onChartClick(param) {
     if (!param || !param.point || DR.on) return;   // drawing: the pointer handlers below own the clicks
+    if (S.tool === 'qstop' || S.tool === 'qtp') { const sp = snapPx(param); if (sp) quickPick(S.tool, sp.p); return; }
+    if (QK.on && QK.stage === 'ask') quickEnd();   // a click elsewhere drops the unconfirmed quick order
     if (!S.tool) { if (S.cur >= 0) openPop(param); return; }
     if (S.tool === 'rstop' || S.tool === 'rlimit') { const k = S.tool === 'rstop' ? 'stop' : 'limit'; setTool(null); if (S.cur >= 0) openPop(param, k); return; }
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
@@ -2300,9 +2505,8 @@
   }
   // click the chart with no tool on: the price there (snapped to the candle's high / low / close / open within 9 px)
   function closePop() { if (pxPop) { pxPop.remove(); pxPop = null; } }
-  function openPop(param, realKind) {   // realKind 'stop' | 'limit': straight to "move the REAL … here?"
-    closePop();
-    let p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
+  function snapPx(param) {   // the price under the click, snapped to the candle's high / low / close / open within 9 px
+    let p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return null;
     let what = 'chart price';
     const d = param.seriesData && param.seriesData.get(cs);
     if (d && d.open != null) {
@@ -2312,6 +2516,12 @@
         const dy = Math.abs(y - param.point.y); if (dy < best) { best = dy; p = d[k]; what = lab; }
       }
     }
+    return { p, what };
+  }
+  function openPop(param, realKind) {   // realKind 'stop' | 'limit': straight to "move the REAL … here?"
+    closePop();
+    const sp = snapPx(param); if (!sp) return;
+    const p = sp.p, what = sp.what;
     const v = (+p).toFixed(S.prec), real = realOn(), wrap = $('sim-chart').parentNode;
     const live = S.mode === 'live' && R.web && R.data;
     const rPos = live && (R.data.positions || []).some(x => x.symbol === S.sym), rOrd = live && (R.data.orders || []).some(x => x.symbol === S.sym);
@@ -2321,6 +2531,7 @@
       `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="stop">→ Stop</button>` +
       `<button type="button" class="b" data-a="tp">→ ${real ? 'TP1' : 'Target'}</button>${real ? '<button type="button" class="b" data-a="limit">→ Limit</button>' : ''}` +
       `<button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>` +
+      `<div class="sim-row"><button type="button" class="b quick" data-a="quick" title="Limit entry here, then click the stop and TP1 on the chart, then confirm long or short in a small bar">⚡ Limit here → stop → TP1</button></div>` +
       (rPos || rOrd ? `<div class="sim-row">${rPos ? '<button type="button" class="b" data-a="rstop" style="border-color:#f97316;color:#f97316">→ REAL stop</button>' : ''}${rOrd ? '<button type="button" class="b" data-a="rlimit" style="border-color:#facc15;color:#facc15">→ REAL limit</button>' : ''}</div>` : '');
     wrap.appendChild(el);
     if (realKind && (realKind === 'stop' ? rPos : rOrd)) realAsk(el, realKind, +v);
@@ -2340,6 +2551,7 @@
       }
       if (act === 'rstop' || act === 'rlimit') { e.stopPropagation(); realAsk(el, act === 'rstop' ? 'stop' : 'limit', +v); return; }
       closePop();
+      if (act === 'quick') return quickStart(+v);
       if (act !== 'x') usePrice(act, +v);
     };
     pxPop = el;
@@ -2351,12 +2563,257 @@
     pos.stop = v; savePos(); status(`Stop moved to ${fmtOf(pos, v)}${onChart(pos) ? '' : ' on your ' + pos.sym + ' ' + pos.side}.`);
   }
 
+  // ---------- ⚡ quick limit from the chart ----------
+  // Click a price → "⚡ Limit here" → click the stop → click TP1 → a small bar on the chart confirms it. The side follows
+  // the stop (below the limit = long). Practice: a practice limit that fills when price touches it. Real: the same
+  // review and ✅ Place as the ticket (the bot's exact order first); without /webtrade it fills in the Telegram panel.
+  const QK = { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null };
+  const quickSide = () => (QK.stop != null && QK.stop < QK.lim ? 'long' : 'short');
+  const pv = v => (+v).toFixed(S.prec);
+  function quickLines() {
+    if (!cs) return;
+    QK.lines.forEach(l => cs.removePriceLine(l)); QK.lines = [];
+    for (const [p, color, title] of [[QK.lim, '#facc15', '⚡ LIMIT'], [QK.stop, '#ef4444', '⚡ STOP'], [QK.tp, '#10b981', '⚡ TP1']])
+      if (p != null) QK.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+  }
+  function quickEnd() {
+    if (QK.bar) QK.bar.remove();
+    if (cs) QK.lines.forEach(l => cs.removePriceLine(l));
+    Object.assign(QK, { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null });
+    if (S.tool === 'qstop' || S.tool === 'qtp') setTool(null);
+  }
+  function quickStart(v) {
+    quickEnd(); if (S.cur < 0) return;
+    Object.assign(QK, { on: true, stage: 'pick', lim: v });
+    quickLines(); setTool('qstop'); quickBar();
+  }
+  function quickPick(tool, p) {
+    if (tool === 'qstop') {
+      if (Math.abs(p / QK.lim - 1) < 1e-4) return hint('That is the limit price itself: click below it for a long stop, above it for a short stop.');
+      QK.stop = p; quickLines(); setTool('qtp'); quickBar(); return;
+    }
+    const side = quickSide();
+    if (side === 'long' ? p <= QK.lim : p >= QK.lim) return hint(`TP1 goes ${side === 'long' ? 'above' : 'below'} the limit for a ${side}: click again (Esc cancels).`);
+    QK.tp = p; QK.stage = 'ask'; quickLines(); setTool(null); quickBar();
+  }
+  function quickErr() {
+    if (realOn()) return realOpenOn(S.sym) ? `You already have a real ${S.sym} trade or order (one per coin).` : '';
+    if (S.pos) return `You already have a practice ${S.pos.side} on ${S.sym}: close it first.`;
+    if (S.mode === 'live' && liveOpen().length >= MAX_LIVE) return `${MAX_LIVE} practice live trades are open: close one first.`;
+    if (!(parseFloat($('sim-size').value) > 0)) return 'Enter a size in dollars in the ticket.';
+    return '';
+  }
+  function quickBar() {
+    if (!QK.bar) {
+      QK.bar = document.createElement('div'); QK.bar.className = 'sim-pxpop sim-qbar';
+      QK.bar.setAttribute('role', 'dialog'); QK.bar.setAttribute('aria-label', 'Quick limit order'); QK.bar.onclick = quickClick;
+      $('sim-chart').parentNode.appendChild(QK.bar);
+    }
+    const side = quickSide(), real = realOn();
+    let h;
+    if (QK.stage === 'pick') {
+      h = `<div class="v"><b>⚡ Limit ${pv(QK.lim)}</b><small>${real ? 'REAL ticket' : 'practice'}</small></div>` +
+        (QK.stop == null ? '<div>Click the <b>stop</b> on the chart</div><div class="m">below the limit = long · above = short</div>'
+          : `<div>stop ${pv(QK.stop)} → <b>${side}</b> · click <b>TP1</b> on the chart</div>`) +
+        '<div class="sim-row"><button type="button" class="b" data-q="x">✕ Cancel</button></div>';
+    } else if (QK.stage === 'ask') {
+      const risk = Math.abs(QK.lim - QK.stop), rr = Math.abs(QK.tp - QK.lim) / risk, err = quickErr(), live = $('sim-r-mode').value === 'live';
+      const pc = v => `${v >= QK.lim ? '+' : ''}${((v / QK.lim - 1) * 100).toFixed(2)}%`;
+      h = `<div class="v"><b>⚡ ${side.toUpperCase()} limit ${pv(QK.lim)}</b><small>${real ? (R.web ? (live ? 'REAL · 💰 live money' : 'REAL · 📝 bot paper') : 'REAL · Telegram panel') : 'practice'}</small></div>` +
+        `<div>stop ${pv(QK.stop)} (${pc(QK.stop)}) · TP1 ${pv(QK.tp)} (${pc(QK.tp)}) · <b>${rr.toFixed(1)}R</b></div>`;
+      if (!real) { const size = parseFloat($('sim-size').value) || 0; h += `<div class="m">$${size} size → risk ≈ $${(size * risk / QK.lim).toFixed(2)} · fills when price touches ${pv(QK.lim)} · closes all at TP1</div>`; }
+      else h += `<div class="m">${R.web ? 'Next: the bot\'s exact order (margin, size, max loss) to check, then ✅ place. TP2–4 follow like /tp.' : `Fills in your Telegram /${side} panel; nothing is placed until you tap ✅ there.`}</div>`;
+      if (err) h += `<div class="err">${esc(err)}</div>`;
+      h += `<div class="sim-row"><button type="button" class="b ${side === 'long' ? 'go' : 'red'}" data-q="go"${err ? ' disabled' : ''}>${real ? (R.web ? `Review ${side} →` : `📲 ${side} to Telegram`) : `✓ Place ${side} limit`}</button><button type="button" class="b" data-q="x" aria-label="Cancel">✕</button></div>`;
+    } else return;   // review / done: quickConfSync fills it
+    QK.bar.innerHTML = h; quickPlace();
+  }
+  function quickPlace() {   // top middle of the chart, out of the way of the next click
+    const x = QK.bar; if (!x) return;
+    const W = $('sim-chart').parentNode.clientWidth, w = x.offsetWidth;
+    x.style.left = Math.max(4, Math.round((W - 70 - w) / 2)) + 'px'; x.style.top = '8px';
+  }
+  function quickClick(e) {
+    const b = e.target.closest('[data-q],[data-c]'); if (!b || b.disabled) return;
+    if (b.dataset.c === 'place') return placeReal();
+    if (b.dataset.c === 'no') { R.conf = null; quickEnd(); renderConf(); renderTicket(); return; }
+    if (b.dataset.q === 'x') return quickEnd();
+    if (b.dataset.q === 'go') quickGo();
+  }
+  async function quickGo() {
+    const side = quickSide();
+    if (quickErr()) return quickBar();
+    if (!realOn()) {   // practice: a limit that waits for price
+      const k = S.base[S.cur], old = pendHere();
+      if (old) pendDrop(old);
+      const o = { mode: S.mode, sym: S.sym, side, lim: QK.lim, stop: QK.stop, tps: [{ price: QK.tp, frac: 1 }], size: parseFloat($('sim-size').value), be: false,
+        checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, above: QK.lim > price(), ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, lines: [] };
+      for (const [p, color, title] of [[o.lim, '#facc15', `LIMIT ${side}`], [o.stop, '#ef4444', 'stop'], [o.tps[0].price, '#10b981', 'TP1']])
+        o.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+      QP.push(o);
+      quickEnd(); [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; });
+      status(`⚡ Practice ${side} limit at ${pv(o.lim)} is waiting: it fills when price touches it.` + (S.mode === 'replay' ? ' Press Play or → to see.' : ''));
+      refresh(); return;
+    }
+    // real: fill in the ticket, then its own review → ✅ Place (shown in this bar too)
+    S.side = side; S.auto = false; R.entry = 'limit';
+    $('sim-r-limit').value = pv(QK.lim); $('sim-stop').value = pv(QK.stop); $('sim-r-tp').value = 'price'; $('sim-tp').value = pv(QK.tp);
+    refresh();
+    const rp = realPlan();
+    if (!rp || rp.errs.length) { QK.stage = 'done'; QK.bar.innerHTML = `<div class="err">${esc(rp ? rp.errs.join(' ') : 'No price yet.')}</div><div class="sim-row"><button type="button" class="b" data-q="x">Close</button></div>`; return; }
+    if (cs) QK.lines.forEach(l => cs.removePriceLine(l)); QK.lines = [];   // the ticket's own lines show the order from here
+    QK.stage = 'review'; QK.bar.innerHTML = `<div>${R.web ? 'Asking the bot for the exact order…' : 'Sending to Telegram…'}</div>`;
+    if (R.web) await reviewReal(); else { await sendReal(); quickDone(); }
+  }
+  function quickConfSync() {   // the ticket's review changed: show it in the bar too
+    if (!QK.bar || QK.stage !== 'review') return;
+    if (R.conf) { QK.bar.innerHTML = `<div class="sim-rconf">${confHtml(R.conf)}</div>`; quickPlace(); return; }
+    if (!R.busy) quickDone();
+  }
+  function quickDone() {   // the result, from the ticket's result line
+    if (!QK.bar) return;
+    const res = $('sim-r-res'), bad = res.classList.contains('bad');
+    QK.stage = 'done';
+    QK.bar.innerHTML = `<div class="${bad ? 'err' : 'ok'}">${esc(res.textContent || 'Not placed.')}</div><div class="sim-row"><button type="button" class="b" data-q="x">Close</button></div>`;
+    quickPlace();
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !QK.on || R.busy) return;
+    e.preventDefault();   // full screen stays
+    if (QK.stage === 'review') { R.conf = null; quickEnd(); renderConf(); renderTicket(); } else quickEnd();
+  });
+
+  // ---------- 📅 news calendar ----------
+  // This week's economic calendar (Forex Factory's free weekly feed: forecast and previous, no actual numbers) plus the
+  // Fed's FOMC dates, from /api/sim/news. Times in UTC like the chart. A line under the clock counts down to the next
+  // red news, dashed lines mark the news on the chart, and a sound 15 min before red news if you tick it.
+  const NW = { ev: [], week: null, err: '', at: 0, busy: false, pop: false, imp: 'high', cur: 'usd', lines: true, warn: false, warned: new Set(), key: 'sc_sim_news_v1' };
+  try { const v = JSON.parse(localStorage.getItem(NW.key)) || {}; ['imp', 'cur', 'lines', 'warn'].forEach(k => { if (v[k] != null) NW[k] = v[k]; }); } catch (e) { /* defaults */ }
+  const saveNews = () => { try { localStorage.setItem(NW.key, JSON.stringify({ imp: NW.imp, cur: NW.cur, lines: NW.lines, warn: NW.warn })); } catch (e) { /* ignore */ } };
+  const BIGCUR = new Set(['USD', 'EUR', 'GBP', 'JPY', 'CNY']);
+  const newsCurOk = e => NW.cur === 'all' || (NW.cur === 'usd' ? e.cur === 'USD' : BIGCUR.has(e.cur));
+  const newsPick = e => newsCurOk(e) && (e.impact === 'High' || (NW.imp === 'med' && e.impact === 'Medium') || NW.imp === 'all');
+  const dur = ms => { const m = Math.max(1, Math.round(Math.abs(ms) / 60e3)); return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h${m % 60 ? ' ' + (m % 60) + ' min' : ''}` : `${Math.round(m / 1440)} days`; };
+  const dayOf = t => new Date(t).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) + (new Date(t).getUTCFullYear() !== new Date().getUTCFullYear() ? ' ' + new Date(t).getUTCFullYear() : '');
+  function newsGroups(list) {   // news at the same minute together (CPI and core CPI come out at once)
+    const out = [];
+    for (const e of list) { const L = out[out.length - 1]; if (L && L.t === e.t) L.es.push(e); else out.push({ t: e.t, es: [e] }); }
+    return out;
+  }
+  const groupName = G => `${G.es[0].cur} ${G.es[0].title}${G.es.length > 1 ? ` + ${G.es.slice(1).map(e => e.title).join(', ')}` : ''}`;
+  async function loadNews(force) {
+    if (NW.busy || (!force && Date.now() - NW.at < (NW.ev.length ? 30 : 5) * 60e3)) return;
+    NW.busy = true;
+    try { const r = await api('/api/sim/news'); NW.ev = r.events || []; NW.week = r.week || null; NW.err = (r.errors || []).join(' · '); }
+    catch (e) { NW.err = e.message; }
+    NW.busy = false; NW.at = Date.now();
+    renderNews(); newsRedraw();
+  }
+  function renderNewsLine() {
+    const el = $('sim-news-next');
+    if (!NW.ev.length) { el.hidden = !NW.err; el.className = 'sim-newsline'; el.textContent = `📅 News calendar could not be read: ${NW.err}`; return; }
+    const now = Date.now(), red = NW.ev.filter(e => e.impact === 'High' && newsCurOk(e)), G = newsGroups(red);
+    const just = G.filter(g => g.t <= now && now - g.t < 30 * 60e3).pop(), next = G.find(g => g.t > now);
+    el.hidden = false;
+    let h, cls = '';
+    if (just) { h = `📅 <b>${esc(groupName(just))}</b> came out ${dur(now - just.t)} ago · price can swing hard both ways for a while`; cls = 'now'; }
+    else if (next) {
+      const soon = next.t - now;
+      h = `📅 Next red news: <b>${esc(groupName(next))}</b> · ${dayOf(next.t)} ${hm(next.t)} UTC · <b>in ${dur(soon)}</b>`;
+      cls = soon <= 15 * 60e3 ? 'now' : soon <= 60 * 60e3 ? 'soon' : '';
+    } else h = '📅 No more red news in this week\'s list';
+    if (NW.week && (!next || next.es[0].src === 'fed')) h += ` <span class="m">· next week's list appears on Sunday</span>`;
+    el.className = 'sim-newsline' + (cls ? ' ' + cls : '');
+    el.innerHTML = h + ' <span class="m">· 📅 calendar</span>';
+  }
+  function renderNews(scrollToNext) {
+    renderNewsLine();
+    if (!NW.pop) return;
+    const body = $('sim-news-body'), now = Date.now();
+    const w0 = NW.week ? NW.week[0] - 86400e3 : now - 7 * 86400e3, w1 = NW.week ? NW.week[1] + 3600e3 : now;
+    const list = NW.ev.filter(e => newsPick(e) && e.t >= w0 && e.t <= w1);
+    let h = '', day = '', nextDone = false;
+    for (const e of list) {
+      const d = dayOf(e.t); if (d !== day) { day = d; h += `<div class="sim-news-day">${d}</div>`; }
+      const past = e.t <= now, isNext = !past && !nextDone; if (isNext) nextDone = true;
+      const fp = e.src === 'fed' ? `<br><span class="fp">${esc(e.note || '')}</span>` : (e.forecast || e.previous) ? `<br><span class="fp">${e.forecast ? 'forecast ' + esc(e.forecast) : ''}${e.forecast && e.previous ? ' · ' : ''}${e.previous ? 'previous ' + esc(e.previous) : ''}</span>` : '';
+      h += `<div class="sim-news-row${past ? ' past' : ''}${isNext ? ' next' : ''}"><span>${hm(e.t)}</span><span class="sim-imp ${esc(e.impact)}" title="${esc(e.impact)} impact"></span><span>${esc(e.cur)}</span><span><b>${esc(e.title)}</b>${fp}</span><span class="when">${past ? (now - e.t < 86400e3 ? dur(now - e.t) + ' ago' : 'done') : 'in ' + dur(e.t - now)}</span></div>`;
+    }
+    if (!list.length) h += `<div class="sim-news-day">${NW.ev.length ? 'Nothing this week with these filters' : NW.busy ? 'Loading…' : 'Could not read the calendar' + (NW.err ? ': ' + esc(NW.err) : '')}</div>`;
+    const fomc = newsGroups(NW.ev.filter(e => e.t > w1 && /FOMC|Federal Funds Rate/i.test(e.title))).slice(0, 4);
+    if (fomc.length) {
+      h += '<div class="sim-news-day">Next Fed rate decisions (FOMC)</div>';
+      for (const G of fomc) { const e = G.es[0]; h += `<div class="sim-news-row"><span>${hm(e.t)}</span><span class="sim-imp High"></span><span>USD</span><span><b>${dayOf(e.t)}</b> · ${esc(e.title)}${e.note ? `<br><span class="fp">${esc(e.note)}</span>` : ''}</span><span class="when">in ${dur(e.t - now)}</span></div>`; }
+    }
+    const keep = body.scrollTop;
+    body.innerHTML = h;
+    if (scrollToNext) { const r = body.querySelector('.sim-news-row.next'); body.scrollTop = r ? Math.max(0, r.offsetTop - body.offsetTop - 60) : 0; } else body.scrollTop = keep;
+    const off = -new Date().getTimezoneOffset() / 60;
+    $('sim-news-foot').innerHTML = `Times in <b>UTC</b>, like the chart (your clock is UTC${off >= 0 ? '+' : ''}${off}). ` +
+      `<b>Red news moves BTC and most coins</b>: US inflation (CPI, mid-month), the jobs report (Non-Farm Payrolls, first Friday), FOMC rate decisions (8 a year) and the Fed chair's talks. ` +
+      `In the first minutes price often whips both ways, so a tight stop can be hit before the real move; many traders wait, or stand aside. ` +
+      `This week's list: Forex Factory's free feed (forecast and previous only; next week's appears on Sunday). FOMC dates: federalreserve.gov.` + (NW.err ? ` <span style="color:var(--danger)">${esc(NW.err)}</span>` : '');
+  }
+  function newsPop(on) {
+    NW.pop = on; $('sim-news').hidden = !on; $('sim-news-shade').hidden = !on;
+    if (on) { $('sim-news-imp').value = NW.imp; $('sim-news-cur').value = NW.cur; $('sim-news-lines').checked = NW.lines; $('sim-news-warn').checked = NW.warn; renderNews(true); loadNews(false); }
+  }
+  function newsWarn() {
+    if (!NW.warn) return;
+    const now = Date.now();
+    for (const G of newsGroups(NW.ev.filter(e => e.impact === 'High' && newsCurOk(e) && e.t > now && e.t - now <= 15 * 60e3))) {
+      if (NW.warned.has(G.t)) continue;
+      NW.warned.add(G.t);
+      ping(`📅 In ${dur(G.t - now)}: ${groupName(G)}`, `${hm(G.t)} UTC · red news: price can swing hard both ways`, null);
+    }
+  }
+  function newsTick() { loadNews(false); renderNewsLine(); newsWarn(); if (NW.pop) renderNews(); }
+  // dashed lines on the main chart at the news you picked
+  let newsLayer = null;
+  function makeNewsLayer() {
+    let req = null;
+    const view = { zOrder: () => 'bottom', renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintNews(sc.context, sc.mediaSize)) }) };
+    return { attached: p => { req = p.requestUpdate; }, detached: () => { req = null; }, paneViews: () => [view], updateAllViews: () => {}, update: () => { if (req) req(); } };
+  }
+  function paintNews(g, size) {
+    if (!NW.lines || !NW.ev.length || !cs || !S.Bt.length) return;
+    g.save(); g.font = '600 10px "JetBrains Mono", monospace'; g.textBaseline = 'middle'; g.lineWidth = 1;
+    let lastEnd = -1e9;
+    for (const G of newsGroups(NW.ev.filter(newsPick))) {
+      const x = tToX(G.t); if (x == null || x < -2 || x > size.width + 2) continue;
+      const col = G.es.some(e => e.impact === 'High') ? '#ef4444' : G.es.some(e => e.impact === 'Medium') ? '#f97316' : '#eab308', X = Math.round(x) + .5;
+      g.strokeStyle = col; g.globalAlpha = .75; g.setLineDash([4, 4]);
+      g.beginPath(); g.moveTo(X, 0); g.lineTo(X, size.height); g.stroke();
+      g.setLineDash([]); g.globalAlpha = 1;
+      const txt = (G.es[0].cur + ' ' + G.es[0].title).slice(0, 28) + (G.es.length > 1 ? ' +' + (G.es.length - 1) : ''), w = g.measureText(txt).width + 8;
+      if (X + 3 > lastEnd && X + 3 + w < size.width) { g.fillStyle = 'rgba(19,23,34,0.88)'; g.fillRect(X + 3, 26, w, 14); g.fillStyle = col; g.textAlign = 'left'; g.fillText(txt, X + 7, 33.5); lastEnd = X + 3 + w + 4; }
+    }
+    g.restore();
+  }
+  const newsRedraw = () => { if (newsLayer) newsLayer.update(); };
+  $('sim-news-btn').onclick = () => newsPop(true);
+  $('sim-news-next').onclick = () => newsPop(true);
+  $('sim-news-close').onclick = () => newsPop(false);
+  $('sim-news-shade').onclick = () => newsPop(false);
+  $('sim-news-imp').onchange = () => { NW.imp = $('sim-news-imp').value; saveNews(); renderNews(true); newsRedraw(); };
+  $('sim-news-cur').onchange = () => { NW.cur = $('sim-news-cur').value; saveNews(); renderNews(true); newsRedraw(); };
+  $('sim-news-lines').onchange = () => { NW.lines = $('sim-news-lines').checked; saveNews(); newsRedraw(); };
+  $('sim-news-warn').onchange = () => {
+    NW.warn = $('sim-news-warn').checked; saveNews();
+    if (NW.warn) {   // sound and notifications need a click to be allowed
+      try { AL.ctx = AL.ctx || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* no sound */ }
+      try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { /* ignore */ }
+    }
+  };
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && NW.pop) { e.preventDefault(); newsPop(false); } });
+
   function start() {
     if (started) return; started = true;
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
     $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early; $('sim-alert-zone').checked = AL.zone !== false;
     initChart(); renderJournal(); setTool(null); setRealPoll();
     if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
+    loadNews(true); setInterval(newsTick, 20e3);
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
     S.track = setInterval(trackBg, 4000);   // live trades keep updating in any mode, on any chart
     const v = loadView();   // the chart you had before the reload
@@ -2428,7 +2885,7 @@
     if (full.on && full.real && !(document.fullscreenElement || document.webkitFullscreenElement)) setFull(false);
   }));
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && full.on && !pxPop && !LS.pop && !DR.cur) setFull(false);
+    if (e.key === 'Escape' && full.on && !e.defaultPrevented && !pxPop && !LS.pop && !DR.cur && !NW.pop && !QK.on) setFull(false);   // Esc that closed something above doesn't also leave full screen
     else if (e.key === 'F' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) {
       const panel = document.getElementById('tab-sim'); if (panel && panel.classList.contains('active')) { e.preventDefault(); setFull(!full.on); }
     }

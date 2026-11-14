@@ -121,6 +121,81 @@ async function fxKlines(pair, iv, start, end) {
   return candles;
 }
 
+// ---------- news calendar ----------
+// This week's economic calendar from Forex Factory's free weekly feed (no key, no "actual" numbers; next week's appears
+// on Sunday), read at most once an hour, plus the Fed's FOMC meeting dates from federalreserve.gov (twice a day), so
+// the next rate decision shows even when it is weeks away. Both public pages, read only.
+const FF_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
+const FED_URL = 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm';
+// decision days if the Fed page can't be read (from that page, 14 Nov 2026; each date is tentative until the meeting before)
+const FOMC_FALLBACK = ['2026-12-09*', '2027-01-27', '2027-03-17', '2027-04-28', '2027-06-09', '2027-07-28', '2027-09-15', '2027-10-27', '2027-11-17'];
+const NEWS = { ff: [], ffAt: 0, ffErr: null, fed: null, fedAt: 0, fedErr: null, busy: null };
+const MONTH = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+
+function nyToUtc(y, m, d, h, min) {   // a New York wall-clock time → UTC ms (EST or EDT, whichever applies that day)
+  const guess = Date.UTC(y, m, d, h + 5, min);
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(new Date(guess));
+  const nyH = +p.find(x => x.type === 'hour').value, nyM = +p.find(x => x.type === 'minute').value;
+  return guess + ((h - nyH) * 60 + (min - nyM)) * 60e3;
+}
+const fomcEvent = (y, m, d, proj, note) => ({
+  t: nyToUtc(y, m, d, 14, 0), cur: 'USD', title: 'FOMC rate decision', impact: 'High', src: 'fed',
+  note: 'Fed interest-rate decision; the chair\'s press conference follows 30 min later' + (proj ? ', with new projections' : '') + (note ? ` (${note})` : ''),
+});
+function parseFed(html, fromYear) {
+  const out = [], parts = html.split(/(\d{4}) FOMC Meetings/);
+  for (let i = 1; i < parts.length; i += 2) {
+    const y = +parts[i]; if (y < fromYear) continue;
+    const re = /fomc-meeting__month[^>]*>\s*<strong>([^<]+)<\/strong>[\s\S]*?fomc-meeting__date[^>]*>([^<]+)<([\s\S]*?)(?=fomc-meeting__month|$)/g;
+    let m;
+    while ((m = re.exec(parts[i + 1]))) {
+      const mon = MONTH[m[1].trim().split('/').pop().trim().slice(0, 3).toLowerCase()], days = m[2].match(/\d+/g);
+      if (mon == null || !days || /unscheduled|notation/i.test(m[2])) continue;
+      const d = +days[days.length - 1], note = /Strategy Meeting/i.test(m[3]) ? 'strategy meeting' : '';
+      out.push(fomcEvent(y, mon, d, m[2].includes('*'), note));
+    }
+  }
+  return out;
+}
+async function refreshNews() {
+  const now = Date.now(), jobs = [];
+  if (now - NEWS.ffAt > (NEWS.ffErr ? 10 : 60) * 60e3) jobs.push((async () => {
+    try {
+      const r = await fetch(FF_URL, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0 (cryptosignal dashboard)' } });
+      if (!r.ok) throw new Error(`Forex Factory feed: HTTP ${r.status}`);
+      const a = await r.json();
+      if (!Array.isArray(a)) throw new Error('Forex Factory feed: not a list');
+      NEWS.ff = a.map(e => ({ t: Date.parse(e.date), cur: String(e.country || ''), title: String(e.title || ''), impact: String(e.impact || ''),
+        forecast: String(e.forecast || ''), previous: String(e.previous || ''), src: 'ff' })).filter(e => isFinite(e.t));
+      NEWS.ffErr = null;
+    } catch (e) { NEWS.ffErr = e.message; }
+    NEWS.ffAt = Date.now();
+  })());
+  if (now - NEWS.fedAt > (NEWS.fedErr ? 60 : 12 * 60) * 60e3) jobs.push((async () => {
+    try {
+      const r = await fetch(FED_URL, { signal: AbortSignal.timeout(20000), headers: { 'User-Agent': 'Mozilla/5.0 (cryptosignal dashboard)' } });
+      if (!r.ok) throw new Error(`Fed calendar: HTTP ${r.status}`);
+      const list = parseFed(await r.text(), new Date().getUTCFullYear() - 1);
+      if (list.length < 4) throw new Error('Fed calendar: page layout changed');
+      NEWS.fed = list; NEWS.fedErr = null;
+    } catch (e) { NEWS.fedErr = e.message; }
+    NEWS.fedAt = Date.now();
+  })());
+  await Promise.all(jobs);
+}
+async function newsEvents() {
+  if (!NEWS.busy) NEWS.busy = refreshNews().finally(() => { NEWS.busy = null; });
+  await NEWS.busy;
+  const fed = NEWS.fed || FOMC_FALLBACK.map(s => { const [y, m, d] = s.match(/\d+/g).map(Number); return fomcEvent(y, m - 1, d, s.endsWith('*')); });
+  const ff = NEWS.ff;
+  // the weekly feed lists the same decision ("Federal Funds Rate", "FOMC Statement") with a forecast: keep that one
+  const fedOnly = fed.filter(f => !ff.some(e => e.cur === 'USD' && Math.abs(e.t - f.t) < 3 * 3600e3 && /Federal Funds Rate|FOMC Statement/i.test(e.title)));
+  const events = ff.concat(fedOnly).sort((a, b) => a.t - b.t);
+  const wk = ff.length ? [Math.min(...ff.map(e => e.t)), Math.max(...ff.map(e => e.t))] : null;
+  return { events, week: wk, errors: [NEWS.ffErr, NEWS.fedErr && NEWS.fed ? null : NEWS.fedErr].filter(Boolean), fedFallback: !NEWS.fed,
+    sources: { calendar: 'Forex Factory weekly feed', fomc: NEWS.fed ? 'federalreserve.gov' : 'built-in list (federalreserve.gov unreachable)' } };
+}
+
 const iso = d => (d ? new Date(d).getTime() : null);
 
 // Answers every /api/sim/* request (the caller has already checked the dashboard key).
@@ -202,6 +277,8 @@ async function handle(url, res) {
           t: iso(t.created_at), t1: iso(t.closed_at) })),
       });
     }
+
+    if (url.pathname === '/api/sim/news') return send(200, await newsEvents());
 
     return send(404, { error: 'unknown simulator endpoint' });
   } catch (e) {
