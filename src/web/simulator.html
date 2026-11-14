@@ -661,8 +661,9 @@
   function keepLevels(r) {   // auto-fit also keeps your stop and next target in view (within ±25% of the price)
     if (!r || !r.priceRange) return r;
     const px = price(); if (px == null) return r;
-    const p = S.pos, lv = [];
+    const p = S.pos, lv = [], q = pendHere();
     if (p) { lv.push(p.stop); const tp = p.tps.find(t => !t.hit); if (tp) lv.push(tp.price); }
+    else if (q) lv.push(q.lim, q.stop, q.tps[0].price);   // a waiting practice limit and its stop / TP1
     else { const pl = plan(px); if (pl.stop) lv.push(pl.stop); if (pl.tps[0]) lv.push(pl.tps[0].price); }
     for (const v of lv) if (isFinite(v) && Math.abs(v / px - 1) <= 0.25) { r.priceRange.minValue = Math.min(r.priceRange.minValue, v); r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v); }
     return r;
@@ -1407,49 +1408,112 @@
     status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
     refresh();
   }
-  // a simulated trade on this chart, entered at px on candle k (the ticket's market button, or a practice limit that filled)
+  // a simulated trade, entered at px on candle k (the ticket's market button, or a practice limit that filled). It is on
+  // this chart unless o.at names another coin: a live practice limit that filled in the background.
   function makePos(side, px, pl, size, k, o) {
+    const c = o.at || { mode: S.mode, sym: S.sym, ex: S.ex, prec: S.prec };
     const p = { id: Date.now() + Math.random(), side, entry: px, t0: k[0] + MIN, size, qty: size / px, stop: pl.stop, stop0: pl.stop,
-      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: o.be, rem: 1, realized: -size * feeOf(S.ex), fee: feeOf(S.ex),
-      checks: o.checks, auto: o.auto, mode: S.mode, sym: S.sym, ex: S.ex,
-      ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
-    p.prec = S.prec; p.last = px; p.fails = 0; p.htf = htfAgree(side);
+      tps: pl.tps.map(x => ({ price: x.price, frac: x.frac, hit: false })), be: o.be, rem: 1, realized: -size * feeOf(c.ex), fee: feeOf(c.ex),
+      checks: o.checks, auto: o.auto, mode: c.mode, sym: c.sym, ex: c.ex,
+      ref: c.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
+    p.prec = c.prec; p.last = px; p.fails = 0; p.htf = o.htf != null ? o.htf : htfAgree(side);
     S.open.push(p);
-    S.marks.push(entryMark(side, k[0], px));
-    if (S.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
+    if (onChart(p)) S.marks.push(entryMark(side, k[0], px));
+    if (c.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
     return p;
   }
   // ---------- practice limit orders (⚡ from the chart) ----------
   // Like the bot's off-book limits: the order fills at its price when a candle touches it (from below or above). One per
-  // chart, checked only while that chart is open; loading another chart cancels it.
-  let QP = [];
-  const pendHere = () => QP.find(o => o.mode === S.mode && o.sym === S.sym) || null;
-  function pendDrop(o) {
-    if (cs) o.lines.forEach(l => cs.removePriceLine(l));
-    QP = QP.filter(x => x !== o);
+  // coin. Live ones are kept in this browser and keep waiting when you open another coin or reload: off this chart they
+  // are checked every 4 s on their own candles, like live practice trades, and a fill opens the trade there. A replay
+  // limit belongs to its replay and is cancelled when another chart loads.
+  const QKEY = 'sc_sim_live_lim_v1';
+  const pendKeep = ['id', 'mode', 'sym', 'ex', 'prec', 'side', 'lim', 'stop', 'tps', 'size', 'be', 'checks', 'htf', 'above', 'ref', 'chk', 't0', 'last'];
+  const savePend = () => { try { const L = QP.filter(o => o.mode === 'live').map(o => Object.fromEntries(pendKeep.map(k => [k, o[k]]))); if (L.length) localStorage.setItem(QKEY, JSON.stringify(L)); else localStorage.removeItem(QKEY); } catch (e) { /* private window */ } };
+  const loadPend = () => { try { return (JSON.parse(localStorage.getItem(QKEY)) || []).filter(o => o && o.mode === 'live' && o.sym && o.lim > 0 && o.stop > 0 && o.tps && o.tps.length).map(o => ({ ...o, caught: false, fails: 0 })); } catch (e) { return []; } };
+  let QP = loadPend();
+  const limHere = o => !!o && o.mode === S.mode && o.sym === S.sym;
+  const pendHere = () => QP.find(limHere) || null;
+  const PL = { key: '', lines: [], cs: null };   // the price lines of the limit on this chart
+  function pendLines() {
+    const o = pendHere(), key = o ? `${o.id}:${o.lim}:${o.stop}:${o.tps[0].price}` : '';
+    if (key === PL.key && PL.cs === cs) return;
+    if (PL.cs) PL.lines.forEach(l => { try { PL.cs.removePriceLine(l); } catch (e) { /* chart gone */ } });
+    PL.lines = []; PL.key = key; PL.cs = cs;
+    if (!o || !cs) return;
+    for (const [p, color, title] of [[o.lim, '#facc15', `LIMIT ${o.side}`], [o.stop, '#ef4444', 'stop'], [o.tps[0].price, '#10b981', 'TP1']])
+      PL.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
   }
-  function pendCheck(k) {   // one candle of this chart: did a waiting practice limit fill? (true = it became the trade)
-    const o = pendHere(); if (!o || S.pos) return false;
+  function pendDrop(o) {
+    QP = QP.filter(x => x !== o);
+    savePend(); pendLines();
+  }
+  function limTouched(o, k) {   // did candle k reach the limit? (the candle it was placed in counts only from then on)
     let h = k[2], l = k[3];
-    if (o.ref) {   // live: the candle it was placed in counts only from then on (new highs / lows)
+    if (o.ref) {
       if (k[0] < o.ref.t) return false;
       if (k[0] === o.ref.t) { h = h > o.ref.h ? h : -Infinity; l = l < o.ref.l ? l : Infinity; o.ref.h = Math.max(o.ref.h, k[2]); o.ref.l = Math.min(o.ref.l, k[3]); }
     }
-    if (!(o.above ? h >= o.lim : l <= o.lim)) return false;
+    return o.above ? h >= o.lim : l <= o.lim;
+  }
+  function limFill(o, k, worst) {   // the limit becomes the trade, at its price, on candle k
     pendDrop(o);
-    const p = makePos(o.side, o.lim, { stop: o.stop, tps: o.tps }, o.size, k, { be: o.be, checks: o.checks, auto: false });
-    // the rest of this candle after the fill is unknown: replay checks only the stop on it (the worse case), from the next candle on as usual
-    if (S.mode === 'replay') evalBar(p, k[0], o.side === 'short' ? k[2] : p.entry, o.side === 'short' ? p.entry : k[3]);
-    status(`⚡ Practice limit filled: ${o.side} at ${fmt(o.lim)}.` + (S.open.includes(p) ? '' : ' The same candle reached the stop.'));
+    const here = limHere(o);
+    const p = makePos(o.side, o.lim, { stop: o.stop, tps: o.tps }, o.size, k, { be: o.be, checks: o.checks, auto: false, htf: o.htf, at: here ? null : o });
+    // the rest of this candle after the fill is unknown: replay (and a background catch-up) checks only the stop on it
+    // (the worse case), from the next candle on as usual
+    if (worst) evalBar(p, k[0], o.side === 'short' ? k[2] : p.entry, o.side === 'short' ? p.entry : k[3]);
+    const f = v => fmtOf(o, v);
+    status((here ? `⚡ Practice limit filled: ${o.side} at ${f(o.lim)}.` : `⚡ Your practice ${o.sym} ${o.side} limit filled at ${f(o.lim)} — it is in Position.`) +
+      (S.open.includes(p) ? '' : ' The same candle reached the stop.'));
+    return p;
+  }
+  function pendCheck(k) {   // one candle of this chart: did a waiting practice limit fill? (true = it became the trade)
+    const o = pendHere(); if (!o || S.pos || (o.mode === 'live' && !o.caught)) return false;
+    if (o.mode === 'live') { o.chk = k[0]; o.last = k[4]; }
+    if (!limTouched(o, k)) return false;
+    limFill(o, k, S.mode === 'replay');
     return true;
   }
+  // live limits on other coins (or not yet caught up since a reload): their own 1m candles since the last check
+  async function trackLims() {
+    for (const o of QP.filter(x => x.mode === 'live')) {
+      if (!QP.includes(o)) continue;
+      if (o.caught && S.mode === 'live' && o.sym === S.sym && S.base.length) continue;   // the chart's own update checks it
+      if (S.open.some(p => p.mode === 'live' && p.sym === o.sym)) continue;            // a practice trade on that coin is open: the limit waits
+      const now = Date.now();
+      let from = o.chk != null ? o.chk : (o.ref ? o.ref.t : o.t0);
+      try {
+        if (now - from > 48 * 3600e3) {   // page closed for more than 2 days: walk that part on 1h candles
+          const r = await api('/api/sim/klines', { symbol: o.sym, interval: '1h', start: from, end: now - 47 * 3600e3, exchange: o.ex });
+          for (const k of r.candles || []) {
+            if (!QP.includes(o)) break; if (k[0] < from) continue;
+            if (limTouched(o, k)) { const t = limFill(o, k, true); if (S.open.includes(t)) { t.chk = k[0] + 3600e3; t.ref = null; } break; }   // its 1m walk starts after this hour
+            o.chk = k[0] + 3600e3; o.last = k[4];
+          }
+          if (!QP.includes(o)) continue;
+          from = o.chk;
+        }
+        const r = await api('/api/sim/klines', { symbol: o.sym, interval: '1m', start: from, exchange: o.ex });
+        for (const k of r.candles || []) {
+          if (!QP.includes(o)) break; if (k[0] < from) continue;
+          o.chk = k[0]; o.last = k[4];
+          if (limTouched(o, k)) { limFill(o, k, now - k[0] > 2 * MIN); break; }
+        }
+        o.caught = true; o.fails = 0;
+      } catch (e) { o.fails = (o.fails || 0) + 1; if (o.fails === 3) status(`Could not check your ${o.sym} practice limit: ${e.message} — still retrying every 4 s.`, true); }
+    }
+    savePend();
+  }
   function renderPend() {
+    pendLines();
     const el = $('sim-pend'), o = pendHere(), px = S.cur >= 0 ? price() : null;
     if (!o) { el.hidden = true; el.innerHTML = ''; return; }
     el.hidden = false;
     el.innerHTML = `⏳ Practice limit <b>${o.side.toUpperCase()}</b> at <b>${fmt(o.lim)}</b> · stop ${fmt(o.stop)} · TP1 ${fmt(o.tps[0].price)} (closes all there)` +
-      ` · fills when price touches it${px != null ? ` (now ${fmt(px)}, ${(Math.abs(px / o.lim - 1) * 100).toFixed(2)}% away)` : ''}<button type="button" class="b" id="sim-pend-x">Cancel</button>`;
-    $('sim-pend-x').onclick = () => { pendDrop(o); renderPend(); status('Practice limit cancelled.'); };
+      ` · fills when price touches it${px != null ? ` (now ${fmt(px)}, ${(Math.abs(px / o.lim - 1) * 100).toFixed(2)}% away)` : ''}` +
+      (o.mode === 'live' ? ' · keeps waiting if you open another coin or reload' : '') + `<button type="button" class="b" id="sim-pend-x">Cancel</button>`;
+    $('sim-pend-x').onclick = () => { pendDrop(o); refresh(); status('Practice limit cancelled.'); };
   }
   const posMarks = p => [entryMark(p.side, p.ref ? p.ref.t : p.t0 - MIN, p.entry)].concat(p.fills.map(f => fillMark(p.side, f.t, f.label)));
   const entryMark = (side, t, px) => ({ t, pos: side === 'short' ? 'aboveBar' : 'belowBar', color: '#e5e7eb', shape: side === 'short' ? 'arrowDown' : 'arrowUp', text: (side === 'short' ? 'Short ' : 'Long ') + fmt(px) });
@@ -1500,13 +1564,26 @@
       <div class="sim-row"><button type="button" class="b" data-pclose="${p.id}">Close at market</button><button type="button" class="b" data-pbe="${p.id}">Stop to entry</button>` +
       (here || p.mode !== 'live' ? '' : `<button type="button" class="b" data-pshow="${p.id}">Show ${esc(p.sym)} chart</button>`) + `</div></div>`;
   }
+  function limBlock(o) {   // a waiting practice limit: on this chart, or a live one on another coin
+    const here = limHere(o), f = v => fmtOf(o, v), px = here ? price() : o.last;
+    const away = px > 0 ? `${(Math.abs(px / o.lim - 1) * 100).toFixed(2)}% away` : 'checking…';
+    return `<div class="sim-posblk${here ? ' here' : ''}">
+      <div class="sim-poshead"><span>⏳ <b>${o.side} ${esc(o.sym)}</b> <small>practice limit · ${o.mode}${here ? ' · this chart' : ''}</small></span><span class="m">${away}</span></div>
+      <dl class="sim-kv"><dt>Limit</dt><dd>${f(o.lim)}</dd><dt>Now</dt><dd>${px > 0 ? f(px) : '–'}</dd>
+      <dt>Stop</dt><dd>${f(o.stop)}</dd><dt>TP1</dt><dd>${f(o.tps[0].price)} (closes all)</dd><dt>Size</dt><dd>$${(+o.size).toFixed(0)}</dd>` +
+      (o.t0 ? `<dt>Placed</dt><dd>${utc(o.t0)} UTC</dd>` : '') + `</dl>
+      <div class="sim-row"><button type="button" class="b" data-lcancel="${o.id}">Cancel limit</button>` +
+      (here || o.mode !== 'live' ? '' : `<button type="button" class="b" data-lshow="${o.id}">Show ${esc(o.sym)} chart</button>`) + `</div></div>`;
+  }
   function renderPos() {
     const body = $('sim-pos-body'), list = S.open.slice().sort((a, b) => onChart(b) - onChart(a));
-    if (!list.length) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade.'; return; }
+    const lims = QP.filter(o => o.mode === 'live' || limHere(o)).sort((a, b) => limHere(b) - limHere(a));
+    if (!list.length && !lims.length) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade or practice limit.'; return; }
     const total = list.reduce((a, p) => a + p.realized + unreal(p, pxOf(p)), 0);
-    $('sim-pos-tag').textContent = list.length === 1 ? `${list[0].side} ${list[0].sym}` : `${list.length} open · ${usd(total)}`;
+    const lt = lims.length ? `${lims.length} limit${lims.length > 1 ? 's' : ''} waiting` : '';
+    $('sim-pos-tag').textContent = [list.length === 1 ? `${list[0].side} ${list[0].sym}` : list.length ? `${list.length} open · ${usd(total)}` : '', lt].filter(Boolean).join(' · ');
     body.className = '';
-    body.innerHTML = list.map(posBlock).join('');
+    body.innerHTML = list.map(posBlock).join('') + lims.map(limBlock).join('');
   }
   function renderJournal() {
     const J = journal, n = J.length, wins = J.filter(j => j.pnl > 0).length, net = J.reduce((a, j) => a + j.pnl, 0);
@@ -1575,7 +1652,9 @@
     S.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0); S.marks = [];   // forex: 210.969 / 1.10278 (pipettes)
     if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = []; DR.cur = null; DR.hover = null;
     if (QK.on) quickEnd();
-    if (QP.length) { QP.slice().forEach(pendDrop); setTimeout(() => hint('Your waiting practice limit was cancelled: practice limits wait only on their own chart.'), 0); }
+    const rq = QP.filter(o => o.mode === 'replay');   // live limits keep waiting (in the background when it is another coin)
+    if (rq.length) { rq.forEach(pendDrop); setTimeout(() => hint('Your waiting replay limit was cancelled: a replay limit belongs to its own replay.'), 0); }
+    pendLines();
     $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
     recomputeFull(); loadHtf(); cmpAfterMain();
   }
@@ -1649,7 +1728,8 @@
           p.caught = true; p.fails = 0;
         } catch (e) { p.fails = (p.fails || 0) + 1; if (p.fails === 3) status(`Could not update your ${p.sym} trade: ${e.message} — still retrying every 4 s.`, true); }
       }
-      if (liveOpen().length || S.open.length) { savePos(); refresh(); }
+      if (QP.some(o => o.mode === 'live')) await trackLims();
+      if (liveOpen().length || S.open.length || QP.length) { savePos(); refresh(); }
     } finally { S.tracking = false; }
   }
   async function restoreAll(list) {
@@ -2732,7 +2812,7 @@
   function quickErr() {
     if (realOn()) return realOpenOn(S.sym) ? `You already have a real ${S.sym} trade or order (one per coin).` : '';
     if (S.pos) return `You already have a practice ${S.pos.side} on ${S.sym}: close it first.`;
-    if (S.mode === 'live' && liveOpen().length >= MAX_LIVE) return `${MAX_LIVE} practice live trades are open: close one first.`;
+    if (S.mode === 'live' && liveOpen().length + QP.filter(o => o.mode === 'live' && o.sym !== S.sym).length >= MAX_LIVE) return `${MAX_LIVE} practice live trades and limits are open: close or cancel one first.`;
     if (!(parseFloat($('sim-size').value) > 0)) return 'Enter a size in dollars in the ticket.';
     return '';
   }
@@ -2782,13 +2862,12 @@
     if (!realOn()) {   // practice: a limit that waits for price
       const k = S.base[S.cur], old = pendHere();
       if (old) pendDrop(old);
-      const o = { mode: S.mode, sym: S.sym, side, lim: QK.lim, stop: QK.stop, tps: [{ price: QK.tp, frac: 1 }], size: parseFloat($('sim-size').value), be: false,
-        checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, above: QK.lim > price(), ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, lines: [] };
-      for (const [p, color, title] of [[o.lim, '#facc15', `LIMIT ${side}`], [o.stop, '#ef4444', 'stop'], [o.tps[0].price, '#10b981', 'TP1']])
-        o.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
-      QP.push(o);
+      const o = { id: Date.now(), mode: S.mode, sym: S.sym, ex: S.ex, prec: S.prec, side, lim: QK.lim, stop: QK.stop, tps: [{ price: QK.tp, frac: 1 }], size: parseFloat($('sim-size').value), be: false,
+        checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, htf: htfAgree(side), above: QK.lim > price(), ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null,
+        t0: S.mode === 'live' ? Date.now() : k[0] + MIN, chk: S.mode === 'live' ? k[0] : null, last: price(), caught: true };
+      QP.push(o); savePend();
       quickEnd(); [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; });
-      status(`⚡ Practice ${side} limit at ${pv(o.lim)} is waiting: it fills when price touches it.` + (S.mode === 'replay' ? ' Press Play or → to see.' : ''));
+      status(`⚡ Practice ${side} limit at ${pv(o.lim)} is waiting: it fills when price touches it.` + (S.mode === 'replay' ? ' Press Play or → to see.' : ' It is listed under Position and keeps waiting if you open another coin or reload.'));
       refresh(); return;
     }
     // real: fill in the ticket, then its own review → ✅ Place (shown in this bar too)
@@ -3245,6 +3324,13 @@
     const b = e.target.closest('[data-scan]'); if (b) openCoin(b.dataset.scan, b.dataset.ex, b.dataset.tf);
   }));
   $('sim-pos-body').addEventListener('click', e => {
+    const lb = e.target.closest('[data-lcancel],[data-lshow]');
+    if (lb) {
+      const o = QP.find(x => String(x.id) === (lb.dataset.lcancel || lb.dataset.lshow)); if (!o) return;
+      if (lb.dataset.lcancel) { pendDrop(o); refresh(); status(`Practice ${o.sym} ${o.side} limit cancelled.`); return; }
+      if (S.mode !== 'live') setMode('live', true);
+      $('sim-symbol-live').value = o.sym; loadLive(o.sym, o.ex); return;
+    }
     const b = e.target.closest('[data-pclose],[data-pbe],[data-pshow]'); if (!b) return;
     const id = +(b.dataset.pclose || b.dataset.pbe || b.dataset.pshow), p = S.open.find(x => x.id === id); if (!p) return;
     if (b.dataset.pshow) { if (S.mode !== 'live') setMode('live', true); $('sim-symbol-live').value = p.sym; loadLive(p.sym, p.ex); return; }
