@@ -335,4 +335,5 @@ async function handle(url, res) {
   }
 }
 
-module.exports = { handle, cleanSymbol };
+// topCoins and the kline fetchers are also used by the Telegram SMC alerts (src/collectors/smcAlerts.js)
+module.exports = { handle, cleanSymbol, topCoins, bybitKlines, binanceKlines };

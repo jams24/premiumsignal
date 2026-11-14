@@ -12,6 +12,8 @@ const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const manualLimits = require('../engine/manualLimitOrders');
 const { launchPolling } = require('./pollingLaunch');
 const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
+const { SIDES: SMC_SIDES, SIDE_TXT: SMC_SIDE_TXT, MAX_COINS: SMC_MAX_COINS } = require('../collectors/smcAlerts');
+const { cleanSymbol: simSymbol } = require('../web/simApi');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
 const ALERT_TYPES = [
@@ -140,9 +142,9 @@ class TelegramBot {
       'setpositions', 'setconfidence', 'risk', 'dynlev', 'filter', 'balance',
       'settings', 'users', 'grant', 'revoke', 'testchart',
       'long', 'short', 'sl', 'tp', 'entry', 'margin', 'lev', 'orders', 'cancelorder', 'mclose', 'mpositions', 'check', 'autopump', 'tightstop',
-      'webtrade',
+      'webtrade', 'smcalerts',
     ]);
-    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_|ap_)/;
+    const ADMIN_ACTIONS = /^(cfg_|oc_|sw_|dz_|panel_|pnl_|mt_|chk_|ap_|sa_)/;
     const PUBLIC_COMMANDS = new Set([
       'start', 'menu', 'help', 'guide', 'signals', 'scan', 'trending', 'funding', 'stats',
       'intel', 'dex', 'whale', 'review', 'analyse', 'positions', 'pnl',
@@ -7998,6 +8000,7 @@ class TelegramBot {
           Markup.button.callback(`${this.alertMutes.has(k) ? '🔕' : '✅'} ${label}`, `al_t_${k}`)));
       }
       rows.push([Markup.button.callback('✅ All ON', 'al_all_on'), Markup.button.callback('🔕 All OFF', 'al_all_off')]);
+      rows.push([Markup.button.callback('📐 SMC setup alerts (zone · 3/4 · A+)', 'sa_show')]);
       rows.push([Markup.button.callback('⬅️ Panel', 'panel_main')]);
       return { text, keyboard: Markup.inlineKeyboard(rows) };
     };
@@ -8039,6 +8042,89 @@ class TelegramBot {
           await ctx.answerCbQuery(muted.length ? 'All alert types OFF' : 'All alert types ON').catch(() => {});
           await showAlerts(ctx, true);
         } catch (e) { logger.error(`${action}: ${e.message}`); }
+      });
+    }
+
+    // === SMC SETUP ALERTS — the Simulator's 🧱 zone / ⚠️ 3/4 / 🎯 A+ alerts in this chat (src/collectors/smcAlerts.js) ===
+    const smcPanel = () => {
+      const s = this.smcAlerts, c = s.cfg, L = s.last, T = s.today, tick = v => (v ? '✅' : '▫️');
+      const day = new Date().toISOString().slice(0, 10);
+      let text = `📐 <b>SMC SETUP ALERTS</b>\nThe Simulator's alerts, sent to this chat by the bot — no dashboard needed.\n\n`;
+      text += c.on ? '🟢 <b>ON</b> · checked every minute on closed 1m candles' : '⚪ <b>OFF</b>';
+      if (c.on && L) text += `\nLast check ${new Date(L.at).toISOString().slice(11, 16)} UTC · ${L.coins} coins (${L.top} top by volume, ${L.signal} signals, ${L.yours} yours) · ${(L.ms / 1000).toFixed(1)} s` + (L.fails ? ` · ${L.fails} unreadable` : '');
+      else if (c.on) text += '\nFirst check within a minute — it only notes what is already set up; new ones after that come here.';
+      if (c.on && T.day === day && T.msgs) text += `\nToday: ${T.zone} zone · ${T.heads} 3/4 · ${T.aplus} A+ in ${T.msgs} message${T.msgs > 1 ? 's' : ''}`;
+      text += `\n\nStructure <b>${c.tf}m</b> · <b>${SMC_SIDE_TXT[c.side]}</b>\n` +
+        `${tick(c.zone)} 🧱 Zone — first touch of the supply / demand zone of the last break (the busy one)\n` +
+        `${tick(c.heads)} ⚠️ 3/4 — sweep done, waiting for the 1m trigger\n` +
+        `${tick(c.aplus)} 🎯 A+ — 1m close through the trigger, with entry · stop · target`;
+      text += `\n\nCoins: ${[c.top && 'top 50 by volume', c.signals && 'pump signals 48 h', c.coins.length && 'yours'].filter(Boolean).join(' + ') || '<b>none picked</b>'}`;
+      if (c.coins.length) text += `\nYours: ${c.coins.map(escapeHtml).join(', ')}`;
+      text += `\nAdd: <code>/smcalerts add ZEC</code> · remove: <code>/smcalerts remove ZEC</code>`;
+      text += '\n\n<i>Tested on the 207 coins we traded (14 Oct – 13 Nov): A+ shorts −0.05R a trade, longs −0.31R, no better than a random entry with the same stop and target; fading a supply zone −0.13R. Practice alerts, not trade calls — not financial advice.</i>';
+      const rows = [
+        [Markup.button.callback(c.on ? '🔕 Turn OFF' : '🔔 Turn ON', 'sa_on')],
+        [Markup.button.callback(`${tick(c.zone)} 🧱 Zone`, 'sa_k_zone'), Markup.button.callback(`${tick(c.heads)} ⚠️ 3/4`, 'sa_k_heads'), Markup.button.callback(`${tick(c.aplus)} 🎯 A+`, 'sa_k_aplus')],
+        [Markup.button.callback(`Side: ${SMC_SIDE_TXT[c.side]}`, 'sa_side'), Markup.button.callback(`Structure: ${c.tf}m`, 'sa_tf')],
+        [Markup.button.callback(`${tick(c.top)} Top 50`, 'sa_c_top'), Markup.button.callback(`${tick(c.signals)} Signals 48 h`, 'sa_c_signals')],
+        [Markup.button.callback('🔄 Refresh', 'sa_show'), Markup.button.callback('⬅️ Alerts', 'al_show')],
+      ];
+      return { text, keyboard: Markup.inlineKeyboard(rows) };
+    };
+    const showSmc = async (ctx, edit) => {
+      if (!this.smcAlerts) return ctx.replyWithHTML('⚠️ SMC alerts are not ready yet — try again in a minute.');
+      const { text, keyboard } = smcPanel();
+      if (!edit) return ctx.replyWithHTML(text, keyboard);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch(e => { if (!/not modified/i.test(e.message)) throw e; });
+    };
+    this.bot.command('smcalerts', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');
+      if (!this.smcAlerts) return ctx.replyWithHTML('⚠️ SMC alerts are not ready yet — try again in a minute.');
+      const [arg, ...rest] = ctx.message.text.trim().split(/\s+/).slice(1);
+      const a = (arg || '').toLowerCase();
+      try {
+        if (a === 'on' || a === 'off') await this.smcAlerts.set({ on: a === 'on' });
+        else if (a === 'add' || a === 'remove' || a === 'rm') {
+          const syms = [...new Set(rest.map(x => (simSymbol(x) || '').replace(/USDT$/, '')).filter(Boolean))];
+          if (!syms.length) return ctx.replyWithHTML(`Send the coin too, e.g. <code>/smcalerts ${a === 'add' ? 'add' : 'remove'} ZEC</code>`);
+          const coins = new Set(this.smcAlerts.cfg.coins), notes = [];
+          for (const s of syms) {
+            if (a !== 'add') { if (!coins.delete(s)) notes.push(`${s} was not on your list`); continue; }
+            if (coins.has(s)) continue;
+            if (coins.size >= SMC_MAX_COINS) { notes.push(`list full (${SMC_MAX_COINS} coins)`); break; }
+            if (!(await this.smcAlerts.exists(s))) { notes.push(`${s}: no USDT perp candles on Bybit or Binance`); continue; }
+            coins.add(s);
+          }
+          await this.smcAlerts.set({ coins: [...coins] });
+          await this.smcAlerts.coinList(true).catch(() => {});
+          if (notes.length) await ctx.replyWithHTML(`⚠️ ${escapeHtml(notes.join(' · '))}`);
+        }
+        await showSmc(ctx, false);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`); }
+    });
+    this.bot.action('sa_show', async (ctx) => {
+      if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Admin only').catch(() => {});
+      await ctx.answerCbQuery().catch(() => {});
+      try { await showSmc(ctx, true); } catch (e) { logger.error(`sa_show: ${e.message}`); }
+    });
+    // one handler per button: each returns the settings change it makes
+    const SMC_BUTTONS = {
+      sa_on: c => ({ on: !c.on }),
+      sa_side: c => ({ side: SMC_SIDES[(SMC_SIDES.indexOf(c.side) + 1) % SMC_SIDES.length] }),
+      sa_tf: c => ({ tf: c.tf === 15 ? 5 : 15 }),
+      sa_k_zone: c => ({ zone: !c.zone }), sa_k_heads: c => ({ heads: !c.heads }), sa_k_aplus: c => ({ aplus: !c.aplus }),
+      sa_c_top: c => ({ top: !c.top }), sa_c_signals: c => ({ signals: !c.signals }),
+    };
+    for (const [action, change] of Object.entries(SMC_BUTTONS)) {
+      this.bot.action(action, async (ctx) => {
+        if (!isAdminCtx(ctx)) return ctx.answerCbQuery('Admin only').catch(() => {});
+        if (!this.smcAlerts) return ctx.answerCbQuery('Not ready yet').catch(() => {});
+        try {
+          const c = await this.smcAlerts.set(change(this.smcAlerts.cfg));
+          if (action.startsWith('sa_c_')) this.smcAlerts.list.at = 0;   // new coin choice applies at the next check
+          await ctx.answerCbQuery(action === 'sa_on' ? (c.on ? 'SMC alerts ON' : 'SMC alerts OFF') : 'Saved').catch(() => {});
+          await showSmc(ctx, true);
+        } catch (e) { logger.error(`${action}: ${e.message}`); ctx.answerCbQuery('Failed to save').catch(() => {}); }
       });
     }
 
@@ -11300,6 +11386,7 @@ class TelegramBot {
       { command: 'dzclose', description: 'Close a DZ paper trade' },
       { command: 'panel', description: 'Trading control panel' },
       { command: 'alerts', description: 'Turn alert types on or off' },
+      { command: 'smcalerts', description: 'SMC zone / 3/4 / A+ alerts for the top 50 coins' },
       { command: 'swingsettings', description: 'Swing trade settings' },
       { command: 'dzsettings', description: 'Demand zone settings' },
       { command: 'flow', description: 'Whales, retail, OI & level of a coin (/flow BEAMX)' },

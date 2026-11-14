@@ -75,6 +75,7 @@ async function main() {
   const dashboardHtml = require('./dashboard');
   const simApi = require('./web/simApi');
   const tradeApi = require('./web/tradeApi');
+  const { SmcAlerts } = require('./collectors/smcAlerts');
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const key = (url.searchParams.get('key') || '').trim();
@@ -664,6 +665,13 @@ async function main() {
   pumpAutoTrader.restoreSweeps().catch(e => logger.error(`Restoring sweep waits failed: ${e.message}`));
   bot.pumpAutoTrader = pumpAutoTrader;
   tradeApi.attach(bot);
+  // /smcalerts: the Simulator's zone / 3/4 / A+ alerts in the owner's DM, checked every minute (off until turned on)
+  const smcAlerts = new SmcAlerts({
+    send: (html) => bot.bot.telegram.sendMessage(Number(pumpAutoTrader.config?.ownerId) || config.telegram.adminIds[0], html, { parse_mode: 'HTML', disable_web_page_preview: true }),
+  });
+  await smcAlerts.load();
+  bot.smcAlerts = smcAlerts;
+  smcAlerts.start();
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
   // Channel trade updates: TP / stop / back-to-entry / 48h replies under every posted entry (exhaust short ✅ ENTER
   // replies, and switch longs / shorts when their 📣 channel posts are on), from the levels the channel showed
