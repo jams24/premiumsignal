@@ -93,6 +93,11 @@
 .sim h3 { font: 600 14px/1.3 var(--font-body); display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .sim h3 small { font: 400 12px var(--font-mono); color: var(--muted); }
 .sim-side { display: grid; gap: 14px; min-width: 0; }
+/* side by side: the coach / ticket / positions column stays in view while the chart side scrolls; it scrolls on its own
+   when it is taller than the screen (stacked on narrow screens and two-chart view, in the drawer in full screen) */
+@media (min-width: 961px) {
+  .sim-grid:not(.wide) > .sim-side { position: sticky; top: 10px; max-height: calc(100vh - 20px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 2px; }
+}
 .sim-two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .sim-two .b[aria-pressed="true"].short { background: var(--danger-dim); border-color: var(--danger); color: var(--danger); }
 .sim-two .b[aria-pressed="true"].long { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
@@ -306,7 +311,7 @@
           <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
           <button type="button" class="b go" id="sim-load-live">Load live chart</button>
           <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the chosen structure timeframe">🔎 Find setups</button>
-          <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option><option value="top">top 50 coins by volume + signals 48 h</option></select>
+          <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option><option value="top">top 50 coins by volume + signals 48 h</option><option value="alltop">every coin we traded + top 50 by volume + signals 48 h</option></select>
           <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
           <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
           <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
@@ -2180,6 +2185,10 @@
   $('sim-lists-shade').onclick = () => listsPop(false);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && LS.pop) { e.preventDefault(); listsPop(false); } });   // preventDefault: full screen stays
   let scanRun = 0, scanning = false, tradedCoins = null, topCoins = null;
+  const SCOPE_TXT = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h',
+    top: 'the 50 biggest coins by 24h volume + pump signals of the last 48 h', alltop: 'every coin we traded + the 50 biggest by 24h volume + pump signals of the last 48 h',
+    signals: 'pump signals of the last 48 h' };
+  const SCOPE_SHORT = { all: 'coins we traded', recent: 'coins traded in 30 days', top: 'top 50 by volume', alltop: 'coins we traded + top 50', signals: 'signals only' };
   async function coinList(scope, onChartToo) {   // the coins Find setups and the alerts check
     const since = Date.now() - 48 * 3600e3, list = [], why = {};
     const add = (sym, tag) => { if (!sym) return; if (!why[sym]) { list.push(sym); why[sym] = []; } if (tag && why[sym].indexOf(tag) < 0) why[sym].push(tag); };
@@ -2187,10 +2196,11 @@
     if (onChartToo && cmp.on && cmp.sym) add(cmp.sym, 'compare chart');
     for (const p of liveOpen()) add(p.sym, 'your open trade');
     for (const p of picks.values()) if (p.kind === 'signal' && p.t >= since) add(p.sym, 'bot signal in last 48 h');
-    if (scope === 'top') {   // the 50 biggest USDT perps by 24h volume (INJ, SOL, DOGE…), refreshed every 30 min
+    if (scope === 'top' || scope === 'alltop') {   // the 50 biggest USDT perps by 24h volume (INJ, SOL, DOGE…), refreshed every 30 min
       try { if (!topCoins || Date.now() - topCoins.at > 30 * 60e3) topCoins = { at: Date.now(), coins: (await api('/api/sim/top', {})).coins || [] }; } catch (e) { topCoins = null; status('Could not get the top coins: ' + e.message, true); }
       for (const c of (topCoins && topCoins.coins) || []) add(c.symbol, `#${c.rank} by 24h volume`);
-    } else if (scope !== 'signals') {
+    }
+    if (scope === 'all' || scope === 'recent' || scope === 'alltop') {
       try { if (!tradedCoins) tradedCoins = (await api('/api/sim/coins', {})).coins || []; } catch (e) { tradedCoins = null; status('Could not get the coins we traded: ' + e.message, true); }
       const cut = scope === 'recent' ? Date.now() - 30 * 864e5 : 0;
       for (const c of tradedCoins || []) if (c.t >= cut) add(c.symbol, `our bot traded it ${c.trades}×`);
@@ -2205,7 +2215,7 @@
     if (scope !== 'signals') box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
     const { list, why } = await coinList(scope, true);
     const rows = [], tf = smc.tf; let next = 0, done = 0;
-    const scopeTxt = { all: 'every coin we traded live + pump signals of the last 48 h', recent: 'coins we traded in the last 30 days + pump signals of the last 48 h', top: 'the 50 biggest coins by 24h volume + pump signals of the last 48 h', signals: 'pump signals of the last 48 h' }[scope];
+    const scopeTxt = SCOPE_TXT[scope] || SCOPE_TXT.all;
     const render = (head, short) => {
       rows.sort((a, b) => b.score - a.score);
       // list only coins at 2/4 or better (and fresh A+ setups); 1/4 just means a structure break happened somewhere
@@ -2249,7 +2259,7 @@
     'A+ longs −0.31R a trade, shorts −0.05R (15m), no better than entering at a random time with the same stop and target; A+++ longs (deep discount / demand zone) −0.32R. ' +
     'About half move 1R your way before the stop. Zone alerts: buying the first touch of a demand zone lost −0.12 to −0.29R a trade in three months (it reached 1R before a stop under the zone about half the time); fading a 15m supply zone −0.13R vs −0.17R for a random short. Zone alerts are for the coins on your charts only. ' +
     'Checks the coins picked in the menu, plus the coin on your chart and the compare chart. Paper-trade them and let your journal show whether your picks do better.';
-  const saveAlert = () => { try { localStorage.setItem(AKEY, JSON.stringify({ on: AL.on, side: AL.side, early: AL.early, zone: AL.zone })); } catch (e) { /* ignore */ } };
+  const saveAlert = () => { try { localStorage.setItem(AKEY, JSON.stringify({ on: AL.on, side: AL.side, early: AL.early, zone: AL.zone, scope: $('sim-scan-scope').value })); } catch (e) { /* ignore */ } };
   try { Object.assign(AL, JSON.parse(localStorage.getItem(AKEY)) || {}); } catch (e) { /* ignore */ }
   function spot(x) {   // where the sweep wick sat in the move (1 = the far end), and whether it reached the order-block zone
     const sh = x.dir === -1, w = x.sweep.wick, rng = x.hi - x.lo;
@@ -2348,16 +2358,17 @@
   async function alertCycle() {
     const run = AL.run, t0 = Date.now(), first = AL.cycle === 0, before = AL.list.length;
     AL.timer = null;
-    const { list } = await coinList($('sim-scan-scope').value, true);   // + the coin on your chart and the compare chart
+    const scope = $('sim-scan-scope').value, which = `${SCOPE_SHORT[scope] || 'coins'} + signals + your charts`;
+    const { list } = await coinList(scope, true);   // + the coin on your chart and the compare chart
     if (run !== AL.run) return;
     let next = 0, fails = 0;
-    $('sim-alert-info').textContent = `Checking ${list.length} coins…`;
+    $('sim-alert-info').textContent = `Checking ${list.length} coins (${which})…`;
     const worker = async () => { while (run === AL.run && next < list.length) { const sym = list[next++]; try { await alertCoin(sym, first); } catch (e) { fails++; } } };
     await Promise.all([worker(), worker()]);   // no timers inside: a background tab slows timers down, not network replies
     if (run !== AL.run) return;
     AL.cycle++;
     if (first && AL.list.length > before) ping(`${AL.list.length - before} setups right now`, 'Listed under the coin buttons. New ones from here on make a sound.', null);
-    $('sim-alert-info').textContent = `On · ${list.length} coins on the ${smc.tf}m structure · checked ${hm(Date.now())} UTC` + (fails ? ` · ${fails} could not be read` : '') + ' · runs while this page is open';
+    $('sim-alert-info').textContent = `On · ${list.length} coins (${which}) on the ${smc.tf}m structure · checked ${hm(Date.now())} UTC` + (fails ? ` · ${fails} could not be read` : '') + ' · runs while this page is open';
     AL.timer = setTimeout(alertCycle, Math.max(5000, 60000 - (Date.now() - t0)));
   }
   function setAlerts(on, byClick) {
@@ -2378,6 +2389,8 @@
   $('sim-alert-side').onchange = () => { AL.side = $('sim-alert-side').value; saveAlert(); };
   $('sim-alert-early').onchange = () => { AL.early = $('sim-alert-early').checked; saveAlert(); };
   $('sim-alert-zone').onchange = () => { AL.zone = $('sim-alert-zone').checked; saveAlert(); };
+  // the coin menu (next to 🔎 Find setups) is also what the alerts check: a new choice is saved and applies at once
+  $('sim-scan-scope').addEventListener('change', () => { saveAlert(); if (AL.on) setAlerts(true, false); });
 
   // ---------- modes, tools, inputs ----------
   function setMode(m, quiet) {
@@ -2891,6 +2904,7 @@
     if (started) return; started = true;
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
     $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early; $('sim-alert-zone').checked = AL.zone !== false;
+    if (AL.scope && [...$('sim-scan-scope').options].some(o => o.value === AL.scope)) $('sim-scan-scope').value = AL.scope;   // your coin choice stays after a reload
     initChart(); renderJournal(); setTool(null); setRealPoll();
     if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
     loadNews(true); setInterval(newsTick, 20e3);
