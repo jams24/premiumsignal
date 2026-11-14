@@ -472,6 +472,7 @@
             <select id="sim-r-ex" aria-label="Exchange"><option value="">My saved one</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select></label>
         </div>
         <div class="sim-sum" id="sim-sum">Load a chart to see the risk.</div>
+        <button type="button" class="sim-linkbtn real-only" id="sim-r-clear" hidden title="Empties the ticket: entry back to market, limit / stop / TP1 / margin / leverage blank, no ticket lines on the chart. Nothing on the exchange is touched — cancel a placed order in Real positions.">✕ Clear the ticket</button>
         <button type="button" class="b red big paper-only" id="sim-go">Short at market</button>
         <button type="button" class="b red big real-only" id="sim-real-go">📲 Send to Telegram</button>
         <div class="sim-rconf real-only" id="sim-r-conf" role="group" aria-label="Confirm the order" hidden></div>
@@ -952,7 +953,7 @@
     if (ps.options().autoScale) ps.applyOptions({ autoScale: true });   // re-fit so the stop / target you just set come into view
     const qk = qkDrawing();
     if (realOn()) {   // the real ticket's levels: the bot's own stop and TP1–4 once it answered (same as the ticket text), else what you typed
-      const rp = realPlan(); if (!rp || qk || realOpenOn(S.sym)) return;
+      const rp = realPlan(); if (!rp || qk || !R.touched || realOpenOn(S.sym)) return;
       const s = R.pv && R.pv.setup && R.pv.key === JSON.stringify(realBody(rp)) ? R.pv.setup : null;
       if (rp.isLim && rp.lim > 0) line(rp.lim, 'rgba(250,204,21,0.6)', 3, 'limit?');
       const stop = s ? +s.stopLoss : rp.stop, tps = s ? (s.tps || []).map(Number) : [rp.tp];
@@ -1072,6 +1073,20 @@
     go.hidden = !!R.conf;
     $('sim-r-tg').disabled = go.disabled;
     if (!rp) { sum.textContent = 'Load a live chart first.'; return; }
+    $('sim-r-clear').hidden = !R.touched || !!R.conf;
+    if (!R.touched && !R.conf) {   // nothing set yet: no order shown (it looked like a saved order), only what blanks would use
+      const s0 = R.pv && R.pv.key === key ? R.pv.setup : null;
+      let save = '';
+      if (s0) {
+        const E0 = s0.entryType === 'limit' ? +s0.entry : +s0.market, tpp = (s0.tps || []).filter(t => t > 0).map(t => +(Math.abs(t / E0 - 1) * 100).toFixed(1));
+        save = `: stop ${(+s0.slPct).toFixed(2)}% · TPs ${tpp.join(' / ')}% · $${+s0.margin} × ${+s0.leverage}x on ${esc(String(s0.exchange).toUpperCase())}`;
+      }
+      let h0 = `<b>Empty ticket</b> · nothing is placed until you review it and press ✅.<br>Set the entry, stop and TP1 above, or click a price on the chart: ⚡ ① entry → ② stop → ③ TP1.` +
+        `<br><small style="color:var(--muted)">Blank fields use your saved /${S.side} settings${save}.</small>`;
+      if (has) h0 += `<br><span class="neg">⛔ You already have a real ${has.limitPrice ? 'limit order' : (has.direction || '').toUpperCase()} on ${esc(S.sym)}. ${R.web ? 'Manage it in Real positions below.' : 'Manage it with /mpositions or /orders.'}</span>`;
+      sum.innerHTML = qkNote() + h0;
+      return;
+    }
     const E = rp.entry || px, pc = v => Math.abs(v / E - 1) * 100, sg = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
     let h = R.web ? `<b>${side} ${esc(S.sym)}</b> · ${live ? '<b>💰 LIVE</b>' : '📝 paper'} · ${esc($('sim-r-ex').value ? $('sim-r-ex').value.toUpperCase() : 'your saved exchange')}<br>` : `Telegram gets a <b>${side} ${esc(S.sym)}</b> panel · ${live ? '<b>💰 LIVE</b>' : '📝 paper'}<br>`;
     const pv = R.pv && R.pv.key === key ? R.pv : null, s = pv && pv.setup;
@@ -1147,12 +1162,21 @@
     try {
       const r = await apiPost('/api/trade/open', Object.assign({}, c.body, { nonce: c.nonce }));
       const s = c.setup, pr = precFor(s.entry || s.market);
+      clearTicket(true);   // placed: the ticket starts empty again (the result line stays)
       res.className = 'sim-rres real-only ok';
       res.textContent = r.kind === 'limit'
         ? `📍 Limit order #${r.id} placed${r.onBook ? ' on the exchange order book' : ''}. The bot sets the stop and TPs when it fills. Telegram has the details.`
         : `✅ ${s.direction === 'long' ? 'LONG' : 'SHORT'} ${s.symbol} opened at ${(+r.entry).toFixed(pr)} with its stop and TPs. Telegram has the details.`;
     } catch (e) { res.className = 'sim-rres real-only bad'; res.textContent = 'Not placed: ' + e.message; }
     finally { R.busy = false; R.conf = null; renderConf(); renderTicket(); loadRealPos(); }
+  }
+  // ✕ Clear: the real ticket back to empty (market, blanks = saved settings, no lines). Nothing on the exchange changes.
+  function clearTicket(keepRes) {
+    ['sim-r-limit', 'sim-stop', 'sim-tp', 'sim-r-margin', 'sim-r-lev'].forEach(id => { $(id).value = ''; });
+    R.entry = 'market'; $('sim-r-tp').value = 'plan'; R.conf = null; R.touched = false;
+    if (!keepRes) { $('sim-r-res').className = 'sim-rres real-only'; $('sim-r-res').textContent = ''; }
+    if (QK.on && QK.stage !== 'review') quickEnd();
+    renderConf(); refresh();
   }
   async function sendReal() {
     const rp = realPlan(), res = $('sim-r-res');
@@ -1543,7 +1567,7 @@
     if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
     stopAll(); coinPanel(false);
     status(`Loading live ${sym}…`);
-    const my = ++S.load;
+    const my = ++S.load, was = S.sym;
     try {
       const end = Date.now();
       const r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: end - 24 * 3600e3, end, exchange: ex || 'auto' });
@@ -1554,6 +1578,7 @@
       if (own && own.caught) for (const k of S.base) if (k[0] >= (own.chk || 0) && S.open.includes(own)) liveBar(own, k);
       if (S.pos) S.marks = posMarks(S.pos);
       smc.seen = Infinity; redraw(true); recentAdd(S.sym, ex);
+      if (was !== S.sym && (R.touched || $('sim-r-res').textContent)) clearTicket(false);   // another coin: the old coin's prices leave the ticket
       smc.seen = smc.A && smc.A.setups.length ? smc.A.setups[smc.A.setups.length - 1].conf : 0;
       const bg = liveOpen().filter(p => p.sym !== S.sym);
       status(`Live ${S.sym} on ${exLabel(S.ex)}. ` + (r.closed ? 'The forex market is closed (weekend): this is its last session. ' : '') + (bg.length ? `Your ${bg.map(p => p.sym + ' ' + p.side).join(', ')} ${bg.length === 1 ? 'keeps' : 'keep'} updating in the background.` : 'Paper trades fill at the last price.'));
@@ -1977,7 +2002,7 @@
     S.side = x.side; $('sim-stop').value = (+x.stop).toFixed(S.prec);
     $('sim-plan').value = 'price'; $('sim-tp').value = (+x.target).toFixed(S.prec);
     // Real ticket too: same stop, the target as TP1 (TP2–4 follow like /tp), entry at market like the plan
-    $('sim-r-tp').value = 'price'; R.entry = 'market'; R.conf = null; renderConf();
+    $('sim-r-tp').value = 'price'; R.entry = 'market'; R.conf = null; R.touched = true; renderConf();
     [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = true; });
     S.auto = true;
     const tgt = x.tgtKind === 'leg' ? 'the end of the leg' : 'at 2R';
@@ -2537,6 +2562,7 @@
     if (kind === 'stop') { if (S.pos && !real) moveStop(S.pos, p); else $('sim-stop').value = v; }
     if (kind === 'tp') { if (real) $('sim-r-tp').value = 'price'; else $('sim-plan').value = 'price'; $('sim-tp').value = v; }
     if (kind === 'limit') { R.entry = 'limit'; $('sim-r-limit').value = v; }
+    if (kind === 'stop' || kind === 'tp' || kind === 'limit') R.touched = true;
     if (kind !== 'line') chart.priceScale('right').applyOptions({ autoScale: true });   // back to auto-fit; it now keeps that level in view
     refresh();
   }
@@ -2709,7 +2735,7 @@
       refresh(); return;
     }
     // real: fill in the ticket, then its own review → ✅ Place (shown in this bar too)
-    S.side = side; S.auto = false; R.entry = 'limit';
+    S.side = side; S.auto = false; R.entry = 'limit'; R.touched = true;
     $('sim-r-limit').value = pv(QK.lim); $('sim-stop').value = pv(QK.stop); $('sim-r-tp').value = 'price'; $('sim-tp').value = pv(QK.tp);
     refresh();
     const rp = realPlan();
@@ -3076,10 +3102,14 @@
   $('sim-tool-limit').onclick = () => setTool('limit');
   $('sim-tm-paper').onclick = () => { R.on = false; refresh(); };
   $('sim-tm-real').onclick = () => { R.on = true; refresh(); };
-  $('sim-r-mkt').onclick = () => { R.entry = 'market'; refresh(); };
-  $('sim-r-lmt').onclick = () => { R.entry = 'limit'; refresh(); };
-  ['sim-r-limit', 'sim-r-margin', 'sim-r-lev'].forEach(id => $(id).addEventListener('input', refresh));
-  ['sim-r-tp', 'sim-r-mode', 'sim-r-ex'].forEach(id => $(id).addEventListener('change', refresh));
+  // the real ticket shows an order only once you set something in it (side, entry, stop, TP, size); ✕ Clear empties it
+  const touch = () => { R.touched = true; };
+  $('sim-r-mkt').onclick = () => { touch(); R.entry = 'market'; refresh(); };
+  $('sim-r-lmt').onclick = () => { touch(); R.entry = 'limit'; refresh(); };
+  ['sim-r-limit', 'sim-r-margin', 'sim-r-lev'].forEach(id => $(id).addEventListener('input', () => { touch(); refresh(); }));
+  $('sim-r-tp').addEventListener('change', () => { touch(); refresh(); });
+  ['sim-r-mode', 'sim-r-ex'].forEach(id => $(id).addEventListener('change', refresh));
+  $('sim-r-clear').onclick = () => clearTicket(false);
   $('sim-real-go').onclick = () => (R.web ? reviewReal() : sendReal());
   $('sim-r-tg').onclick = () => { R.conf = null; renderConf(); sendReal(); };
   $('sim-r-conf').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || b.disabled) return; if (b.dataset.c === 'place') placeReal(); else { R.conf = null; renderConf(); renderTicket(); } };
@@ -3109,15 +3139,16 @@
   $('sim-play').onclick = togglePlay;
   document.querySelectorAll('#sim-replay-bar [data-step]').forEach(b => b.onclick = () => step(+b.dataset.step));
   $('sim-until-exit').onclick = () => { if (!S.pos) return; S.untilExit = true; if (!S.play) { $('sim-play').textContent = '❚❚ Pause'; S.play = setInterval(() => step(+$('sim-speed').value), 300); } };
-  $('sim-side-short').onclick = () => { S.side = 'short'; S.auto = false; $('sim-stop').value = ''; refresh(); };
-  $('sim-side-long').onclick = () => { S.side = 'long'; S.auto = false; $('sim-stop').value = ''; refresh(); };
-  $('sim-stop-8').onclick = () => { const px = price(); if (px == null) return; $('sim-stop').value = (px * (S.side === 'short' ? 1.08 : 0.92)).toFixed(S.prec); refresh(); };
+  $('sim-side-short').onclick = () => { touch(); S.side = 'short'; S.auto = false; $('sim-stop').value = ''; refresh(); };
+  $('sim-side-long').onclick = () => { touch(); S.side = 'long'; S.auto = false; $('sim-stop').value = ''; refresh(); };
+  $('sim-stop-8').onclick = () => { const px = price(); if (px == null) return; touch(); $('sim-stop').value = (px * (S.side === 'short' ? 1.08 : 0.92)).toFixed(S.prec); refresh(); };
   $('sim-stop-swing').onclick = () => {
-    if (S.cur < 0) return; let hi = -Infinity, lo = Infinity;
+    if (S.cur < 0) return; touch(); let hi = -Infinity, lo = Infinity;
     for (let i = S.cur; i >= 0 && i > S.cur - 60; i--) { hi = Math.max(hi, S.base[i][2]); lo = Math.min(lo, S.base[i][3]); }
     $('sim-stop').value = (S.side === 'short' ? hi * 1.002 : lo * 0.998).toFixed(S.prec); refresh();
   };
-  ['sim-stop', 'sim-size', 'sim-tp'].forEach(id => $(id).addEventListener('input', refresh));
+  ['sim-stop', 'sim-tp'].forEach(id => $(id).addEventListener('input', () => { touch(); refresh(); }));
+  $('sim-size').addEventListener('input', refresh);
   ['sim-plan', 'sim-c1', 'sim-c2', 'sim-c3', 'sim-c4'].forEach(id => $(id).addEventListener('change', refresh));
   $('sim-go').onclick = enter;
   $('sim-smc-on').onchange = () => { smc.on = $('sim-smc-on').checked; saveSmc(); refresh(); };
