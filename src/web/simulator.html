@@ -60,9 +60,12 @@
 .sim-card.full .sim-chart, .sim-card.full .sim-charts.two #sim-cmp-chart { height: 100%; }
 #sim-full.on { border-color: #60a5fa; color: #60a5fa; }
 /* full screen toolbar: 🪙 the loader drops down inside the chart card, 🎫 the ticket column slides in on the right */
-.sim-fpanel { display: grid; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
-.sim-fpanel .sim-seg { justify-self: start; }
-.sim-fslot:empty { display: none; }
+/* coin loader: on top of the chart card, with the chart tools; in full screen it folds away and 🪙 opens it */
+.sim-loader { display: grid; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); min-width: 0; }
+.sim-loader .sim-seg { justify-self: start; }
+.sim-card.full .sim-loader { display: none; }
+.sim-card.full .sim-loader.open { display: grid; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
+.sim-status:empty { display: none; }
 .sim-recent { gap: 6px; }
 .sim-recent .b { padding: 6px 9px; }
 #sim-coin-btn.on, #sim-side-btn.on { border-color: #60a5fa; color: #60a5fa; }
@@ -239,57 +242,23 @@
       <h1>Trade Simulator</h1>
       <p>Practise the SMC Playbook on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now. For a real trade, switch the ticket to <b>Real · via Telegram</b>: it fills in your <code>/short</code> · <code>/long</code> panel in Telegram, and you place it there with ✅. Click any price on the chart to copy it or put it in the ticket.</p>
     </div>
-    <div class="sim-seg" role="group" aria-label="Mode" id="sim-mode-seg">
-      <button type="button" id="sim-m-replay" aria-pressed="true">Replay</button>
-      <button type="button" id="sim-m-live" aria-pressed="false">Live</button>
-    </div>
   </div>
 
-  <div class="sim-card">
-    <div class="sim-row" id="sim-replay-load">
-      <select id="sim-pick" aria-label="Pick a signal or one of our trades"><option value="">Loading recent signals…</option></select>
-      <button type="button" class="b go" id="sim-load-pick">Replay it</button>
-      <span class="sim-status" style="flex-basis:100%;margin:0">or any coin and time:</span>
-      <input id="sim-symbol" list="sim-coin-list" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false">
-      <input id="sim-time" type="datetime-local" aria-label="Start time (UTC)">
-      <label for="sim-time" class="sim-status" style="margin:0">UTC</label>
-      <select id="sim-ex" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
-      <button type="button" class="b" id="sim-load-custom">Load replay</button>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins, from the time above:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi, from the time above:</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices; 1m candles only for the last 30 days. Practice only: the bot can't trade forex.">Forex (practice only), from the time above:</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
+  <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"><option value="GBPJPY"><option value="EURUSD"><option value="GBPUSD"><option value="USDJPY"><option value="EURJPY"><option value="AUDUSD"><option value="USDCAD"><option value="USDCHF"><option value="NZDUSD"><option value="EURGBP"><option value="GBPAUD"></datalist>
+  <div class="sim-shade sim-news-shade" id="sim-news-shade" hidden></div>
+  <div class="sim-news" id="sim-news" role="dialog" aria-label="News calendar" hidden>
+    <div class="sim-news-bar">
+      <h3>📅 News calendar</h3>
+      <select id="sim-news-imp" aria-label="Which news"><option value="high">Red only (high impact)</option><option value="med">Red + orange</option><option value="all">All news</option></select>
+      <select id="sim-news-cur" aria-label="Which currencies"><option value="usd">USD only</option><option value="big">USD, EUR, GBP, JPY, CNY</option><option value="all">All currencies</option></select>
+      <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-news-lines"> lines on chart</label>
+      <label class="sim-opt" style="margin:0" title="A sound (and a browser notification if allowed) 15 minutes before red news in the currencies you picked, while this page is open"><input type="checkbox" id="sim-news-warn"> warn me 15 min before red news</label>
+      <button type="button" class="b" id="sim-news-close">✕ Close</button>
     </div>
-    <div class="sim-row" id="sim-live-load" hidden>
-      <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
-      <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
-      <button type="button" class="b go" id="sim-load-live">Load live chart</button>
-      <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the chosen structure timeframe">🔎 Find setups</button>
-      <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option><option value="top">top 50 coins by volume + signals 48 h</option></select>
-      <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices, about 1–2 minutes behind, no volume. Practice only: the bot can't trade forex.">Forex (practice only · ~1–2 min behind):</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
-      <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Alerts:</span>
-        <button type="button" class="b" id="sim-alert-btn" aria-pressed="false" title="While this page is open, checks the coins picked in the menu above, plus the coin on your chart and the compare chart, every minute and alerts you (sound + notification) when a new A+ setup appears">🔔 Alert me</button>
-        <select id="sim-alert-side" aria-label="Which setups to alert on"><option value="both">A+ shorts + longs</option><option value="short">A+ shorts only</option><option value="long">A+ longs only</option><option value="a3">A+++ longs only (deep discount / demand zone)</option></select>
-        <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-alert-early" checked> heads-up at 3/4 (sweep done, waiting for the 1m trigger)</label>
-        <label class="sim-opt" style="margin:0" title="The coin on your chart and the compare chart: price reaching the demand zone (long idea) or supply zone (short idea) of the move that made the last break, first time. Only these coins: across every coin we traded it would fire about every 1–2 minutes."><input type="checkbox" id="sim-alert-zone" checked> price reaches the demand / supply zone (coins on your charts)</label>
-        <span class="sim-status" id="sim-alert-info" style="margin:0">Off.</span></div>
-    </div>
-    <datalist id="sim-coin-list"><option value="BTC"><option value="ETH"><option value="SOL"><option value="BNB"><option value="XRP"><option value="LTC"><option value="DOGE"><option value="ADA"><option value="AVAX"><option value="LINK"><option value="SUI"><option value="TON"><option value="DOT"><option value="TRX"><option value="BCH"><option value="NEAR"><option value="APT"><option value="ARB"><option value="OP"><option value="HYPE"><option value="GOLD"><option value="XAU"><option value="SILVER"><option value="XAG"><option value="OIL"><option value="CL"><option value="BRENT"><option value="NATGAS"><option value="COPPER"><option value="XPT"><option value="QQQ"><option value="SPY"><option value="TSLA"><option value="NVDA"><option value="AAPL"><option value="MSFT"><option value="AMZN"><option value="META"><option value="GOOGL"><option value="MSTR"><option value="COIN"><option value="HOOD"><option value="PAXG"><option value="XAUT"><option value="GBPJPY"><option value="EURUSD"><option value="GBPUSD"><option value="USDJPY"><option value="EURJPY"><option value="AUDUSD"><option value="USDCAD"><option value="USDCHF"><option value="NZDUSD"><option value="EURGBP"><option value="GBPAUD"></datalist>
-    <div class="sim-shade sim-news-shade" id="sim-news-shade" hidden></div>
-    <div class="sim-news" id="sim-news" role="dialog" aria-label="News calendar" hidden>
-      <div class="sim-news-bar">
-        <h3>📅 News calendar</h3>
-        <select id="sim-news-imp" aria-label="Which news"><option value="high">Red only (high impact)</option><option value="med">Red + orange</option><option value="all">All news</option></select>
-        <select id="sim-news-cur" aria-label="Which currencies"><option value="usd">USD only</option><option value="big">USD, EUR, GBP, JPY, CNY</option><option value="all">All currencies</option></select>
-        <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-news-lines"> lines on chart</label>
-        <label class="sim-opt" style="margin:0" title="A sound (and a browser notification if allowed) 15 minutes before red news in the currencies you picked, while this page is open"><input type="checkbox" id="sim-news-warn"> warn me 15 min before red news</label>
-        <button type="button" class="b" id="sim-news-close">✕ Close</button>
-      </div>
-      <div class="sim-news-body" id="sim-news-body"></div>
-      <div class="sim-news-foot" id="sim-news-foot"></div>
-    </div>
+    <div class="sim-news-body" id="sim-news-body"></div>
+    <div class="sim-news-foot" id="sim-news-foot"></div>
+  </div>
+  <div class="sim-card sim-topcard" id="sim-topcard" hidden>
     <div class="sim-shade" id="sim-lists-shade" hidden></div>
     <div class="sim-lists" id="sim-lists" hidden>
       <div class="sim-lists-bar">
@@ -302,11 +271,46 @@
         <div class="sim-scan" id="sim-scan" hidden></div>
       </div>
     </div>
-    <div class="sim-status" id="sim-status" aria-live="polite"></div>
   </div>
 
   <div class="sim-grid">
     <div class="sim-card">
+      <div class="sim-loader" id="sim-loader">
+        <div class="sim-seg" role="group" aria-label="Mode" id="sim-mode-seg">
+          <button type="button" id="sim-m-replay" aria-pressed="true">Replay</button>
+          <button type="button" id="sim-m-live" aria-pressed="false">Live</button>
+        </div>
+        <div class="sim-row" id="sim-replay-load">
+          <select id="sim-pick" aria-label="Pick a signal or one of our trades"><option value="">Loading recent signals…</option></select>
+          <button type="button" class="b go" id="sim-load-pick">Replay it</button>
+          <span class="sim-status" style="flex-basis:100%;margin:0">or any coin and time:</span>
+          <input id="sim-symbol" list="sim-coin-list" placeholder="BARD" aria-label="Symbol" autocomplete="off" spellcheck="false">
+          <input id="sim-time" type="datetime-local" aria-label="Start time (UTC)">
+          <label for="sim-time" class="sim-status" style="margin:0">UTC</label>
+          <select id="sim-ex" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
+          <button type="button" class="b" id="sim-load-custom">Load replay</button>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins, from the time above:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi, from the time above:</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices; 1m candles only for the last 30 days. Practice only: the bot can't trade forex.">Forex (practice only), from the time above:</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
+        </div>
+        <div class="sim-row" id="sim-live-load" hidden>
+          <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
+          <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
+          <button type="button" class="b go" id="sim-load-live">Load live chart</button>
+          <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the chosen structure timeframe">🔎 Find setups</button>
+          <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option><option value="top">top 50 coins by volume + signals 48 h</option></select>
+          <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">TradFi (24/7 perps):</span><button type="button" class="b" data-coin="XAU" title="XAUUSDT perp">GOLD</button><button type="button" class="b" data-coin="XAG" title="XAGUSDT perp">SILVER</button><button type="button" class="b" data-coin="CL" title="CLUSDT perp">OIL</button><button type="button" class="b" data-coin="QQQ" title="QQQUSDT perp">NASDAQ</button><button type="button" class="b" data-coin="SPY" title="SPYUSDT perp">S&amp;P 500</button><button type="button" class="b" data-coin="TSLA" title="TSLAUSDT perp">TSLA</button><button type="button" class="b" data-coin="NVDA" title="NVDAUSDT perp">NVDA</button></div>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0" title="Yahoo Finance prices, about 1–2 minutes behind, no volume. Practice only: the bot can't trade forex.">Forex (practice only · ~1–2 min behind):</span><button type="button" class="b" data-coin="GBPJPY">GBP/JPY</button><button type="button" class="b" data-coin="EURUSD">EUR/USD</button><button type="button" class="b" data-coin="GBPUSD">GBP/USD</button><button type="button" class="b" data-coin="USDJPY">USD/JPY</button><button type="button" class="b" data-coin="EURJPY">EUR/JPY</button><button type="button" class="b" data-coin="AUDUSD">AUD/USD</button><button type="button" class="b" data-coin="USDCAD">USD/CAD</button></div>
+          <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Alerts:</span>
+            <button type="button" class="b" id="sim-alert-btn" aria-pressed="false" title="While this page is open, checks the coins picked in the menu above, plus the coin on your chart and the compare chart, every minute and alerts you (sound + notification) when a new A+ setup appears">🔔 Alert me</button>
+            <select id="sim-alert-side" aria-label="Which setups to alert on"><option value="both">A+ shorts + longs</option><option value="short">A+ shorts only</option><option value="long">A+ longs only</option><option value="a3">A+++ longs only (deep discount / demand zone)</option></select>
+            <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-alert-early" checked> heads-up at 3/4 (sweep done, waiting for the 1m trigger)</label>
+            <label class="sim-opt" style="margin:0" title="The coin on your chart and the compare chart: price reaching the demand zone (long idea) or supply zone (short idea) of the move that made the last break, first time. Only these coins: across every coin we traded it would fire about every 1–2 minutes."><input type="checkbox" id="sim-alert-zone" checked> price reaches the demand / supply zone (coins on your charts)</label>
+            <span class="sim-status" id="sim-alert-info" style="margin:0">Off.</span></div>
+        </div>
+      </div>
       <div class="sim-chartbar">
         <div class="sim-row sim-tf" role="group" aria-label="Timeframe">
           <button type="button" class="b" data-tf="1m">1m</button>
@@ -331,8 +335,7 @@
         </div>
         <div class="sim-row sim-recent" id="sim-recent" hidden></div>
       </div>
-      <div class="sim-fpanel" id="sim-fpanel" hidden></div>
-      <div class="sim-fslot" id="sim-fslot"></div>
+      <div class="sim-status" id="sim-status" aria-live="polite"></div>
       <div class="sim-drawbar" id="sim-drawbar" hidden>
         <button type="button" class="b on" data-draw="pen" title="Press and drag on the chart">✏️ Pencil</button>
         <button type="button" class="b" data-draw="zig" title="Click each turn; double-click, Enter or ✓ Finish to end it">〰 Zig-zag</button>
@@ -2121,7 +2124,7 @@
   try { LS.fold = !!(JSON.parse(localStorage.getItem(LS.key)) || {}).fold; } catch (e) { /* ignore */ }
   function listsShow() {
     const scanOn = !$('sim-scan').hidden, any = scanOn || !$('sim-alerts').hidden;
-    $('sim-lists').hidden = !any; $('sim-lists-btn').hidden = !any; if (!any) { listsPop(false); return; }
+    $('sim-lists').hidden = !any; $('sim-lists-btn').hidden = !any; $('sim-topcard').hidden = !any; if (!any) { listsPop(false); return; }
     const nA = $('sim-alerts').hidden ? 0 : $('sim-alerts').querySelectorAll('[data-scan]').length, nS = scanOn ? $('sim-scan').querySelectorAll('[data-scan]').length : 0;
     $('sim-lists-btn').textContent = nA ? `🔔 Alerts ${nA}` : `🔎 Setups${nS ? ' ' + nS : ''}`;
     $('sim-lists-body').classList.toggle('fixed', scanOn);   // a scan gets the full height at once, so rows coming in never push the page down
@@ -2350,7 +2353,7 @@
     $('sim-m-replay').setAttribute('aria-pressed', String(m === 'replay'));
     $('sim-m-live').setAttribute('aria-pressed', String(m === 'live'));
     $('sim-replay-load').hidden = m !== 'replay'; $('sim-replay-bar').hidden = m !== 'replay';
-    $('sim-live-load').hidden = m !== 'live'; $('sim-scan').hidden = true;
+    $('sim-live-load').hidden = m !== 'live'; $('sim-scan').hidden = true; listsShow();
     $('sim-next-setup').hidden = m !== 'replay'; $('sim-pause-wrap').hidden = m !== 'replay';
     if (!quiet && m === 'live') { const sym = S.sym || 'BTC'; $('sim-symbol-live').value = sym; loadLive(sym, $('sim-ex-live').value); }
     if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
@@ -2929,8 +2932,9 @@
     }
   });
   // ---------- the chart toolbar in full screen: 🪙 loader, 🎫 ticket column, 🔔 list, recent coins ----------
-  // The loader rows, the status line and the ticket column are moved into the full-screen card and back: the same
-  // elements, so every button and field keeps working. Outside full screen 🪙 scrolls up to the loader instead.
+  // The loader sits on top of the chart card with the chart tools; in full screen it folds away and 🪙 (or typing a
+  // coin name) unfolds it. The ticket column is moved into the full-screen card and back: the same elements, so every
+  // button and field keeps working.
   const FS = { coin: false, side: false, key: 'sc_sim_full_v1', homes: new Map() };
   try { FS.side = !!(JSON.parse(localStorage.getItem(FS.key)) || {}).side; } catch (e) { /* ignore */ }
   function park(el, into) {   // into: move el there, leaving a marker where it lived · no into: put it back
@@ -2938,11 +2942,10 @@
     if (into) { if (!FS.homes.has(el)) { const m = document.createComment('sim-home'); el.parentNode.insertBefore(m, el); FS.homes.set(el, m); } into.appendChild(el); return; }
     const m = FS.homes.get(el); if (m) { m.parentNode.insertBefore(el, m); m.remove(); FS.homes.delete(el); }
   }
-  function coinPanel(on) {
+  function coinPanel(on) {   // full screen only: the loader on top of the chart card unfolds
     on = !!on && full.on;
     if (FS.coin === on) return; FS.coin = on;
-    const p = $('sim-fpanel'); p.hidden = !on;
-    ['sim-mode-seg', 'sim-replay-load', 'sim-live-load'].forEach(id => park($(id), on ? p : null));
+    $('sim-loader').classList.toggle('open', on);
     $('sim-coin-btn').classList.toggle('on', on); $('sim-coin-btn').setAttribute('aria-expanded', String(on));
   }
   function focusSymbol(ch) {
@@ -2952,7 +2955,7 @@
   }
   $('sim-coin-btn').onclick = () => {
     if (full.on) { coinPanel(!FS.coin); if (FS.coin) focusSymbol(); return; }
-    $('sim-replay-load').closest('.sim-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => focusSymbol(), 400);
+    $('sim-loader').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); setTimeout(() => focusSymbol(), 400);
   };
   const withSide = () => $('sim-chart').closest('.sim-card').classList.contains('with-side');
   function sideDrawer(on) {
@@ -2967,10 +2970,10 @@
   $('sim-side-close').onclick = () => sideSave(false);
   $('sim-lists-btn').onclick = () => { coinPanel(false); listsPop(true); };
   $('sim-scan-btn').addEventListener('click', () => { if (full.on) { coinPanel(false); listsPop(true); } });   // the setup list fills in over the chart
-  function onFull(on) {   // from setFull: status line and ticket follow the chart into full screen, and come back after
+  function onFull(on) {   // from setFull: the ticket column follows the chart into full screen, and comes back after
     $('sim-side-btn').hidden = !on;
-    if (on) { park($('sim-status'), $('sim-fslot')); sideDrawer(FS.side); }
-    else { coinPanel(false); sideDrawer(false); park($('sim-status')); }
+    if (on) sideDrawer(FS.side);
+    else { coinPanel(false); sideDrawer(false); }
   }
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && FS.coin && !e.defaultPrevented) { e.preventDefault(); coinPanel(false); return; }   // full screen stays
@@ -3101,7 +3104,7 @@
     if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.tf = tf; $('sim-smc-tf').value = String(tf); }
     smc.on = true; $('sim-smc-on').checked = true; saveSmc();
     $('sim-symbol-live').value = sym; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
-    loadLive(sym, ex).then(() => { if (full.on) return; const c = $('sim-chart').closest('.sim-card') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    loadLive(sym, ex).then(() => { if (full.on) return; const c = $('sim-chart').closest('.sim-card').querySelector('.sim-chartbar') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   }
   ['sim-scan', 'sim-alerts'].forEach(id => $(id).addEventListener('click', e => {
     const b = e.target.closest('[data-scan]'); if (b) openCoin(b.dataset.scan, b.dataset.ex, b.dataset.tf);
