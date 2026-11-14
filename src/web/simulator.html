@@ -530,7 +530,7 @@
       </div>
 
       <div class="sim-card" id="sim-poscard">
-        <h3>Position <small id="sim-pos-tag">none</small></h3>
+        <h3 class="sim-rp-head">Position <small id="sim-pos-tag">none</small><button type="button" class="b" id="sim-pos-refresh" hidden title="Get the latest price and P&amp;L for every live practice trade and limit now (this chart and other coins), instead of waiting for the 4 s update. In Live mode it also reloads Real positions.">↻ Refresh</button></h3>
         <div id="sim-pos-body" class="sim-empty">No open simulated trade.</div>
       </div>
 
@@ -1371,6 +1371,26 @@
     try { await loadRealPos(true); } finally { b.disabled = false; b.textContent = '↻ Refresh'; }
     if (R.err) hint('Could not refresh Real positions: ' + R.err);
   }
+  // ↻ Refresh on the Position card: the chart's live candles, every live practice trade / limit on other coins, and in
+  // Live mode the Real positions card, now. An update already on its way is waited for (≤ 13 s, the api timeout) first.
+  async function refreshPos() {
+    const b = $('sim-pos-refresh'); if (b.disabled) return;
+    b.disabled = true; b.textContent = '↻ Updating…';
+    try {
+      for (let t = Date.now(); (S.busy || S.tracking) && Date.now() - t < 13000;) await wait(150);
+      const fails = [];
+      const oldFails = S.pollFails || 0;
+      await Promise.all([
+        S.mode === 'live' ? pollLive() : null,
+        trackBg(),
+        S.mode === 'live' && !$('sim-realpos').hidden ? loadRealPos(true) : null,
+      ]);
+      if (S.mode === 'live' && (S.pollFails || 0) > oldFails) fails.push(`${S.sym} chart`);
+      liveOpen().filter(p => p.fails).forEach(p => fails.push(p.sym));
+      if (R.err && S.mode === 'live') fails.push('Real positions');
+      status(fails.length ? `Could not update ${fails.join(', ')} — try again in a moment.` : `Prices and P&L updated ${new Date().toISOString().slice(11, 19)} UTC.`, !!fails.length);
+    } finally { b.disabled = false; b.textContent = '↻ Refresh'; }
+  }
   function setRealPoll() {
     const on = S.mode === 'live'; $('sim-realpos').hidden = !on;
     if (on && !R.poll) { loadRealPos(); R.poll = setInterval(loadRealPos, 15000); }
@@ -1833,6 +1853,7 @@
   function renderPos() {
     const body = $('sim-pos-body'), list = S.open.slice().sort((a, b) => onChart(b) - onChart(a));
     const lims = QP.filter(o => o.mode === 'live' || limHere(o)).sort((a, b) => limHere(b) - limHere(a));
+    $('sim-pos-refresh').hidden = !(S.mode === 'live' || liveOpen().length || QP.some(o => o.mode === 'live'));   // replay prices come from the replay
     const res = S.result ? `<div class="sim-posblk">${resBlock(S.result)}</div>` : '';
     if (!list.length && !lims.length) {
       $('sim-pos-tag').textContent = S.result ? 'last trade' : 'none';
@@ -3629,6 +3650,7 @@
   $('sim-r-conf').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || b.disabled) return; if (b.dataset.c === 'place') placeReal(); else { R.conf = null; renderConf(); renderTicket(); } };
   $('sim-rp-body').addEventListener('click', onRealAct);
   $('sim-rp-refresh').addEventListener('click', refreshRealPos);
+  $('sim-pos-refresh').addEventListener('click', refreshPos);
   $('sim-rp-body').addEventListener('input', e => {   // typed stop / limit: keep it across refreshes, update the "if hit"
     if (!e.target.matches('[data-askin]') || !R.ui) return;
     R.ui.val = e.target.value;
