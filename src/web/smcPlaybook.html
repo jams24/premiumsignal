@@ -107,7 +107,7 @@
     <h1>SMC Short Playbook</h1>
     <p class="lede">How smart-money traders read candles, taught one candle at a time. Press <b>▶ Replay</b> on any chart to watch the setup form, or tap a note to jump to that candle. Then test yourself on the drills at the end.</p>
     <p><a href="#" onclick="document.querySelector('[data-tab=sim]').click();window.scrollTo(0,0);return false">Practise on real charts in the Simulator tab →</a></p>
-    <p class="muted">The lessons use made-up candles so each idea is clean. Lesson 9 is real: BARD on Bybit, 12 Nov 2026, the trade that stopped us out. The last two sections say which parts our own backtests support and which they don't.</p>
+    <p class="muted">The lessons use made-up candles so each idea is clean. Lesson 10 is real: BARD on Bybit, 12 Nov 2026, the trade that stopped us out. The last two sections say which parts our own backtests support and which they don't.</p>
   </header>
 
   <nav class="toc" aria-label="Lessons">
@@ -120,10 +120,11 @@
       <li><a href="#smc-setup"><span>6</span>The full short setup</a></li>
       <li><a href="#smc-tf"><span>7</span>Timeframes</a></li>
       <li><a href="#smc-retest"><span>8</span>Zone retest</a></li>
-      <li><a href="#smc-bard"><span>9</span>BARD, 12 Nov</a></li>
-      <li><a href="#smc-drills"><span>10</span>Practice drills</a></li>
-      <li><a href="#smc-checklist"><span>11</span>Our checklist</a></li>
-      <li><a href="#smc-evidence"><span>12</span>What our tests say</a></li>
+      <li><a href="#smc-inducement"><span>9</span>Inducement</a></li>
+      <li><a href="#smc-bard"><span>10</span>BARD, 12 Nov</a></li>
+      <li><a href="#smc-drills"><span>11</span>Practice drills</a></li>
+      <li><a href="#smc-checklist"><span>12</span>Our checklist</a></li>
+      <li><a href="#smc-evidence"><span>13</span>What our tests say</a></li>
     </ol>
   </nav>
 
@@ -240,20 +241,80 @@
     <p class="muted"><b>What our test says.</b> We tested the zone retest on 18 forex, metal, oil and index markets (Nov 2023 – Oct 2026, spreads in). On the 4H it made −0.04R a trade over 5,017 trades, about the same as random entries (−0.05R). Gold was the one exception: +0.26R on the 4H, and +0.14R on an unseen 2022–24 period, but only with forex-tight spreads. With crypto perp fees it lost (−0.13R). The group's winning screenshots are the trades that worked. Nobody posts the stops.</p>
   </section>
 
+  <section id="smc-inducement">
+    <h2><span class="n">9</span>Inducement: when a break is only a wick</h2>
+    <p>This lesson comes from a trading video (@varisthetrader, "Inducement liquidity"). It builds on one rule from lesson 1: <b>a low is broken only when a candle's body closes past it.</b> A wick that pokes through and comes back doesn't count. The video says that kind of fake break tells you where price goes next.</p>
+    <div class="cols">
+      <div class="card">
+        <span class="tag go">Real break</span>
+        <h3>Jump over the puddle</h3>
+        <p>The candle's body closes below the low. Like jumping over a puddle and landing on the other side. The low is broken.</p>
+      </div>
+      <div class="card">
+        <span class="tag no">Fake break</span>
+        <h3>Dip a toe in</h3>
+        <p>Only the wick goes below the low, and the body closes back above. Like dipping a toe in the puddle and pulling it back. The low is not broken.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Inducement</span>
+        <h3>The bait</h3>
+        <p>The small high just before a fake break. Traders who sold there hide their stop-losses just above it. That pile of stops is bait: big players like to grab it first.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Order block</span>
+        <h3>The box</h3>
+        <p>The last up candle before the last real break, from its open to its top. That's where big sellers started the drop. The video says price climbs back to it before falling again.</p>
+      </div>
+    </div>
+    <p>The whole story in one line: <b>real break → fake break → price climbs and grabs the bait → touches the box → falls through the wick low.</b> For longs it's the same story upside down. The charts below show it working, upside down, going wrong, and cancelled.</p>
+    <div class="sub" data-lesson="ind1"><h3><span class="tf">Example 1</span>Real break or fake break?</h3></div>
+    <div class="sub" data-lesson="ind2"><h3><span class="tf">Example 2</span>The short, when it works</h3></div>
+    <div class="sub" data-lesson="ind3"><h3><span class="tf">Example 3</span>The long: the same idea upside down</h3></div>
+    <div class="sub" data-lesson="ind4"><h3><span class="tf">Example 4</span>When it goes wrong (the usual ending)</h3></div>
+    <div class="sub" data-lesson="ind5"><h3><span class="tf">Example 5</span>No trade: the wick turns into a real break</h3></div>
+    <div class="card">
+      <span class="tag">The rules we tested</span>
+      <h3>The short, step by step (a long is the mirror)</h3>
+      <ol>
+        <li>Find a real break: a candle body closes below the last low.</li>
+        <li>Mark the order block: the last up candle before that drop, from its open to its top.</li>
+        <li>Wait for a fake break: the next drop goes below the new low with only a wick. The small high before it is the inducement.</li>
+        <li>Put a sell limit at the bottom of the box. Only if the box is above the inducement high, so price has to grab the bait to reach it.</li>
+        <li>Stop just above the box. Target the wick low.</li>
+        <li>Cancel if a body closes below the low (the break became real), or if price doesn't reach the box within 40 candles.</li>
+      </ol>
+    </div>
+    <h3>What our test says</h3>
+    <p>We turned those rules into code and replayed them with fees and spreads. The markets were 18 forex, metal and index markets (Nov 2023 – Oct 2026), 10 big coins (Nov 2025 – Nov 2026) and the 207 coins our bot traded (Aug – Nov 2026), on four timeframes. Each trade was compared with random entries on the same market, same side, same stop size and same target. <b>R</b> is the amount you risk: −0.14R means losing 14 cents for every dollar risked, on average.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Timeframe</th><th>Trades</th><th>Inducement trade</th><th>Random entry</th></tr></thead>
+        <tbody>
+          <tr><td>15m (crypto only)</td><td class="r">3,691</td><td class="r neg">−0.12R</td><td class="r neg">−0.23R</td></tr>
+          <tr><td>1H</td><td class="r">1,446</td><td class="r neg">−0.24R</td><td class="r neg">−0.07R</td></tr>
+          <tr><td>4H</td><td class="r">375</td><td class="r mix">−0.02R</td><td class="r mix">−0.03R</td></tr>
+          <tr><td>Daily</td><td class="r">32</td><td class="r neg">−0.57R</td><td class="r pos">+0.05R</td></tr>
+          <tr><td><b>All</b></td><td class="r">5,544</td><td class="r neg">−0.14R</td><td class="r neg">−0.17R</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">About 3 trades in 4 hit the stop before the wick low. Each win paid about 3R, but there weren't enough wins. On the 15m it beat random entries by 0.11R a trade and still lost after fees. On the 4H it was about break-even, the same as random. Our coins' 4H shorts made +0.48R a trade (96 trades), but more than half of that came from one crash day (4 Nov, 15 trades), and with slightly wider swing points it fell to −0.01R. Gold had only 9 setups on the 4H in three years, too few to judge. So the video's picture does happen, just not more often than chance.</p>
+  </section>
+
   <section id="smc-bard" data-lesson="bard">
-    <h2><span class="n">9</span>Real example: BARD, 12 Nov 2026</h2>
+    <h2><span class="n">10</span>Real example: BARD, 12 Nov 2026</h2>
     <p>Bybit perp, 5-minute candles, 17:00–19:30 UTC. Our bot shorted this WEAK pump at ENTER and got stopped for −$62. Replay it to see where the sweep rule would have shorted instead, and why a tight SMC stop would also have been hit.</p>
   </section>
 
   <section id="smc-drills">
-    <h2><span class="n">10</span>Practice drills</h2>
-    <p>Each chart stops at a decision. Pick an answer, then watch what happened. Drills 1–5 have a right answer. Drill 6 doesn't; it shows the price of the sweep rule.</p>
-    <div class="score" id="smc-score" aria-live="polite">Score: 0 of 5 right</div>
+    <h2><span class="n">11</span>Practice drills</h2>
+    <p>Each chart stops at a decision. Pick an answer, then watch what happened. Drills 1–7 have a right answer (6 and 7 practise lesson 9). Drill 8 doesn't; it shows the price of the sweep rule.</p>
+    <div class="score" id="smc-score" aria-live="polite">Score: 0 of 7 right</div>
     <div class="drills" id="smc-drill-list"></div>
   </section>
 
   <section id="smc-checklist">
-    <h2><span class="n">11</span>Our manual short checklist</h2>
+    <h2><span class="n">12</span>Our manual short checklist</h2>
     <p>Pump coins and big coins need different handling. Pump coins wick through tight stops: in our tests, every stop tighter than 8% lost money on them. Big coins allow a tight stop, but then the fees eat the edge.</p>
     <div class="cols">
       <div class="card">
@@ -285,7 +346,7 @@
   </section>
 
   <section id="smc-evidence">
-    <h2><span class="n">12</span>What our tests say</h2>
+    <h2><span class="n">13</span>What our tests say</h2>
     <p>SMC is popular and easy to draw after the fact. When we turned its rules into exact code and replayed them with fees, most versions lost money. The table lists what we tested and the result.</p>
     <div class="table-wrap">
       <table>
@@ -304,6 +365,7 @@
           <tr><td>Same, only with the 4H trend (lesson 7)</td><td>204 traded coins, 14 Sep – 13 Nov 2026</td><td class="r neg">shorts −0.09R, longs −0.21R per trade</td></tr>
           <tr><td>Zone retest, sell limit at the zone edge (lesson 8)</td><td>18 forex, metal, oil and index markets, 4H, Nov 2023 – Oct 2026</td><td class="r neg">−0.04R per trade (random −0.05R)</td></tr>
           <tr><td>Same, gold only</td><td>Gold 4H 2023–26, then PAXG 2022–24 unseen</td><td class="r mix">+0.26R, then +0.14R with tight spreads; −0.13R with perp fees</td></tr>
+          <tr><td>Inducement: wick-only break, sell limit at the last real break's order block, target the wick low (lesson 9)</td><td>18 forex, metal and index markets, 10 big coins, 207 traded coins; 15m, 1H, 4H, daily</td><td class="r neg">−0.14R per trade over 5,544 trades (random −0.17R)</td></tr>
         </tbody>
       </table>
     </div>
@@ -312,7 +374,7 @@
 
   <footer>
     <p>Not financial advice. This tab teaches chart concepts and reports our own backtests. It does not tell you what to trade.</p>
-    <p>Lesson charts 1–8 and the drills use invented candles. BARD candles: Bybit BARDUSDT perpetual, 5m, 12 Nov 2026 17:00–19:30 UTC.</p>
+    <p>Lesson charts 1–9 and the drills use invented candles. BARD candles: Bybit BARDUSDT perpetual, 5m, 12 Nov 2026 17:00–19:30 UTC.</p>
   </footer>
 </div>
 <script>
@@ -370,6 +432,7 @@
         else if (lp === 'in-left') txt(svg, x1 + 5, yT + 14, a.label, 't-zone');
         else if (lp === 'above-left') txt(svg, x1 + 3, yT - 6, a.label, 't-zone');
         else if (lp === 'bottom-right') txt(svg, x2 - 5, yB - 6, a.label, 't-zone', 'end');
+        else if (lp === 'below-left') txt(svg, x1 + 3, yB + 15, a.label, 't-zone');
       }
     }
     for (const a of anns.filter(a => a.type === 'box')) {
@@ -651,6 +714,124 @@
       { at: 18, t: 'Target hit. When it works, the entry beats ours because it waits for nothing. When price runs straight through the box, the stop is hit with no warning.' },
     ],
   };
+  // lesson 9: inducement (the @varisthetrader video), five invented charts
+  L.ind1 = {
+    aria: 'Downtrend: one candle body closes below a low (a real break), later a candle only wicks below the next low and closes back above (a fake break)',
+    candles: gen([108.0, 107.0, 105.8, 104.6, 105.4, 106.2, 105.0, 103.4, 102.9, 103.8, 104.6, 103.9, 103.2, 103.5, 104.2, 104.9],
+      { O: { 0: 108.6, 13: 103.2 }, H: { 0: 108.9, 5: 106.5, 10: 104.9 }, L: { 3: 104.0, 8: 102.6, 13: 102.1 } }),
+    ann: [
+      { type: 'mark', i: 3, y: 104.0, label: 'Low', cls: 'struct', pos: 'below', at: 4 },
+      { type: 'line', y: 104.0, i0: 3, i1: 7, cls: 'bos', label: 'Real break', ly: 'below', at: 7 },
+      { type: 'mark', i: 8, y: 102.6, label: 'New low', cls: 'struct', pos: 'below', at: 9 },
+      { type: 'line', y: 102.6, i0: 8, i1: 15, cls: 'liq', label: 'Only a wick: not a break', lp: 'end', at: 13 },
+      { type: 'mark', i: 13, y: 102.1, label: 'Wick', cls: 'sweep', pos: 'below', at: 13 },
+    ],
+    notes: [
+      { at: 3, t: 'Price is walking down a staircase. Each low is a step. This step is at 104.0.' },
+      { at: 7, t: 'This candle\'s body closes below 104.0. That is a real break (BOS), like jumping over a puddle and landing on the other side.' },
+      { at: 8, t: 'A new, lower step forms at 102.6.' },
+      { at: 13, t: 'This candle\'s wick dips below 102.6, but its body closes back above. That is dipping a toe in the puddle and pulling it back. The low is NOT broken.' },
+      { at: 15, t: 'Price climbs again. The video says a fake break means the market wants to go up first and grab something. Example 2 shows what.' },
+    ],
+  };
+  L.ind2 = {
+    aria: 'Bearish inducement: two real breaks, an order block above, a wick-only break, then price takes the small high, taps the order block where a sell limit fills, and falls through the wick low',
+    candles: gen([110.2, 109.4, 108.3, 108.9, 109.5, 108.6, 107.3, 106.6, 107.1, 107.9, 107.0, 105.8, 105.3, 105.6, 106.1, 105.5, 105.4, 106.0, 106.7, 106.6, 105.9, 105.2, 104.6, 104.0, 104.3],
+      { O: { 0: 110.8, 19: 106.7 }, H: { 0: 111.0, 4: 109.8, 9: 108.3, 14: 106.4, 18: 106.9, 19: 107.4 }, L: { 2: 107.9, 7: 106.2, 12: 104.9, 16: 104.3, 23: 103.8 } }),
+    ann: [
+      { type: 'line', y: 107.9, i0: 2, i1: 6, cls: 'bos', label: 'Real break', ly: 'below', at: 6 },
+      { type: 'line', y: 106.2, i0: 7, i1: 11, cls: 'bos', label: 'Real break', ly: 'below', at: 11 },
+      { type: 'zone', y0: 107.1, y1: 108.3, i0: 9, i1: 24, cls: 'supply', label: 'Order block (the box)', lp: 'above-left', at: 11 },
+      { type: 'line', y: 104.9, i0: 12, i1: 16, cls: 'liq', label: 'Only a wick', ly: 'below', at: 16 },
+      { type: 'line', y: 106.4, i0: 14, i1: 18, cls: 'liq', at: 16 },
+      { type: 'mark', i: 14, y: 106.4, label: 'Bait', cls: 'struct', at: 16 },
+      { type: 'mark', i: 16, y: 104.3, label: 'Wick low = target', cls: 'tp', pos: 'below', at: 16 },
+      { type: 'box', i0: 17, i1: 24, entry: 107.1, stop: 108.4, tp: 104.3, entryLabel: 'Sell limit', tpLabel: 'Wick low', at: 17 },
+      { type: 'mark', i: 18, y: 106.9, label: 'Bait grabbed', cls: 'sweep', anchor: 'end', at: 18 },
+      { type: 'mark', i: 23, y: 103.8, label: 'Target hit', cls: 'tp', pos: 'below', at: 23 },
+    ],
+    notes: [
+      { at: 6, t: 'Price is going down. This body closes below the last low: a real break. Sellers are in charge.' },
+      { at: 11, t: 'Another real break. The last green candle before this drop is the order block, the red box from 107.1 to 108.3. Big sellers started the drop there.' },
+      { at: 14, t: 'A small bounce makes a little high at 106.4.' },
+      { at: 16, t: 'The trick: this candle only wicks below the last low (104.9) and closes back above. Not a real break, so the little high at 106.4 is not protected. Sellers have their stop-losses just above it. That pile of stops is the inducement: the bait.' },
+      { at: 17, t: 'The video\'s plan: price climbs, grabs the bait above 106.4, touches the box, then falls to the wick low. So: sell limit at the bottom of the box (107.1), stop just above the box (108.4), target the wick low (104.3). About 2.2R: you would win 2.2 times what you risk.' },
+      { at: 18, t: 'Price goes above 106.4. The stops there are hit: the bait is grabbed.' },
+      { at: 19, t: 'Price pokes into the box and gets pushed back down. The sell limit fills at 107.1.' },
+      { at: 23, t: 'Price falls through the wick low. Target hit, +2.2R. This is the picture the video shows.' },
+    ],
+  };
+  L.ind3 = {
+    aria: 'Bullish inducement: a real break up, a demand order block below, a wick-only break above the high, then price takes the small low, taps the order block where a buy limit fills, and rallies through the wick high',
+    candles: gen([46.0, 46.6, 47.3, 46.9, 46.5, 47.2, 48.0, 48.6, 48.2, 47.8, 48.4, 48.7, 48.1, 47.5, 47.2, 47.8, 48.4, 49.1, 49.7, 49.5],
+      { O: { 0: 45.6, 11: 48.4 }, H: { 2: 47.5, 7: 48.9, 11: 49.6, 18: 49.9 }, L: { 0: 45.4, 4: 46.2, 9: 47.6, 13: 47.3, 14: 46.8 } }),
+    digits: 2,
+    ann: [
+      { type: 'line', y: 47.5, i0: 2, i1: 6, cls: 'bos', label: 'Real break up', at: 6 },
+      { type: 'zone', y0: 46.2, y1: 46.9, i0: 4, i1: 19, cls: 'disc', label: 'Order block (the box)', lp: 'below-left', at: 7 },
+      { type: 'line', y: 48.9, i0: 7, i1: 11, cls: 'liq', label: 'Only a wick', at: 11 },
+      { type: 'line', y: 47.6, i0: 9, i1: 13, cls: 'liq', at: 11 },
+      { type: 'mark', i: 9, y: 47.6, label: 'Bait', cls: 'struct', pos: 'below', at: 11 },
+      { type: 'mark', i: 11, y: 49.6, label: 'Wick high = target', cls: 'tp', at: 11 },
+      { type: 'box', i0: 12, i1: 19, entry: 46.9, stop: 46.15, tp: 49.6, entryLabel: 'Buy limit', tpLabel: 'Wick high', at: 12 },
+      { type: 'mark', i: 13, y: 47.3, label: 'Bait grabbed', cls: 'sweep', pos: 'below', anchor: 'end', at: 13 },
+      { type: 'mark', i: 18, y: 49.9, label: 'Target hit', cls: 'tp', at: 18 },
+    ],
+    notes: [
+      { at: 6, t: 'Now the other way. Price is going up, and this body closes above the last high: a real break up. Buyers are in charge.' },
+      { at: 7, t: 'The last red candle before this push up is the order block, the green box from 46.2 to 46.9. Big buyers started the move there.' },
+      { at: 9, t: 'A small dip makes a little low at 47.6.' },
+      { at: 11, t: 'This candle\'s wick pokes above the high (48.9), but its body closes back below. A fake break. So the little low at 47.6 is the bait: buyers hide their stop-losses just under it.' },
+      { at: 12, t: 'The mirror plan: buy limit at the top of the box (46.9), stop just under the box (46.15), target the wick high (49.6). About 3.6R.' },
+      { at: 13, t: 'Price drops below 47.6: the bait is grabbed.' },
+      { at: 14, t: 'It dips into the box and bounces. The buy limit fills at 46.9.' },
+      { at: 18, t: 'Up through the wick high. Target hit, +3.6R.' },
+    ],
+  };
+  L.ind4 = {
+    aria: 'Inducement short that fails: same pattern, the sell limit fills at the order block, then price keeps rising through the box and hits the stop',
+    candles: gen([2.300, 2.240, 2.180, 2.220, 2.260, 2.190, 2.120, 2.090, 2.130, 2.160, 2.120, 2.100, 2.140, 2.190, 2.250, 2.270, 2.310, 2.360, 2.400, 2.380],
+      { O: { 0: 2.36, 11: 2.12 }, H: { 0: 2.38, 4: 2.28, 9: 2.17, 13: 2.20, 14: 2.26, 16: 2.33 }, L: { 2: 2.15, 7: 2.07, 11: 2.04 } }),
+    digits: 3,
+    ann: [
+      { type: 'line', y: 2.15, i0: 2, i1: 6, cls: 'bos', label: 'Real break', ly: 'below', at: 6 },
+      { type: 'zone', y0: 2.22, y1: 2.28, i0: 4, i1: 19, cls: 'supply', label: 'Order block', lp: 'above-left', at: 6 },
+      { type: 'line', y: 2.07, i0: 7, i1: 11, cls: 'liq', label: 'Only a wick', ly: 'below', at: 11 },
+      { type: 'mark', i: 9, y: 2.17, label: 'Bait', cls: 'struct', at: 11 },
+      { type: 'mark', i: 11, y: 2.04, label: 'Wick low = target', cls: 'tp', pos: 'below', at: 11 },
+      { type: 'box', i0: 12, i1: 19, entry: 2.22, stop: 2.283, tp: 2.04, entryLabel: 'Sell limit', tpLabel: 'Wick low', at: 12 },
+      { type: 'mark', i: 13, y: 2.20, label: 'Bait grabbed', cls: 'sweep', anchor: 'end', at: 13 },
+      { type: 'mark', i: 16, y: 2.33, label: 'Stopped: −1R', cls: 'stop', anchor: 'end', at: 16 },
+    ],
+    notes: [
+      { at: 11, t: 'Same picture as example 2: a real break, then a wick-only break, bait at 2.17 and the box above it. Sell limit at 2.22, stop 2.283, target the wick low 2.04 (2.9R).' },
+      { at: 13, t: 'The bait is grabbed, just like the video says.' },
+      { at: 14, t: 'Price reaches the box. The sell limit fills at 2.22.' },
+      { at: 16, t: 'But price doesn\'t care about our box. It keeps climbing and hits the stop: −1R.' },
+      { at: 19, t: 'In our test this is how about 3 trades in 4 ended: the stop was hit before the wick low. Each win paid about 3R, but only about 1 trade in 4 won, so overall it lost.' },
+    ],
+  };
+  L.ind5 = {
+    aria: 'Forex chart: real break, order block, a wick-only break, then a body closes below the low two candles later, so the waiting sell limit is cancelled and price falls without returning',
+    candles: gen([1.0920, 1.0905, 1.0890, 1.0900, 1.0912, 1.0895, 1.0872, 1.0866, 1.0876, 1.0884, 1.0874, 1.0868, 1.0864, 1.0850, 1.0838, 1.0829, 1.0820, 1.0826],
+      { wick: 0.0002, O: { 0: 1.0935, 11: 1.0874 }, H: { 0: 1.0940, 4: 1.0918, 9: 1.0888 }, L: { 2: 1.0882, 7: 1.0860, 11: 1.0852, 16: 1.0815 } }),
+    digits: 4,
+    ann: [
+      { type: 'line', y: 1.0882, i0: 2, i1: 6, cls: 'bos', label: 'Real break', ly: 'below', at: 6 },
+      { type: 'zone', y0: 1.0900, y1: 1.0918, i0: 4, i1: 17, cls: 'supply', label: 'Order block', lp: 'above-left', at: 6 },
+      { type: 'line', y: 1.0860, i0: 7, i1: 11, cls: 'liq', label: 'Only a wick… for now', ly: 'below', at: 11 },
+      { type: 'mark', i: 9, y: 1.0888, label: 'Bait?', cls: 'struct', at: 11 },
+      { type: 'line', y: 1.0900, i0: 11, i1: 13, cls: 'entry', label: 'Sell limit waiting', lp: 'end', at: 11 },
+      { type: 'line', y: 1.0860, i0: 12, i1: 14, cls: 'bos', label: 'Real break', lp: 'after', at: 13 },
+      { type: 'mark', i: 13, y: 1.0900, label: '✕ Cancel the limit', cls: 'stop', pos: 'below', anchor: 'end', at: 13 },
+    ],
+    notes: [
+      { at: 6, t: 'A forex pair this time (1.09 is a price like EURUSD). A real break at 1.0882 and an order block above it.' },
+      { at: 11, t: 'A wick below 1.0860 and the body closes back above: a fake break, for now. Bait at 1.0888. The sell limit waits at the bottom of the box, 1.0900.' },
+      { at: 13, t: 'Two candles later a body closes below 1.0860. Now the low IS broken for real. The high at 1.0888 is protected after all, so the idea is dead: cancel the sell limit.' },
+      { at: 17, t: 'Price falls without ever coming back to the box. No trade and no loss, even though price went your way. Our test also cancelled the order if price didn\'t reach the box within 40 candles.' },
+    ],
+  };
   const bardK = [[0.11299,0.12184,0.11036,0.12135],[0.12135,0.12971,0.11987,0.12514],[0.12514,0.12891,0.12232,0.12503],[0.12503,0.12837,0.1223,0.12591],[0.12591,0.13062,0.11959,0.1201],[0.1201,0.12347,0.11836,0.12221],[0.12221,0.12496,0.11721,0.12365],[0.12365,0.12721,0.12227,0.1238],[0.1238,0.12804,0.12345,0.12593],[0.12593,0.13231,0.11336,0.12232],[0.12232,0.12413,0.12011,0.1219],[0.1219,0.126,0.12096,0.12395],[0.12395,0.12694,0.12196,0.12616],[0.12616,0.12624,0.12299,0.12379],[0.12379,0.12925,0.12342,0.12908],[0.12908,0.13424,0.12828,0.13087],[0.13087,0.13281,0.13024,0.13187],[0.13187,0.13431,0.1298,0.13101],[0.13101,0.13958,0.13101,0.13955],[0.13955,0.13955,0.13555,0.13652],[0.13652,0.13771,0.13309,0.13523],[0.13523,0.13789,0.13259,0.13448],[0.13448,0.1347,0.13077,0.13281],[0.13281,0.1344,0.13172,0.1323],[0.1323,0.13504,0.13019,0.1343],[0.1343,0.13661,0.13258,0.13517],[0.13517,0.13521,0.13134,0.13297],[0.13297,0.135,0.13177,0.13324],[0.13324,0.13339,0.12547,0.12639],[0.12639,0.12823,0.12628,0.12721],[0.12721,0.12874,0.12558,0.12806]];
   L.bard = {
     aria: 'BARD 5 minute candles: 24h top at 0.13231, bot short at 0.12554 stopped at 18:30, sweep at 18:15 and a sweep short at 0.13087 that survives with an 8 percent stop',
@@ -714,7 +895,7 @@
     range.oninput = () => { stop(); n = +range.value; render(); };
     observe(host, render); render();
   }
-  ['structure', 'liquidity', 'breakout', 'supply', 'premium', 'setup', 'tf4h', 'tf15', 'tf1', 'retest', 'bard'].forEach(lesson);
+  ['structure', 'liquidity', 'breakout', 'supply', 'premium', 'setup', 'tf4h', 'tf15', 'tf1', 'retest', 'ind1', 'ind2', 'ind3', 'ind4', 'ind5', 'bard'].forEach(lesson);
 
   // ---------- drills ----------
   const D = [
@@ -790,6 +971,38 @@
         { k: '8% above entry (1.0206)', v: 'right', fb: 'Our tests on pump coins: every stop tighter than 8% lost money. The spike to 1.015 stays under it, then TP1 and TP2 hit.' },
       ],
       result: 'The next candle spikes 3% past the sweep high, then the dump: TP1 (−5%) and TP2 (−12%) hit.' },
+    { title: 'Did the low break?', digits: 1,
+      candles: gen([64.0, 63.0, 62.2, 62.9, 63.5, 62.6, 61.2, 60.8, 61.6, 62.3, 61.7, 61.1, 61.9, 62.8, 63.4, 62.7, 61.8],
+        { O: { 0: 64.6, 11: 61.7 }, H: { 0: 64.8, 4: 63.8, 9: 62.6, 13: 63.0 }, L: { 2: 61.8, 7: 60.5, 11: 59.9 } }), d: 11,
+      q: 'Downtrend. This candle went below the last low (60.5). Did it break the low?',
+      ann: [
+        { type: 'line', y: 61.8, i0: 2, i1: 6, cls: 'bos', label: 'Real break', ly: 'below', at: 6 },
+        { type: 'line', y: 60.5, i0: 7, i1: 16, cls: 'liq', label: 'Last low', lp: 'before', at: 7 },
+        { type: 'mark', i: 9, y: 62.6, label: 'Small high', cls: 'struct', at: 10 },
+        { type: 'mark', i: 13, y: 63.0, label: 'Stops above taken', cls: 'sweep', post: true, at: 13 },
+      ],
+      choices: [
+        { k: 'Yes, it broke the low', v: 'wrong', fb: 'Only the wick went below 60.5. The body closed back above it, so the low is not broken. A break needs a body close.' },
+        { k: 'No, only the wick did', v: 'right', fb: 'A fake break. That makes the small high at 62.6 the inducement: the stops above it are bait.' },
+      ],
+      result: 'Price climbs back above the small high at 62.6 and grabs the stops there, as lesson 9 says it often does.' },
+    { title: 'Where does the sell limit go?', digits: 3,
+      candles: gen([0.560, 0.548, 0.541, 0.546, 0.553, 0.540, 0.530, 0.526, 0.531, 0.536, 0.529, 0.527, 0.533, 0.541, 0.545, 0.541, 0.532, 0.523, 0.515, 0.518],
+        { O: { 0: 0.572, 11: 0.529, 14: 0.541 }, H: { 0: 0.575, 4: 0.558, 9: 0.539, 13: 0.543, 14: 0.550 }, L: { 2: 0.536, 7: 0.522, 11: 0.516, 18: 0.513 } }), d: 11,
+      q: 'A real break, then a fake break (only a wick below 0.522). You want to trade the inducement idea. Where does the sell limit go?',
+      ann: [
+        { type: 'line', y: 0.536, i0: 2, i1: 6, cls: 'bos', label: 'Real break', ly: 'below', at: 6 },
+        { type: 'zone', y0: 0.546, y1: 0.558, i0: 4, i1: 19, cls: 'supply', label: 'Order block', lp: 'above-left', at: 6 },
+        { type: 'line', y: 0.522, i0: 7, i1: 11, cls: 'liq', label: 'Only a wick', ly: 'below', at: 11 },
+        { type: 'mark', i: 9, y: 0.539, label: 'Inducement high', cls: 'struct', at: 10 },
+        { type: 'box', i0: 12, i1: 19, entry: 0.546, stop: 0.559, tp: 0.516, entryLabel: 'Sell limit', tpLabel: 'Wick low', post: true, at: 11 },
+      ],
+      choices: [
+        { k: 'At the inducement high (0.539)', v: 'wrong', fb: 'That high is the bait. The idea expects price to run through it to grab the stops there, so a short at 0.539 is the trade that gets stopped.' },
+        { k: 'At the bottom of the order block (0.546)', v: 'right', fb: 'Price should grab the bait and touch the box. Stop just above the box (0.559), target the wick low (0.516): about 2.3R.' },
+        { k: 'Sell now at 0.527', v: 'wrong', fb: 'The idea says price goes up first, so a short here starts by losing, and the wick low is only 0.011 away.' },
+      ],
+      result: 'Price grabs the bait, fills the limit at 0.546 and falls to the wick low: +2.3R. It worked this time; in our test about 3 in 4 of these hit the stop first.' },
     { title: 'ENTER, but no sweep yet', digits: 3, unscored: true,
       candles: gen([1.40, 1.46, 1.55, 1.63, 1.74, 1.86, 1.95, 2.03, 1.98, 1.95, 1.93, 1.96, 1.98, 1.93, 1.89, 1.86, 1.87, 1.82, 1.79, 1.81, 1.77, 1.74, 1.75],
         { H: { 7: 2.08, 12: 2.02 } }), d: 10,
