@@ -59,6 +59,13 @@
 .sim-card.full .sim-chartwrap { height: 100%; min-height: 0; }
 .sim-card.full .sim-chart, .sim-card.full .sim-charts.two #sim-cmp-chart { height: 100%; }
 #sim-full.on { border-color: #60a5fa; color: #60a5fa; }
+/* full screen puts the chart first: the read-outs above it (recent coins, 4H/1H direction, when the coin moves, news,
+   the two-chart summary) fold away until ⓘ Info shows them again */
+.sim-card:not(.full) #sim-info-btn { display: none; }
+.sim-card.full:not(.info) :is(#sim-recent, #sim-htf, #sim-rhythm, #sim-news-next, #sim-clock, #sim-cmp-sum:not(.bad), #sim-hint.static,
+  #sim-cmp-bar[data-ready], .sim-opt:has(#sim-showtop)) { display: none !important; }
+.sim-card.full { gap: 6px; }
+#sim-info-btn[aria-pressed="true"] { border-color: #60a5fa; color: #60a5fa; }
 /* full screen toolbar: 🪙 the loader drops down inside the chart card, 🎫 the ticket column slides in on the right */
 /* coin loader: on top of the chart card, with the chart tools; in full screen it folds away and 🪙 opens it */
 .sim-loader { display: grid; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); min-width: 0; }
@@ -367,6 +374,7 @@
           <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe.">✏️ Draw</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
+          <button type="button" class="b" id="sim-info-btn" aria-pressed="false" title="Full screen: show or hide the read-outs around the chart (4H/1H direction, when the coin moves, news, recent coins, the clock line, the second chart's coin box and summary, 24h high). Hidden = a bigger chart.">ⓘ Info</button>
           <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
           <button type="button" class="b" id="sim-news-btn" title="This week's economic news (CPI, jobs, FOMC…) and the next Fed rate decisions, in UTC like the chart">📅 News</button>
           <button type="button" class="b" id="sim-lists-btn" title="Open the alert / setup list in a big window (works in full screen too)" hidden>🔔 Alerts</button>
@@ -675,7 +683,7 @@
   const utc = t => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
   const precFor = p => p > 0 ? Math.min(8, Math.max(2, 4 - Math.floor(Math.log10(p)))) : 4;
   const status = (msg, bad) => { const e = $('sim-status'); e.textContent = msg || ''; e.classList.toggle('bad', !!bad); };
-  const hint = msg => { $('sim-hint').textContent = msg || ''; };
+  const hint = msg => { $('sim-hint').textContent = msg || ''; $('sim-hint').classList.remove('static'); };
   const price = () => (S.cur >= 0 ? S.base[S.cur][4] : null);
   // the open trade's own coin may differ from the chart you are looking at (live): use its own last price and precision
   const onChart = p => !!p && p.mode === S.mode && (p.mode === 'replay' || p.sym === S.sym);
@@ -884,7 +892,7 @@
     $('sim-charts').classList.toggle('two', on); document.querySelector('#sim .sim-grid').classList.toggle('wide', on); fitLater();
     $('sim-cmp-btn').setAttribute('aria-pressed', String(on));
     if (on) { cmpInit(); if (!cmp.poll) cmp.poll = setInterval(cmpPoll, 4000); }
-    else { cmp.load++; cmp.want = ''; cmp.sym = ''; cmp.base = []; cmp.cur = -1; cmp.Bt = []; cmp.Bc = []; }
+    else { cmp.load++; cmp.want = ''; cmp.sym = ''; cmp.base = []; cmp.cur = -1; cmp.Bt = []; cmp.Bc = []; delete $('sim-cmp-bar').dataset.ready; }
     saveView();
   }
   async function cmpOpen(sym) {
@@ -906,8 +914,10 @@
       Object.assign(cmp, { base: r.candles, sym: r.symbol.replace(/USDT$/, ''), ex: r.exchange, cur: -1, fails: 0 });
       cmp.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0);
       cmpRedraw(true); saveView();
+      $('sim-cmp-bar').dataset.ready = '1';   // full screen folds the bar away once its coin is on (ⓘ Info shows it)
     } catch (e) {
       if (my !== cmp.load) return;
+      delete $('sim-cmp-bar').dataset.ready;
       Object.assign(cmp, { base: [], cur: -1, Bt: [], Bc: [] }); cmp.cs.setData([]); cmp.vs.setData([]); $('sim-cmp-legend').textContent = '';
       cmpNote(`Could not load ${cmp.want.toUpperCase()}: ${e.message}`, true);
     }
@@ -2990,6 +3000,7 @@
     hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
       'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
     $('sim-hint').classList.toggle('tip', !S.tool);
+    $('sim-hint').classList.toggle('static', !S.tool);   // the plain tip: full screen folds it away (hint() clears this)
   }
   // a picked price → the ticket (stop / target / limit) or a drawn level. A stop on an open simulated trade moves that
   // trade's stop (practice only; the real ticket never touches a position).
@@ -3423,6 +3434,15 @@
     }
   }
   $('sim-full').onclick = () => setFull(!full.on);
+  // ⓘ Info (full screen only): the read-outs above the chart, hidden by default so the chart gets the height; remembered
+  const INFO_KEY = 'sc_sim_fsinfo_v1';
+  let fsInfo = false; try { fsInfo = localStorage.getItem(INFO_KEY) === '1'; } catch (e) { fsInfo = false; }
+  const setInfo = on => {
+    fsInfo = on; $('sim-chart').closest('.sim-card').classList.toggle('info', on); $('sim-info-btn').setAttribute('aria-pressed', String(on));
+    try { localStorage.setItem(INFO_KEY, on ? '1' : '0'); } catch (e) { /* private window */ }
+  };
+  setInfo(fsInfo);
+  $('sim-info-btn').onclick = () => setInfo(!fsInfo);
   ['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, () => {   // Esc in the browser's full screen
     if (full.on && full.real && !(document.fullscreenElement || document.webkitFullscreenElement)) setFull(false);
   }));
