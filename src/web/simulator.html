@@ -154,6 +154,8 @@
 .sim-pxpop .v small { color: var(--muted); }
 .sim-pxpop .sim-row { gap: 5px; }
 .sim-pxpop .b { padding: 6px 8px; font-size: 11px; }
+.sim-pxpop .m { color: var(--muted); white-space: normal; max-width: 340px; }
+.sim-pxpop .wl { display: grid; gap: 5px; border: 1px solid var(--gold); border-radius: 6px; padding: 6px 7px; background: var(--gold-dim); }
 /* ⚡ quick limit from the chart: limit → stop → TP1 → confirm, in a small bar on the chart */
 .sim-qbar { border-color: var(--gold); max-width: min(420px, calc(100% - 16px)); z-index: 6; }
 .sim-qbar .m { color: var(--muted); white-space: normal; }
@@ -1370,9 +1372,17 @@
     const pr = precFor(t.entry || t.limitPrice), pf = x => (+x).toFixed(pr), n = +v;
     el.innerHTML = kind === 'stop'
       ? `<div class="ask">Move the REAL stop on ${t.direction.toUpperCase()} ${esc(t.symbol)} ${pf(t.stop)} → <b>${pf(n)}</b>? If hit ≈ <b>${usd(R.ifHit ? R.ifHit(t, n) : 0)}</b></div>`
-      : `<div class="ask">Move the REAL limit ${pf(t.limitPrice)} → <b>${pf(n)}</b>? The old order is cancelled and a new one placed.</div>`;
+      : `<div class="ask">Move the REAL ${t.direction.toUpperCase()} limit ${pf(t.limitPrice)} → <b>${pf(n)}</b>? The old order is cancelled and a new one placed (fresh 24h). ${t.slFixed ? `Stop stays at ${pf(t.stop)}.` : 'Stop and TPs keep their distance from the limit.'}</div>`;
     el.innerHTML += `<div class="sim-row"><button type="button" class="b go" data-ra="yes">${kind === 'stop' ? 'Yes, move stop' : 'Yes, move limit'}</button><button type="button" class="b" data-ra="no">No</button></div>`;
     el._ra = () => manage(kind === 'stop' ? 'pos' : 'ord', kind === 'stop' ? 'stop' : 'move_limit', t.id, { price: n });   // run by openPop's click handler
+    const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
+  }
+  function realCancelAsk(el) {   // chart click → "Cancel limit" on the real order waiting on this coin
+    const o = (R.data && R.data.orders || []).find(x => x.symbol === S.sym);
+    if (!o) { el.innerHTML = '<div class="ask">No real limit order on this coin any more.</div>'; return; }
+    el.innerHTML = `<div class="ask">Cancel the REAL ${o.direction.toUpperCase()} ${esc(o.symbol)} limit at <b>${(+o.limitPrice).toFixed(precFor(o.limitPrice))}</b>? ${o.onBook ? 'It comes off the exchange order book.' : 'The bot stops watching it.'}</div>` +
+      `<div class="sim-row"><button type="button" class="b red" data-ra="yes">Yes, cancel it</button><button type="button" class="b" data-ra="no">No</button></div>`;
+    el._ra = () => manage('ord', 'cancel', o.id);   // run by openPop's click handler
     const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
   }
   function drawReal() {   // the real trade's levels on its own chart (solid, brighter than the simulated ones)
@@ -1447,6 +1457,30 @@
   function pendDrop(o) {
     QP = QP.filter(x => x !== o);
     savePend(); pendLines();
+  }
+  function pendEdit(act, v) {   // chart click on a coin with a waiting practice limit: move its limit / stop / TP1 here, or cancel it
+    const o = pendHere(); if (!o) return status('No practice limit is waiting on this chart any more.', true);
+    const short = o.side === 'short', f = x => fmtOf(o, x), tp = o.tps[0];
+    if (act === 'pcancel') { pendDrop(o); refresh(); return status(`Practice ${o.side} limit at ${f(o.lim)} cancelled.`); }
+    if (act === 'plim') {
+      if (short ? v >= o.stop : v <= o.stop) return status(`A ${o.side} limit goes ${short ? 'below' : 'above'} its stop (${f(o.stop)}). Move the stop first.`, true);
+      if (short ? v <= tp.price : v >= tp.price) return status(`A ${o.side} limit goes ${short ? 'above' : 'below'} its TP1 (${f(tp.price)}). Move TP1 first.`, true);
+      const k = S.base[S.cur], px = price();
+      o.lim = v; o.above = v > px;
+      if (S.mode === 'live' && k) o.ref = { t: k[0], h: k[2], l: k[3] };   // like a new order: the candle now counts only from here on
+      savePend(); refresh();
+      return status(`Practice ${o.side} limit moved to ${f(v)}: it fills when price touches it (now ${f(px)}).`);
+    }
+    if (act === 'pstop') {
+      if (short ? v <= o.lim : v >= o.lim) return status(`The stop of a ${o.side} goes ${short ? 'above' : 'below'} the limit (${f(o.lim)}).`, true);
+      o.stop = v; savePend(); refresh();
+      return status(`Practice limit stop moved to ${f(v)}.`);
+    }
+    if (act === 'ptp') {
+      if (short ? v >= o.lim : v <= o.lim) return status(`TP1 of a ${o.side} goes ${short ? 'below' : 'above'} the limit (${f(o.lim)}).`, true);
+      tp.price = v; savePend(); refresh();
+      return status(`Practice limit TP1 moved to ${f(v)}.`);
+    }
   }
   function limTouched(o, k) {   // did candle k reach the limit? (the candle it was placed in counts only from then on)
     let h = k[2], l = k[3];
@@ -2733,19 +2767,33 @@
     const sp = snapPx(param); if (!sp) return;
     const p = sp.p, what = sp.what;
     const v = (+p).toFixed(S.prec), real = realOn(), wrap = $('sim-chart').parentNode;
-    const live = S.mode === 'live' && R.web && R.data;
-    const rPos = live && (R.data.positions || []).some(x => x.symbol === S.sym), rOrd = live && (R.data.orders || []).some(x => x.symbol === S.sym);
+    // what is already waiting / open on this coin comes first, with its own buttons (real ones need /webtrade on)
+    const live = S.mode === 'live' && R.data;
+    const rP = live ? (R.data.positions || []).find(x => x.symbol === S.sym) : null, rO = live ? (R.data.orders || []).find(x => x.symbol === S.sym) : null;
+    const pl = pendHere(), f = x => (x > 0 ? (+x).toFixed(S.prec) : '–');
+    const btn = (a, label, color) => `<button type="button" class="b" data-a="${a}"${color ? ` style="border-color:${color};color:${color}"` : ''}>${label}</button>`;
+    const GOLD = '#facc15', ORANGE = '#f97316', RED = '#ef4444', GREEN = '#10b981';
+    let mine = '';
+    if (rO) mine += `<div class="wl"><div>📍 <b>REAL ${rO.direction.toUpperCase()} limit ${f(rO.limitPrice)}</b> is waiting</div><div class="m">stop ${f(rO.stop)} · TP1 ${f(rO.tp1)}${rO.price > 0 ? ` · now ${f(rO.price)}` : ''}</div>` +
+      (R.web ? `<div class="sim-row">${btn('rlimit', `Move limit to ${v}`, GOLD)}${btn('rcancel', 'Cancel limit', RED)}${btn('rcard', 'Its card ↓')}</div><div class="m">To change its stop or TP1: cancel it and place a new one.</div>`
+        : '<div class="m">Read-only here: manage it in Telegram (/orders), or send /webtrade on.</div>') + '</div>';
+    if (rP) mine += `<div class="wl"><div>${rP.direction === 'short' ? '🔴' : '🟢'} <b>REAL ${rP.direction.toUpperCase()} open</b> · stop ${f(rP.stop)}</div>` +
+      (R.web ? `<div class="sim-row">${btn('rstop', `Move stop to ${v}`, ORANGE)}${btn('rcard', 'Its card ↓')}</div>` : '<div class="m">Read-only here: manage it in Telegram (/mpositions).</div>') + '</div>';
+    if (pl) mine += `<div class="wl"><div>⏳ <b>Practice ${pl.side.toUpperCase()} limit ${f(pl.lim)}</b> is waiting</div><div class="m">stop ${f(pl.stop)} · TP1 ${f(pl.tps[0].price)}</div>` +
+      `<div class="sim-row">${btn('plim', 'Limit here', GOLD)}${btn('pstop', 'Stop here', ORANGE)}${btn('ptp', 'TP1 here', GREEN)}${btn('pcancel', 'Cancel limit', RED)}</div></div>`;
+    const blocked = real && !!realOpenOn(S.sym);   // the Real ticket takes one trade or order per coin
     const el = document.createElement('div');
     el.className = 'sim-pxpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Price ' + v);
-    el.innerHTML = `<div class="v"><b>${v}</b><small>${what}${param.time != null ? ' · ' + hm(param.time * 1000) : ''}</small></div>` +
-      // in trade order: ⚡ entry here, then the chart asks for the stop, then TP1 · or one field of the ticket · or copy / level
-      `<div class="sim-row"><button type="button" class="b quick" data-a="quick" title="Step 1: your limit entry at this price. Then click your stop on the chart (step 2), then TP1 (step 3), then confirm. Long or short follows the stop: below the entry = long.">⚡ ① Entry here → ② stop → ③ TP1</button></div>` +
-      `<div class="sim-row"><span class="sim-status" style="margin:0">or put it in the ticket as:</span>${real ? '<button type="button" class="b" data-a="limit">Entry (limit)</button>' : ''}` +
-      `<button type="button" class="b" data-a="stop">Stop</button><button type="button" class="b" data-a="tp">${real ? 'TP1' : 'Target'}</button></div>` +
-      `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>` +
-      (rPos || rOrd ? `<div class="sim-row">${rPos ? '<button type="button" class="b" data-a="rstop" style="border-color:#f97316;color:#f97316">→ REAL stop</button>' : ''}${rOrd ? '<button type="button" class="b" data-a="rlimit" style="border-color:#facc15;color:#facc15">→ REAL limit</button>' : ''}</div>` : '');
+    el.innerHTML = `<div class="v"><b>${v}</b><small>${what}${param.time != null ? ' · ' + hm(param.time * 1000) : ''}</small></div>` + mine +
+      // a new order, in trade order: ⚡ entry here, then the chart asks for the stop, then TP1 · or one field of the ticket
+      (blocked ? `<div class="m">New real ${esc(S.sym)} orders wait until this one is done (one per coin).</div>`
+        : (mine ? '<div class="m">or start a new order:</div>' : '') +
+          `<div class="sim-row"><button type="button" class="b quick" data-a="quick" title="Step 1: your limit entry at this price. Then click your stop on the chart (step 2), then TP1 (step 3), then confirm. Long or short follows the stop: below the entry = long.">⚡ ① Entry here → ② stop → ③ TP1${pl && !real ? ' (replaces the waiting limit)' : ''}</button></div>` +
+          `<div class="sim-row"><span class="sim-status" style="margin:0">or put it in the ticket as:</span>${real ? '<button type="button" class="b" data-a="limit">Entry (limit)</button>' : ''}` +
+          `<button type="button" class="b" data-a="stop">Stop</button><button type="button" class="b" data-a="tp">${real ? 'TP1' : 'Target'}</button></div>`) +
+      `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>`;
     wrap.appendChild(el);
-    if (realKind && (realKind === 'stop' ? rPos : rOrd)) realAsk(el, realKind, +v);
+    if (realKind && R.web && (realKind === 'stop' ? rP : rO)) realAsk(el, realKind, +v);
     const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
     let x = param.point.x + 12, y = param.point.y - h - 10;
     if (x + w > W - 4) x = Math.max(4, param.point.x - w - 12);
@@ -2761,7 +2809,10 @@
         return;
       }
       if (act === 'rstop' || act === 'rlimit') { e.stopPropagation(); realAsk(el, act === 'rstop' ? 'stop' : 'limit', +v); return; }
+      if (act === 'rcancel') { e.stopPropagation(); realCancelAsk(el); return; }
       closePop();
+      if (act === 'rcard') { const c = $('sim-rp-body'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+      if (act === 'plim' || act === 'pstop' || act === 'ptp' || act === 'pcancel') return pendEdit(act, +v);
       if (act === 'quick') return quickStart(+v);
       if (act !== 'x') usePrice(act, +v);
     };
