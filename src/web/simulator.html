@@ -531,6 +531,11 @@
   let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
   // Real ticket (Live mode): fills in the Telegram /long · /short panel; R.data = read-only open live positions
   const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '', web: false, conf: null, ui: null, msg: null, pick: null };
+  // ⚡ quick limit drawn on the chart (see "quick limit from the chart" below); while it is being drawn only its lines show
+  const QK = { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null };
+  const qkDrawing = () => QK.on && (QK.stage === 'pick' || QK.stage === 'ask');
+  const qkNote = () => qkDrawing()
+    ? `<small style="color:var(--gold)">⚡ The ${QK.stop != null ? quickSide() + ' ' : ''}limit ${(+QK.lim).toFixed(S.prec)} you are drawing on the chart is separate from this ticket: use the button in its bar. This ticket's lines come back when it closes.</small><br>` : '';
   // a one-time id per request, so a double click can't place an order twice
   const nonce = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
   let pxPop = null;
@@ -933,11 +938,14 @@
     const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
     const p = S.pos, ps = chart.priceScale('right');
     if (ps.options().autoScale) ps.applyOptions({ autoScale: true });   // re-fit so the stop / target you just set come into view
-    if (realOn()) {   // the real ticket's levels (what Telegram will get)
-      const rp = realPlan(); if (!rp) return;
+    const qk = qkDrawing();
+    if (realOn()) {   // the real ticket's levels: the bot's own stop and TP1–4 once it answered (same as the ticket text), else what you typed
+      const rp = realPlan(); if (!rp || qk || realOpenOn(S.sym)) return;
+      const s = R.pv && R.pv.setup && R.pv.key === JSON.stringify(realBody(rp)) ? R.pv.setup : null;
       if (rp.isLim && rp.lim > 0) line(rp.lim, 'rgba(250,204,21,0.6)', 3, 'limit?');
-      if (rp.stop > 0) line(rp.stop, 'rgba(239,68,68,0.55)', 3, 'stop?');
-      if (rp.tp > 0) line(rp.tp, 'rgba(16,185,129,0.55)', 3, 'TP1?');
+      const stop = s ? +s.stopLoss : rp.stop, tps = s ? (s.tps || []).map(Number) : [rp.tp];
+      if (stop > 0) line(stop, 'rgba(239,68,68,0.55)', 3, 'stop?');
+      tps.forEach((tp, i) => { if (tp > 0) line(tp, 'rgba(16,185,129,0.55)', 3, `TP${i + 1}?`); });
       return;
     }
     if (p) {
@@ -946,7 +954,7 @@
       p.tps.forEach((tp, i) => { if (!tp.hit) line(tp.price, '#10b981', 2, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'); });
       return;
     }
-    const px = price(); if (px == null) return;
+    const px = price(); if (px == null || qk) return;
     const pl = plan(px);
     if (pl.stop) line(pl.stop, 'rgba(239,68,68,0.45)', 3, 'stop?', false);
     pl.tps.forEach((tp, i) => line(tp.price, 'rgba(16,185,129,0.4)', 3, pl.tps.length > 1 ? 'TP' + (i + 1) + '?' : 'target?', false));
@@ -994,7 +1002,7 @@
     const tp1 = pl.tps[0], sh = sharesOf(pl.tps.map(t => t.frac));
     const gain = (t, i) => size * Math.abs(t.price - px) / px * (pl.tps.length > 1 ? sh[i] : 1);
     const checks = [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length;
-    sum.innerHTML = `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
+    sum.innerHTML = qkNote() + `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
       (!tp1 ? 'Set a target.'
         : pl.tps.length === 1 ? `Target: <b>+$${gain(tp1, 0).toFixed(2)}</b> at ${fmt(tp1.price)} · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R`
         : pl.tps.map((t, i) => `TP${i + 1} ${fmt(t.price)} · ${pctTxt(sh[i])} → <b>+$${gain(t, i).toFixed(2)}</b>`).join('<br>') +
@@ -1054,8 +1062,11 @@
     if (!rp) { sum.textContent = 'Load a live chart first.'; return; }
     const E = rp.entry || px, pc = v => Math.abs(v / E - 1) * 100, sg = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
     let h = R.web ? `<b>${side} ${esc(S.sym)}</b> · ${live ? '<b>💰 LIVE</b>' : '📝 paper'} · ${esc($('sim-r-ex').value ? $('sim-r-ex').value.toUpperCase() : 'your saved exchange')}<br>` : `Telegram gets a <b>${side} ${esc(S.sym)}</b> panel · ${live ? '<b>💰 LIVE</b>' : '📝 paper'}<br>`;
-    h += rp.isLim ? (rp.lim > 0 ? `Entry: limit <b>${fmt(rp.lim)}</b> (${sg((rp.lim / px - 1) * 100)} from ${fmt(px)})` : 'Entry: limit, price not set') : `Entry: market ~<b>${fmt(px)}</b>`;
     const pv = R.pv && R.pv.key === key ? R.pv : null, s = pv && pv.setup;
+    // a limit on the "wrong" side (short below / long above the price) does not rest on the book: the bot waits for price
+    // to reach it and enters at market there (a breakdown / breakout entry); stop and TPs are measured from the limit
+    const lwhy = rp.isLim && rp.lim > 0 && s ? ` · ${s.onBook ? 'rests on the order book' : `the bot enters at market when price ${rp.lim < px ? 'falls' : 'rises'} to it`}` : '';
+    h += rp.isLim ? (rp.lim > 0 ? `Entry: limit <b>${fmt(rp.lim)}</b> (${sg((rp.lim / px - 1) * 100)} from ${fmt(px)})${lwhy}` : 'Entry: limit, price not set') : `Entry: market ~<b>${fmt(px)}</b>`;
     if (s) {   // the bot's own numbers (your saved settings fill the blanks): stop and every TP in dollars
       h += '<br>' + setupMoney(s).join('<br>');
       h += `<br>$${+s.margin} × ${+s.leverage}x = <b>$${(+s.posSize).toFixed(0)}</b> position${s.exLeverage > s.leverage ? ` · margin saver runs ${+s.exLeverage}x` : ''}`;
@@ -1073,7 +1084,7 @@
     }
     if (has) h += `<br><span class="neg">⛔ You already have a real ${has.limitPrice ? 'limit order' : (has.direction || '').toUpperCase()} on ${esc(S.sym)}. ${R.web ? 'Manage it in Real positions below.' : 'Manage it with /mpositions or /orders.'}</span>`;
     if (rp.errs.length) h += '<br>' + rp.errs.map(e => `<span class="neg">⛔ ${esc(e)}</span>`).join('<br>');
-    sum.innerHTML = h;
+    sum.innerHTML = qkNote() + h;
   }
   function pvSchedule(key, body) {
     R.pvWant = key; clearTimeout(R.pvT);
@@ -1081,7 +1092,7 @@
       if (R.pvWant !== key) return;
       try { const r = await apiPost('/api/trade/preview', body); if (R.pvWant === key) R.pv = { key, at: Date.now(), setup: r.setup }; R.web = !!r.webTrading; }
       catch (e) { if (R.pvWant === key) R.pv = { key, at: Date.now(), err: e.message }; }
-      finally { if (R.pvWant === key) R.pvWant = null; if (realOn()) renderTicket(); }
+      finally { if (R.pvWant === key) R.pvWant = null; if (realOn()) { renderTicket(); if (cs) drawPos(); } }
     }, 800);
   }
   // ---- direct: review (the bot's own numbers, nothing placed) → place ----
@@ -2591,7 +2602,6 @@
   // Click a price → "⚡ Limit here" → click the stop → click TP1 → a small bar on the chart confirms it. The side follows
   // the stop (below the limit = long). Practice: a practice limit that fills when price touches it. Real: the same
   // review and ✅ Place as the ticket (the bot's exact order first); without /webtrade it fills in the Telegram panel.
-  const QK = { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null };
   const quickSide = () => (QK.stop != null && QK.stop < QK.lim ? 'long' : 'short');
   const pv = v => (+v).toFixed(S.prec);
   function quickLines() {
@@ -2599,12 +2609,15 @@
     QK.lines.forEach(l => cs.removePriceLine(l)); QK.lines = [];
     for (const [p, color, title] of [[QK.lim, '#facc15', '⚡ LIMIT'], [QK.stop, '#ef4444', '⚡ STOP'], [QK.tp, '#10b981', '⚡ TP1']])
       if (p != null) QK.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+    drawPos(); renderTicket();   // the ticket's own lines step aside, and its text says why
   }
   function quickEnd() {
     if (QK.bar) QK.bar.remove();
     if (cs) QK.lines.forEach(l => cs.removePriceLine(l));
+    const was = QK.on;
     Object.assign(QK, { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null });
     if (S.tool === 'qstop' || S.tool === 'qtp') setTool(null);
+    if (was && cs && S.cur >= 0) { drawPos(); renderTicket(); }   // the ticket's lines come back
   }
   function quickStart(v) {
     quickEnd(); if (S.cur < 0) return;
@@ -2687,6 +2700,7 @@
     if (!rp || rp.errs.length) { QK.stage = 'done'; QK.bar.innerHTML = `<div class="err">${esc(rp ? rp.errs.join(' ') : 'No price yet.')}</div><div class="sim-row"><button type="button" class="b" data-q="x">Close</button></div>`; return; }
     if (cs) QK.lines.forEach(l => cs.removePriceLine(l)); QK.lines = [];   // the ticket's own lines show the order from here
     QK.stage = 'review'; QK.bar.innerHTML = `<div>${R.web ? 'Asking the bot for the exact order…' : 'Sending to Telegram…'}</div>`;
+    drawPos(); renderTicket();   // the ticket now holds this order: its lines and text show it
     if (R.web) await reviewReal(); else { await sendReal(); quickDone(); }
   }
   function quickConfSync() {   // the ticket's review changed: show it in the bar too
