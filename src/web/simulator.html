@@ -66,6 +66,10 @@
 .sim-card.full .sim-loader { display: none; }
 .sim-card.full .sim-loader.open { display: grid; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
 .sim-status:empty { display: none; }
+/* full screen: a coin box right on the toolbar */
+.sim-fsym-wrap { display: none; gap: 4px; align-items: center; }
+.sim-card.full .sim-fsym-wrap { display: inline-flex; }
+#sim-fsym { width: 120px; text-transform: uppercase; }
 .sim-recent { gap: 6px; }
 .sim-recent .b { padding: 6px 9px; }
 #sim-coin-btn.on, #sim-side-btn.on { border-color: #60a5fa; color: #60a5fa; }
@@ -152,6 +156,10 @@
 .sim-qbar .ok { color: var(--accent); white-space: normal; }
 .sim-qbar .sim-rconf { border: 0; padding: 0; background: none; }
 .sim-pxpop .b.quick { border-color: var(--gold); color: var(--gold); }
+.sim-qsteps { display: flex; flex-wrap: wrap; gap: 5px; font: 600 11px/1.2 var(--font-mono); }
+.sim-qsteps span { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+.sim-qsteps span.cur { border-color: var(--gold); color: var(--gold); }
+.sim-qsteps span.done { border-color: var(--accent); color: var(--accent); }
 .sim [data-px] { cursor: copy; text-decoration: underline dotted; text-underline-offset: 3px; }
 .sim [data-px].copied { color: var(--accent); }
 .sim-hint.tip { color: var(--muted); }
@@ -321,7 +329,8 @@
           <button type="button" class="b" data-tf="1d" title="Daily candles (UTC days): the chart's own minutes plus up to 1,000 days of the coin's daily history">1D</button>
         </div>
         <div class="sim-row">
-          <button type="button" class="b" id="sim-coin-btn" aria-expanded="false" title="Change coin or signal. In full screen the loader opens here, above the chart; you can also just start typing a coin name.">🪙 Coin</button>
+          <span class="sim-fsym-wrap"><input id="sim-fsym" list="sim-coin-list" placeholder="Coin…" aria-label="Load another coin: type its name, then Enter" autocomplete="off" spellcheck="false" title="Type a coin (INJ, SOL, GOLD…) and press Enter: it loads here without leaving full screen. Suggestions: big coins, your recent ones and the top 50 by volume."><button type="button" class="b go" id="sim-fsym-go">Load</button></span>
+          <button type="button" class="b" id="sim-coin-btn" aria-expanded="false" title="Change coin or signal. In full screen the whole loader (signals, time, exchange, big coins) opens here, above the chart.">🪙 Coin</button>
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
           <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe.">✏️ Draw</button>
@@ -2514,7 +2523,7 @@
     $('sim-tool-stop').classList.toggle('on', S.tool === 'stop');
     $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
     $('sim-tool-limit').classList.toggle('on', S.tool === 'limit');
-    if (S.tool === 'qstop' || S.tool === 'qtp') { $('sim-hint').classList.remove('tip'); hint(S.tool === 'qstop' ? `⚡ Limit ${fmt(QK.lim)}: click the chart where the stop goes (below for a long, above for a short). Esc cancels.` : `⚡ Limit ${fmt(QK.lim)} · stop ${fmt(QK.stop)} = ${quickSide()}: click the chart where TP1 goes. Esc cancels.`); return; }
+    if (S.tool === 'qstop' || S.tool === 'qtp') { $('sim-hint').classList.remove('tip'); hint(S.tool === 'qstop' ? `⚡ ① Entry ${fmt(QK.lim)} ✓ · ② click your stop on the chart (below the entry = long, above = short). Esc cancels.` : `⚡ ① Entry ${fmt(QK.lim)} ✓ · ② stop ${fmt(QK.stop)} ✓ (${quickSide()}) · ③ click your TP1 on the chart. Esc cancels.`); return; }
     if (S.tool === 'rstop' || S.tool === 'rlimit') { hint(`Click the chart where the REAL ${S.tool === 'rstop' ? 'stop' : 'limit'} goes. You confirm it next.`); $('sim-hint').classList.remove('tip'); return; }
     hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
       'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
@@ -2566,10 +2575,11 @@
     const el = document.createElement('div');
     el.className = 'sim-pxpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Price ' + v);
     el.innerHTML = `<div class="v"><b>${v}</b><small>${what}${param.time != null ? ' · ' + hm(param.time * 1000) : ''}</small></div>` +
-      `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="stop">→ Stop</button>` +
-      `<button type="button" class="b" data-a="tp">→ ${real ? 'TP1' : 'Target'}</button>${real ? '<button type="button" class="b" data-a="limit">→ Limit</button>' : ''}` +
-      `<button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>` +
-      `<div class="sim-row"><button type="button" class="b quick" data-a="quick" title="Limit entry here, then click the stop and TP1 on the chart, then confirm long or short in a small bar">⚡ Limit here → stop → TP1</button></div>` +
+      // in trade order: ⚡ entry here, then the chart asks for the stop, then TP1 · or one field of the ticket · or copy / level
+      `<div class="sim-row"><button type="button" class="b quick" data-a="quick" title="Step 1: your limit entry at this price. Then click your stop on the chart (step 2), then TP1 (step 3), then confirm. Long or short follows the stop: below the entry = long.">⚡ ① Entry here → ② stop → ③ TP1</button></div>` +
+      `<div class="sim-row"><span class="sim-status" style="margin:0">or put it in the ticket as:</span>${real ? '<button type="button" class="b" data-a="limit">Entry (limit)</button>' : ''}` +
+      `<button type="button" class="b" data-a="stop">Stop</button><button type="button" class="b" data-a="tp">${real ? 'TP1' : 'Target'}</button></div>` +
+      `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>` +
       (rPos || rOrd ? `<div class="sim-row">${rPos ? '<button type="button" class="b" data-a="rstop" style="border-color:#f97316;color:#f97316">→ REAL stop</button>' : ''}${rOrd ? '<button type="button" class="b" data-a="rlimit" style="border-color:#facc15;color:#facc15">→ REAL limit</button>' : ''}</div>` : '');
     wrap.appendChild(el);
     if (realKind && (realKind === 'stop' ? rPos : rOrd)) realAsk(el, realKind, +v);
@@ -2650,17 +2660,20 @@
       $('sim-chart').parentNode.appendChild(QK.bar);
     }
     const side = quickSide(), real = realOn();
+    // the three steps in order, the one to do now in gold: ① entry ✓ → ② stop → ③ TP1
+    const step = (n, lab, val, now) => `<span class="${val != null ? 'done' : now ? 'cur' : ''}">${n} ${lab}${val != null ? ' ' + pv(val) + ' ✓' : ''}</span>`;
+    const steps = `<div class="sim-qsteps">${step('①', 'Entry', QK.lim)}${step('②', 'Stop', QK.stop, QK.stop == null)}${step('③', 'TP1', QK.tp, QK.stop != null && QK.tp == null)}</div>`;
     let h;
     if (QK.stage === 'pick') {
-      h = `<div class="v"><b>⚡ Limit ${pv(QK.lim)}</b><small>${real ? 'REAL ticket' : 'practice'}</small></div>` +
-        (QK.stop == null ? '<div>Click the <b>stop</b> on the chart</div><div class="m">below the limit = long · above = short</div>'
-          : `<div>stop ${pv(QK.stop)} → <b>${side}</b> · click <b>TP1</b> on the chart</div>`) +
+      h = `<div class="v"><b>⚡ ${QK.stop == null ? '' : side.toUpperCase() + ' '}limit ${pv(QK.lim)}</b><small>${real ? 'REAL ticket' : 'practice'}</small></div>` + steps +
+        (QK.stop == null ? '<div>Step ②: click your <b>stop</b> on the chart</div><div class="m">below the entry = long · above = short</div>'
+          : `<div>Step ③: click your <b>TP1</b> on the chart (${side === 'long' ? 'above' : 'below'} the entry)</div>`) +
         '<div class="sim-row"><button type="button" class="b" data-q="x">✕ Cancel</button></div>';
     } else if (QK.stage === 'ask') {
       const risk = Math.abs(QK.lim - QK.stop), rr = Math.abs(QK.tp - QK.lim) / risk, err = quickErr(), live = $('sim-r-mode').value === 'live';
       const pc = v => `${v >= QK.lim ? '+' : ''}${((v / QK.lim - 1) * 100).toFixed(2)}%`;
-      h = `<div class="v"><b>⚡ ${side.toUpperCase()} limit ${pv(QK.lim)}</b><small>${real ? (R.web ? (live ? 'REAL · 💰 live money' : 'REAL · 📝 bot paper') : 'REAL · Telegram panel') : 'practice'}</small></div>` +
-        `<div>stop ${pv(QK.stop)} (${pc(QK.stop)}) · TP1 ${pv(QK.tp)} (${pc(QK.tp)}) · <b>${rr.toFixed(1)}R</b></div>`;
+      h = `<div class="v"><b>⚡ ${side.toUpperCase()} limit ${pv(QK.lim)}</b><small>${real ? (R.web ? (live ? 'REAL · 💰 live money' : 'REAL · 📝 bot paper') : 'REAL · Telegram panel') : 'practice'}</small></div>` + steps +
+        `<div>stop ${pc(QK.stop)} · TP1 ${pc(QK.tp)} · <b>${rr.toFixed(1)}R</b></div>`;
       if (!real) { const size = parseFloat($('sim-size').value) || 0; h += `<div class="m">$${size} size → risk ≈ $${(size * risk / QK.lim).toFixed(2)} · fills when price touches ${pv(QK.lim)} · closes all at TP1</div>`; }
       else h += `<div class="m">${R.web ? 'Next: the bot\'s exact order (margin, size, max loss) to check, then ✅ place. TP2–4 follow like /tp.' : `Fills in your Telegram /${side} panel; nothing is placed until you tap ✅ there.`}</div>`;
       if (err) h += `<div class="err">${esc(err)}</div>`;
@@ -2972,15 +2985,15 @@
   $('sim-scan-btn').addEventListener('click', () => { if (full.on) { coinPanel(false); listsPop(true); } });   // the setup list fills in over the chart
   function onFull(on) {   // from setFull: the ticket column follows the chart into full screen, and comes back after
     $('sim-side-btn').hidden = !on;
-    if (on) sideDrawer(FS.side);
+    if (on) { sideDrawer(FS.side); fsymSync(); }
     else { coinPanel(false); sideDrawer(false); }
   }
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && FS.coin && !e.defaultPrevented) { e.preventDefault(); coinPanel(false); return; }   // full screen stays
-    // full screen: start typing a coin name anywhere (like TradingView) → the loader opens with it
+    // full screen: start typing a coin name anywhere (like TradingView) → it goes into the toolbar's coin box
     if (!full.on || FS.coin || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
-    if (!/^[a-z]$/i.test(e.key) || (e.key === 'F' && e.shiftKey) || pxPop || LS.pop || NW.pop || QK.on || DR.on) return;
-    e.preventDefault(); coinPanel(true); focusSymbol(e.key.toUpperCase());
+    if (!/^[a-z0-9]$/i.test(e.key) || (e.key === 'F' && e.shiftKey) || pxPop || LS.pop || NW.pop || QK.on || DR.on) return;
+    e.preventDefault(); const i = $('sim-fsym'); FS.typed = true; i.value = e.key.toUpperCase(); i.focus(); i.setSelectionRange(1, 1);
   });
   // Enter in the coin box loads it
   $('sim-symbol-live').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('sim-load-live').click(); } });
@@ -2996,7 +3009,7 @@
   }
   function renderRecent() {
     const el = $('sim-recent'), list = RC.list.filter(x => x.sym !== S.sym).slice(0, 6);
-    el.hidden = !list.length;
+    el.hidden = !list.length; fsymSync();
     el.innerHTML = list.length ? `<span class="sim-status" style="margin:0">Recent:</span>` + list.map(x =>
       `<button type="button" class="b" data-recent="${esc(x.sym)}" data-rex="${esc(x.ex)}" title="${S.mode === 'live' ? 'Load live' : 'Replay from the time in the loader'}">${esc(x.sym)}</button>`).join('') : '';
   }
@@ -3006,6 +3019,32 @@
     if (S.mode === 'live') { $('sim-symbol-live').value = sym; setEx('sim-ex-live'); loadLive(sym, $('sim-ex-live').value); }
     else { $('sim-symbol').value = sym; setEx('sim-ex'); $('sim-load-custom').click(); }
   });
+  // full screen: the toolbar's coin box. Type (or just start typing anywhere), Enter loads: Live now, Replay from the
+  // loader's time and exchange. Suggestions: the big coins, your recent ones and the top 50 by volume.
+  function fsymSync() { const i = $('sim-fsym'); if (i && document.activeElement !== i) i.value = S.sym || ''; }
+  async function fsymFill() {
+    if (FS.filled) return; FS.filled = true;
+    const dl = $('sim-coin-list'), have = new Set([...dl.options].map(o => o.value));
+    const add = s => { if (s && !have.has(s)) { have.add(s); const o = document.createElement('option'); o.value = s; dl.appendChild(o); } };
+    RC.list.forEach(x => add(x.sym));
+    try {
+      if (!topCoins || Date.now() - topCoins.at > 30 * 60e3) topCoins = { at: Date.now(), coins: (await api('/api/sim/top', {})).coins || [] };
+      (topCoins.coins || []).forEach(c => add(c.symbol));
+    } catch (e) { FS.filled = false; }   // try again next time
+  }
+  function fsymLoad() {
+    const sym = $('sim-fsym').value.trim().toUpperCase();
+    if (!sym) return;
+    $('sim-fsym').blur(); coinPanel(false);
+    if (S.mode === 'live') { $('sim-symbol-live').value = sym; $('sim-load-live').click(); }
+    else { $('sim-symbol').value = sym; $('sim-load-custom').click(); }
+  }
+  $('sim-fsym').addEventListener('focus', () => { fsymFill(); if (!FS.typed) $('sim-fsym').select(); FS.typed = false; });
+  $('sim-fsym').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); fsymLoad(); }
+    else if (e.key === 'Escape') { e.preventDefault(); $('sim-fsym').blur(); fsymSync(); }   // full screen stays
+  });
+  $('sim-fsym-go').onclick = fsymLoad;
   renderRecent();
   $('sim-cmp-btn').onclick = () => {
     if (cmp.on) return cmpShow(false);
