@@ -119,7 +119,22 @@
 .sim-stat b { font: 700 16px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; }
 .sim-learn { font-size: 13px; color: var(--text2); background: var(--gold-dim); border-left: 3px solid var(--gold); border-radius: 6px; padding: 8px 10px; }
 .sim-tablewrap { overflow-x: auto; }
-.sim table { border-collapse: collapse; width: 100%; min-width: 620px; font: 400 12px/1.4 var(--font-mono); }
+/* practice account: balance line in the ticket, the result card after a trade, the balance curve */
+.sim-acct { font: 400 11.5px/1.4 var(--font-mono); color: var(--muted); }
+.sim-acct b { color: var(--text); font-weight: 600; }
+.sim-acctrow input { width: 110px; }
+.sim-res { display: grid; gap: 4px; border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 8px; padding: 10px 12px; background: var(--bg); font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); }
+.sim-res.win { border-left-color: var(--accent); } .sim-res.loss { border-left-color: var(--danger); } .sim-res.idea { border-left-color: var(--gold); }
+.sim-res .hd { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font: 700 14px/1.3 var(--font-mono); color: var(--text); }
+.sim-res .sub { color: var(--muted); font-size: 11.5px; }
+.sim-res b { color: var(--text); font-weight: 600; }
+.sim-res .why { color: var(--text); background: var(--surface2); border-radius: 6px; padding: 6px 8px; margin-top: 2px; }
+.sim-curve { position: relative; height: 160px; }
+.sim-curve svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.sim-curve .tip { position: absolute; top: 0; pointer-events: none; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: 400 11.5px/1.4 var(--font-mono); color: var(--text2); white-space: nowrap; }
+.sim-curve .tip b { color: var(--text); }
+.sim tr.old td { opacity: .45; }
+.sim table { border-collapse: collapse; width: 100%; min-width: 820px; font: 400 12px/1.4 var(--font-mono); }
 .sim th, .sim td { padding: 7px 8px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sim th:nth-child(-n+3), .sim td:nth-child(-n+3) { text-align: left; }
 .sim thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
@@ -407,6 +422,7 @@
         <button type="button" class="b" data-step="60">+1h</button>
         <select id="sim-speed" aria-label="Playback speed"><option value="1">1 min / tick</option><option value="2">2 min / tick</option><option value="5" selected>5 min / tick</option><option value="15">15 min / tick</option></select>
         <button type="button" class="b" id="sim-until-exit" title="Play until your simulated trade closes">⏩ Play to exit</button>
+        <button type="button" class="b" id="sim-to-result" title="Jump straight to how your simulated trade (or waiting limit) ends">⏭ Result now</button>
       </div>
       <div class="sim-fdrawer" id="sim-fdrawer"><div class="sim-fdrawer-bar">Ticket · positions <button type="button" class="b" id="sim-side-close">✕ Close</button></div></div>
     </div>
@@ -447,7 +463,11 @@
           </div>
           <div class="sim-row" id="sim-r-lrow" hidden><input id="sim-r-limit" type="number" step="any" placeholder="limit price" inputmode="decimal" aria-label="Limit price"><button type="button" class="b" id="sim-tool-limit">Click chart</button></div>
         </div>
-        <label class="sim-field paper-only"><span>Size (position, $)</span><input id="sim-size" type="number" min="1" step="1" value="150" inputmode="decimal"></label>
+        <div class="sim-field paper-only">
+          <span>Margin $ × leverage</span>
+          <div class="sim-row"><input id="sim-margin" type="number" min="0.01" step="any" value="15" inputmode="decimal" aria-label="Margin in dollars"><input id="sim-lev" type="number" min="1" max="125" step="1" value="10" inputmode="numeric" aria-label="Leverage"></div>
+          <div class="sim-row"><button type="button" class="b" data-risk="1" title="Margin so a stop-out costs 1% of your practice balance">Risk 1%</button><button type="button" class="b" data-risk="2" title="Margin so a stop-out costs 2% of your practice balance">Risk 2%</button><span class="sim-acct" id="sim-acct"></span></div>
+        </div>
         <div class="sim-field real-only">
           <span>Margin $ × leverage</span>
           <div class="sim-row"><input id="sim-r-margin" type="number" min="1" step="any" placeholder="margin $" inputmode="decimal" aria-label="Margin in dollars"><input id="sim-r-lev" type="number" min="1" max="125" step="1" placeholder="leverage ×" inputmode="numeric" aria-label="Leverage"></div>
@@ -513,11 +533,17 @@
   </div>
 
   <div class="sim-card">
-    <h3>Your simulated trades <small>saved in this browser</small></h3>
+    <h3>Practice account <small>your simulated trades · saved in this browser</small></h3>
     <div class="sim-stats" id="sim-stats"></div>
+    <div class="sim-curve" id="sim-curve" hidden></div>
     <div class="sim-learn" id="sim-learn" hidden></div>
+    <div class="sim-row sim-acctrow">
+      <span class="sim-acct" id="sim-acct-since"></span>
+      <label class="sim-acct">New balance $ <input id="sim-acct-start" type="number" min="1" step="any" inputmode="decimal" aria-label="Starting balance for a new practice account"></label>
+      <button type="button" class="b" id="sim-acct-new">Start a new account</button>
+    </div>
     <div class="sim-tablewrap"><table>
-      <thead><tr><th>Closed (UTC)</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>R</th><th>Checks</th><th>How it ended</th></tr></thead>
+      <thead><tr><th>Closed (UTC)</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Margin</th><th>P&amp;L</th><th>R</th><th>Checks</th><th>Result</th><th>Balance</th></tr></thead>
       <tbody id="sim-jbody"></tbody>
     </table></div>
     <div class="sim-row"><button type="button" class="b" id="sim-jclear">Clear journal</button></div>
@@ -573,9 +599,68 @@
   const picks = new Map();
 
   // ---------- small helpers ----------
+  // ---------- practice account: a starting balance; every closed simulated trade (replay or live) adds its P&L ----------
+  // since: journal ids (close times) after this belong to the current account · carry: P&L of its trades that no longer
+  // fit in the saved journal · margin / lev: the ticket's last margin and leverage
+  const ACKEY = 'sc_sim_acct_v1', JMAX = 1000;
+  const ACC = (() => {
+    let a = null; try { a = JSON.parse(localStorage.getItem(ACKEY)); } catch (e) { a = null; }
+    const ok = !!a && a.start > 0;
+    return { start: ok ? +a.start : 1000, since: ok ? +a.since || 0 : 0, carry: ok ? +a.carry || 0 : 0,
+      margin: ok && a.margin > 0 ? +a.margin : 15, lev: ok && a.lev >= 1 ? Math.round(+a.lev) : 10 };
+  })();
+  const saveAcc = () => { try { localStorage.setItem(ACKEY, JSON.stringify(ACC)); } catch (e) { /* private window */ } };
   const loadJ = () => { try { return JSON.parse(localStorage.getItem(JKEY)) || []; } catch (e) { return []; } };
-  const saveJ = () => { try { localStorage.setItem(JKEY, JSON.stringify(journal.slice(-300))); } catch (e) { /* private window */ } };
+  const saveJ = () => {
+    if (journal.length > JMAX) {   // the oldest trades drop out of the saved list; their P&L stays in the balance
+      journal.slice(0, journal.length - JMAX).forEach(j => { if (j.id > ACC.since) ACC.carry += j.pnl; });
+      journal = journal.slice(-JMAX); saveAcc();
+    }
+    try { localStorage.setItem(JKEY, JSON.stringify(journal)); } catch (e) { /* private window */ }
+  };
   let journal = loadJ();
+  const accTrades = () => journal.filter(j => j.id > ACC.since);
+  const closedBal = () => ACC.start + ACC.carry + accTrades().reduce((a, j) => a + j.pnl, 0);
+  // like an exchange wallet: closed P&L plus what open trades already banked (entry fee, TPs); free = minus the margin
+  // still held by open trades and waiting practice limits
+  const wallet = () => closedBal() + S.open.reduce((a, p) => a + p.realized, 0);
+  const marginInUse = () => S.open.reduce((a, p) => a + p.rem * (p.margin || 0), 0) + QP.filter(o => o.mode === 'live' || limHere(o)).reduce((a, o) => a + (o.margin || 0), 0);
+  const freeBal = () => wallet() - marginInUse();
+  const money = v => (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const marginNow = () => parseFloat($('sim-margin').value) || 0;
+  const levNow = () => Math.min(125, Math.max(1, Math.round(parseFloat($('sim-lev').value) || 1)));
+  const sizeNow = () => marginNow() * levNow();
+  // practice liquidation (isolated margin) from the chart coin's maintenance margin: Bybit's public tiers by position size
+  async function loadMmr() {
+    const sym = S.sym;
+    S.mmr = isFx() ? null : { sym, tiers: null };
+    if (isFx()) return;
+    try { const r = await api('/api/sim/mmr', { symbol: sym }); if (S.mmr && S.mmr.sym === sym) { S.mmr.tiers = r.tiers; refresh(); } }
+    catch (e) { if (S.mmr && S.mmr.sym === sym) S.mmr.err = e.message; }
+  }
+  function mmrNow(size) {   // { pct, known, maxLev } for a position of `size` $ on this chart's coin; forex: { fx }
+    if (isFx()) return { fx: true, known: true, pct: null, maxLev: 500 };
+    const T = S.mmr && S.mmr.sym === S.sym ? S.mmr.tiers : null;
+    if (!T || !T.length) return { pct: 5, known: false, maxLev: 125 };   // the bot's own assumption when a coin's rate is unknown
+    const t = T.find(x => x.cap >= size) || T[T.length - 1];
+    return { pct: t.mmr, known: true, maxLev: t.maxLev };
+  }
+  // how far price can go against you before liquidation: the bot's rule (utils/marginSaver liquidationPct: 1/leverage −
+  // maintenance − 0.2% close fee); forex brokers stop you out at a 50% margin level
+  const liqDist = (lev, mm) => (mm.fx ? 0.5 / lev : 1 / lev - (mm.pct + 0.2) / 100);
+  const liqPrice = (side, entry, lev, mm) => { const d = Math.max(0, liqDist(lev, mm)); return entry * (side === 'short' ? 1 + d : 1 - d); };
+  const safeLev = (stopPct, mm) => Math.max(1, Math.floor(mm.fx ? 0.5 / (stopPct * 1.2) : 1 / (stopPct * 1.2 + (mm.pct + 0.2) / 100)));
+  const mmTxt = mm => (mm.fx ? 'forex: stop-out at 50% margin' : mm.known ? `coin maintenance ${+mm.pct.toFixed(2)}%${S.ex === 'binance' ? ' (Bybit\'s rate)' : ''}` : 'maintenance 5% assumed');
+  // why a practice order can't go in now ('' = it can): the coin's leverage cap, the free balance
+  function paperErr(size, margin, lev, freed = 0) {
+    if (!(margin > 0)) return 'Enter a margin in dollars.';
+    const mm = mmrNow(size);
+    if (lev > mm.maxLev) return `${S.sym} allows at most ${mm.maxLev}× for a $${Math.round(size)} position${mm.fx ? '' : ' (Bybit)'}. Lower the leverage.`;
+    const free = freeBal() + freed;
+    if (margin > free + 1e-9) return `Not enough free balance: ${money(free)} free for a ${money(margin)} margin. Lower the margin, or start a new account under Practice account.`;
+    return '';
+  }
+  const acctLine = () => { const w = wallet(), f = freeBal(); return `Balance <b>${money(w)}</b>${Math.abs(w - f) > 0.005 ? ` · free ${money(f)}` : ''}`; };
   // an open LIVE paper trade is kept in this browser so a reload doesn't lose it (replay trades restart with the replay)
   const PKEY2 = 'sc_sim_live_pos_v2';   // all open live trades (v1 held one)
   // saved only while trades are open; the list is cleared only when the last one closes (an idle page or tab never wipes it)
@@ -599,13 +684,21 @@
   const nowT = () => (S.cur >= 0 ? S.base[S.cur][0] + MIN : null);   // close time of the last visible 1m candle
   const barT = () => S.base[S.cur][0];                               // open time of it (markers must sit on a drawn bar)
   // like the dashboard's apiFetch (key + 401 handling), but it passes on the server's error message
-  async function api(path, params) {
+  // Every read has a time limit. A request that never answers (laptop sleep, a Wi-Fi switch, the server restarting in a
+  // deploy) used to keep its update loop marked busy, so a live chart froze on its last price until the page was reloaded.
+  async function api(path, params, ms = 30000) {
     const q = Object.entries(Object.assign({}, params, { key: apiKey, _t: Date.now() })).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
-    const r = await fetch(path + '?' + q, { cache: 'no-store' });
-    if (r.status === 401) { resetConfig(); throw new Error('Invalid key — please log in again'); }
-    const j = await r.json().catch(() => null);
-    if (!r.ok) throw new Error((j && j.error) || 'server error ' + r.status);
-    return j;
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+    try {
+      const r = await fetch(path + '?' + q, { cache: 'no-store', signal: ac.signal });
+      if (r.status === 401) { resetConfig(); throw new Error('Invalid key — please log in again'); }
+      const j = await r.json().catch(e => { if (ac.signal.aborted) throw e; return null; });
+      if (!r.ok) throw new Error((j && j.error) || 'server error ' + r.status);
+      return j;
+    } catch (e) {
+      if (ac.signal.aborted) throw new Error(`no answer in ${Math.round(ms / 1000)} s`);
+      throw e;
+    } finally { clearTimeout(timer); }
   }
   async function apiPost(path, body) {   // JSON body, key in the query like api()
     const r = await fetch(path + '?key=' + encodeURIComponent(apiKey), { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -810,7 +903,7 @@
       const r = await api('/api/sim/klines', { symbol: cmp.want, interval: '1m', start, end, exchange: 'auto' });
       if (my !== cmp.load) return;   // closed, or another coin / chart was loaded meanwhile
       if (!r.candles || !r.candles.length) throw new Error('no candles came back for that time');
-      Object.assign(cmp, { base: r.candles, sym: r.symbol.replace(/USDT$/, ''), ex: r.exchange, cur: -1 });
+      Object.assign(cmp, { base: r.candles, sym: r.symbol.replace(/USDT$/, ''), ex: r.exchange, cur: -1, fails: 0 });
       cmp.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0);
       cmpRedraw(true); saveView();
     } catch (e) {
@@ -871,8 +964,9 @@
     if (!cmp.on || S.mode !== 'live' || cmp.busy || !cmp.base.length) return;
     cmp.busy = true; const my = cmp.load;
     try {
-      const r = await api('/api/sim/klines', { symbol: cmp.sym, interval: '1m', start: cmp.base[cmp.base.length - 1][0], exchange: cmp.ex });
+      const r = await api('/api/sim/klines', { symbol: cmp.sym, interval: '1m', start: cmp.base[cmp.base.length - 1][0], exchange: cmp.ex }, 12000);
       if (my !== cmp.load) return;
+      if (cmp.fails >= 3) { cmp.fails = 0; cmpSum(); } else cmp.fails = 0;   // working again: the normal line comes back
       let first = Infinity;
       for (const k of r.candles || []) {
         const i = cmp.base.length - 1;
@@ -881,7 +975,9 @@
       }
       if (first <= cmp.cur) cmp.cur = first - 1;   // the minute on screen changed: draw it again
       cmpTick();
-    } catch (e) { /* a missed update; the next one comes in 4 s */ }
+    } catch (e) {   // one missed update is normal; say so when it keeps failing (it used to go stale without a word)
+      if (my === cmp.load && (cmp.fails = (cmp.fails || 0) + 1) >= 3) cmpNote(`${cmpName()} live update failed ${cmp.fails}× in a row: ${e.message} — still retrying every 4 s.`, true);
+    }
     finally { cmp.busy = false; }
   }
   function rangeAt(base, upto, end) {   // last 24 h up to the clock: % change and where the price sits in its high–low range
@@ -984,11 +1080,16 @@
       line(p.entry, '#e5e7eb', 0, p.side === 'short' ? 'Short' : 'Long');
       line(p.stop, '#ef4444', 2, p.stop === p.entry ? 'Stop (entry)' : 'Stop');
       p.tps.forEach((tp, i) => { if (!tp.hit) line(tp.price, '#10b981', 2, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'); });
+      if (p.liq) line(p.liq, '#a855f7', 1, 'Liquidation');
       return;
     }
     const px = price(); if (px == null || qk) return;
     const pl = plan(px);
     if (pl.stop) line(pl.stop, 'rgba(239,68,68,0.45)', 3, 'stop?', false);
+    if (pl.stop && !isFx()) {   // only when it would come before the stop: the ticket warns about it too
+      const lq = liqPrice(S.side, px, levNow(), mmrNow(sizeNow()));
+      if (S.side === 'short' ? lq < pl.stop : lq > pl.stop) line(lq, 'rgba(168,85,247,0.6)', 3, 'liq?', true);
+    }
     pl.tps.forEach((tp, i) => line(tp.price, 'rgba(16,185,129,0.4)', 3, pl.tps.length > 1 ? 'TP' + (i + 1) + '?' : 'target?', false));
   }
 
@@ -1024,17 +1125,25 @@
     $('sim-price').textContent = px != null ? S.sym + ' ' + fmt(px) : '–';
     if (px != null) $('sim-price').dataset.px = fmt(px); else delete $('sim-price').dataset.px;
     if (real) return renderReal(px);
+    $('sim-acct').innerHTML = acctLine();
     const sum = $('sim-sum');
     if (px == null) { sum.textContent = 'Load a chart to see the risk.'; return; }
     if (S.pos) { sum.textContent = `You already have a simulated ${S.pos.side} open on ${S.sym}. Close it first, or load another coin to trade that too.`; return; }
     if (full) { sum.textContent = `${MAX_LIVE} simulated live trades are open. Close one to open another.`; return; }
-    const pl = plan(px), size = parseFloat($('sim-size').value) || 0;
-    if (!pl.stop) { sum.innerHTML = short ? 'Set a stop <b>above</b> the price.' : 'Set a stop <b>below</b> the price.'; return; }
+    const pl = plan(px), margin = marginNow(), lev = levNow(), size = sizeNow(), mm = mmrNow(size), err = paperErr(size, margin, lev);
+    if (err) go.disabled = true;
+    const posTxt = `Position <b>${money(size)}</b> = ${money(margin)} margin × ${lev}<br>`;
+    if (!pl.stop) { sum.innerHTML = qkNote() + posTxt + (err ? `<span class="neg">${esc(err)}</span><br>` : '') + (short ? 'Set a stop <b>above</b> the price.' : 'Set a stop <b>below</b> the price.'); return; }
     const riskPct = Math.abs(pl.stop - px) / px, risk = size * riskPct + 2 * size * feeOf(S.ex);
+    const liq = liqPrice(S.side, px, lev, mm), liqFirst = short ? liq < pl.stop : liq > pl.stop, bal = wallet();
+    const loss = liqFirst ? margin + size * feeOf(S.ex) : risk, ofBal = bal > 0 ? `, <b>${(loss / bal * 100).toFixed(1)}%</b> of your balance` : '';
     const tp1 = pl.tps[0], sh = sharesOf(pl.tps.map(t => t.frac));
     const gain = (t, i) => size * Math.abs(t.price - px) / px * (pl.tps.length > 1 ? sh[i] : 1);
     const checks = [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length;
-    sum.innerHTML = qkNote() + `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)<br>` +
+    sum.innerHTML = qkNote() + posTxt + (err ? `<span class="neg">${esc(err)}</span><br>` : '') +
+      `Liquidation ≈ <b>${fmt(liq)}</b> (${(Math.abs(liq / px - 1) * 100).toFixed(1)}% away · ${mmTxt(mm)})<br>` +
+      (liqFirst ? `<span class="neg">⚠ Liquidation comes before your stop: there the whole ${money(margin)} margin is gone (−$${loss.toFixed(2)} with fees${ofBal}). ${safeLev(riskPct, mm)}× or less keeps it past the stop.</span><br>`
+        : `Risk if stopped: <b>−$${risk.toFixed(2)}</b> (${(riskPct * 100).toFixed(1)}% move)${ofBal}<br>`) +
       (!tp1 ? 'Set a target.'
         : pl.tps.length === 1 ? `Target: <b>+$${gain(tp1, 0).toFixed(2)}</b> at ${fmt(tp1.price)} · ${(Math.abs(tp1.price - px) / Math.abs(pl.stop - px)).toFixed(1)}R`
         : pl.tps.map((t, i) => `TP${i + 1} ${fmt(t.price)} · ${pctTxt(sh[i])} → <b>+$${gain(t, i).toFixed(2)}</b>`).join('<br>') +
@@ -1409,11 +1518,11 @@
   function enter() {
     if (S.pos || S.cur < 0) return;
     if (S.mode === 'live' && liveOpen().length >= MAX_LIVE) return status(`${MAX_LIVE} simulated live trades are open. Close one first.`, true);
-    const px = price(), pl = plan(px), size = parseFloat($('sim-size').value);
+    const px = price(), pl = plan(px), margin = marginNow(), lev = levNow(), size = sizeNow();
     if (!pl.stop) return status(S.side === 'short' ? 'Set a stop above the price first.' : 'Set a stop below the price first.', true);
     if (!pl.tps.length) return status('Set a target first.', true);
-    if (!(size > 0)) return status('Enter a size in dollars.', true);
-    makePos(S.side, px, pl, size, S.base[S.cur], { be: $('sim-be').checked, checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto });
+    const err = paperErr(size, margin, lev); if (err) return status(err, true);
+    makePos(S.side, px, pl, size, S.base[S.cur], { be: $('sim-be').checked, checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, auto: S.auto, margin, lev, mm: mmrNow(size) });
     $('sim-stop').value = ''; $('sim-tp').value = ''; [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = false; }); S.auto = false;  // next trade starts from a clean ticket
     status(`Simulated ${S.side} opened at ${fmt(px)}.` + (S.mode === 'replay' ? ' Press Play or → to see what happens.' : ''));
     refresh();
@@ -1427,6 +1536,11 @@
       checks: o.checks, auto: o.auto, mode: c.mode, sym: c.sym, ex: c.ex,
       ref: c.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null, fills: [] };
     p.prec = c.prec; p.last = px; p.fails = 0; p.htf = o.htf != null ? o.htf : htfAgree(side);
+    // isolated margin: margin × leverage = the position; liquidation where the margin is used up (older saved trades: none)
+    p.lev = o.lev >= 1 ? o.lev : null; p.margin = p.lev ? (o.margin > 0 ? o.margin : size / p.lev) : null;
+    p.liq = p.lev && o.mm ? liqPrice(side, px, p.lev, o.mm) : null; p.mm = o.mm || null;
+    p.fav = px; p.adv = px;   // furthest price your way / against you while open
+    if (onChart(p)) S.result = null;
     S.open.push(p);
     if (onChart(p)) S.marks.push(entryMark(side, k[0], px));
     if (c.mode === 'live') { p.chk = k[0]; p.caught = true; savePos(); }
@@ -1438,7 +1552,7 @@
   // are checked every 4 s on their own candles, like live practice trades, and a fill opens the trade there. A replay
   // limit belongs to its replay and is cancelled when another chart loads.
   const QKEY = 'sc_sim_live_lim_v1';
-  const pendKeep = ['id', 'mode', 'sym', 'ex', 'prec', 'side', 'lim', 'stop', 'tps', 'size', 'be', 'checks', 'htf', 'above', 'ref', 'chk', 't0', 'last'];
+  const pendKeep = ['id', 'mode', 'sym', 'ex', 'prec', 'side', 'lim', 'stop', 'tps', 'size', 'margin', 'lev', 'mm', 'be', 'checks', 'htf', 'above', 'ref', 'chk', 't0', 'last'];
   const savePend = () => { try { const L = QP.filter(o => o.mode === 'live').map(o => Object.fromEntries(pendKeep.map(k => [k, o[k]]))); if (L.length) localStorage.setItem(QKEY, JSON.stringify(L)); else localStorage.removeItem(QKEY); } catch (e) { /* private window */ } };
   const loadPend = () => { try { return (JSON.parse(localStorage.getItem(QKEY)) || []).filter(o => o && o.mode === 'live' && o.sym && o.lim > 0 && o.stop > 0 && o.tps && o.tps.length).map(o => ({ ...o, caught: false, fails: 0 })); } catch (e) { return []; } };
   let QP = loadPend();
@@ -1493,7 +1607,7 @@
   function limFill(o, k, worst) {   // the limit becomes the trade, at its price, on candle k
     pendDrop(o);
     const here = limHere(o);
-    const p = makePos(o.side, o.lim, { stop: o.stop, tps: o.tps }, o.size, k, { be: o.be, checks: o.checks, auto: false, htf: o.htf, at: here ? null : o });
+    const p = makePos(o.side, o.lim, { stop: o.stop, tps: o.tps }, o.size, k, { be: o.be, checks: o.checks, auto: false, htf: o.htf, at: here ? null : o, margin: o.margin, lev: o.lev, mm: o.mm });
     // the rest of this candle after the fill is unknown: replay (and a background catch-up) checks only the stop on it
     // (the worse case), from the next candle on as usual
     if (worst) evalBar(p, k[0], o.side === 'short' ? k[2] : p.entry, o.side === 'short' ? p.entry : k[3]);
@@ -1559,8 +1673,12 @@
   }
   function evalBar(p, t, h, l) {
     if (!p) return;
-    const short = p.side === 'short';
-    if (short ? h >= p.stop : l <= p.stop) { fill(p, p.rem, p.stop, t, p.stop === p.entry ? 'Breakeven stop' : 'Stop'); return finish(p, t, p.stop === p.entry ? 'Breakeven stop' : 'Stopped'); }
+    const short = p.side === 'short', fav0 = p.fav != null ? p.fav : p.entry, adv0 = p.adv != null ? p.adv : p.entry;
+    const advTo = lim => { p.adv = short ? Math.max(adv0, Math.min(h, lim)) : Math.min(adv0, Math.max(l, lim)); p.fav = fav0; };   // stopped on this candle: count it up to the stop only
+    p.fav = short ? Math.min(fav0, l) : Math.max(fav0, h); p.adv = short ? Math.max(adv0, h) : Math.min(adv0, l);
+    // isolated margin: a liquidation price inside the stop is reached first, and takes the rest of the margin
+    if (p.liq != null && (short ? p.liq < p.stop : p.liq > p.stop) && (short ? h >= p.liq : l <= p.liq)) { advTo(p.liq); liquidate(p, t); return finish(p, t, 'Liquidated'); }
+    if (short ? h >= p.stop : l <= p.stop) { advTo(p.stop); fill(p, p.rem, p.stop, t, p.stop === p.entry ? 'Breakeven stop' : 'Stop'); return finish(p, t, p.stop === p.entry ? 'Breakeven stop' : 'Stopped'); }
     for (let i = 0; i < p.tps.length; i++) {
       const tp = p.tps[i]; if (tp.hit) continue;
       if (!(short ? l <= tp.price : h >= tp.price)) break;
@@ -1568,21 +1686,106 @@
       fill(p, lastOne ? p.rem : p.rem * tp.frac, tp.price, t, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target');
       tp.hit = true;
       if (i === 0 && p.be && p.tps.length > 1) p.stop = short ? Math.min(p.stop, p.entry) : Math.max(p.stop, p.entry);
-      if (p.rem <= 1e-9) return finish(p, t, p.tps.length > 1 ? 'All targets' : 'Target');
+      if (p.rem <= 1e-9) { p.fav = short ? Math.min(fav0, Math.max(l, tp.price)) : Math.max(fav0, Math.min(h, tp.price)); return finish(p, t, p.tps.length > 1 ? 'All targets' : 'Target'); }
     }
+  }
+  function liquidate(p, t) {   // the exchange closes the rest at the liquidation price and keeps its whole margin
+    p.realized -= p.rem * p.margin; p.fills.push({ q: p.rem, px: p.liq, t, label: 'Liquidated' }); p.rem = 0;
+    if (onChart(p)) S.marks.push(fillMark(p.side, t, 'Liquidated'));
+  }
+  // Replay only: the loaded candles after the exit (up to 24 h) — did price still reach your next target, or your stop?
+  // That tells a right idea with a bad stop from a wrong idea, and an early exit from a good one.
+  function afterExit(p, how) {
+    const B = S.base, i0 = S.cur + 1, i1 = Math.min(B.length - 1, S.cur + 24 * 60);
+    if (i1 - i0 < 30) return null;
+    const short = p.side === 'short', hours = Math.round((B[i1][0] - B[S.cur][0]) / 3600e3), next = p.tps.find(x => !x.hit);
+    const out = { hours, next: next ? next.price : null, reach: null, worst: null, stopHit: null, stopT: null, more: 0 };
+    const k0 = B[S.cur];
+    let worst = short ? Math.max(p.adv, k0[2]) : Math.min(p.adv, k0[3]);   // the exit candle's whole wick counts (past the stop too)
+    for (let i = i0; i <= i1; i++) {
+      const k = B[i];
+      worst = short ? Math.max(worst, k[2]) : Math.min(worst, k[3]);   // (the candle that reaches the target counts: its wick may come first)
+      if (out.stopT == null && (short ? k[2] >= p.stop0 : k[3] <= p.stop0)) out.stopT = k[0];
+      if (out.next != null && (short ? k[3] <= out.next : k[2] >= out.next)) { out.reach = k[0]; break; }
+    }
+    out.worst = worst;   // the furthest price went against you before reaching the target (or by the end)
+    // a target exit: how much further it ran your way before coming back to your entry
+    if (/target/i.test(how)) {
+      let best = p.fav;
+      for (let i = i0; i <= i1; i++) { const k = B[i]; if (short ? k[2] >= p.entry : k[3] <= p.entry) break; best = short ? Math.min(best, k[3]) : Math.max(best, k[2]); }
+      out.more = Math.abs(best - p.fav) / p.entry;
+    }
+    return out;
+  }
+  const held = ms => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor(m % 1440 / 60)}h`; };
+  // the verdict on a closed trade: code (right / partly / idea / wrong / even / hand / loss), headline and the why
+  function verdict(p, how, look) {
+    const f = v => fmtOf(p, v), riskD = Math.abs(p.stop0 - p.entry), hits = p.tps.filter(x => x.hit).length, pnl = p.realized;
+    const pc = v => `${(Math.abs(v - p.entry) / p.entry * 100).toFixed(1)}%`, rOf = v => (riskD > 0 ? Math.abs(v - p.entry) / riskD : 0).toFixed(1);
+    const nextTxt = look && look.next != null ? `${hits ? 'TP' + (hits + 1) : p.tps.length > 1 ? 'TP1' : 'your target'} (${f(look.next)})` : '';
+    const later = (t0, t1) => `${held(t1 - t0)} later`;
+    if (/target/i.test(how)) {
+      const why = look ? (look.more * p.entry >= riskD ? `After your exit it ran another ${(look.more * 100).toFixed(1)}% your way (${(look.more * p.entry / riskD).toFixed(1)}R) before coming back: the target was early.`
+        : `After your exit it went only ${(look.more * 100).toFixed(1)}% further your way: a good exit.`) : '';
+      return { code: 'right', icon: '✅', title: 'Right — target hit', why };
+    }
+    if (how === 'Closed by hand') {
+      let why = '';
+      if (look) why = look.reach != null && (look.stopT == null || look.reach < look.stopT) ? `After you closed, price reached ${nextTxt} ${later(p.fills[p.fills.length - 1].t, look.reach)}: holding would have paid more.`
+        : look.stopT != null ? `After you closed, price hit your first stop (${f(p.stop0)}) ${later(p.fills[p.fills.length - 1].t, look.stopT)}: a good close.`
+        : `In the next ${look.hours}h price reached neither your stop nor ${nextTxt || 'your target'}.`;
+      return { code: 'hand', icon: '✋', title: `Closed by hand ${pnl >= 0 ? 'in profit' : 'at a loss'}`, why };
+    }
+    if (how === 'Breakeven stop' && !hits) return { code: 'even', icon: '➖', title: 'Even — stopped at entry', why: look && look.reach != null ? `Price then reached ${nextTxt} ${later(p.fills[p.fills.length - 1].t, look.reach)}.` : '' };
+    if (hits) {
+      const why = look && look.reach != null ? `After the rest was stopped, price still reached ${nextTxt} ${later(p.fills[p.fills.length - 1].t, look.reach)}.` : '';
+      return { code: 'partly', icon: '✅', title: `Partly right — ${hits === 1 ? 'TP1' : 'TP1–' + hits} banked, the rest ${how === 'Liquidated' ? 'liquidated' : 'stopped'}`, why };
+    }
+    const liq = how === 'Liquidated';
+    if (look && look.reach != null) {
+      const stopHeld = liq && !(p.side === 'short' ? look.worst >= p.stop0 : look.worst <= p.stop0), need = look.worst;
+      return { code: 'idea', icon: '🟡', title: liq ? (stopHeld ? 'Right idea — leverage too high' : 'Right idea — liquidated, stop too close') : 'Right idea — stop too close',
+        why: `Price reached ${nextTxt} ${later(p.fills[p.fills.length - 1].t, look.reach)}. ` +
+          (stopHeld ? `Your stop (${f(p.stop0)}) was never hit: at ${p.lev}× the liquidation came first. Lower leverage would have kept the trade.`
+            : `On the way it went ${pc(need)} against you (${rOf(need)}R): a stop just past ${f(need)} would have held.`) };
+    }
+    if (look) {
+      const stopOk = !(p.side === 'short' ? look.worst >= p.stop0 : look.worst <= p.stop0);
+      if (liq && stopOk) return { code: 'loss', icon: '❌', title: 'Liquidated — your stop was never hit',
+        why: `At ${p.lev}× the liquidation (${f(p.liq)}) came first. In the next ${look.hours}h price reached neither your stop (${f(p.stop0)}) nor ${nextTxt || 'your target'}.` };
+      return { code: 'wrong', icon: '❌', title: liq ? 'Wrong — liquidated' : 'Wrong — stopped', why: `Price never reached ${nextTxt || 'your target'} in the next ${look.hours}h.` };
+    }
+    return { code: 'loss', icon: '❌', title: liq ? 'Liquidated' : 'Stopped', why: '' };
   }
   function finish(p, t, how) {
     const risk = p.qty * Math.abs(p.stop0 - p.entry), qn = p.fills.reduce((a, f) => a + f.q, 0);
     const exit = p.fills.reduce((a, f) => a + f.q * f.px, 0) / (qn || 1);
-    const R = risk > 0 ? p.realized / risk : 0;
-    journal.push({ id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, htf: p.htf || 0, auto: !!p.auto, how, prec: p.prec != null ? p.prec : precFor(p.entry) });
-    saveJ();
-    const here = onChart(p);
+    const R = risk > 0 ? p.realized / risk : 0, here = onChart(p);
+    const look = p.mode === 'replay' && here ? afterExit(p, how) : null, v = verdict(p, how, look);
+    const mv = x => (x != null ? Math.abs(x - p.entry) / p.entry : null);
+    const j = { id: Date.now(), sym: p.sym, ex: p.ex, side: p.side, mode: p.mode, t0: p.t0, t1: t, entry: p.entry, exit, stop0: p.stop0, size: p.size, pnl: p.realized, R, checks: p.checks, htf: p.htf || 0, auto: !!p.auto, how, prec: p.prec != null ? p.prec : precFor(p.entry),
+      margin: p.margin, lev: p.lev, liq: p.liq, tp1: p.tps[0] ? p.tps[0].price : null, fav: mv(p.fav), adv: mv(p.adv), v: v.code, vt: v.title, why: v.why, look: look ? look.hours : null };
+    journal.push(j); j.bal = closedBal(); saveJ();
     S.open = S.open.filter(x => x !== p); if (p.mode === 'live') savePos(true);
     if (p.mode === 'replay') { S.halt = true; stopPlay(); }   // pause so you can look at how it ended
-    S.lastClose = `${here ? 'Closed' : `Your ${p.sym} ${p.side} closed`} (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R.`;
+    S.result = { ...j, icon: v.icon };
+    S.lastClose = `${here ? 'Closed' : `Your ${p.sym} ${p.side} closed`} (${how.toLowerCase()}): ${usd(p.realized)} after fees, ${R.toFixed(2)}R. ${v.icon} ${v.title}.`;
     status(S.lastClose);
     renderJournal();
+  }
+  function resBlock(j) {   // the last closed trade: was it right, what it made, and what price did after
+    const f = v => (+v).toFixed(j.prec || 4), riskD = Math.abs(j.stop0 - j.entry) / j.entry, before = j.bal != null ? j.bal - j.pnl : null;
+    const cls = j.v === 'idea' ? 'idea' : j.pnl > 0 ? 'win' : j.pnl < 0 ? 'loss' : '';
+    const pct = (v, of) => (of > 0 ? `${v >= 0 ? '+' : '−'}${Math.abs(v / of * 100).toFixed(1)}%` : '');
+    return `<div class="sim-res ${cls}" role="status">
+      <div class="hd"><span>${j.icon || ''} ${esc(j.vt || j.how)}</span><span class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</span></div>
+      <div class="sub">${j.side} ${esc(j.sym)} · ${j.mode} · ${esc(j.how.toLowerCase())} · held ${held(j.t1 - j.t0)}</div>
+      <div><b>${j.R >= 0 ? '+' : ''}${j.R.toFixed(2)}R</b>${j.margin ? ` · ${pct(j.pnl, j.margin)} of the ${money(j.margin)} margin (${j.lev}×)` : ''}${before > 0 ? ` · ${pct(j.pnl, before)} of your balance` : ''}</div>
+      <div>Entry ${f(j.entry)} → exit ${f(j.exit)}${j.liq ? ` · liq was ${f(j.liq)}` : ''}</div>` +
+      (j.fav != null ? `<div>Best <span class="pos">${(j.fav * 100).toFixed(1)}%</span> your way (${riskD > 0 ? (j.fav / riskD).toFixed(1) : '–'}R) · worst <span class="neg">${(j.adv * 100).toFixed(1)}%</span> against (${riskD > 0 ? (j.adv / riskD).toFixed(1) : '–'}R)</div>` : '') +
+      (j.why ? `<div class="why">${esc(j.why)}</div>` : j.mode === 'replay' && j.look == null ? '<div class="sub">Not enough loaded candles after the exit to see what came next.</div>' : '') +
+      (j.bal != null ? `<div class="sub">Balance now ${money(j.bal)}</div>` : '') +
+      `<div class="sim-row"><button type="button" class="b" data-rclose="1">OK</button></div></div>`;
   }
   function unreal(p, px) { return p ? p.rem * p.qty * (p.side === 'short' ? p.entry - px : px - p.entry) - p.rem * p.qty * px * (p.fee != null ? p.fee : FEE) : 0; }
   function posBlock(p) {
@@ -1590,10 +1793,12 @@
     const tpTxt = p.tps.map((tp, i) => `${p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'} ${f(tp.price)}${tp.hit ? ' ✓' : ''}`).join('<br>');
     return `<div class="sim-posblk${here ? ' here' : ''}">
       <div class="sim-poshead"><span><b>${p.side} ${esc(p.sym)}</b> <small>${p.mode === 'live' ? 'live' : 'replay'}${here ? ' · this chart' : ''}</small></span>
-        <span class="${total >= 0 ? 'pos' : 'neg'}">${usd(total)} <small>${(risk > 0 ? total / risk : 0).toFixed(2)}R</small></span></div>
+        <span class="${total >= 0 ? 'pos' : 'neg'}">${usd(total)} <small>${p.margin ? `${total >= 0 ? '+' : '−'}${Math.abs(total / p.margin * 100).toFixed(1)}% · ` : ''}${(risk > 0 ? total / risk : 0).toFixed(2)}R</small></span></div>
       <dl class="sim-kv"><dt>Entry</dt><dd>${f(p.entry)}</dd><dt>Now</dt><dd>${f(px)}</dd>
-      <dt>Stop</dt><dd>${f(p.stop)}${p.stop === p.entry ? ' (entry)' : ''}</dd><dt>Targets</dt><dd>${tpTxt}</dd>
-      <dt>Still open</dt><dd>${Math.round(p.rem * 100)}% of $${p.size.toFixed(0)}</dd><dt>Banked</dt><dd class="${p.realized >= 0 ? 'pos' : 'neg'}">${usd(p.realized)}</dd>
+      <dt>Stop</dt><dd>${f(p.stop)}${p.stop === p.entry ? ' (entry)' : ''}</dd><dt>Targets</dt><dd>${tpTxt}</dd>` +
+      (p.margin ? `<dt>Margin</dt><dd>${money(p.margin)} × ${p.lev}</dd>` : '') +
+      (p.liq ? `<dt>Liquidation</dt><dd>${f(p.liq)}${(p.side === 'short' ? p.liq < p.stop : p.liq > p.stop) ? ' <span class="neg">before the stop</span>' : ''}</dd>` : '') +
+      `<dt>Still open</dt><dd>${Math.round(p.rem * 100)}% of $${p.size.toFixed(0)}</dd><dt>Banked</dt><dd class="${p.realized >= 0 ? 'pos' : 'neg'}">${usd(p.realized)}</dd>
       <dt>Opened</dt><dd>${utc(p.t0)} UTC</dd></dl>
       <div class="sim-row"><button type="button" class="b" data-pclose="${p.id}">Close at market</button><button type="button" class="b" data-pbe="${p.id}">Stop to entry</button>` +
       (here || p.mode !== 'live' ? '' : `<button type="button" class="b" data-pshow="${p.id}">Show ${esc(p.sym)} chart</button>`) + `</div></div>`;
@@ -1604,7 +1809,7 @@
     return `<div class="sim-posblk${here ? ' here' : ''}">
       <div class="sim-poshead"><span>⏳ <b>${o.side} ${esc(o.sym)}</b> <small>practice limit · ${o.mode}${here ? ' · this chart' : ''}</small></span><span class="m">${away}</span></div>
       <dl class="sim-kv"><dt>Limit</dt><dd>${f(o.lim)}</dd><dt>Now</dt><dd>${px > 0 ? f(px) : '–'}</dd>
-      <dt>Stop</dt><dd>${f(o.stop)}</dd><dt>TP1</dt><dd>${f(o.tps[0].price)} (closes all)</dd><dt>Size</dt><dd>$${(+o.size).toFixed(0)}</dd>` +
+      <dt>Stop</dt><dd>${f(o.stop)}</dd><dt>TP1</dt><dd>${f(o.tps[0].price)} (closes all)</dd><dt>Size</dt><dd>$${(+o.size).toFixed(0)}${o.margin ? ` (${money(o.margin)} × ${o.lev})` : ''}</dd>` +
       (o.t0 ? `<dt>Placed</dt><dd>${utc(o.t0)} UTC</dd>` : '') + `</dl>
       <div class="sim-row"><button type="button" class="b" data-lcancel="${o.id}">Cancel limit</button>` +
       (here || o.mode !== 'live' ? '' : `<button type="button" class="b" data-lshow="${o.id}">Show ${esc(o.sym)} chart</button>`) + `</div></div>`;
@@ -1612,19 +1817,74 @@
   function renderPos() {
     const body = $('sim-pos-body'), list = S.open.slice().sort((a, b) => onChart(b) - onChart(a));
     const lims = QP.filter(o => o.mode === 'live' || limHere(o)).sort((a, b) => limHere(b) - limHere(a));
-    if (!list.length && !lims.length) { $('sim-pos-tag').textContent = 'none'; body.className = 'sim-empty'; body.textContent = 'No open simulated trade or practice limit.'; return; }
+    const res = S.result ? `<div class="sim-posblk">${resBlock(S.result)}</div>` : '';
+    if (!list.length && !lims.length) {
+      $('sim-pos-tag').textContent = S.result ? 'last trade' : 'none';
+      body.className = res ? '' : 'sim-empty'; body.innerHTML = res || 'No open simulated trade or practice limit.'; return;
+    }
     const total = list.reduce((a, p) => a + p.realized + unreal(p, pxOf(p)), 0);
     const lt = lims.length ? `${lims.length} limit${lims.length > 1 ? 's' : ''} waiting` : '';
     $('sim-pos-tag').textContent = [list.length === 1 ? `${list[0].side} ${list[0].sym}` : list.length ? `${list.length} open · ${usd(total)}` : '', lt].filter(Boolean).join(' · ');
     body.className = '';
-    body.innerHTML = list.map(posBlock).join('') + lims.map(limBlock).join('');
+    body.innerHTML = res + list.map(posBlock).join('') + lims.map(limBlock).join('');
   }
+  // the balance after each trade of this account (closed trades only), drawn as one line with a hover readout
+  let curveA = [];
+  function drawCurve(A) {
+    curveA = A;
+    const el = $('sim-curve');
+    if (A.length < 2) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const W = Math.max(280, el.clientWidth || 600), H = 160, L = 6, Rr = 78, T = 16, Bm = 8;
+    const start = ACC.start + (ACC.carry || 0), pts = [{ bal: start }].concat(A.map((j, i) => ({ bal: A.slice(0, i + 1).reduce((a, x) => a + x.pnl, start), j })));
+    let lo = Math.min(...pts.map(p => p.bal)), hi = Math.max(...pts.map(p => p.bal)); if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    const x = i => L + i * (W - L - Rr) / (pts.length - 1), y = v => T + (hi - v) / (hi - lo) * (H - T - Bm);
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.bal).toFixed(1)}`).join('');
+    const last = pts[pts.length - 1].bal, up = last >= start;
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Balance after each trade: ${money(start)} to ${money(last)} over ${A.length} trades">
+      <text x="${L}" y="10" fill="var(--muted)" font-family="var(--font-mono)" font-size="11">Balance after each trade</text>
+      <line x1="${L}" x2="${W - Rr}" y1="${y(start)}" y2="${y(start)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 4"/>
+      <text x="${W - Rr + 6}" y="${y(start) + 4}" fill="var(--muted)" font-family="var(--font-mono)" font-size="11">start ${money(start).replace('.00', '')}</text>
+      <path d="${d}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${x(pts.length - 1)}" cy="${y(last)}" r="4" fill="var(--blue)" stroke="var(--surface)" stroke-width="2"/>
+      ${Math.abs(y(last) - y(start)) > 12 ? `<text x="${W - Rr + 6}" y="${y(last) + 4}" fill="var(--text)" font-family="var(--font-mono)" font-size="11.5" font-weight="600">${money(last)}</text>` : ''}
+      <line class="hx" x1="0" x2="0" y1="${T}" y2="${H - Bm}" stroke="var(--text2)" stroke-width="1" visibility="hidden"/>
+      <circle class="hd" r="4.5" fill="var(--blue)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+      <rect x="0" y="0" width="${W}" height="${H}" fill="transparent"/></svg><div class="tip" hidden></div>`;
+    const svg = el.querySelector('svg'), tip = el.querySelector('.tip'), hx = svg.querySelector('.hx'), hd = svg.querySelector('.hd');
+    const show = e => {
+      const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) * W / r.width;
+      const i = Math.max(0, Math.min(pts.length - 1, Math.round((mx - L) / ((W - L - Rr) / (pts.length - 1))))), p = pts[i];
+      hx.setAttribute('x1', x(i)); hx.setAttribute('x2', x(i)); hx.setAttribute('visibility', 'visible');
+      hd.setAttribute('cx', x(i)); hd.setAttribute('cy', y(p.bal)); hd.setAttribute('visibility', 'visible');
+      tip.hidden = false;
+      tip.innerHTML = p.j ? `#${i} · ${esc(p.j.sym)} ${p.j.side} · <span class="${p.j.pnl >= 0 ? 'pos' : 'neg'}">${usd(p.j.pnl)}</span> → <b>${money(p.bal)}</b>` : `Start <b>${money(p.bal)}</b>`;
+      const tw = tip.offsetWidth, px = x(i) * r.width / W;
+      tip.style.left = Math.max(0, Math.min(r.width - tw, px + 10 + tw > r.width ? px - tw - 10 : px + 10)) + 'px';
+    };
+    const hide = () => { tip.hidden = true; hx.setAttribute('visibility', 'hidden'); hd.setAttribute('visibility', 'hidden'); };
+    svg.addEventListener('pointermove', show); svg.addEventListener('pointerdown', show); svg.addEventListener('pointerleave', hide);
+  }
+  if (window.ResizeObserver) { let rw = 0; new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w && w !== rw) { rw = w; if (curveA.length > 1) drawCurve(curveA); } }).observe(document.getElementById('sim-curve')); }
   function renderJournal() {
-    const J = journal, n = J.length, wins = J.filter(j => j.pnl > 0).length, net = J.reduce((a, j) => a + j.pnl, 0);
-    const avgR = n ? J.reduce((a, j) => a + j.R, 0) / n : 0;
-    const stat = (k, v, cls = '') => `<div class="sim-stat"><span>${k}</span><b class="${cls}">${v}</b></div>`;
-    $('sim-stats').innerHTML = stat('Trades', n) + stat('Win rate', n ? Math.round(wins / n * 100) + '%' : '–') +
-      stat('Net P&L', n ? usd(net) : '–', net >= 0 ? 'pos' : 'neg') + stat('Average R', n ? avgR.toFixed(2) : '–', avgR >= 0 ? 'pos' : 'neg');
+    const J = accTrades(), n = J.length, wins = J.filter(j => j.pnl > 0).length, net = J.reduce((a, j) => a + j.pnl, 0);
+    const avgR = n ? J.reduce((a, j) => a + j.R, 0) / n : 0, start = ACC.start + (ACC.carry || 0), bal = closedBal();
+    const gw = J.filter(j => j.pnl > 0).reduce((a, j) => a + j.pnl, 0), gl = -J.filter(j => j.pnl < 0).reduce((a, j) => a + j.pnl, 0);
+    let peak = start, run = start, dd = 0, ddPct = 0;
+    J.forEach(j => { run += j.pnl; if (run > peak) peak = run; if (peak - run > dd) { dd = peak - run; ddPct = peak > 0 ? dd / peak : 0; } });
+    const idea = J.filter(j => j.v === 'idea').length, judged = J.filter(j => ['idea', 'wrong'].includes(j.v)).length;
+    const stat = (k, v, cls = '', tip = '') => `<div class="sim-stat"${tip ? ` title="${tip}"` : ''}><span>${k}</span><b class="${cls}">${v}</b></div>`;
+    $('sim-stats').innerHTML = stat('Balance', money(bal), bal >= ACC.start ? 'pos' : 'neg', `Started with ${money(ACC.start)}`) +
+      stat('Return', `${bal >= ACC.start ? '+' : '−'}${Math.abs((bal / ACC.start - 1) * 100).toFixed(1)}%`, bal >= ACC.start ? 'pos' : 'neg') +
+      stat('Trades', n) + stat('Win rate', n ? Math.round(wins / n * 100) + '%' : '–') +
+      stat('Average R', n ? avgR.toFixed(2) : '–', avgR >= 0 ? 'pos' : 'neg') +
+      stat('Profit factor', gl > 0 ? (gw / gl).toFixed(2) : gw > 0 ? '∞' : '–', gw >= gl ? 'pos' : 'neg', 'Money won ÷ money lost. Above 1 = making money.') +
+      stat('Max drawdown', dd > 0 ? `−${money(dd).replace('$', '$')} (${(ddPct * 100).toFixed(1)}%)` : '–', dd > 0 ? 'neg' : '', 'The biggest drop from a high point of your balance') +
+      (judged ? stat('Right idea, stopped', `${idea} of ${judged}`, '', 'Replay stop-outs where price still reached your target later') : '');
+    drawCurve(J);
+    $('sim-acct-since').innerHTML = `Account started with <b>${money(ACC.start)}</b>${ACC.since ? ` on ${utc(ACC.since)} UTC` : ''} · ${n} trade${n === 1 ? '' : 's'}`;
+    if (!$('sim-acct-start').value) $('sim-acct-start').placeholder = String(ACC.start);
     const full = J.filter(j => j.checks === 4), part = J.filter(j => j.checks < 4);
     const learn = $('sim-learn'), aR = a => a.reduce((s, j) => s + j.R, 0) / a.length;
     let msg = '';
@@ -1636,12 +1896,17 @@
     const w4 = J.filter(j => j.htf === 1), a4 = J.filter(j => j.htf === -1);
     if (w4.length >= 3 && a4.length >= 3) msg += (msg ? ' ' : '') + `With the 4H trend: ${w4.length} trades, ${aR(w4).toFixed(2)}R. Against it: ${a4.length} trades, ${aR(a4).toFixed(2)}R.`;
     learn.hidden = !msg; learn.textContent = msg;
-    const rows = J.slice(-25).reverse().map(j => {
-      const f = v => (+v).toFixed(j.prec || 4);
-      return `<tr><td>${utc(j.t1)}</td><td>${j.sym}${j.mode === 'live' ? ' · live' : ''}</td><td>${j.side}</td><td>${f(j.entry)}</td><td>${f(j.exit)}</td>` +
-        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4${j.htf === 1 ? ' · 4H ✓' : j.htf === -1 ? ' · 4H ✗' : ''}${j.auto ? ' auto' : ''}</td><td>${j.how}</td></tr>`;
+    // the table: the last 25 trades of every account (earlier accounts dimmed); balance after each one in this account
+    const balOf = new Map(); let b = start; J.forEach(j => { b += j.pnl; balOf.set(j, b); });
+    const VI = { right: '✅', partly: '✅', idea: '🟡', wrong: '❌', loss: '❌', even: '➖', hand: '✋' };
+    const rows = journal.slice(-25).reverse().map(j => {
+      const f = v => (+v).toFixed(j.prec || 4), old = j.id <= ACC.since;
+      return `<tr${old ? ' class="old" title="An earlier practice account"' : ''}><td>${utc(j.t1)}</td><td>${esc(j.sym)}${j.mode === 'live' ? ' · live' : ''}</td><td>${j.side}</td><td>${f(j.entry)}</td><td>${f(j.exit)}</td>` +
+        `<td>${j.margin ? `${money(j.margin)} × ${j.lev}` : `$${Math.round(j.size)}`}</td>` +
+        `<td class="${j.pnl >= 0 ? 'pos' : 'neg'}">${usd(j.pnl)}</td><td class="${j.R >= 0 ? 'pos' : 'neg'}">${j.R.toFixed(2)}</td><td>${j.checks}/4${j.htf === 1 ? ' · 4H ✓' : j.htf === -1 ? ' · 4H ✗' : ''}${j.auto ? ' auto' : ''}</td>` +
+        `<td${j.why ? ` title="${esc(j.why)}"` : ''}>${j.v ? `${VI[j.v] || ''} ${esc(j.vt)}` : esc(j.how)}</td><td>${balOf.has(j) ? money(balOf.get(j)) : '–'}</td></tr>`;
     });
-    $('sim-jbody').innerHTML = rows.join('') || '<tr><td colspan="9" class="sim-empty" style="text-align:left">No simulated trades yet. Load a chart, set a stop, and take your first one.</td></tr>';
+    $('sim-jbody').innerHTML = rows.join('') || '<tr><td colspan="11" class="sim-empty" style="text-align:left">No simulated trades yet. Load a chart, set a stop, and take your first one.</td></tr>';
   }
   function refresh() {
     if (!cs) return;
@@ -1653,6 +1918,7 @@
     const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1;
     document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = atEnd || S.cur < 0; });
     $('sim-until-exit').disabled = atEnd || !S.pos;
+    $('sim-to-result').disabled = atEnd || S.mode !== 'replay' || !(S.pos || pendHere());
     cmpTick();
   }
 
@@ -1690,7 +1956,7 @@
     if (rq.length) { rq.forEach(pendDrop); setTimeout(() => hint('Your waiting replay limit was cancelled: a replay limit belongs to its own replay.'), 0); }
     pendLines();
     $('sim-stop').value = ''; $('sim-tp').value = ''; $('sim-r-limit').value = ''; $('sim-r-res').textContent = ''; closePop();
-    recomputeFull(); loadHtf(); cmpAfterMain();
+    recomputeFull(); loadHtf(); cmpAfterMain(); loadMmr();
   }
   const replayOpen = () => S.open.some(p => p.mode === 'replay');
   async function loadReplay(sym, t, ex, extraMarks, label) {
@@ -1785,7 +2051,7 @@
     if (S.mode !== 'live' || S.busy || !S.base.length) return;
     S.busy = true; const my = S.load;
     try {
-      const r = await api('/api/sim/klines', { symbol: S.sym, interval: '1m', start: S.base[S.base.length - 1][0], exchange: S.ex });
+      const r = await api('/api/sim/klines', { symbol: S.sym, interval: '1m', start: S.base[S.base.length - 1][0], exchange: S.ex }, 12000);
       if (my !== S.load) return;   // another coin was loaded while this update was on its way
       if (S.pollErr) status(`Live ${S.sym} on ${exLabel(S.ex)} — updating again.`);
       S.pollFails = 0; S.pollErr = false;
@@ -2244,7 +2510,7 @@
 
     let h7;
     if (ls) {
-      const size = parseFloat($('sim-size').value) || 150, rk = Math.abs(ls.stop - ls.entry) / ls.entry;
+      const size = sizeNow() || 150, rk = Math.abs(ls.stop - ls.entry) / ls.entry;
       h7 = `<p><b>Entry</b> ${fmt(ls.entry)} (the trigger close) · <b>Stop</b> ${fmt(ls.stop)}, just ${w.ab} the sweep wick · <b>Target</b> ${fmt(ls.target)}, ${ls.tgtKind === 'leg' ? `the ${w.end} of the move, where the next stops sit` : `2R (the ${w.end} of the move was too close)`}.</p>` +
         `<p>Risk ${(rk * 100).toFixed(1)}% · reward ${(Math.abs(ls.target - ls.entry) / ls.entry * 100).toFixed(1)}% → <b>${ls.R.toFixed(1)}R</b>. On $${size.toFixed(0)} the stop costs about $${(size * rk + 2 * size * feeOf(S.ex)).toFixed(2)} with fees.` +
         (ls.R < 1.5 ? ' Under 1.5R: many traders pass on this one.' : '') + '</p>' +
@@ -2864,8 +3130,8 @@
     if (realOn()) return realOpenOn(S.sym) ? `You already have a real ${S.sym} trade or order (one per coin).` : '';
     if (S.pos) return `You already have a practice ${S.pos.side} on ${S.sym}: close it first.`;
     if (S.mode === 'live' && liveOpen().length + QP.filter(o => o.mode === 'live' && o.sym !== S.sym).length >= MAX_LIVE) return `${MAX_LIVE} practice live trades and limits are open: close or cancel one first.`;
-    if (!(parseFloat($('sim-size').value) > 0)) return 'Enter a size in dollars in the ticket.';
-    return '';
+    const old = pendHere();   // a new practice limit replaces the one waiting here, and frees its margin
+    return paperErr(sizeNow(), marginNow(), levNow(), old && old.margin ? old.margin : 0);
   }
   function quickBar() {
     if (!QK.bar) {
@@ -2888,7 +3154,11 @@
       const pc = v => `${v >= QK.lim ? '+' : ''}${((v / QK.lim - 1) * 100).toFixed(2)}%`;
       h = `<div class="v"><b>⚡ ${side.toUpperCase()} limit ${pv(QK.lim)}</b><small>${real ? (R.web ? (live ? 'REAL · 💰 live money' : 'REAL · 📝 bot paper') : 'REAL · Telegram panel') : 'practice'}</small></div>` + steps +
         `<div>stop ${pc(QK.stop)} · TP1 ${pc(QK.tp)} · <b>${rr.toFixed(1)}R</b></div>`;
-      if (!real) { const size = parseFloat($('sim-size').value) || 0; h += `<div class="m">$${size} size → risk ≈ $${(size * risk / QK.lim).toFixed(2)} · fills when price touches ${pv(QK.lim)} · closes all at TP1</div>`; }
+      if (!real) {
+        const size = sizeNow(), lq = liqPrice(side, QK.lim, levNow(), mmrNow(size)), lqFirst = side === 'short' ? lq < QK.stop : lq > QK.stop;
+        h += `<div class="m">$${+marginNow().toFixed(2)} × ${levNow()} = $${+size.toFixed(2)} → risk ≈ $${(size * risk / QK.lim).toFixed(2)} · fills when price touches ${pv(QK.lim)} · closes all at TP1</div>` +
+          (lqFirst ? `<div class="err">⚠ Liquidation ${pv(lq)} comes before the stop at ${levNow()}×</div>` : '');
+      }
       else h += `<div class="m">${R.web ? 'Next: the bot\'s exact order (margin, size, max loss) to check, then ✅ place. TP2–4 follow like /tp.' : `Fills in your Telegram /${side} panel; nothing is placed until you tap ✅ there.`}</div>`;
       if (err) h += `<div class="err">${esc(err)}</div>`;
       h += `<div class="sim-row"><button type="button" class="b ${side === 'long' ? 'go' : 'red'}" data-q="go"${err ? ' disabled' : ''}>${real ? (R.web ? `Review ${side} →` : `📲 ${side} to Telegram`) : `✓ Place ${side} limit`}</button><button type="button" class="b" data-q="x" aria-label="Cancel">✕</button></div>`;
@@ -2913,7 +3183,7 @@
     if (!realOn()) {   // practice: a limit that waits for price
       const k = S.base[S.cur], old = pendHere();
       if (old) pendDrop(old);
-      const o = { id: Date.now(), mode: S.mode, sym: S.sym, ex: S.ex, prec: S.prec, side, lim: QK.lim, stop: QK.stop, tps: [{ price: QK.tp, frac: 1 }], size: parseFloat($('sim-size').value), be: false,
+      const o = { id: Date.now(), mode: S.mode, sym: S.sym, ex: S.ex, prec: S.prec, side, lim: QK.lim, stop: QK.stop, tps: [{ price: QK.tp, frac: 1 }], size: sizeNow(), margin: marginNow(), lev: levNow(), mm: mmrNow(sizeNow()), be: false,
         checks: [1, 2, 3, 4].filter(i => $('sim-c' + i).checked).length, htf: htfAgree(side), above: QK.lim > price(), ref: S.mode === 'live' ? { t: k[0], h: k[2], l: k[3] } : null,
         t0: S.mode === 'live' ? Date.now() : k[0] + MIN, chk: S.mode === 'live' ? k[0] : null, last: price(), caught: true };
       QP.push(o); savePend();
@@ -3079,6 +3349,7 @@
     $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
     $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early; $('sim-alert-zone').checked = AL.zone !== false;
     if (AL.scope && [...$('sim-scan-scope').options].some(o => o.value === AL.scope)) $('sim-scan-scope').value = AL.scope;   // your coin choice stays after a reload
+    $('sim-margin').value = ACC.margin; $('sim-lev').value = ACC.lev;   // your last margin × leverage
     initChart(); renderJournal(); setTool(null); setRealPoll();
     if (AL.on) setAlerts(true, false);   // sound comes back with your first click on the page
     loadNews(true); setInterval(newsTick, 20e3);
@@ -3111,7 +3382,10 @@
     try { localStorage.setItem(VKEY, JSON.stringify({ mode: S.mode, sym: S.sym || '', ex: S.ex || '', tf: S.tf, real: !!R.on, pick: $('sim-pick').value || '', cmp: cmp.on ? (cmp.sym || cmp.want || '').toUpperCase() : '', cmpTf: cmp.tf || '', cmpSmc: cmp.smc })); } catch (e) { /* ignore */ }
   }
   window.addEventListener('pagehide', saveView);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveView(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') return saveView();
+    if (S.mode === 'live') { pollLive(); cmpPoll(); }   // back on the tab (or after sleep): catch up now, not in 4 s
+  });
 
   // wiring
   const tabBtn = document.querySelector('[data-tab="sim"]');
@@ -3337,7 +3611,36 @@
     $('sim-stop').value = (S.side === 'short' ? hi * 1.002 : lo * 0.998).toFixed(S.prec); refresh();
   };
   ['sim-stop', 'sim-tp'].forEach(id => $(id).addEventListener('input', () => { touch(); refresh(); }));
-  $('sim-size').addEventListener('input', refresh);
+  ['sim-margin', 'sim-lev'].forEach(id => $(id).addEventListener('input', () => {
+    if (marginNow() > 0) ACC.margin = marginNow();
+    if (parseFloat($('sim-lev').value) >= 1) ACC.lev = levNow();
+    saveAcc(); refresh();
+  }));
+  // Risk 1% / 2%: the margin (at this leverage) that loses that share of the balance if the stop is hit, fees in
+  document.querySelectorAll('#sim-ticket [data-risk]').forEach(b => b.onclick = () => {
+    const px = price(); if (px == null) return;
+    const pl = plan(px); if (!pl.stop) return status('Set your stop first: the size comes from how far away it is.', true);
+    const pct = +b.dataset.risk, lose = wallet() * pct / 100, size = lose / (Math.abs(pl.stop - px) / px + 2 * feeOf(S.ex));
+    $('sim-margin').value = (size / levNow()).toFixed(2); ACC.margin = +(size / levNow()).toFixed(2); saveAcc(); refresh();
+    status(`Margin set to ${money(size / levNow())} × ${levNow()}: hitting the stop costs about ${money(lose)} (${pct}% of your balance).`);
+  });
+  $('sim-to-result').onclick = () => {   // replay straight to the exit (or to the end of the loaded candles)
+    if (S.mode !== 'replay' || S.cur < 0 || !(S.pos || pendHere())) return;
+    stopPlay(); S.untilExit = true;
+    step(S.base.length - 1 - S.cur);
+    S.untilExit = false;
+    if (S.pos || pendHere()) status(`No result yet: the loaded candles end at ${utc(nowT())} UTC with your ${S.pos ? 'trade still open' : 'limit still waiting'}.`);
+  };
+  $('sim-pos-body').addEventListener('click', e => { if (e.target.closest('[data-rclose]')) { S.result = null; renderPos(); } });
+  let newArmed = false;
+  $('sim-acct-new').onclick = () => {   // two clicks, no browser dialog: the old trades stay in the table, dimmed
+    const v = parseFloat($('sim-acct-start').value) || ACC.start;
+    if (!(v > 0)) return;
+    if (!newArmed) { newArmed = true; $('sim-acct-new').textContent = `Click again: start over with ${money(v)}`; setTimeout(() => { newArmed = false; $('sim-acct-new').textContent = 'Start a new account'; }, 4000); return; }
+    newArmed = false; $('sim-acct-new').textContent = 'Start a new account';
+    Object.assign(ACC, { start: v, since: Date.now(), carry: 0 }); saveAcc(); $('sim-acct-start').value = '';
+    S.result = null; renderJournal(); refresh(); status(`New practice account: ${money(v)}. Earlier trades stay in the table, dimmed.`);
+  };
   ['sim-plan', 'sim-c1', 'sim-c2', 'sim-c3', 'sim-c4'].forEach(id => $(id).addEventListener('change', refresh));
   $('sim-go').onclick = enter;
   $('sim-smc-on').onchange = () => { smc.on = $('sim-smc-on').checked; saveSmc(); refresh(); };
@@ -3392,7 +3695,7 @@
   let clearArmed = false;
   $('sim-jclear').onclick = () => {
     if (!clearArmed) { clearArmed = true; $('sim-jclear').textContent = 'Click again to delete all simulated trades'; setTimeout(() => { clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; }, 4000); return; }
-    journal = []; saveJ(); clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; renderJournal();
+    journal = []; Object.assign(ACC, { since: 0, carry: 0 }); saveAcc(); saveJ(); clearArmed = false; $('sim-jclear').textContent = 'Clear journal'; S.result = null; renderJournal(); refresh();
   };
   document.addEventListener('keydown', e => {
     const panel = document.getElementById('tab-sim');

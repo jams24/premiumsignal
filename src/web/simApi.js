@@ -223,6 +223,22 @@ async function topCoins() {
   return TOP.p;
 }
 
+// A coin's maintenance-margin tiers for the simulator's practice liquidation price: Bybit's public risk-limit list
+// (Binance's leverage brackets need an API key). Cached 6 h per coin.
+const MMR = new Map();
+async function mmrTiers(sym) {
+  const c = MMR.get(sym);
+  if (c && Date.now() - c.at < 6 * 3600e3) return c.tiers;
+  const j = await getJson(`https://api.bybit.com/v5/market/risk-limit?category=linear&symbol=${encodeURIComponent(sym)}`);
+  if (j.retCode) throw new Error(j.retMsg || `Bybit error ${j.retCode}`);
+  const tiers = (j.result?.list || []).map(t => ({ cap: +t.riskLimitValue, mmr: +t.maintenanceMargin * 100, maxLev: +t.maxLeverage }))
+    .filter(t => t.cap > 0 && t.mmr >= 0 && t.maxLev > 0).sort((a, b) => a.cap - b.cap).slice(0, 12);
+  if (!tiers.length) throw new Error('no risk tiers');
+  if (MMR.size > 500) MMR.clear();
+  MMR.set(sym, { at: Date.now(), tiers });
+  return tiers;
+}
+
 // Answers every /api/sim/* request (the caller has already checked the dashboard key).
 async function handle(url, res) {
   const send = (code, obj) => {
@@ -306,6 +322,12 @@ async function handle(url, res) {
     }
 
     if (url.pathname === '/api/sim/news') return send(200, await newsEvents());
+
+    if (url.pathname === '/api/sim/mmr') {   // practice liquidation: the coin's maintenance margin by position size
+      const sym = cleanSymbol(url.searchParams.get('symbol'));
+      if (!sym || fxPair(url.searchParams.get('symbol'))) return send(400, { error: 'a crypto perp symbol is required' });
+      try { return send(200, { symbol: sym, source: 'bybit', tiers: await mmrTiers(sym) }); } catch (e) { return send(404, { error: `No ${sym} maintenance margin from Bybit: ${e.message}` }); }
+    }
 
     return send(404, { error: 'unknown simulator endpoint' });
   } catch (e) {
