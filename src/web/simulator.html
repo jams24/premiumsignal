@@ -73,6 +73,7 @@
 .sim-card.full .sim-loader { display: none; }
 .sim-card.full .sim-loader.open { display: grid; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
 .sim-status:empty { display: none; }
+.sim-status .b { margin: 6px 6px 0 0; padding: 6px 10px; }   /* the open-replay-trade question: close / cancel / keep */
 /* full screen: a coin box right on the toolbar */
 .sim-fsym-wrap { display: none; gap: 4px; align-items: center; }
 .sim-card.full .sim-fsym-wrap { display: inline-flex; }
@@ -431,6 +432,7 @@
         <select id="sim-speed" aria-label="Playback speed"><option value="1">1 min / tick</option><option value="2">2 min / tick</option><option value="5" selected>5 min / tick</option><option value="15">15 min / tick</option></select>
         <button type="button" class="b" id="sim-until-exit" title="Play until your simulated trade closes">⏩ Play to exit</button>
         <button type="button" class="b" id="sim-to-result" title="Jump straight to how your simulated trade (or waiting limit) ends">⏭ Result now</button>
+        <button type="button" class="b" id="sim-restart" title="Start this replay again from the beginning (asks first if a replay trade is open)">↺ Restart</button>
       </div>
       <div class="sim-fdrawer" id="sim-fdrawer"><div class="sim-fdrawer-bar">Ticket · positions <button type="button" class="b" id="sim-side-close">✕ Close</button></div></div>
     </div>
@@ -1138,7 +1140,11 @@
     $('sim-acct').innerHTML = acctLine();
     const sum = $('sim-sum');
     if (px == null) { sum.textContent = 'Load a chart to see the risk.'; return; }
-    if (S.pos) { sum.textContent = `You already have a simulated ${S.pos.side} open on ${S.sym}. Close it first, or load another coin to trade that too.`; return; }
+    if (S.pos) {
+      sum.textContent = S.mode === 'replay' ? `You have a simulated ${S.pos.side} open on ${S.sym}. Play on, close it under Position (Close at market), ⏭ Result now to see how it ends, or ↺ Restart to start this replay again.`
+        : `You already have a simulated ${S.pos.side} open on ${S.sym}. Close it first, or load another coin to trade that too.`;
+      return;
+    }
     if (full) { sum.textContent = `${MAX_LIVE} simulated live trades are open. Close one to open another.`; return; }
     const pl = plan(px), margin = marginNow(), lev = levNow(), size = sizeNow(), mm = mmrNow(size), err = paperErr(size, margin, lev);
     if (err) go.disabled = true;
@@ -1929,6 +1935,7 @@
     document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = atEnd || S.cur < 0; });
     $('sim-until-exit').disabled = atEnd || !S.pos;
     $('sim-to-result').disabled = atEnd || S.mode !== 'replay' || !(S.pos || pendHere());
+    $('sim-restart').disabled = S.mode !== 'replay' || !S.replayArgs;   // works at the end of the candles too
     cmpTick();
   }
 
@@ -1969,8 +1976,33 @@
     recomputeFull(); loadHtf(); cmpAfterMain(); loadMmr();
   }
   const replayOpen = () => S.open.some(p => p.mode === 'replay');
+  // A replay trade belongs to its replay. Before another chart, a Live/Replay switch or a restart, the status line asks:
+  // close it at market (it counts in your practice account), cancel it (as if never taken), or keep trading — then the
+  // thing you clicked goes ahead. Returns true while it is asking.
+  function replayGate(then, what) {
+    const p = S.open.find(x => x.mode === 'replay'); if (!p) return false;
+    stopPlay();
+    const tot = p.realized + unreal(p, pxOf(p)), el = $('sim-status');
+    S.gate = { p, then };
+    el.classList.add('bad');
+    el.innerHTML = `Your replay ${p.side} on ${esc(p.sym)} is still open (<b class="${tot >= 0 ? 'pos' : 'neg'}">${usd(tot)}</b> now). Before ${what}:<br>` +
+      '<button type="button" class="b" data-rg="close" title="Closes it at the current replay price; the result goes in your practice account">Close it at market</button>' +
+      '<button type="button" class="b" data-rg="drop" title="Removes it as if you never took it: nothing goes in your practice account">Cancel it (not counted)</button>' +
+      '<button type="button" class="b" data-rg="keep">Keep trading</button>';
+    return true;
+  }
+  function gateAct(act) {
+    const g = S.gate; S.gate = null; if (!g || !S.open.includes(g.p)) return status('');
+    if (act === 'keep') return status('Still in your trade. Press Play or → to go on.');
+    const p = g.p;
+    if (act === 'close') { const t = barT(); fill(p, p.rem, pxOf(p), t, 'Closed by hand'); finish(p, t, 'Closed by hand'); S.halt = false; }
+    else { S.open = S.open.filter(x => x !== p); S.result = null; status(`Your replay ${p.side} on ${p.sym} was cancelled: not counted.`); }
+    refresh();
+    g.then();
+  }
   async function loadReplay(sym, t, ex, extraMarks, label) {
-    if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
+    if (replayGate(() => loadReplay(sym, t, ex, extraMarks, label), 'loading another chart')) return;
+    S.replayArgs = [sym, t, ex, extraMarks, label];   // ↺ Restart loads the same replay again from its start
     stopAll(); setMode('replay', true); coinPanel(false);
     const start = t - 24 * 3600e3, end = Math.min(Date.now(), t + 24 * 3600e3);
     status(`Loading ${sym} candles around ${utc(t)} UTC…`);
@@ -1988,7 +2020,7 @@
     } catch (e) { if (my === S.load) status('Could not load candles: ' + e.message, true); }
   }
   async function loadLive(sym, ex) {
-    if (replayOpen()) return status('Close your simulated replay trade before loading another chart.', true);
+    if (replayGate(() => loadLive(sym, ex), 'loading another chart')) return;
     stopAll(); coinPanel(false);
     status(`Loading live ${sym}…`);
     const my = ++S.load, was = S.sym;
@@ -2829,7 +2861,7 @@
   // ---------- modes, tools, inputs ----------
   function setMode(m, quiet) {
     if (S.mode === m) return;
-    if (replayOpen()) { status('Close your simulated replay trade before switching mode. Live trades keep running in the background.', true); return; }
+    if (replayGate(() => setMode(m, quiet), `switching to ${m === 'live' ? 'Live' : 'Replay'} (live practice trades keep running)`)) return;
     stopAll(); S.mode = m; setRealPoll();
     $('sim-m-replay').setAttribute('aria-pressed', String(m === 'replay'));
     $('sim-m-live').setAttribute('aria-pressed', String(m === 'live'));
@@ -3652,6 +3684,11 @@
     if (S.pos || pendHere()) status(`No result yet: the loaded candles end at ${utc(nowT())} UTC with your ${S.pos ? 'trade still open' : 'limit still waiting'}.`);
   };
   $('sim-pos-body').addEventListener('click', e => { if (e.target.closest('[data-rclose]')) { S.result = null; renderPos(); } });
+  $('sim-status').addEventListener('click', e => { const b = e.target.closest('[data-rg]'); if (b) gateAct(b.dataset.rg); });
+  $('sim-restart').onclick = () => {
+    if (!S.replayArgs || replayGate(() => loadReplay(...S.replayArgs), 'restarting this replay')) return;
+    loadReplay(...S.replayArgs);
+  };
   let newArmed = false;
   $('sim-acct-new').onclick = () => {   // two clicks, no browser dialog: the old trades stay in the table, dimmed
     const v = parseFloat($('sim-acct-start').value) || ACC.start;
@@ -3688,7 +3725,7 @@
   $('sim-scan-btn').onclick = scanCoins;
   function openCoin(sym, ex, tf) {   // Load live from a scan row / alert: same exchange and structure timeframe, overlay on, chart in view
     ex = ex || 'auto'; tf = +tf; listsPop(false);
-    if (S.mode !== 'live') { if (S.open.some(p => p.mode === 'replay')) return status('Close your simulated replay trade first.', true); setMode('live', true); }
+    if (S.mode !== 'live') { if (replayGate(() => openCoin(sym, ex, tf), `opening ${sym} live`)) return; setMode('live', true); }
     if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.tf = tf; $('sim-smc-tf').value = String(tf); }
     smc.on = true; $('sim-smc-on').checked = true; saveSmc();
     $('sim-symbol-live').value = sym; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
