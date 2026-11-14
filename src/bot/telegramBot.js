@@ -10,6 +10,7 @@ const { SWEEP, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
 const manualLimits = require('../engine/manualLimitOrders');
+const { launchPolling } = require('./pollingLaunch');
 const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
 
 // Info alerts the owner can mute in their own DM (/alerts). Trade notifications are never muted.
@@ -11221,7 +11222,8 @@ class TelegramBot {
       { command: 'help', description: 'Show all commands & signal types' },
     ]);
 
-    await this.bot.launch();
+    // a 409 from the old container during a deploy no longer kills a freshly started bot (see pollingLaunch.js)
+    await launchPolling(this.bot, { log: m => logger.warn(m) });
     logger.info('Telegram bot launched');
   }
 
