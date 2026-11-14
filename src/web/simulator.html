@@ -190,6 +190,13 @@
 .sim-coach-text { display: grid; gap: 8px; font-size: 13.5px; line-height: 1.6; color: var(--text2); }
 .sim-coach-text b { color: var(--text); }
 .sim-coach-text .b { justify-self: start; }
+.sim-coach-body { display: grid; gap: 10px; min-height: 0; }
+@media (min-width: 961px) {
+  /* Walk me through: the coach stays at the top of the right column while the ticket scrolls under it; its text
+     scrolls on its own and the Back / Next buttons stay in view */
+  .sim-side > .sim-coach { position: sticky; top: 0; z-index: 3; display: flex; flex-direction: column; max-height: 55vh; box-shadow: 0 10px 18px -10px rgba(0,0,0,0.75); }
+  .sim-side > .sim-coach .sim-coach-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 2px; }
+}
 .sim-steps { display: flex; gap: 4px; }
 .sim-steps i { flex: 1; height: 4px; border-radius: 2px; background: var(--surface2); }
 .sim-steps i.on { background: #60a5fa; }
@@ -406,9 +413,11 @@
       <div class="sim-card sim-coach" id="sim-coach" hidden>
         <h3>SMC coach <small id="sim-coach-n"></small></h3>
         <div class="sim-steps" id="sim-coach-bar"></div>
-        <h4 id="sim-coach-title"></h4>
-        <div class="sim-coach-text" id="sim-coach-text"></div>
-        <div class="sim-fb" id="sim-coach-fb" hidden></div>
+        <div class="sim-coach-body" id="sim-coach-body">
+          <h4 id="sim-coach-title"></h4>
+          <div class="sim-coach-text" id="sim-coach-text"></div>
+          <div class="sim-fb" id="sim-coach-fb" hidden></div>
+        </div>
         <div class="sim-row">
           <button type="button" class="b" id="sim-coach-back">◀ Back</button>
           <button type="button" class="b go" id="sim-coach-next">Next ▶</button>
@@ -776,7 +785,7 @@
   function cmpShow(on) {
     cmp.on = on;
     ['sim-cmp-bar', 'sim-cmp-wrap', 'sim-cmp-sum'].forEach(id => { $(id).hidden = !on; });
-    $('sim-charts').classList.toggle('two', on); document.querySelector('#sim .sim-grid').classList.toggle('wide', on);
+    $('sim-charts').classList.toggle('two', on); document.querySelector('#sim .sim-grid').classList.toggle('wide', on); fitLater();
     $('sim-cmp-btn').setAttribute('aria-pressed', String(on));
     if (on) { cmpInit(); if (!cmp.poll) cmp.poll = setInterval(cmpPoll, 4000); }
     else { cmp.load++; cmp.want = ''; cmp.sym = ''; cmp.base = []; cmp.cur = -1; cmp.Bt = []; cmp.Bc = []; }
@@ -2154,7 +2163,21 @@
     coach.step = Math.max(0, Math.min(LAYERS.length - 1, i)); coach.quiz = false; coach.fb = null; smc.hide = null;
     if (S.tool === 'quiz') setTool(null);
     smc.layers = LAYERS.slice(0, coach.step + 1); refresh();
+    $('sim-coach-body').scrollTop = 0;
   }
+  // ---------- right column: sticks to the window (CSS) and fits it ----------
+  // Near the end of the chart card the column gets shorter instead of sliding up, so the coach at its top stays on
+  // screen while the chart is. Not in the one-column (phone / two-chart) view or the full-screen drawer.
+  let fitRaf = 0;
+  function fitSide() {
+    fitRaf = 0;
+    const side = $('sim-side'), grid = side.parentElement;
+    if (!grid.classList.contains('sim-grid') || grid.classList.contains('wide') || innerWidth <= 960 || !grid.offsetParent) { side.style.maxHeight = ''; return; }
+    const g = grid.getBoundingClientRect();
+    side.style.maxHeight = Math.round(Math.max(260, Math.min(innerHeight - 20, g.bottom - 10))) + 'px';
+  }
+  const fitLater = () => { if (!fitRaf) fitRaf = requestAnimationFrame(fitSide); };
+  addEventListener('scroll', fitLater, { passive: true }); addEventListener('resize', fitLater);
   function quizAnswer(p) {
     const A = smc.A; if (!A) return;
     const q = coachSteps(A)[coach.step].quiz; if (!q) return;
@@ -3036,7 +3059,7 @@
     on = !!on && full.on;
     if (withSide() === on) return;
     park($('sim-side'), on ? $('sim-fdrawer') : null);
-    $('sim-chart').closest('.sim-card').classList.toggle('with-side', on);
+    $('sim-chart').closest('.sim-card').classList.toggle('with-side', on); fitLater();
     $('sim-side-btn').classList.toggle('on', on); $('sim-side-btn').setAttribute('aria-pressed', String(on));
   }
   const sideSave = on => { FS.side = on; sideDrawer(on); try { localStorage.setItem(FS.key, JSON.stringify({ side: on })); } catch (e) { /* ignore */ } };
@@ -3195,6 +3218,12 @@
   $('sim-coach-btn').onclick = () => {
     coach.open = !coach.open;
     if (coach.open) coachGo(0); else { smc.layers = null; smc.hide = null; coach.quiz = false; if (S.tool === 'quiz') setTool(null); refresh(); }
+    const grid = document.querySelector('#sim .sim-grid');
+    if (coach.open && !full.on && innerWidth > 960 && !grid.classList.contains('wide')) {   // chart and coach side by side
+      const c = $('sim-chart').getBoundingClientRect();
+      if (c.top < 0 || c.bottom > innerHeight) $('sim-chart').scrollIntoView({ behavior: 'smooth', block: c.height + 20 > innerHeight ? 'start' : 'nearest' });
+    }
+    fitLater();
   };
   $('sim-coach-close').onclick = () => { if (coach.open) $('sim-coach-btn').click(); };
   $('sim-coach-back').onclick = () => coachGo(coach.step - 1);
