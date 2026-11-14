@@ -9,7 +9,8 @@
 // Telegram confirm (always available):
 //   POST /api/trade/panel    — fill in the /long · /short panel in Telegram; nothing is placed until ✅ there
 // Read-only:
-//   GET  /api/trade/positions — open live trades + pending live limit orders (+ whether web trading is on)
+//   GET  /api/trade/positions — open live trades + pending live limit orders (+ whether web trading is on);
+//                              ?fresh=1 skips the cache and checks orders on the exchange book (read only)
 // Writes carry a client nonce (a double click is refused) and are spaced ≥ 2 s apart.
 const logger = require('../utils/logger');
 
@@ -17,7 +18,7 @@ let bot = null;
 function attach(b) { bot = b; }
 
 const MAX_BODY = 4096, SEND_GAP_MS = 3000, WRITE_GAP_MS = 2000, NONCE_TTL_MS = 10 * 60000;
-let lastSend = 0, lastWrite = 0, posCache = null;
+let lastSend = 0, lastWrite = 0, lastFresh = 0, posCache = null;
 const nonces = new Map();   // nonce → time used
 
 function readJson(req) {
@@ -145,7 +146,10 @@ async function handle(req, url, res) {
 
     if (p === '/api/trade/positions') {
       if (req.method !== 'GET') return send(405, { error: 'GET only' });
-      if (!posCache || Date.now() - posCache.at > 5000) posCache = { at: Date.now(), data: await bot.livePositionsForWeb() };
+      // ?fresh=1 (the ↻ Refresh button): skip the 5 s cache and ask the exchange about orders on its book — at most every 3 s
+      const fresh = url.searchParams.get('fresh') === '1' && Date.now() - lastFresh >= 3000;
+      if (fresh) lastFresh = Date.now();
+      if (fresh || !posCache || Date.now() - posCache.at > 5000) posCache = { at: Date.now(), data: await bot.livePositionsForWeb({ check: fresh }) };
       return send(200, { ...posCache.data, at: posCache.at, webTrading: await bot.webTrade.isOn() });
     }
 

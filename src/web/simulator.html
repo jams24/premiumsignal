@@ -174,6 +174,8 @@
 .sim-rp .top { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; color: var(--text); }
 .sim-rp small { color: var(--muted); }
 .sim-rp .b { justify-self: start; padding: 5px 8px; font-size: 11px; }
+.sim-rp-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sim .sim-rp-head .b { margin-left: auto; padding: 5px 9px; font-size: 11px; }
 .sim-smcbar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .sim-watch { font: 400 12.5px/1.6 var(--font-mono); color: var(--text2); background: var(--bg); border: 1px solid transparent; border-radius: 6px; padding: 7px 10px; }
 .sim-watch b { color: var(--text); }
@@ -492,7 +494,7 @@
       </div>
 
       <div class="sim-card" id="sim-realpos" hidden>
-        <h3>Real positions <small id="sim-rp-tag">read-only</small></h3>
+        <h3 class="sim-rp-head">Real positions <small id="sim-rp-tag">read-only</small><button type="button" class="b" id="sim-rp-refresh" title="Reload now instead of waiting for the 15 s update, and ask the exchange about each limit order on its book. Read only: nothing is changed.">↻ Refresh</button></h3>
         <div id="sim-rp-body" class="sim-empty">Loading…</div>
         <div class="sim-empty" id="sim-rp-note">Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code>. Click a price to copy it.</div>
       </div>
@@ -1217,11 +1219,20 @@
   }
 
   // ---------- real positions: read-only copy of /mpositions, polled while Live is open ----------
-  async function loadRealPos() {
+  async function loadRealPos(fresh) {   // fresh: the ↻ Refresh button — no cache, orders on the book checked on the exchange
     if (S.mode !== 'live' || document.hidden) return;
     const tab = document.getElementById('tab-sim'); if (tab && !tab.classList.contains('active')) return;
-    try { R.data = await api('/api/trade/positions'); R.err = null; R.web = !!R.data.webTrading; } catch (e) { R.err = e.message; }
+    try {
+      R.data = await api('/api/trade/positions', fresh ? { fresh: 1 } : {}); R.err = null; R.web = !!R.data.webTrading;
+      if (R.data.checked) { R.checks = {}; (R.data.orders || []).forEach(o => { if (o.onExchange) R.checks[o.id] = Object.assign({ at: R.data.at }, o.onExchange); }); }
+    } catch (e) { R.err = e.message; }
     renderRealPos(); drawReal(); renderTicket();
+  }
+  async function refreshRealPos() {
+    const b = $('sim-rp-refresh'); if (b.disabled) return;
+    b.disabled = true; b.textContent = '↻ Checking…';
+    try { await loadRealPos(true); } finally { b.disabled = false; b.textContent = '↻ Refresh'; }
+    if (R.err) hint('Could not refresh Real positions: ' + R.err);
   }
   function setRealPoll() {
     const on = S.mode === 'live'; $('sim-realpos').hidden = !on;
@@ -1233,12 +1244,12 @@
   function renderRealPos() {
     const body = $('sim-rp-body'), tag = $('sim-rp-tag');
     $('sim-rp-note').innerHTML = R.web
-      ? 'Buttons act on the exchange through the bot (same code as <code>/mpositions</code> · <code>/orders</code>); Telegram gets each one. Click a price to copy it.'
+      ? 'Buttons act on the exchange through the bot (same code as <code>/mpositions</code> · <code>/orders</code>); Telegram gets each one, with the same buttons there (Refresh · Close · Breakeven · Take profit · Stop · Check order · Cancel). ↻ Refresh reloads now and asks the exchange about limit orders. Click a price to copy it.'
       : 'Read-only. Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code> — or send <code>/webtrade on</code> to manage them here. Click a price to copy it.';
     if (R.err) { body.className = 'sim-empty'; body.textContent = 'Could not load: ' + R.err; tag.textContent = 'read-only'; return; }
     const d = R.data; if (!d) return;
     const P = d.positions || [], O = d.orders || [];
-    tag.textContent = `${R.web ? 'live' : 'read-only'} · ${P.length} open${O.length ? ' · ' + O.length + ' limit' : ''} · ${hm(d.at || Date.now())} UTC`;
+    tag.textContent = `${R.web ? 'live' : 'read-only'} · ${P.length} open${O.length ? ' · ' + O.length + ' limit' : ''} · ${new Date(d.at || Date.now()).toISOString().slice(11, 19)} UTC`;
     if (R.ui && (R.ui.type === 'pos' ? P : O).some(x => x.id === R.ui.id)) return;   // you're mid-action: keep that box as it is
     R.ui = null;
     if (R.msg && Date.now() - R.msg.at > 30000) R.msg = null;
@@ -1260,6 +1271,16 @@
     const ifHit = (t, v) => ((t.direction === 'long' ? v - t.entry : t.entry - v) / t.entry) * (t.size || 0) + (t.realized || 0);
     R.ifHit = ifHit;
     const pickBtn = (sym, a, id) => sym === S.sym ? A(a, id, 'Click chart', '', R.busy) : '';
+    const ordNow = o => { if (!(o.price > 0)) return ''; const dd = (o.limitPrice - o.price) / o.price * 100; return `<div>Now ${cp(o.price, o.limitPrice)} · needs a ${dd < 0 ? 'drop' : 'rise'} of ${Math.abs(dd).toFixed(2)}% to fill</div>`; };
+    const ordCheck = o => {   // the last ↻ Refresh answer from the exchange for an order on its book
+      if (!o.onBook) return '';
+      const c = R.checks && R.checks[o.id], ex = esc((o.exchange || '').toUpperCase()), at = c ? ` <small>(checked ${new Date(c.at).toISOString().slice(11, 19)})</small>` : '';
+      if (!c) return '<div><small>↻ Refresh asks the exchange about this order.</small></div>';
+      if (c.error) return `<div class="neg">Could not check ${ex}: ${esc(c.error)}${at}</div>`;
+      if (c.status === 'open') return `<div>📗 On the ${ex} book · ${c.filled > 0 ? `${+c.filled} of ${+c.amount} filled` : 'nothing filled yet'}${at}</div>`;
+      if (c.status === 'closed') return `<div class="pos">✅ ${ex}: filled — the bot sets its stop and TPs within ~15 s${at}</div>`;
+      return `<div class="neg">${ex}: ${esc(c.status)}${c.filled > 0 ? ` (${+c.filled} filled)` : ''} — the bot clears it within ~15 s${at}</div>`;
+    };
     body.innerHTML = P.map(t => {
       const sh = t.direction === 'short', ref = t.entry, tps = t.tps || [], next = tps.find(x => !x.hit);
       return `<div class="sim-rp"><div class="top"><span class="${sh ? 'neg' : 'pos'}">${sh ? '🔴 SHORT' : '🟢 LONG'} <b>${esc(t.symbol)}</b></span>` +
@@ -1269,7 +1290,7 @@
         `<div><small>$${(+t.size).toFixed(2)} open · margin $${(+t.margin).toFixed(2)}${t.realized ? ' · banked ' + usd(t.realized) : ''}</small></div>${posActs(t)}${msgOf('pos', t.id)}<div data-ask="pos-${t.id}"></div></div>`;
     }).join('') + O.map(o => `<div class="sim-rp"><div class="top"><span>📍 ${o.direction === 'short' ? 'SHORT' : 'LONG'} <b>${esc(o.symbol)}</b> limit ${cp(o.limitPrice, o.limitPrice)}</span>` +
         `<small>${esc(o.exchange || '')} · ${o.onBook ? 'on the order book' : 'watched by the bot'} · ${Math.max(0, (o.expiresAt - Date.now()) / 3600e3).toFixed(1)}h left</small></div>` +
-        `<div>Stop ${cp(o.stop, o.limitPrice)} · TP1 ${cp(o.tp1, o.limitPrice)} · $${+o.margin} × ${+o.leverage}x</div>${ordActs(o)}${msgOf('ord', o.id)}<div data-ask="ord-${o.id}"></div></div>`).join('');
+        `${ordNow(o)}<div>Stop ${cp(o.stop, o.limitPrice)} · TP1 ${cp(o.tp1, o.limitPrice)} · $${+o.margin} × ${+o.leverage}x</div>${ordCheck(o)}${ordActs(o)}${msgOf('ord', o.id)}<div data-ask="ord-${o.id}"></div></div>`).join('');
     R.pickBtn = pickBtn;
     body.querySelectorAll('[data-rp-chart]').forEach(b => b.onclick = () => openCoin(b.dataset.rpChart, ['binance', 'bybit'].includes(b.dataset.rpEx) ? b.dataset.rpEx : 'auto', smc.tf));
     askBox();
@@ -3128,6 +3149,7 @@
   $('sim-r-tg').onclick = () => { R.conf = null; renderConf(); sendReal(); };
   $('sim-r-conf').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || b.disabled) return; if (b.dataset.c === 'place') placeReal(); else { R.conf = null; renderConf(); renderTicket(); } };
   $('sim-rp-body').addEventListener('click', onRealAct);
+  $('sim-rp-refresh').addEventListener('click', refreshRealPos);
   $('sim-rp-body').addEventListener('input', e => {   // typed stop / limit: keep it across refreshes, update the "if hit"
     if (!e.target.matches('[data-askin]') || !R.ui) return;
     R.ui.val = e.target.value;

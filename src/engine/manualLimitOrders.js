@@ -226,7 +226,7 @@ function fillMessage(o, r, label) {
       (r.partial ? `✂️ Partly filled — the rest was cancelled so the filled part got its stop at once\n` : '') +
       `💵 $${t.positionSize.toFixed(2)} at ${t.leverage}x\n` +
       `🎯 TP1 $${fmtP(t.tp1)} · TP2 $${fmtP(t.tp2)} · TP3 $${fmtP(t.tp3)} · TP4 $${fmtP(t.tp4)}\n` +
-      `🛑 SL $${fmtP(t.stopLoss)}\n\n<i>Stop and TPs are set from the real fill price. Manage it in /mpositions.</i>`;
+      `🛑 SL $${fmtP(t.stopLoss)}\n\n<i>Stop and TPs are set from the real fill price. Manage it with the buttons below or /mpositions.</i>`;
   }
   if (r.other) {
     return r.undone
@@ -245,7 +245,7 @@ function fillMessage(o, r, label) {
 }
 
 // One check of a resting exchange limit. finish(o, status) claims the order in the DB (false = someone else did);
-// notify(html) messages the owner. Returns what happened (for logs/tests).
+// notify(html, tradeId) messages the owner (tradeId on a good fill, for its buttons). Returns what happened (for logs/tests).
 async function checkRealOrder(te, o, { finish, notify }) {
   if (o._busy) return 'busy';
   o._busy = true;
@@ -289,7 +289,7 @@ async function checkRealOrder(te, o, { finish, notify }) {
     let r;
     try { r = await adoptFill(te, o, st); } catch (e) { r = { error: e.message }; logger.error(`Limit #${o.id} ${o.symbol} adopt failed: ${e.message}`); }
     if (!r.trade) await db.query("UPDATE manual_orders SET status = 'failed' WHERE id = $1", [o.id]).catch(() => {});
-    await notify(fillMessage(o, r, label));
+    await notify(fillMessage(o, r, label), r.trade?.id);
     return r.trade ? 'filled' : 'fill-problem';
   } finally {
     o._busy = false;

@@ -770,6 +770,17 @@ class TelegramBot {
     const isAdminCtx = (ctx) => ctx.state?.user?.role === 'admin';
     const ack = (ctx, text) => ctx.answerCbQuery(text).catch(() => {});
     const mtExec = () => this.onchainTradeExecutor;
+    // Buttons that manage one trade / limit order from the message that reports it (opened, limit placed or filled,
+    // dashboard notices) — the same actions as /mpositions · /orders. 🔄 💰 ✏️ open their view as a new message so the
+    // report stays in the chat; ❌ and 🛡 ask first.
+    const tradeKb = (id) => Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Refresh', `mt_nw_pd_${id}`), Markup.button.callback('❌ Close', `mt_close_${id}`)],
+      [Markup.button.callback('🛡 Breakeven', `mt_be_${id}`), Markup.button.callback('💰 Take profit', `mt_nw_tk_${id}`), Markup.button.callback('✏️ Stop', `mt_nw_sl_${id}`)],
+    ]).reply_markup;
+    const orderKb = (id) => Markup.inlineKeyboard([[Markup.button.callback('🔄 Check order', `mt_nw_od_${id}`), Markup.button.callback(`❌ Cancel order #${id}`, `mt_cancelorder_${id}`)]]).reply_markup;
+    // A live open returns the trade without its DB id — find it by coin (one open trade per coin)
+    const openTradeId = async (te, trade, symbol, exchangeId) => trade?.id
+      || (await db.getOpenTrades(te.settingsKey).catch(() => [])).find(t => t.symbol === symbol && t.exchange === exchangeId)?.id;
     const pairOf = (symbol) => `${symbol}/USDT:USDT`;
     const grid = (items, perRow) => {
       const rows = [];
@@ -1638,7 +1649,7 @@ class TelegramBot {
               `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)} · TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
               `🛑 SL $${fmtP(s.stopLoss)} (-$${s.maxLoss.toFixed(2)})\n\n` +
               `⏳ <i>Fills at your price or better · the bot places the stop and TPs within ~15 s of the fill, from the real fill price · expires in 24h · margin is reserved while it waits</i>`,
-              { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback(`❌ Cancel order #${id}`, `mt_cancelorder_${id}`)]]).reply_markup }
+              { parse_mode: 'HTML', reply_markup: orderKb(id) }
             );
           }
           const id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
@@ -1652,7 +1663,7 @@ class TelegramBot {
             `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)} · TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
             `🛑 SL $${fmtP(s.stopLoss)} (-$${s.maxLoss.toFixed(2)})\n\n` +
             `⏳ <i>Fills when price ${cfg.trigger === 'below' ? 'drops to' : 'rises to'} $${fmtP(st.limitPrice)} · expires in 24h · survives restarts</i>`,
-            { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback(`❌ Cancel order #${id}`, `mt_cancelorder_${id}`)]]).reply_markup }
+            { parse_mode: 'HTML', reply_markup: orderKb(id) }
           );
         }
 
@@ -1675,6 +1686,7 @@ class TelegramBot {
         const levNote = lev > st.leverage && st.marginSaver
           ? ` (🏦 margin saver: locks $${(size / lev).toFixed(2)}, liq ≈ ${liquidationPct(lev).toFixed(1)}%)`
           : lev !== st.leverage ? ` (exchange allowed ${lev}x, not ${st.leverage}x)` : '';
+        const tid = await openTradeId(te, trade, st.symbol, st.exchangeId);
         await ctx.editMessageText(
           `${isLong ? '🟢' : '🔴'} <b>MANUAL ${st.direction.toUpperCase()} OPENED</b> — ${escapeHtml(st.symbol)}\n\n` +
           `${modeLabel} · ${st.exchangeId.toUpperCase()}\n` +
@@ -1683,8 +1695,8 @@ class TelegramBot {
           `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)}\n🎯 TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
           `🛑 SL $${fmtP(s.stopLoss)} · 💀 Liq ≈ $${fmtP(s.liqPrice)}\n\n` +
           `🛡️ Exit: <b>${MT_EXIT_STYLES[st.exitStyle]}</b> — ${describeExit(st.exitStyle)}\n` +
-          `<i>Close any time with /mpositions.</i>`,
-          { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]).reply_markup }
+          `<i>Manage it with the buttons below or /mpositions.</i>`,
+          { parse_mode: 'HTML', reply_markup: tid ? tradeKb(tid) : Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]).reply_markup }
         );
       } finally {
         st.busy = false;
@@ -1716,8 +1728,8 @@ class TelegramBot {
     });
 
     // --- Limit orders: persisted in manual_orders, checked every minute from index.js ---
-    const notifyChat = (chatId, html) =>
-      this.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML' }).catch(e => logger.warn(`Notify ${chatId} failed: ${e.message}`));
+    const notifyChat = (chatId, html, markup) =>
+      this.bot.telegram.sendMessage(chatId, html, { parse_mode: 'HTML', ...(markup ? { reply_markup: markup } : {}) }).catch(e => logger.warn(`Notify ${chatId} failed: ${e.message}`));
 
     const loadPendingOrders = async () => {
       if (this._manualOrdersLoaded) return;
@@ -1733,7 +1745,8 @@ class TelegramBot {
       return db.setManualOrderStatus(o.id, status);
     };
 
-    const realLimitHooks = (o) => ({ finish: finishOrder, notify: (html) => notifyChat(o.chatId, html) });
+    // notify(html, tradeId): a fill report carries the new trade's buttons
+    const realLimitHooks = (o) => ({ finish: finishOrder, notify: (html, tradeId) => notifyChat(o.chatId, html, tradeId ? tradeKb(tradeId) : undefined) });
 
     const processLimitOrder = async (te, o) => {
       // Resting on the exchange: its own checks (fill → stop + TPs, cancel, expiry)
@@ -1794,12 +1807,13 @@ class TelegramBot {
         await notifyChat(o.chatId, `⚠️ Limit order triggered but NOT executed: ${label}\nCheck the bot notification for the reason.`);
         return;
       }
+      const tid = await openTradeId(te, trade, o.symbol, o.exchangeId);
       await notifyChat(o.chatId,
         `📍✅ <b>LIMIT ORDER FILLED</b> — ${escapeHtml(o.symbol)} (#${o.id})\n\n` +
         `${isLong ? '🟢 LONG' : '🔴 SHORT'} · ${o.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${o.exchangeId.toUpperCase()}\n` +
         `💰 Entry: <b>$${fmtP(trade.entryPrice)}</b> (limit $${fmtP(o.limitPrice)})\n` +
         `💵 $${(trade.positionSize || o.margin * o.leverage).toFixed(2)} at ${trade.leverage || o.leverage}x\n` +
-        `🎯 TP1 $${fmtP(trade.tp1)} · 🛑 SL $${fmtP(trade.stopLoss)}`);
+        `🎯 TP1 $${fmtP(trade.tp1)} · 🛑 SL $${fmtP(trade.stopLoss)}`, tid ? tradeKb(tid) : undefined);
     };
 
     // Exchange-resting limits are checked every ~15 s (index.js) so a fill gets its stop quickly
@@ -2089,11 +2103,13 @@ class TelegramBot {
       }
     };
 
-    // Read-only copy of /mpositions for the dashboard: open LIVE trades with the same price / P&L math, plus pending
-    // limit orders. Managing them (stop, take profit, close, cancel) stays in Telegram.
-    this.livePositionsForWeb = async () => {
+    // Copy of /mpositions for the dashboard: open LIVE trades with the same price / P&L math, plus pending limit orders
+    // with the market price. check: also ask the exchange about each order on its book (read only, the ↻ Refresh).
+    this.livePositionsForWeb = async ({ check = false } = {}) => {
       const trades = (await db.getOpenTrades()).filter(t => t.mode === 'live');
-      const prices = await positionPrices(trades);
+      await loadPendingOrders().catch(() => {});
+      const live = [...this.pendingLimitOrders.values()].filter(o => o.mode === 'live');
+      const prices = await positionPrices([...trades, ...live.map(o => ({ exchange: o.exchangeId, symbol: o.symbol }))]);
       const num = (v) => (v == null || !isFinite(parseFloat(v)) ? null : parseFloat(v));
       const positions = trades.map((t) => {
         const price = prices.get(`${t.exchange}:${t.symbol}`);
@@ -2107,12 +2123,21 @@ class TelegramBot {
           atBreakeven: p.atBreakeven, opened: new Date(t.created_at).getTime(),
         };
       });
-      const orders = [...this.pendingLimitOrders.values()].filter(o => o.mode === 'live').map(o => ({
-        id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
-        stop: o.stopLoss, tp1: o.tp1, margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
-        slFixed: !!o.slFixed,   // a typed stop stays put when the dashboard moves the limit
+      const te = mtExec();
+      const orders = await Promise.all(live.map(async (o) => {
+        let exchange = null;
+        if (check && o.real && o.orderId && te) {
+          const s = await Promise.race([manualLimits.entryOrderStatus(te, o).catch(e => ({ err: e.message })), new Promise(r => setTimeout(() => r({ err: 'no answer in 6 s' }), 6000))]);
+          exchange = s?.err ? { error: s.err } : s ? { status: s.status, filled: s.filled, amount: s.amount } : { status: 'unknown' };
+        }
+        return {
+          id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
+          stop: o.stopLoss, tp1: o.tp1, margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
+          slFixed: !!o.slFixed,   // a typed stop stays put when the dashboard moves the limit
+          price: prices.get(`${o.exchangeId}:${o.symbol}`) || null, ...(exchange ? { onExchange: exchange } : {}),
+        };
       }));
-      return { positions, orders };
+      return { positions, orders, checked: check };
     };
 
     this.bot.command('mpositions', async (ctx) => {
@@ -2142,6 +2167,62 @@ class TelegramBot {
       if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
       await ack(ctx);
       try { await editOrReply(ctx, await positionDetail(Number(ctx.match[1]))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    // One limit order, checked now: market price and how far it is from the limit; an order on the exchange book is
+    // looked up on the exchange (read only — a fill found here is set up by the 15 s check). Filled → its position.
+    const orderView = async (id) => {
+      await loadPendingOrders();
+      const o = this.pendingLimitOrders.get(id);
+      if (!o) {
+        const row = (await db.query('SELECT status, symbol FROM manual_orders WHERE id = $1', [id]).catch(() => ({ rows: [] }))).rows[0];
+        if (row?.status === 'filled') {
+          const t = (await db.query("SELECT id FROM trades WHERE status = 'open' AND onchain_context->>'limitOrderId' = $1 ORDER BY id DESC LIMIT 1", [String(id)])
+            .catch(() => ({ rows: [] }))).rows[0];
+          if (t) { const v = await positionDetail(t.id); return { text: `📍✅ <b>Limit #${id} filled</b> → position #${t.id}\n\n${v.text}`, keyboard: v.keyboard }; }
+          return { text: `📍✅ Limit #${id} ${escapeHtml(row.symbol || '')} filled — that trade is closed now.`, keyboard: Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]) };
+        }
+        return { text: `📍 Limit #${id} ${escapeHtml(row?.symbol || '')} is no longer waiting${row?.status ? ` — ${escapeHtml(row.status)}` : ''}.`, keyboard: Markup.inlineKeyboard([[Markup.button.callback('📋 Orders', 'mt_orders')]]) };
+      }
+      const te = mtExec();
+      const price = (await positionPrices([{ exchange: o.exchangeId, symbol: o.symbol }])).get(`${o.exchangeId}:${o.symbol}`);
+      let exLine = '';
+      if (o.real && o.orderId && te) {
+        const s = await Promise.race([manualLimits.entryOrderStatus(te, o).catch(e => ({ err: e.message })), new Promise(r => setTimeout(() => r({ err: 'no answer in 6 s' }), 6000))]);
+        exLine = s?.err ? `⚠️ Could not check ${o.exchangeId}: ${escapeHtml(s.err)}`
+          : !s ? `⚠️ ${o.exchangeId} doesn't know this order`
+          : s.status === 'open' ? `📗 On the ${o.exchangeId.toUpperCase()} book${s.filled > 0 ? ` · ${s.filled} of ${s.amount} filled` : ' · nothing filled yet'}`
+          : s.status === 'closed' ? `✅ ${o.exchangeId.toUpperCase()}: filled — the bot sets its stop and TPs within ~15 s`
+          : `⚠️ ${o.exchangeId.toUpperCase()}: ${escapeHtml(s.status)}${s.filled > 0 ? ` (${s.filled} filled)` : ''} — the bot clears it within ~15 s`;
+      }
+      const d = price ? (o.limitPrice - price) / price * 100 : null;
+      const hoursLeft = Math.max(0, (o.expiresAt - Date.now()) / 3600000).toFixed(1);
+      const text = `📍 <b>Limit order #${o.id}</b> — ${o.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} ${escapeHtml(o.symbol)}\n\n` +
+        `${o.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${o.exchangeId.toUpperCase()} · ${o.real ? 'resting on the order book' : 'watched by the bot (enters at market on the touch)'}\n` +
+        `📍 Limit <b>$${fmtP(o.limitPrice)}</b>${price ? ` · now $${fmtP(price)} · needs a ${d < 0 ? 'drop' : 'rise'} of ${Math.abs(d).toFixed(2)}%` : ' · no live price right now'}\n` +
+        `🛑 SL $${fmtP(o.stopLoss)} · 🎯 TP1 $${fmtP(o.tp1)} · $${o.margin} × ${o.leverage}x · ${hoursLeft}h left\n` +
+        (exLine ? `${exLine}\n` : '') + `\n<i>Checked ${utcClock()} UTC</i>`;
+      return { text, keyboard: Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Refresh', `mt_od_${o.id}`), Markup.button.callback(`❌ Cancel order #${o.id}`, `mt_cancelorder_${o.id}`)],
+        [Markup.button.callback('📋 All orders', 'mt_orders')],
+      ]) };
+    };
+
+    this.bot.action(/^mt_od_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx, 'Checking…');
+      try { await editOrReply(ctx, await orderView(Number(ctx.match[1]))); } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
+    });
+
+    // From a report message (tradeKb / orderKb): the view comes as a new message, so the report stays in the chat
+    this.bot.action(/^mt_nw_(pd|tk|sl|od)_(\d+)$/, async (ctx) => {
+      if (!isAdminCtx(ctx)) return ack(ctx, 'Admin only');
+      await ack(ctx);
+      const id = Number(ctx.match[2]), k = ctx.match[1];
+      try {
+        const v = k === 'pd' ? await positionDetail(id) : k === 'tk' ? await takeMenu(id) : k === 'sl' ? await slMenu(id) : await orderView(id);
+        await ctx.replyWithHTML(v.text, v.keyboard);
+      } catch (e) { ctx.replyWithHTML(`⚠️ ${escapeHtml(e.message)}`).catch(() => {}); }
     });
 
     // SL → breakeven: only offered and only applied while the position is in profit, so the stop can't fire at once
@@ -2696,11 +2777,11 @@ class TelegramBot {
     // buttons run: open → executeManual (→ openManualTrade, or the real limit order), close → closeTradeNow, stop →
     // slCheck + updateExchangeSL, breakeven → breakevenCheck, take profit → takeCheck + takeProfitNow, limit → cancelPending.
     // Off until the owner sends /webtrade on; every action is reported in the owner's chat. Live trades/orders only.
-    const WEB_KEEP_BUTTONS = /^(mt_pos_refresh_new|mt_cancelorder_\d+)$/;
+    const WEB_KEEP_BUTTONS = /^(mt_pos_refresh_new|mt_cancelorder_\d+|mt_nw_(pd|tk|sl|od)_\d+|mt_close_\d+|mt_be_\d+)$/;
     const plainText = (html) => String(html || '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
     const webOwner = () => Number(this.pumpAutoTrader?.config?.ownerId) || config.telegram.adminIds[0];
     const webSend = (uid, html, markup) => {
-      // only buttons that work outside a panel (positions, cancel order): a panel's own buttons need its Telegram state
+      // only buttons that work outside a panel (positions, trade / order actions): a panel's own buttons need its Telegram state
       const rows = (markup?.inline_keyboard || []).map(r => r.filter(b => WEB_KEEP_BUTTONS.test(b.callback_data || ''))).filter(r => r.length);
       return this.bot.telegram.sendMessage(uid, `🌐 <i>From the dashboard</i>\n${html}`, { parse_mode: 'HTML', ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}) })
         .catch(e => logger.warn(`[WEB TRADE] Telegram notice failed: ${e.message}`));
@@ -2808,7 +2889,8 @@ class TelegramBot {
     const webManage = async (a) => {
       const uid = webOwner();
       if (!uid) return { error: 'No owner Telegram account set (ADMIN_TELEGRAM_IDS)' };
-      const done = async (html, log) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, posKb()); return { ok: true, text: plainText(html) }; };
+      // a position that is still open keeps its buttons (refresh, close, breakeven, take profit, stop)
+      const done = async (html, log, tradeId) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, tradeId ? tradeKb(tradeId) : posKb()); return { ok: true, text: plainText(html) }; };
 
       if (a.action === 'cancel' || a.action === 'move_limit') {
         await loadPendingOrders();
@@ -2864,7 +2946,7 @@ class TelegramBot {
         return done(
           `✅ <b>${escapeHtml(t.symbol)} stop moved</b>\nSL $${fmtP(r.st.sl)} → <b>$${fmtP(r.sl)}</b> · ${fmtUsd(r.pnl)} if it fills\n` +
           `<i>Placed on the exchange and enforced by the bot every minute. The plan's own moves (e.g. stop → entry at TP1) still apply.</i>`,
-          `stop ${t.symbol} #${t.id} ${r.st.sl} → ${r.sl}`);
+          `stop ${t.symbol} #${t.id} ${r.st.sl} → ${r.sl}`, t.id);
       }
       if (a.action === 'breakeven') {   // breakevenCheck, then exchange first like 🛡 Take + breakeven
         const b = await breakevenCheck(t.id);
@@ -2873,7 +2955,7 @@ class TelegramBot {
         if (ok !== true) return { error: `The exchange rejected the breakeven stop — the stop is still $${fmtP(b.st.sl)}. Nothing changed.` };
         await db.updateTradeStopLoss(t.id, b.st.entry);
         return done(`🛡 <b>${escapeHtml(t.symbol)} stop moved to breakeven</b>\nSL $${fmtP(b.st.sl)} → <b>$${fmtP(b.st.entry)}</b> (entry)`,
-          `breakeven ${t.symbol} #${t.id} ${b.st.sl} → ${b.st.entry}`);
+          `breakeven ${t.symbol} #${t.id} ${b.st.sl} → ${b.st.entry}`, t.id);
       }
       if (a.action === 'take') {   // as mt_tkok with a % of the position
         const r = await takeCheck(t.id, 'p', a.pct);
@@ -2883,7 +2965,7 @@ class TelegramBot {
         return done(
           `✅ <b>${escapeHtml(t.symbol)} — profit taken</b>\n\nClosed ${(res.fraction * 100).toFixed(0)}% ($${res.size.toFixed(2)}) @ $${fmtP(res.price)} → banked <b>${fmtUsd(res.pnl)}</b>\n` +
           `Still open: $${Number(res.remainingSize).toFixed(2)} · TPs re-placed for the rest · SL unchanged`,
-          `take ${a.pct}% ${t.symbol} #${t.id} → ${res.pnl}`);
+          `take ${a.pct}% ${t.symbol} #${t.id} → ${res.pnl}`, t.id);
       }
       return { error: 'Unknown action' };
     };
