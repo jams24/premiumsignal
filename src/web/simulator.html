@@ -210,6 +210,13 @@
 .sim-pxpop .wl { display: grid; gap: 5px; border: 1px solid var(--gold); border-radius: 6px; padding: 6px 7px; background: var(--gold-dim); }
 /* ⚡ quick limit from the chart: limit → stop → TP1 → confirm, in a small bar on the chart */
 .sim-qbar { border-color: var(--gold); max-width: min(420px, calc(100% - 16px)); z-index: 6; }
+/* a chart box you can drag (boxDrag): a handle on top, move cursor on its plain parts */
+.sim-movable { cursor: move; touch-action: none; padding-top: 12px; }
+.sim-movable::before { content: ''; position: absolute; top: 4px; left: calc(50% - 18px); width: 36px; height: 4px; border-radius: 2px; background: var(--border); }
+.sim-movable:hover::before, .sim-movable.dragging::before { background: var(--muted); }
+.sim-movable.dragging { user-select: none; box-shadow: 0 10px 28px rgba(0,0,0,.6); opacity: .96; }
+.sim-movable button, .sim-movable input, .sim-movable select, .sim-movable label, .sim-movable a { cursor: auto; }
+.sim-movable button { cursor: pointer; }
 .sim-qbar .m { color: var(--muted); white-space: normal; }
 .sim-qbar .err { color: var(--danger); white-space: normal; }
 .sim-qbar .ok { color: var(--accent); white-space: normal; }
@@ -3835,6 +3842,7 @@
     if (x + w > W - 4) x = Math.max(4, param.point.x - w - 12);
     if (y < 4) y = Math.min(H - h - 4, param.point.y + 14);
     el.style.left = Math.max(4, x) + 'px'; el.style.top = Math.max(4, y) + 'px';
+    boxDrag(el);   // move it off the lines you want to see
     el.onclick = e => {
       const ra = e.target.closest('[data-ra]');
       if (ra) { const f = el._ra; closePop(); if (ra.dataset.ra === 'yes' && f) f(); return; }
@@ -3911,6 +3919,8 @@
       QK.bar.setAttribute('role', 'dialog'); QK.bar.setAttribute('aria-label', 'Quick limit order'); QK.bar.onclick = quickClick;
       QK.bar.addEventListener('change', confSize); QK.bar.addEventListener('keydown', confSize);
       $('sim-chart').parentNode.appendChild(QK.bar);
+      boxDrag(QK.bar, (x, y) => { qbarAt = { x, y }; try { localStorage.setItem('sc_sim_qbar_v1', JSON.stringify(qbarAt)); } catch (e) { /* no storage */ } },
+        () => { qbarAt = null; try { localStorage.removeItem('sc_sim_qbar_v1'); } catch (e) { /* no storage */ } quickPlace(); });
     }
     const side = quickSide(), real = realOn();
     // the three steps in order, the one to do now in gold: ① entry ✓ → ② stop → ③ TP1
@@ -3938,8 +3948,49 @@
     } else return;   // review / done: quickConfSync fills it
     QK.bar.innerHTML = h; quickPlace();
   }
-  function quickPlace() {   // top middle of the chart, out of the way of the next click
+  // A chart box (the ⚡ order bar, the price popup) moves by dragging any spot that isn't a button or field, so it can
+  // be put over the compare chart or the page instead of the candles. It stays whole on screen (no stray scrollbars in full
+  // screen); the drop is not a click.
+  function boxClamp(el, x, y) {
+    const p = el.offsetParent ? el.offsetParent.getBoundingClientRect() : { left: 0, top: 0 }, w = el.offsetWidth, h = el.offsetHeight;
+    const minX = 4 - p.left, maxX = Math.max(minX, window.innerWidth - p.left - w - 4), minY = 4 - p.top, maxY = Math.max(minY, window.innerHeight - p.top - h - 4);
+    return [Math.round(Math.min(maxX, Math.max(minX, x))), Math.round(Math.min(maxY, Math.max(minY, y)))];
+  }
+  function boxDrag(el, onMove, onReset) {
+    el.classList.add('sim-movable');
+    el.title = 'Drag to move' + (onReset ? ' · double-click to put it back' : '');
+    const free = t => !t.closest('button, input, select, textarea, a, label, [data-px], [data-copy]');
+    el.addEventListener('click', e => { if (free(e.target) && Date.now() - (el._dropAt || 0) < 400) { e.stopPropagation(); e.preventDefault(); } }, true);   // the drop's own click; buttons always work
+    if (onReset) el.addEventListener('dblclick', e => { if (free(e.target)) { e.preventDefault(); onReset(); } });
+    el.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || !free(e.target)) return;
+      const x0 = e.clientX, y0 = e.clientY, l0 = el.offsetLeft, t0 = el.offsetTop; let moved = false;
+      const move = ev => {
+        const dx = ev.clientX - x0, dy = ev.clientY - y0;
+        if (!moved) {
+          if (Math.hypot(dx, dy) < 4) return;
+          moved = true; el.classList.add('dragging');
+          try { el.setPointerCapture(e.pointerId); } catch (er) { /* pointer already gone */ }
+          const s = window.getSelection && window.getSelection(); if (s) s.removeAllRanges();
+        }
+        const [x, y] = boxClamp(el, l0 + dx, t0 + dy); el.style.left = x + 'px'; el.style.top = y + 'px';
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+        if (!moved) return;
+        el.classList.remove('dragging'); el._dropAt = Date.now();
+        if (onMove) onMove(el.offsetLeft, el.offsetTop);
+      };
+      // on the window: a quick flick that leaves the box before the 4 px start still drags it
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+    });
+  }
+  // where you dragged the ⚡ bar (px from the chart's top-left) — kept for the next order and after a reload (this browser)
+  let qbarAt = null;
+  try { const o = JSON.parse(localStorage.getItem('sc_sim_qbar_v1')); if (o && isFinite(o.x) && isFinite(o.y)) qbarAt = o; } catch (e) { /* no storage */ }
+  function quickPlace() {   // top middle of the chart, out of the way of the next click — or where you dragged it
     const x = QK.bar; if (!x) return;
+    if (qbarAt) { const [l, t] = boxClamp(x, qbarAt.x, qbarAt.y); x.style.left = l + 'px'; x.style.top = t + 'px'; return; }
     const W = $('sim-chart').parentNode.clientWidth, w = x.offsetWidth;
     x.style.left = Math.max(4, Math.round((W - 70 - w) / 2)) + 'px'; x.style.top = '8px';
   }
