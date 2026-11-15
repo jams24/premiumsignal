@@ -2932,6 +2932,69 @@ class TradeExecutor {
     }
   }
 
+  // Move one TP of an open trade by hand (dashboard chart). Only a TP not hit yet; it must stay past the entry and the
+  // price (in profit, not filling at once) and between its neighbours still to come, so the minute check keeps its
+  // TP1 → TP4 order. Live: the resting TP limits are cancelled, the new level saved, and the limits put back for what
+  // is still open (placeTPOrders, same split). Each move is logged in onchain_context.manualTpMoves. The minute check
+  // skips the trade while this runs. Returns { from, to, level, onBook } (onBook: TP limits on the exchange after, live).
+  async moveTakeProfit(tradeId, level, price) {
+    if (![1, 2, 3, 4].includes(level)) throw new Error('Pick TP1–TP4.');
+    if (!(price > 0) || !isFinite(price)) throw new Error('That is not a valid price.');
+    const locks = (this._tradeLocks ||= new Set());
+    if (locks.has(tradeId)) throw new Error('This trade is already being changed — try again in a moment.');
+    locks.add(tradeId);
+    try {
+      for (let i = 0; i < 40 && this._checkingId === tradeId; i++) await new Promise(r => setTimeout(r, 500));
+      const { rows } = await db.query("SELECT * FROM trades WHERE id = $1 AND status = 'open'", [tradeId]);
+      const trade = rows[0];
+      if (!trade) throw new Error('That position is already closed.');
+      const isLong = trade.direction === 'long', entry = parseFloat(trade.entry_price);
+      const tps = [1, 2, 3, 4].map(n => ({ n, price: parseFloat(trade[`tp${n}`]), hit: n < 4 && !!trade[`hit_tp${n}`] }));
+      const me = tps[level - 1];
+      if (!(me.price > 0)) throw new Error(`This trade has no TP${level}.`);
+      if (me.hit) throw new Error(`TP${level} was already hit.`);
+      const past = (a, b) => (isLong ? a > b : a < b);   // a is further in profit than b
+      const fmt = v => +(+v).toPrecision(6);
+      if (!past(price, entry)) throw new Error(`A TP must be ${isLong ? 'above' : 'below'} the entry $${fmt(entry)} — to get out with a smaller loss, move the stop or close.`);
+      const exchange = this.exchanges[trade.exchange];
+      const pair = `${trade.symbol}/USDT:USDT`;
+      const last = await exchange?.fetchTicker(pair).then(t => t.last).catch(() => null);
+      if (!last) throw new Error('No live price right now — try again.');
+      if (!past(price, last * (isLong ? 1.001 : 0.999))) throw new Error(`TP${level} must be at least 0.1% ${isLong ? 'above' : 'below'} the price now ($${fmt(last)}) — to bank now use Take profit or Close.`);
+      const before = tps.slice(0, level - 1).reverse().find(x => !x.hit && x.price > 0);
+      const after = tps.slice(level).find(x => !x.hit && x.price > 0);
+      if (before && !past(price, before.price)) throw new Error(`TP${level} must stay ${isLong ? 'above' : 'below'} TP${before.n} ($${fmt(before.price)}) — move TP${before.n} first.`);
+      if (after && !past(after.price, price)) throw new Error(`TP${level} must stay ${isLong ? 'below' : 'above'} TP${after.n} ($${fmt(after.price)}) — move TP${after.n} first.`);
+
+      const done = trade.hit_tp3 ? 3 : trade.hit_tp2 ? 2 : trade.hit_tp1 ? 1 : 0;   // as takeProfitNow: only TPs ahead rest on the book
+      let onBook = null;
+      if (trade.mode === 'live') {
+        if (!exchange?.apiKey) throw new Error(`No API keys for ${trade.exchange}`);
+        // A TP limit that just filled leaves less on the exchange than the bot tracks: let the minute check book it first
+        const pos = (await this._fetchPositions(exchange, trade.exchange, [pair])).find(p => Math.abs(p.contracts || 0) > 0);
+        const held = pos ? Math.abs(pos.contracts) : 0;
+        if (held < Number(trade.quantity) * 0.95) throw new Error('The exchange position is smaller than the bot tracks (a TP may have just filled) — wait a minute and try again.');
+        await this.cancelTPOrders(trade);
+      }
+      await db.query(`UPDATE trades SET tp${level} = $1,
+          onchain_context = jsonb_set(COALESCE(onchain_context, '{}'::jsonb), '{manualTpMoves}',
+            COALESCE(onchain_context->'manualTpMoves', '[]'::jsonb) || $2::jsonb)
+        WHERE id = $3 AND status = 'open'`,
+        [price, JSON.stringify([{ at: new Date().toISOString(), level, from: me.price, to: price }]), tradeId]);
+      if (trade.mode === 'live') {
+        await this.placeTPOrders({ ...trade, [`tp${level}`]: price, quantity: Number(trade.quantity) }, done);
+        try {
+          const closeSide = isLong ? 'sell' : 'buy';
+          onBook = (await exchange.fetchOpenOrders(pair)).filter(o => o.type === 'limit' && o.side === closeSide && !o.stopPrice && !o.triggerPrice).length;
+        } catch (e) { /* unknown */ }
+      }
+      logger.info(`Manual TP move ${trade.symbol} #${trade.id}: TP${level} $${me.price} → $${price} (${trade.mode}${onBook != null ? `, ${onBook} TP limits on the book` : ''})`);
+      return { trade, level, from: me.price, to: price, onBook };
+    } finally {
+      locks.delete(tradeId);
+    }
+  }
+
   // Close any open trade of this executor immediately (exchange close for live), returns final P&L
   async closeTradeNow(trade, reason = 'manual_close') {
     const exchange = this.exchanges[trade.exchange];

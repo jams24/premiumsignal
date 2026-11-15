@@ -5,7 +5,8 @@
 //   POST /api/trade/open     — place it now through the bot's own path (executeManual → tradeExecutor.openManualTrade,
 //                              or the real limit order), no ✅ in Telegram
 //   POST /api/trade/manage   — close · stop · breakeven · take · cancel · move_limit on a live trade / limit order, through
-//                              the same functions as the /mpositions and /orders buttons
+//                              the same functions as the /mpositions and /orders buttons; tp (move TP1–4 of an open
+//                              trade, tradeExecutor.moveTakeProfit — the dashboard chart only)
 // Telegram confirm (always available):
 //   POST /api/trade/panel    — fill in the /long · /short panel in Telegram; nothing is placed until ✅ there
 // Read-only:
@@ -54,7 +55,7 @@ function cleanOrder(b) {
   return { order: out };
 }
 
-const MANAGE = { close: [], stop: ['price'], breakeven: [], take: ['pct'], cancel: [], move_limit: ['price'] };
+const MANAGE = { close: [], stop: ['price'], breakeven: [], take: ['pct'], cancel: [], move_limit: ['price'], tp: ['price', 'level'] };
 function cleanManage(b) {
   if (!Object.prototype.hasOwnProperty.call(MANAGE, b.action)) return { error: 'Unknown action' };
   const id = Number(b.id);
@@ -69,6 +70,11 @@ function cleanManage(b) {
     const p = Number(b.pct);
     if (![25, 50, 75].includes(p)) return { error: 'Take 25, 50 or 75%' };
     out.pct = p;
+  }
+  if (MANAGE[b.action].includes('level')) {
+    const n = Number(b.level);
+    if (![1, 2, 3, 4].includes(n)) return { error: 'Pick TP1–TP4' };
+    out.level = n;
   }
   return { a: out };
 }
@@ -105,7 +111,7 @@ async function handle(req, url, res) {
         if (now - lastWrite < WRITE_GAP_MS) return send(429, { error: 'One action every 2 seconds — try again.' });
         const nerr = useNonce(body.nonce); if (nerr) return send(409, { error: nerr });
         lastWrite = now;
-        logger.info(`[WEB TRADE] manage ${a.action} #${a.id}${a.price ? ' @ ' + a.price : ''}${a.pct ? ' ' + a.pct + '%' : ''}`);
+        logger.info(`[WEB TRADE] manage ${a.action}${a.level ? a.level : ''} #${a.id}${a.price ? ' @ ' + a.price : ''}${a.pct ? ' ' + a.pct + '%' : ''}`);
         const r = await bot.webTrade.manage(a);
         posCache = null;
         return r.ok ? send(200, r) : send(422, { ...r, error: firstError(r) });

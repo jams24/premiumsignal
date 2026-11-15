@@ -2783,7 +2783,8 @@ class TelegramBot {
     // === Dashboard direct trading (src/web/tradeApi.js) ===
     // The Simulator's Real ticket and Real positions card act without a tap in Telegram, through the code the Telegram
     // buttons run: open → executeManual (→ openManualTrade, or the real limit order), close → closeTradeNow, stop →
-    // slCheck + updateExchangeSL, breakeven → breakevenCheck, take profit → takeCheck + takeProfitNow, limit → cancelPending.
+    // slCheck + updateExchangeSL, breakeven → breakevenCheck, take profit → takeCheck + takeProfitNow, limit → cancelPending,
+    // TP1–4 → executor.moveTakeProfit (dashboard only: Telegram has no button for it).
     // Off until the owner sends /webtrade on; every action is reported in the owner's chat. Live trades/orders only.
     const WEB_KEEP_BUTTONS = /^(mt_pos_refresh_new|mt_cancelorder_\d+|mt_nw_(pd|tk|sl|od)_\d+|mt_close_\d+|mt_be_\d+)$/;
     const plainText = (html) => String(html || '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
@@ -2974,6 +2975,16 @@ class TelegramBot {
           `✅ <b>${escapeHtml(t.symbol)} — profit taken</b>\n\nClosed ${(res.fraction * 100).toFixed(0)}% ($${res.size.toFixed(2)}) @ $${fmtP(res.price)} → banked <b>${fmtUsd(res.pnl)}</b>\n` +
           `Still open: $${Number(res.remainingSize).toFixed(2)} · TPs re-placed for the rest · SL unchanged`,
           `take ${a.pct}% ${t.symbol} #${t.id} → ${res.pnl}`, t.id);
+      }
+      if (a.action === 'tp') {   // dashboard chart: move one TP that is still ahead (tradeExecutor.moveTakeProfit)
+        if (!executor.moveTakeProfit) return { error: `Moving a TP isn't available for source "${t.source}".` };
+        let r;
+        try { r = await executor.moveTakeProfit(t.id, a.level, a.price); } catch (e) { return { error: e.message }; }
+        const entry = parseFloat(t.entry_price), pct = (t.direction === 'long' ? r.to - entry : entry - r.to) / entry * 100;
+        return done(
+          `🎯 <b>${escapeHtml(t.symbol)} TP${r.level} moved</b>\n$${fmtP(r.from)} → <b>$${fmtP(r.to)}</b> (${fmtPct(pct)} from entry)\n` +
+          `<i>${r.onBook != null ? `TP limits on ${escapeHtml(t.exchange)} re-placed (${r.onBook} on the book) · ` : ''}stop unchanged · the bot checks every TP each minute.</i>`,
+          `tp${r.level} ${t.symbol} #${t.id} ${r.from} → ${r.to}`, t.id);
       }
       return { error: 'Unknown action' };
     };

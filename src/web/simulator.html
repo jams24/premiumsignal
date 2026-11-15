@@ -1,6 +1,7 @@
 <!-- Trade Simulator tab, inserted into the dashboard's tab-sim panel by src/dashboard.js. It reads candles
      through /api/sim/* (src/web/simApi.js) and never sends orders. Its "Real · via Telegram" ticket only fills in the
-     owner's /long · /short panel in Telegram (/api/trade/*, src/web/tradeApi.js); the order is placed there, on ✅. The SMC overlay, setup finder and coach use
+     owner's /long · /short panel in Telegram (/api/trade/*, src/web/tradeApi.js); the order is placed there, on ✅. With /webtrade on the
+     Real ticket, the Real positions card and the chart (drag a REAL line, or click a price) act directly, each after a confirm. The SMC overlay, setup finder and coach use
      src/web/smcEngine.js (inserted below by dashboard.js). CSS scoped under .sim, one IIFE, ids prefixed sim-. -->
 <style>
 .sim { display: grid; gap: 14px; color: var(--text); font: 400 14px/1.5 var(--font-body); padding-bottom: 40px; }
@@ -621,7 +622,9 @@
   const sgnB = v => `<b class="${v >= 0 ? 'pos' : 'neg'}">${usd(v)}</b>`;
   const fromEntry = (v, e) => `${(Math.abs(v / e - 1) * 100).toFixed(2)}% from entry`;
   // Real ticket (Live mode): fills in the Telegram /long · /short panel; R.data = read-only open live positions
-  const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '', web: false, conf: null, ui: null, msg: null, pick: null };
+  const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '', web: false, conf: null, ui: null, msg: null, pick: null,
+    dragging: false, dragAsk: null };   // a REAL stop / TP / limit line being dragged · its move waiting for Yes in the chart popup
+  const realMeta = new WeakMap();   // REAL price line → { k: 'stop' | 'tp' | 'limit', n, id, title, from } (drawReal; drag to move)
   // ⚡ quick limit drawn on the chart (see "quick limit from the chart" below); while it is being drawn only its lines show
   const QK = { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null };
   const qkDrawing = () => QK.on && (QK.stage === 'pick' || QK.stage === 'ask');
@@ -1448,7 +1451,7 @@
   function renderRealPos() {
     const body = $('sim-rp-body'), tag = $('sim-rp-tag');
     $('sim-rp-note').innerHTML = R.web
-      ? 'Buttons act on the exchange through the bot (same code as <code>/mpositions</code> · <code>/orders</code>); Telegram gets each one, with the same buttons there (Refresh · Close · Breakeven · Take profit · Stop · Check order · Cancel). ↻ Refresh reloads now and asks the exchange about limit orders. Click a price to copy it.'
+      ? 'Buttons act on the exchange through the bot (same code as <code>/mpositions</code> · <code>/orders</code>); Telegram gets each one, with the same buttons there (Refresh · Close · Breakeven · Take profit · Stop · Check order · Cancel). ↻ Refresh reloads now and asks the exchange about limit orders. Click a price to copy it. On the chart: drag the REAL stop / TP / limit line, or click a price for <b>TP here</b> · <b>Move stop</b> · <b>Close trade</b>. You confirm each one.'
       : 'Read-only. Manage them in Telegram: <code>/mpositions</code> · limit orders <code>/orders</code> — or send <code>/webtrade on</code> to manage them here. Click a price to copy it.';
     if (R.err) { body.className = 'sim-empty'; body.textContent = 'Could not load: ' + R.err; tag.textContent = 'read-only'; return; }
     const d = R.data; if (!d) return;
@@ -1530,14 +1533,14 @@
   }
   async function manage(type, action, id, extra) {
     if (R.busy) return;
-    R.busy = true; askBox();
+    R.busy = true; askBox(); hint('Sending it to the bot…');
     try {
       const r = await apiPost('/api/trade/manage', Object.assign({ action, id, nonce: nonce() }, extra || {}));
       const text = r.moved ? `📍 Limit moved ${(+r.moved.from).toFixed(precFor(r.moved.from))} → ${(+r.moved.to).toFixed(precFor(r.moved.to))} (new order #${r.id}${r.onBook ? ', on the order book' : ''})`
         : r.text ? r.text.split('\n').filter(Boolean).slice(0, 3).join(' · ') : 'Done.';
       R.msg = { type, id: r.moved ? r.id : id, ok: true, text, at: Date.now() };
       hint((r.text || 'Done.').split('\n')[0].replace(/^🌐.*$/, '').trim() || 'Done.'); $('sim-hint').classList.add('tip');
-    } catch (e) { R.msg = { type, id, ok: false, text: e.message, at: Date.now() }; }
+    } catch (e) { R.msg = { type, id, ok: false, text: e.message, at: Date.now() }; hint('⚠️ Not done: ' + e.message); }   // the chart's own buttons show it here too
     finally { R.busy = false; R.ui = null; await loadRealPos(); }
   }
   function onRealAct(e) {
@@ -1558,10 +1561,26 @@
     }
   }
   // a chart pick (popup button or Click chart) for a real stop / limit: ask right in the popup
-  function realAsk(el, kind, v) {
-    const t = kind === 'stop' ? (R.data && R.data.positions || []).find(x => x.symbol === S.sym) : (R.data && R.data.orders || []).find(x => x.symbol === S.sym);
+  function realAsk(el, kind, v) {   // kind 'stop' | 'tp1'…'tp4' (the open trade) | 'limit' (the waiting order)
+    const t = kind !== 'limit' ? (R.data && R.data.positions || []).find(x => x.symbol === S.sym) : (R.data && R.data.orders || []).find(x => x.symbol === S.sym);
     if (!t) { el.innerHTML = '<div class="ask">No real position or order on this coin any more.</div>'; return; }
     const pr = precFor(t.entry || t.limitPrice), pf = x => (+x).toFixed(pr), n = +v;
+    if (/^tp[1-4]$/.test(kind)) {   // the bot's ladder with this TP moved: what it then closes and books there
+      const k = +kind.slice(2), cur = (t.tps || []).find(x => x.n === k), room = realTpRoom(t, n, t.price || price());
+      if (!cur || !room.ok.includes(k)) {
+        const why = (room.reason && room.reason(k)) || room.why || `TP${k} was already hit.`;
+        el.innerHTML = `<div class="ask">TP${k} can't go to ${pf(n)}. ${esc(why)}</div><div class="sim-row"><button type="button" class="b" data-ra="no">OK</button></div>`;
+        el._ra = null; return;
+      }
+      const x = realLadder(t.direction, t.entry, +t.size || 0, t.realized || 0, (t.tps || []).map(y => (y.n === k ? Object.assign({}, y, { price: n }) : y)), t.closeFr).find(y => y.n === k);
+      el.innerHTML = `<div class="ask">Move the REAL TP${k} on ${t.direction.toUpperCase()} ${esc(t.symbol)} ${pf(cur.price)} → <b>${pf(n)}</b>?` +
+        (x ? ` There it closes ${pctTxt(x.share)} of the open position → books ${sgnB(x.book)}; P&amp;L if price gets there ≈ ${sgnB(x.total)}.` : '') +
+        ` The bot re-places its TP orders on the exchange; the stop stays.</div>` +
+        `<div class="sim-row"><button type="button" class="b go" data-ra="yes">Yes, move TP${k}</button><button type="button" class="b" data-ra="no">No</button></div>`;
+      el._ra = () => manage('pos', 'tp', t.id, { price: n, level: k });   // run by openPop's click handler
+      const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
+      return;
+    }
     el.innerHTML = kind === 'stop'
       ? `<div class="ask">Move the REAL stop on ${t.direction.toUpperCase()} ${esc(t.symbol)} ${pf(t.stop)} → <b>${pf(n)}</b>? If hit ≈ <b>${usd(R.ifHit ? R.ifHit(t, n) : 0)}</b></div>`
       : `<div class="ask">Move the REAL ${t.direction.toUpperCase()} limit ${pf(t.limitPrice)} → <b>${pf(n)}</b>? The old order is cancelled and a new one placed (fresh 24h). ${t.slFixed ? `Stop stays at ${pf(t.stop)}.` : 'Stop and TPs keep their distance from the limit.'}</div>`;
@@ -1576,6 +1595,32 @@
       `<div class="sim-row"><button type="button" class="b red" data-ra="yes">Yes, cancel it</button><button type="button" class="b" data-ra="no">No</button></div>`;
     el._ra = () => manage('ord', 'cancel', o.id);   // run by openPop's click handler
     const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
+  }
+  function realCloseAsk(el) {   // chart click → "Close trade" on the real position open on this coin
+    const t = (R.data && R.data.positions || []).find(x => x.symbol === S.sym);
+    if (!t) { el.innerHTML = '<div class="ask">No real position on this coin any more.</div>'; return; }
+    el.innerHTML = `<div class="ask">Close the REAL ${t.direction.toUpperCase()} ${esc(t.symbol)} at market now? P&amp;L ≈ ${t.pnl == null ? '–' : sgnB(t.pnl)}` +
+      `${t.realized ? ` (with the ${usd(t.realized)} banked)` : ''} at ${t.price ? (+t.price).toFixed(precFor(t.entry)) : 'the price now'}, before fees.</div>` +
+      `<div class="sim-row"><button type="button" class="b red" data-ra="yes">Yes, close it</button><button type="button" class="b" data-ra="no">No</button></div>`;
+    el._ra = () => manage('pos', 'close', t.id);   // run by openPop's click handler
+    const y = el.querySelector('[data-ra="no"]'); if (y) y.focus({ preventScroll: true });   // Enter doesn't close a trade by accident
+  }
+  // which TPs of the open REAL trade t may go to price v — the bot's own rules (tradeExecutor.moveTakeProfit): past the
+  // entry, ≥ 0.1% past the price now, not hit yet, and still between its neighbours to come. → { ok: [n…], why }
+  function realTpRoom(t, v, now) {
+    const L = t.direction === 'long', past = (a, b) => (L ? a > b : a < b), f = x => (+x).toFixed(precFor(t.entry));
+    if (!past(v, t.entry)) return { ok: [], why: `A TP goes ${L ? 'above' : 'below'} the entry ${f(t.entry)}. To get out with a smaller loss, move the stop or close.` };
+    if (now > 0 && !past(v, now * (L ? 1.001 : 0.999))) return { ok: [], why: 'That is at the price now. To bank now use Take profit or Close.' };
+    const open = (t.tps || []).filter(x => !x.hit && x.price > 0), ok = [];
+    const reason = k => {   // why TP k can't go to v ('' = it can)
+      const i = open.findIndex(x => x.n === k); if (i < 0) return `TP${k} was already hit.`;
+      const a = open[i - 1], b = open[i + 1];
+      if (a && !past(v, a.price)) return `TP${k} must stay ${L ? 'above' : 'below'} TP${a.n} ${f(a.price)}. Move TP${a.n} first.`;
+      if (b && !past(b.price, v)) return `TP${k} must stay ${L ? 'below' : 'above'} TP${b.n} ${f(b.price)}. Move TP${b.n} first.`;
+      return '';
+    };
+    open.forEach(x => { if (!reason(x.n)) ok.push(x.n); });
+    return { ok, reason, why: ok.length ? '' : open.length ? 'TPs keep their order (TP1 → TP4): move the next TP first.' : 'All TPs are hit.' };
   }
   // ---------- $ on the trade lines: each REAL / practice line's label carries its dollars; hovering the line or its price
   // label shows the breakdown (LV holds { price, html } for every line drawn) ----------
@@ -1599,6 +1644,7 @@
     const t = live ? (R.data.positions || []).find(x => x.symbol === S.sym) : null;
     const o = live && !t ? (R.data.orders || []).find(x => x.symbol === S.sym) : null;
     const pr = v => (+v).toFixed(precFor(t ? t.entry : o ? o.limitPrice : v));
+    const drag = R.web ? '<br><small>Drag the line to move it — you confirm first.</small>' : '';
     if (t) {
       const mv = v => (t.direction === 'long' ? v - t.entry : t.entry - v) / t.entry, banked = t.realized || 0, open = +t.size || 0;
       L.push([t.entry, '#facc15', 2, 0, 'REAL ' + t.direction]);
@@ -1606,23 +1652,23 @@
         `${t.pct != null ? ` (${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%)` : ''}<br>$${open.toFixed(2)} open${banked ? ` · banked ${usd(banked)}` : ''} · $${(+t.margin).toFixed(2)} × ${+t.leverage}x` });
       if (t.stop) {
         const lose = open * mv(t.stop), tot = banked + lose;
-        L.push([t.stop, '#f97316', 2, 0, `REAL stop ${usd(tot)}`]);
+        L.push([t.stop, '#f97316', 2, 0, `REAL stop ${usd(tot)}`, { k: 'stop', id: t.id }]);
         H.push({ price: t.stop, html: `<b>REAL stop ${pr(t.stop)}</b> · ${fromEntry(t.stop, t.entry)}${t.atBreakeven ? ' (at entry)' : ''}<br>` +
-          `If it hits: the $${open.toFixed(2)} open ${lose >= 0 ? 'keeps' : 'loses'} ${sgnB(lose)}` + (banked ? `<br>With the ${usd(banked)} banked: ${sgnB(tot)} in total` : '') + '<br><small>Before fees.</small>' });
+          `If it hits: the $${open.toFixed(2)} open ${lose >= 0 ? 'keeps' : 'loses'} ${sgnB(lose)}` + (banked ? `<br>With the ${usd(banked)} banked: ${sgnB(tot)} in total` : '') + '<br><small>Before fees.</small>' + drag });
       }
       const lad = realLadder(t.direction, t.entry, open, banked, t.tps || [], t.closeFr);
       lad.forEach((x, i) => {
-        L.push([x.price, '#22d3ee', i ? 1 : 2, i ? 2 : 0, `REAL TP${x.n} ${usd(x.total)}`]);
+        L.push([x.price, '#22d3ee', i ? 1 : 2, i ? 2 : 0, `REAL TP${x.n} ${usd(x.total)}`, { k: 'tp', n: x.n, id: t.id }]);
         H.push({ price: x.price, html: `<b>REAL TP${x.n} ${pr(x.price)}</b> · ${fromEntry(x.price, t.entry)}<br>` +
           `Closes ${pctTxt(x.share)} of the open position ($${x.q.toFixed(2)}) → books ${sgnB(x.book)}<br>` +
           `P&amp;L if price gets here ≈ ${sgnB(x.total)}<br><small>${x.left > 1e-9 ? `banked ${usd(x.bank)} + the $${x.left.toFixed(2)} still open at this price` : 'everything closed here'}` +
           `${x.n === 1 ? ' · then the stop moves to entry' : ''} · before fees</small>` +
-          (i === lad.length - 1 && lad.length > 1 ? `<br>All TPs hit: banked ≈ ${sgnB(x.bank)}` : '') });
+          (i === lad.length - 1 && lad.length > 1 ? `<br>All TPs hit: banked ≈ ${sgnB(x.bank)}` : '') + drag });
       });
     } else if (o) {
       const size = (+o.margin || 0) * (+o.leverage || 0), E = +o.limitPrice, mv = v => (o.direction === 'long' ? v - E : E - v) / E;
-      L.push([E, '#facc15', 2, 1, 'REAL limit']);
-      H.push({ price: E, html: `<b>REAL ${esc(o.direction)} limit ${pr(E)}</b> · ${esc(o.symbol)}<br>$${+o.margin} × ${+o.leverage}x = $${size.toFixed(2)} position when it fills` });
+      L.push([E, '#facc15', 2, 1, 'REAL limit', { k: 'limit', id: o.id }]);
+      H.push({ price: E, html: `<b>REAL ${esc(o.direction)} limit ${pr(E)}</b> · ${esc(o.symbol)}<br>$${+o.margin} × ${+o.leverage}x = $${size.toFixed(2)} position when it fills` + drag });
       if (o.stop) {
         const lose = size * mv(o.stop);
         L.push([o.stop, '#f97316', 2, 1, `REAL stop ${usd(lose)}`]);
@@ -1638,15 +1684,19 @@
       }
     }
     LV.real = H.filter(h => h.price > 0);
-    const key = S.sym + JSON.stringify(L);
+    if (R.dragging || R.dragAsk) return;   // a REAL line is being dragged / its move is being confirmed: leave the lines alone
+    const key = S.sym + R.web + JSON.stringify(L);
     if (key === R.lineKey) return;
     R.lines.forEach(l => cs.removePriceLine(l)); R.lines = []; R.lineKey = key;
-    for (const [p, color, width, style, title] of L) if (p > 0) R.lines.push(cs.createPriceLine({ price: p, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }));
+    for (const [p, color, width, style, title, meta] of L) if (p > 0) {
+      const l = cs.createPriceLine({ price: p, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title });
+      R.lines.push(l); if (meta && R.web) realMeta.set(l, Object.assign({ title, from: p }, meta));   // with /webtrade on: drag it to move it
+    }
   }
   function lvHover(e) {   // the line nearest the cursor (within 7 px, over the chart or its price labels)
     const tip = $('sim-lvtip'), items = LV.real.concat(LV.pos);
     LV.last = { clientX: e.clientX, clientY: e.clientY };
-    if (!cs || !items.length) { tip.hidden = true; return; }
+    if (!cs || !items.length || pxPop) { tip.hidden = true; return; }   // a chart popup is open: it has the say
     const cr = $('sim-chart').getBoundingClientRect(), wr = tip.parentElement.getBoundingClientRect(), y = e.clientY - cr.top, x = e.clientX - wr.left;
     let best = null, bd = 7;
     for (const it of items) { const c = cs.priceToCoordinate(it.price); if (c == null) continue; const d = Math.abs(c - y); if (d < bd) { bd = d; best = it; } }
@@ -3182,12 +3232,16 @@
       const l = lvlLines[i]; if (!myLvls.has(l)) continue;
       const c = cs.priceToCoordinate(l.options().price); if (c != null && Math.abs(c - y) <= 5) return { lvl: l };
     }
+    if (R.web && !DR.on && S.mode === 'live' && !R.busy) for (const l of R.lines) {   // the REAL stop / TPs / limit (/webtrade on)
+      const m = realMeta.get(l); if (!m) continue;
+      const c = cs.priceToCoordinate(l.options().price); if (c != null && Math.abs(c - y) <= 5) return { real: l, meta: m };
+    }
     return null;
   }
   function dragHover(e) {   // the cursor says what a press would do; the drawing under it shows thicker
     if (DG.drag) return;
     const el = $('sim-chart'), q = e && chart && cs ? paneXY(e) : null, h = q ? dragHit(q.x, q.y) : null;
-    el.classList.toggle('dr-end', !!(h && h.d && h.end >= 0)); el.classList.toggle('dr-move', !!(h && h.d && h.end < 0)); el.classList.toggle('dr-lvl', !!(h && h.lvl));
+    el.classList.toggle('dr-end', !!(h && h.d && h.end >= 0)); el.classList.toggle('dr-move', !!(h && h.d && h.end < 0)); el.classList.toggle('dr-lvl', !!(h && (h.lvl || h.real)));
     const was = (DG.hit && DG.hit.d) || null; DG.hit = h;
     if (((h && h.d) || null) !== was) drawRedraw();
   }
@@ -3213,6 +3267,7 @@
     e.preventDefault(); e.stopPropagation();
     const dp = drawPoint(e);
     DG.drag = Object.assign(h, { x0: q.x, y0: q.y, t0: xToT(q.x), p0: cs.coordinateToPrice(q.y), pt: dp && dp.pt, pts: h.d ? h.d.pts.map(p => p.slice()) : null, moved: false, id: e.pointerId });
+    if (h.real) { R.dragging = true; if (DG.sel && !DR.on) dragSelect(null); }
     try { $('sim-chart').setPointerCapture(e.pointerId); } catch (er) { /* ignore */ }
     chart.applyOptions({ handleScroll: false, handleScale: false });
     $('sim-chart').classList.add('dr-drag'); closePop();
@@ -3224,6 +3279,10 @@
     g.moved = true;
     const p = cs.coordinateToPrice(y); if (p == null || !isFinite(p) || p <= 0) return;
     if (g.lvl) { g.lvl.applyOptions({ price: p }); return; }
+    if (g.real) {   // only the line moves; nothing is sent until you say Yes in the popup
+      const m = g.meta, name = m.k === 'tp' ? 'REAL TP' + m.n : m.k === 'stop' ? 'REAL stop' : 'REAL limit';
+      g.to = p; g.lx = x; g.real.applyOptions({ price: p, title: `${name} → ${(+p).toFixed(S.prec)}?` }); return;
+    }
     const t = xToT(x); if (t == null || g.t0 == null || g.p0 == null) return;
     if (g.end >= 0) g.d.pts[g.end] = [Math.round(t), +(+p).toPrecision(8)];
     else {
@@ -3238,6 +3297,16 @@
     try { el.releasePointerCapture(g.id); } catch (er) { /* ignore */ }
     el.classList.remove('dr-drag');
     if (chart) chart.applyOptions({ handleScroll: !DR.on, handleScale: !DR.on });
+    if (g.real) {   // a REAL line: dropped → "move it here?" in the chart popup (No / ✕ puts it back); a plain click → the usual popup
+      R.dragging = false;
+      if (g.moved && g.to > 0) {
+        const k = g.meta.k === 'tp' ? 'tp' + g.meta.n : g.meta.k, y = cs.priceToCoordinate(g.to);
+        openPop({ point: { x: g.lx != null ? g.lx : g.x0, y: y != null ? y : g.y0 }, time: null, price: g.to }, k);
+        R.dragAsk = { line: g.real, price: g.meta.from, title: g.meta.title };   // closing the popup without Yes puts it back
+      } else { drawReal(); openPop({ point: { x: g.x0, y: g.y0 }, time: xToT(g.x0), seriesData: new Map() }); }
+      dragHover(e && e.type === 'pointerup' ? e : null);
+      return;
+    }
     if (g.moved && g.d) saveDraw();
     if (DR.on) {   // Draw mode: nothing is picked; a plain click on a drawing draws, as anywhere else (on a point: from that exact point)
       if (!g.moved && g.d && g.pt && !DR.cur && DR.kind !== 'pen') { DR.cur = { k: DR.kind, c: DR.color, pts: [g.end >= 0 ? g.d.pts[g.end].slice() : g.pt] }; drawHint(); }
@@ -3358,7 +3427,14 @@
     const t = S.tool; setTool(null); usePrice(t, p);
   }
   // click the chart with no tool on: the price there (snapped to the candle's high / low / close / open within 9 px)
-  function closePop() { if (pxPop) { pxPop.remove(); pxPop = null; } }
+  function closePop() {
+    if (pxPop) { pxPop.remove(); pxPop = null; }
+    if (R.dragAsk) {   // a dragged REAL line: back where it really is (after Yes, the reload then draws the new level)
+      const d = R.dragAsk; R.dragAsk = null;
+      try { d.line.applyOptions({ price: d.price, title: d.title }); } catch (e) { R.lineKey = ''; }
+      drawReal();
+    }
+  }
   function snapPx(param) {   // the price under the click, snapped to the candle's high / low / close / open within 9 px
     let p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return null;
     let what = 'chart price';
@@ -3372,9 +3448,9 @@
     }
     return { p, what };
   }
-  function openPop(param, realKind) {   // realKind 'stop' | 'limit': straight to "move the REAL … here?"
+  function openPop(param, realKind) {   // realKind 'stop' | 'tp1'…'tp4' | 'limit': straight to "move the REAL … here?"
     closePop();
-    const sp = snapPx(param); if (!sp) return;
+    const sp = param.price != null ? { p: param.price, what: 'dragged line' } : snapPx(param); if (!sp) return;   // a dragged REAL line: its exact price
     const p = sp.p, what = sp.what;
     const v = (+p).toFixed(S.prec), real = realOn(), wrap = $('sim-chart').parentNode;
     // what is already waiting / open on this coin comes first, with its own buttons (real ones need /webtrade on)
@@ -3382,13 +3458,20 @@
     const rP = live ? (R.data.positions || []).find(x => x.symbol === S.sym) : null, rO = live ? (R.data.orders || []).find(x => x.symbol === S.sym) : null;
     const pl = pendHere(), f = x => (x > 0 ? (+x).toFixed(S.prec) : '–');
     const btn = (a, label, color) => `<button type="button" class="b" data-a="${a}"${color ? ` style="border-color:${color};color:${color}"` : ''}>${label}</button>`;
-    const GOLD = '#facc15', ORANGE = '#f97316', RED = '#ef4444', GREEN = '#10b981';
+    const GOLD = '#facc15', ORANGE = '#f97316', RED = '#ef4444', GREEN = '#10b981', CYAN = '#22d3ee';
     let mine = '';
     if (rO) mine += `<div class="wl"><div>📍 <b>REAL ${rO.direction.toUpperCase()} limit ${f(rO.limitPrice)}</b> is waiting</div><div class="m">stop ${f(rO.stop)} · TP1 ${f(rO.tp1)}${rO.price > 0 ? ` · now ${f(rO.price)}` : ''}</div>` +
       (R.web ? `<div class="sim-row">${btn('rlimit', `Move limit to ${v}`, GOLD)}${btn('rcancel', 'Cancel limit', RED)}${btn('rcard', 'Its card ↓')}</div><div class="m">To change its stop or TP1: cancel it and place a new one.</div>`
         : '<div class="m">Read-only here: manage it in Telegram (/orders), or send /webtrade on.</div>') + '</div>';
-    if (rP) mine += `<div class="wl"><div>${rP.direction === 'short' ? '🔴' : '🟢'} <b>REAL ${rP.direction.toUpperCase()} open</b> · stop ${f(rP.stop)}</div>` +
-      (R.web ? `<div class="sim-row">${btn('rstop', `Move stop to ${v}`, ORANGE)}${btn('rcard', 'Its card ↓')}</div>` : '<div class="m">Read-only here: manage it in Telegram (/mpositions).</div>') + '</div>';
+    if (rP) {   // past the price (the profit side): a TP can go here; on the other side: the stop
+      const now = rP.price || price(), up = now > 0 && (rP.direction === 'long' ? +v > now : +v < now), room = up ? realTpRoom(rP, +v, now) : null;
+      const nx = (rP.tps || []).find(x => !x.hit && x.price > 0);
+      mine += `<div class="wl"><div>${rP.direction === 'short' ? '🔴' : '🟢'} <b>REAL ${rP.direction.toUpperCase()} open</b> · stop ${f(rP.stop)}${nx ? ` · TP${nx.n} ${f(nx.price)}` : ''}</div>` +
+        (R.web ? `<div class="sim-row">${up ? room.ok.map(n => btn('rtp' + n, `TP${n} here`, CYAN)).join('') : btn('rstop', `Move stop to ${v}`, ORANGE)}</div>` +
+            (up && room.why ? `<div class="m">${room.why}</div>` : '') +
+            `<div class="sim-row">${btn('rclose', 'Close trade', RED)}${btn('rcard', 'Its card ↓')}</div><div class="m">Or drag its stop / TP lines. You confirm each change.</div>`
+          : '<div class="m">Read-only here: manage it in Telegram (/mpositions), or send /webtrade on.</div>') + '</div>';
+    }
     if (pl) mine += `<div class="wl"><div>⏳ <b>Practice ${pl.side.toUpperCase()} limit ${f(pl.lim)}</b> is waiting</div><div class="m">stop ${f(pl.stop)} · TP1 ${f(pl.tps[0].price)}</div>` +
       `<div class="sim-row">${btn('plim', 'Limit here', GOLD)}${btn('pstop', 'Stop here', ORANGE)}${btn('ptp', 'TP1 here', GREEN)}${btn('pcancel', 'Cancel limit', RED)}</div></div>`;
     const blocked = real && !!realOpenOn(S.sym);   // the Real ticket takes one trade or order per coin
@@ -3402,8 +3485,8 @@
           `<div class="sim-row"><span class="sim-status" style="margin:0">or put it in the ticket as:</span>${real ? '<button type="button" class="b" data-a="limit">Entry (limit)</button>' : ''}` +
           `<button type="button" class="b" data-a="stop">Stop</button><button type="button" class="b" data-a="tp">${real ? 'TP1' : 'Target'}</button></div>`) +
       `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>`;
-    wrap.appendChild(el);
-    if (realKind && R.web && (realKind === 'stop' ? rP : rO)) realAsk(el, realKind, +v);
+    wrap.appendChild(el); $('sim-lvtip').hidden = true;   // the line's hover note would sit under the popup
+    if (realKind && R.web && (realKind === 'limit' ? rO : rP)) realAsk(el, realKind, +v);
     const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
     let x = param.point.x + 12, y = param.point.y - h - 10;
     if (x + w > W - 4) x = Math.max(4, param.point.x - w - 12);
@@ -3419,7 +3502,9 @@
         return;
       }
       if (act === 'rstop' || act === 'rlimit') { e.stopPropagation(); realAsk(el, act === 'rstop' ? 'stop' : 'limit', +v); return; }
+      if (/^rtp[1-4]$/.test(act)) { e.stopPropagation(); realAsk(el, act.slice(1), +v); return; }
       if (act === 'rcancel') { e.stopPropagation(); realCancelAsk(el); return; }
+      if (act === 'rclose') { e.stopPropagation(); realCloseAsk(el); return; }
       closePop();
       if (act === 'rcard') { const c = $('sim-rp-body'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
       if (act === 'plim' || act === 'pstop' || act === 'ptp' || act === 'pcancel') return pendEdit(act, +v);
