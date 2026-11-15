@@ -892,7 +892,7 @@
     if (!cs || S.cur < 0) return;
     const B = bars(S.cur);
     cs.applyOptions({ priceFormat: { type: 'price', precision: S.prec, minMove: Math.pow(10, -S.prec) } });
-    cs.setData(B.map(toC)); vs.setData(B.map(toV));
+    cmp.hold++; try { cs.setData(B.map(toC)); vs.setData(B.map(toV)); } finally { cmp.hold--; }   // see cmpAlign
     S.Bt = B.map(b => b.t); S.Bc = B.map(b => b.c);   // bar times and closes, for the second chart's scroll and crosshair
     S.topHi = null;
     if (fit) {
@@ -914,7 +914,7 @@
   // view-only: the ticket, levels and SMC stay on the main chart. The line above both says where each sits in its last
   // 24 h high–low range.
   const cmp = { on: false, want: '', sym: '', ex: '', prec: 4, base: [], cur: -1, chart: null, cs: null, vs: null, Bt: [], Bc: [],
-    load: 0, poll: null, smc: true, A: null, layer: null, busy: false, pending: '', tf: null, ign: { main: 0, cmp: 0 }, xIgn: { main: 0, cmp: 0 } };
+    load: 0, poll: null, smc: true, A: null, layer: null, busy: false, pending: '', tf: null, ign: { main: 0, cmp: 0 }, xIgn: { main: 0, cmp: 0 }, hold: 0 };
   const atOrBefore = (n, get, t) => { let lo = 0, hi = n - 1, r = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (get(m) <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
   const cmpFmt = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(cmp.prec);
   const cmpName = () => (cmp.ex === 'fx' ? `${cmp.sym.slice(0, 3)}/${cmp.sym.slice(3)}` : cmp.sym);
@@ -999,7 +999,7 @@
     cmp.cur = cmpCut();
     const B = cmp.cur >= 0 ? cmpBars(cmp.cur) : [];
     cmp.cs.applyOptions({ priceFormat: { type: 'price', precision: cmp.prec, minMove: Math.pow(10, -cmp.prec) } });
-    cmp.cs.setData(B.map(toC)); cmp.vs.setData(B.map(toV));
+    cmp.hold++; try { cmp.cs.setData(B.map(toC)); cmp.vs.setData(B.map(toV)); } finally { cmp.hold--; }
     cmp.Bt = B.map(b => b.t); cmp.Bc = B.map(b => b.c);
     if (fit) {
       cmp.chart.priceScale('right').applyOptions({ autoScale: true });
@@ -1098,6 +1098,11 @@
   }
   function cmpAlign(fromCmp) {   // same zoom and the same last candle on both charts
     if (!cmp.on || !cmp.chart || !cmp.Bt.length || !S.Bt.length || ctf() !== S.tf) return;   // its own timeframe: its own zoom and scroll
+    // A chart taking a new set of candles (setData) reports its scroll right away, before its bar times (S.Bt / cmp.Bt)
+    // are updated: aligning then used the old bars (e.g. the second coin's one day before its hourly history came in)
+    // and pushed the other chart far past its last candle. The redraw aligns once its bars are set. (A one-candle
+    // update keeps the old bars lined up, so it still aligns.)
+    if (cmp.hold) return;
     const now = performance.now();
     if (now < (fromCmp ? cmp.ign.cmp : cmp.ign.main)) return;   // the move we just made ourselves
     const src = fromCmp ? cmp.chart : chart, dst = fromCmp ? chart : cmp.chart;
