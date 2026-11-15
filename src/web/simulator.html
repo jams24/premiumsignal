@@ -90,6 +90,11 @@
 .sim-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; padding: 0; cursor: pointer; flex: 0 0 auto; }
 .sim-swatch.on { border-color: #fff; box-shadow: 0 0 0 1px #000 inset; }
 .sim-chart.drawing { cursor: crosshair; touch-action: none; }
+/* a drawing or ✎ level under the pointer can be dragged: the whole thing, or one end of a line / zig-zag */
+.sim-chart.dr-move, .sim-chart.dr-move * { cursor: move !important; }
+.sim-chart.dr-end, .sim-chart.dr-end * { cursor: grab !important; }
+.sim-chart.dr-lvl, .sim-chart.dr-lvl * { cursor: ns-resize !important; }
+.sim-chart.dr-drag, .sim-chart.dr-drag * { cursor: grabbing !important; }
 .sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
 .sim-legend b { color: var(--text); font-weight: 600; }
 /* hover a trade line (REAL or practice entry / stop / TP) or its price label: what it means in dollars */
@@ -378,7 +383,7 @@
           <button type="button" class="b" id="sim-coin-btn" aria-expanded="false" title="Change coin or signal. In full screen the whole loader (signals, time, exchange, big coins) opens here, above the chart.">🪙 Coin</button>
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
-          <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe.">✏️ Draw</button>
+          <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe. Drag a drawing to move it; click it, then Delete, to remove it.">✏️ Draw</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
           <button type="button" class="b" id="sim-info-btn" aria-pressed="false" title="Full screen: show or hide the read-outs around the chart (4H/1H direction, when the coin moves, news, recent coins, the clock line, the second chart's coin box and summary, 24h high). Hidden = a bigger chart.">ⓘ Info</button>
@@ -2087,7 +2092,7 @@
   function setData(r) {
     S.base = r.candles; S.sym = r.symbol.replace(/USDT$/, ''); S.ex = r.exchange;
     S.prec = precFor(r.candles[r.candles.length - 1][4]) + (r.exchange === 'fx' ? 1 : 0); S.marks = [];   // forex: 210.969 / 1.10278 (pipettes)
-    if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = []; DR.cur = null; DR.hover = null;
+    if (cs) { lvlLines.forEach(l => cs.removePriceLine(l)); } lvlLines = []; DR.cur = null; DR.hover = null; DG.sel = null; DG.hit = null;
     if (QK.on) quickEnd();
     const rq = QP.filter(o => o.mode === 'replay');   // live limits keep waiting (in the background when it is another coin)
     if (rq.length) { rq.forEach(pendDrop); setTimeout(() => hint('Your waiting replay limit was cancelled: a replay limit belongs to its own replay.'), 0); }
@@ -3028,13 +3033,18 @@
     g.save(); g.lineJoin = 'round'; g.lineCap = 'round'; g.font = '600 10px "JetBrains Mono", monospace'; g.textBaseline = 'middle';
     for (const d of list) {
       const P = d.pts.map(([t, p]) => [tToX(t), cs.priceToCoordinate(p)]);
-      g.strokeStyle = d.c; g.lineWidth = d.k === 'pen' ? 2 : 1.8; g.beginPath();
+      const sel = d === DG.sel || (DG.drag && DG.drag.d === d), hot = sel || (DG.hit && DG.hit.d === d);   // picked / under the pointer: thicker
+      g.strokeStyle = d.c; g.lineWidth = (d.k === 'pen' ? 2 : 1.8) + (hot ? 1.2 : 0); g.beginPath();
       let on = false;
       for (const [x, y] of P) { if (x == null || y == null) { on = false; continue; } if (!on) { g.moveTo(x, y); on = true; } else g.lineTo(x, y); }
       g.stroke();
       if (d.k === 'pen') continue;
       g.fillStyle = d.c;
-      P.forEach(([x, y]) => { if (x != null && y != null) { g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill(); } });
+      P.forEach(([x, y]) => {   // its points; picked: a ring you can grab to move that end
+        if (x == null || y == null) return;
+        g.beginPath(); g.arc(x, y, sel ? 4.5 : 2.6, 0, Math.PI * 2);
+        if (sel) { g.fillStyle = '#131722'; g.fill(); g.lineWidth = 1.6; g.stroke(); g.fillStyle = d.c; } else g.fill();
+      });
       for (let i = 1; i < P.length; i++) {   // each leg's move in %, at its end
         const [x, y] = P[i]; if (x == null || y == null) continue;
         const ch = (d.pts[i][1] / d.pts[i - 1][1] - 1) * 100, txt = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`, w = g.measureText(txt).width + 8, up = d.pts[i][1] >= d.pts[i - 1][1];
@@ -3051,11 +3061,12 @@
     $('sim-draw-hint').textContent = !DR.on ? '' :
       (DR.kind === 'pen' ? 'Pencil: press and drag on the chart.' : DR.kind === 'zig' ? (DR.cur ? `Zig-zag: ${DR.cur.pts.length} point${DR.cur.pts.length > 1 ? 's' : ''} — click the next turn; double-click, Enter or ✓ Finish to end it, Esc to drop it.` : 'Zig-zag: click each turn (each leg shows its % move); double-click, Enter or ✓ Finish to end it.')
         : (DR.cur ? 'Line: click where it ends.' : 'Line: click where it starts, then where it ends.')) +
-      ` The chart doesn't scroll while drawing — ✓ Done when you're finished. ${n ? `${n} drawing${n > 1 ? 's' : ''} on ${S.sym}.` : ''}`;
+      ` The chart doesn't scroll while drawing — ✓ Done when you're finished. ${n ? `${n} drawing${n > 1 ? 's' : ''} on ${S.sym}. Drag one (or a line's end) to move it${DR.kind === 'pen' ? ' after ✓ Done' : ''}.` : ''}`;
     $('sim-draw-done').textContent = DR.cur && DR.cur.k !== 'pen' ? '✓ Finish line' : '✓ Done';
     $('sim-draw-undo').disabled = !n && !DR.cur;
   }
   function drawMode(on) {
+    if (DG.sel) dragSelect(null);
     DR.on = on; DR.cur = null; DR.hover = null; DR.down = false;
     if (on && S.tool) setTool(null);
     if (on) closePop();
@@ -3069,18 +3080,108 @@
     if (d && S.sym && d.pts.length >= 2) { (DR.all[S.sym] = DR.all[S.sym] || []).push(d); if (DR.all[S.sym].length > 80) DR.all[S.sym].shift(); saveDraw(); }
     drawHint(); drawRedraw();
   }
-  function drawPoint(e) {   // the pointer → [time, price] and pixel, or null outside the candle area
+  function paneXY(e) {   // the pointer over the candle area (not the price or time axis), or null
     const el = $('sim-chart'), r = el.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     const ts = chart.timeScale(), pw = ts.width(), ph = el.clientHeight - ts.height();
-    if (x < 0 || y < 0 || x > pw || y > ph) return null;
-    const t = xToT(x), p = cs.coordinateToPrice(y);
+    return x < 0 || y < 0 || x > pw || y > ph ? null : { x, y };
+  }
+  function drawPoint(e) {   // the pointer → [time, price] and pixel, or null outside the candle area
+    const q = paneXY(e); if (!q) return null;
+    const t = xToT(q.x), p = cs.coordinateToPrice(q.y);
     if (t == null || p == null || !isFinite(p)) return null;
-    return { pt: [Math.round(t), +(+p).toPrecision(8)], x, y };
+    return { pt: [Math.round(t), +(+p).toPrecision(8)], x: q.x, y: q.y };
+  }
+  // ---------- move a drawing or a ✎ level ----------
+  // Press on a saved drawing and drag: the whole drawing moves (same candles shift, same price shift); press on a line's
+  // or zig-zag's point: only that end moves. ✎ levels drag up / down. A click without moving picks it (Delete removes it,
+  // Esc lets go). Works with Draw off too; in Draw mode a plain click still draws (a new line can start on an old one's end)
+  // and the Pencil always draws. The chart doesn't scroll while you drag.
+  const DG = { hit: null, drag: null, sel: null, end: 0 };   // under the pointer, being dragged, picked, when the last drag ended
+  const myLvls = new WeakSet();   // ✎ levels you drew (not the quiz's "your pick" line)
+  const segDist = (x, y, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy, u = L ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L)) : 0;
+    return Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy);
+  };
+  function dragHit(x, y) {   // the drawing (or one of its points) or level at this pixel, topmost first
+    if (!cs || !chart || S.tool || (DR.on && (DR.cur || DR.kind === 'pen'))) return null;
+    const list = myDrawings(), ok = q => q[0] != null && q[1] != null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const d = list[i], P = d.pts.map(([t, p]) => [tToX(t), cs.priceToCoordinate(p)]);
+      if (d.k !== 'pen') for (let j = 0; j < P.length; j++) if (ok(P[j]) && Math.hypot(x - P[j][0], y - P[j][1]) <= 8) return { d, end: j };
+      for (let j = 1; j < P.length; j++) if (ok(P[j - 1]) && ok(P[j]) && segDist(x, y, P[j - 1], P[j]) <= 6) return { d, end: -1 };
+    }
+    for (let i = lvlLines.length - 1; i >= 0; i--) {
+      const l = lvlLines[i]; if (!myLvls.has(l)) continue;
+      const c = cs.priceToCoordinate(l.options().price); if (c != null && Math.abs(c - y) <= 5) return { lvl: l };
+    }
+    return null;
+  }
+  function dragHover(e) {   // the cursor says what a press would do; the drawing under it shows thicker
+    if (DG.drag) return;
+    const el = $('sim-chart'), q = e && chart && cs ? paneXY(e) : null, h = q ? dragHit(q.x, q.y) : null;
+    el.classList.toggle('dr-end', !!(h && h.d && h.end >= 0)); el.classList.toggle('dr-move', !!(h && h.d && h.end < 0)); el.classList.toggle('dr-lvl', !!(h && h.lvl));
+    const was = (DG.hit && DG.hit.d) || null; DG.hit = h;
+    if (((h && h.d) || null) !== was) drawRedraw();
+  }
+  function dragSelect(x) {   // pick a drawing / level (null lets go)
+    const old = DG.sel; DG.sel = x || null;
+    if (old && old !== DG.sel && !old.pts && lvlLines.includes(old)) old.applyOptions({ lineWidth: 1 });
+    if (DG.sel && !DG.sel.pts) DG.sel.applyOptions({ lineWidth: 2 });
+    if (DG.sel) {
+      const what = !DG.sel.pts ? 'Level' : DG.sel.k === 'pen' ? 'Pencil drawing' : DG.sel.k === 'zig' ? 'Zig-zag' : 'Line';
+      hint(`${what} picked: drag it to move it${DG.sel.pts && DG.sel.k !== 'pen' ? ', or drag a ring to move that end' : ''}. Delete removes it, Esc lets go.`);
+    } else if (old && !S.tool && !DR.on) setTool(null);   // the usual tip back
+    drawRedraw();
+  }
+  function dragDelete() {
+    const x = DG.sel; if (!x) return;
+    if (x.pts) { const l = (DR.all[S.sym] || []).filter(d => d !== x); if (l.length) DR.all[S.sym] = l; else delete DR.all[S.sym]; saveDraw(); }
+    else { if (cs) cs.removePriceLine(x); lvlLines = lvlLines.filter(l => l !== x); }
+    DG.hit = null; dragSelect(null); dragHover(null);
+  }
+  function dragStart(e) {   // true: this press grabbed a drawing / level (the chart doesn't get it)
+    const q = paneXY(e), h = q && dragHit(q.x, q.y);
+    if (!h) { if (DG.sel && !DR.on) dragSelect(null); return false; }
+    e.preventDefault(); e.stopPropagation();
+    const dp = drawPoint(e);
+    DG.drag = Object.assign(h, { x0: q.x, y0: q.y, t0: xToT(q.x), p0: cs.coordinateToPrice(q.y), pt: dp && dp.pt, pts: h.d ? h.d.pts.map(p => p.slice()) : null, moved: false, id: e.pointerId });
+    try { $('sim-chart').setPointerCapture(e.pointerId); } catch (er) { /* ignore */ }
+    chart.applyOptions({ handleScroll: false, handleScale: false });
+    $('sim-chart').classList.add('dr-drag'); closePop();
+    return true;
+  }
+  function dragMove(e) {
+    const g = DG.drag, r = $('sim-chart').getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (!g.moved && Math.hypot(x - g.x0, y - g.y0) < 3) return;   // a click, so far
+    g.moved = true;
+    const p = cs.coordinateToPrice(y); if (p == null || !isFinite(p) || p <= 0) return;
+    if (g.lvl) { g.lvl.applyOptions({ price: p }); return; }
+    const t = xToT(x); if (t == null || g.t0 == null || g.p0 == null) return;
+    if (g.end >= 0) g.d.pts[g.end] = [Math.round(t), +(+p).toPrecision(8)];
+    else {
+      const dt = t - g.t0, dpx = p - g.p0, pts = g.pts.map(([a, b]) => [Math.round(a + dt), +(b + dpx).toPrecision(8)]);
+      if (pts.some(v => !(v[1] > 0))) return;
+      g.d.pts = pts;
+    }
+    drawRedraw();
+  }
+  function dragEnd(e) {
+    const g = DG.drag, el = $('sim-chart'); DG.drag = null; DG.end = Date.now();
+    try { el.releasePointerCapture(g.id); } catch (er) { /* ignore */ }
+    el.classList.remove('dr-drag');
+    if (chart) chart.applyOptions({ handleScroll: !DR.on, handleScale: !DR.on });
+    if (g.moved && g.d) saveDraw();
+    if (DR.on) {   // Draw mode: nothing is picked; a plain click on a drawing draws, as anywhere else (on a point: from that exact point)
+      if (!g.moved && g.d && g.pt && !DR.cur && DR.kind !== 'pen') { DR.cur = { k: DR.kind, c: DR.color, pts: [g.end >= 0 ? g.d.pts[g.end].slice() : g.pt] }; drawHint(); }
+    } else dragSelect(g.d || g.lvl);
+    dragHover(e && e.type === 'pointerup' ? e : null); drawRedraw();
   }
   (() => {
     const el = $('sim-chart');
     el.addEventListener('pointerdown', e => {
-      if (!DR.on || !chart || (e.button != null && e.button !== 0)) return;
+      if (!chart || (e.button != null && e.button !== 0)) return;
+      if (!DR.cur && dragStart(e)) return;
+      if (!DR.on) return;
       const q = drawPoint(e); if (!q) return;
       e.preventDefault();
       if (DR.kind === 'pen') {
@@ -3097,6 +3198,8 @@
       drawHint(); drawRedraw();
     }, true);
     el.addEventListener('pointermove', e => {
+      if (DG.drag) { if (e.pointerId === DG.drag.id) dragMove(e); return; }
+      if (!e.buttons) dragHover(e);   // not while the chart is being panned
       if (!DR.on || !DR.cur) return;
       const q = drawPoint(e); if (!q) return;
       if (DR.cur.k === 'pen') {
@@ -3106,11 +3209,19 @@
       } else DR.hover = q.pt;
       drawRedraw();
     }, true);
-    const up = () => { if (DR.on && DR.cur && DR.cur.k === 'pen' && DR.down) drawFinish(); };
+    const up = e => {
+      if (DG.drag) { if (e.pointerId === DG.drag.id) dragEnd(e); return; }
+      if (DR.on && DR.cur && DR.cur.k === 'pen' && DR.down) drawFinish();
+    };
     el.addEventListener('pointerup', up, true); el.addEventListener('pointercancel', up, true);
     el.addEventListener('dblclick', e => { if (DR.on && DR.cur && DR.cur.k === 'zig') { e.preventDefault(); drawFinish(); } }, true);
-    el.addEventListener('pointerleave', () => { if (DR.hover) { DR.hover = null; drawRedraw(); } });
+    el.addEventListener('pointerleave', () => { if (DR.hover) { DR.hover = null; drawRedraw(); } if (!DG.drag) dragHover(null); });
   })();
+  document.addEventListener('keydown', e => {   // a picked drawing / level: Delete (or Backspace) removes it, Esc lets go
+    if (!DG.sel || DR.on || e.metaKey || e.ctrlKey || e.altKey || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === 'Escape') { e.preventDefault(); dragSelect(null); }   // preventDefault: full screen stays
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); dragDelete(); }
+  });
   document.addEventListener('keydown', e => {
     if (!DR.on || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
     if (e.key === 'Enter' && DR.cur) { e.preventDefault(); drawFinish(); }
@@ -3140,6 +3251,7 @@
 
   function setTool(t) {
     if (t && DR.on) drawMode(false);
+    if (t && DG.sel) { const s = DG.sel; DG.sel = null; if (!s.pts && lvlLines.includes(s)) s.applyOptions({ lineWidth: 1 }); drawRedraw(); }   // a tool lets go of a picked drawing / level
     const was = S.tool;
     S.tool = S.tool === t ? null : t;
     if (QK.on && QK.stage === 'pick' && (was === 'qstop' || was === 'qtp') && S.tool !== 'qstop' && S.tool !== 'qtp') quickEnd();   // another tool: the quick order is dropped
@@ -3149,7 +3261,7 @@
     $('sim-tool-limit').classList.toggle('on', S.tool === 'limit');
     if (S.tool === 'qstop' || S.tool === 'qtp') { $('sim-hint').classList.remove('tip'); hint(S.tool === 'qstop' ? `⚡ ① Entry ${fmt(QK.lim)} ✓ · ② click your stop on the chart (below the entry = long, above = short). Esc cancels.` : `⚡ ① Entry ${fmt(QK.lim)} ✓ · ② stop ${fmt(QK.stop)} ✓ (${quickSide()}) · ③ click your TP1 on the chart. Esc cancels.`); return; }
     if (S.tool === 'rstop' || S.tool === 'rlimit') { hint(`Click the chart where the REAL ${S.tool === 'rstop' ? 'stop' : 'limit'} goes. You confirm it next.`); $('sim-hint').classList.remove('tip'); return; }
-    hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge).' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
+    hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge). Drag it later to move it.' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
       'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
     $('sim-hint').classList.toggle('tip', !S.tool);
     $('sim-hint').classList.toggle('static', !S.tool);   // the plain tip: full screen folds it away (hint() clears this)
@@ -3158,7 +3270,7 @@
   // trade's stop (practice only; the real ticket never touches a position).
   function usePrice(kind, p) {
     const real = realOn(), v = (+p).toFixed(S.prec);
-    if (kind === 'line') lvlLines.push(cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }));
+    if (kind === 'line') { const l = cs.createPriceLine({ price: p, color: '#60a5fa', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: '' }); lvlLines.push(l); myLvls.add(l); }   // drag it to move it
     if (kind === 'stop') { if (S.pos && !real) moveStop(S.pos, p); else $('sim-stop').value = v; }
     if (kind === 'tp') { if (real) $('sim-r-tp').value = 'price'; else $('sim-plan').value = 'price'; $('sim-tp').value = v; }
     if (kind === 'limit') { R.entry = 'limit'; $('sim-r-limit').value = v; }
@@ -3168,6 +3280,7 @@
   }
   function onChartClick(param) {
     if (!param || !param.point || DR.on) return;   // drawing: the pointer handlers below own the clicks
+    if (Date.now() - DG.end < 400) return;   // the end of a drag (or a click that picked a drawing / level)
     if (S.tool === 'qstop' || S.tool === 'qtp') { const sp = snapPx(param); if (sp) quickPick(S.tool, sp.p); return; }
     if (QK.on && QK.stage === 'ask') quickEnd();   // a click elsewhere drops the unconfirmed quick order
     if (!S.tool) { if (S.cur >= 0) openPop(param); return; }
@@ -3770,7 +3883,7 @@
   document.addEventListener('pointerdown', e => { if (pxPop && !pxPop.contains(e.target)) closePop(); }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && pxPop) closePop(); });
   $('sim-chart').addEventListener('wheel', closePop, { passive: true });
-  $('sim-clear-lines').onclick = () => { lvlLines.forEach(l => cs && cs.removePriceLine(l)); lvlLines = []; };
+  $('sim-clear-lines').onclick = () => { lvlLines.forEach(l => cs && cs.removePriceLine(l)); lvlLines = []; if (DG.sel && !DG.sel.pts) dragSelect(null); };
   $('sim-showtop').onchange = () => { S.topHi = undefined; refresh(); };
   $('sim-play').onclick = togglePlay;
   document.querySelectorAll('#sim-replay-bar [data-step]').forEach(b => b.onclick = () => step(+b.dataset.step));
