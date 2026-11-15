@@ -2115,6 +2115,9 @@ class TelegramBot {
       const live = [...this.pendingLimitOrders.values()].filter(o => o.mode === 'live');
       const prices = await positionPrices([...trades, ...live.map(o => ({ exchange: o.exchangeId, symbol: o.symbol }))]);
       const num = (v) => (v == null || !isFinite(parseFloat(v)) ? null : parseFloat(v));
+      // share of what is still open each TP closes (checkOpenTrades / placeTPOrders): TP1 tp1ClosePct, TP2 tp2ClosePct,
+      // TP3 half, TP4 the rest — so the chart can show each TP line in dollars
+      const closeFr = (te) => [te?.tp1ClosePct ?? 0.33, te?.tp2ClosePct ?? 0.5, 0.5, 1];
       const positions = trades.map((t) => {
         const price = prices.get(`${t.exchange}:${t.symbol}`);
         const p = positionStats(t, price);
@@ -2124,7 +2127,7 @@ class TelegramBot {
           kind: c.autoPump ? 'auto pump' : c.manual ? 'manual' : t.source || 'bot',
           entry: p.entry, price: price || null, pct: p.pct, pnl: p.pct == null ? null : p.total, realized: p.realized,
           stop: num(t.stop_loss), tps: p.tps, size: p.size, margin: p.margin, leverage: p.lev,
-          atBreakeven: p.atBreakeven, opened: new Date(t.created_at).getTime(),
+          atBreakeven: p.atBreakeven, opened: new Date(t.created_at).getTime(), closeFr: closeFr(executorForSource(t.source) || mtExec()),
         };
       });
       const te = mtExec();
@@ -2138,6 +2141,7 @@ class TelegramBot {
           id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
           stop: o.stopLoss, tp1: o.tp1, margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
           slFixed: !!o.slFixed,   // a typed stop stays put when the dashboard moves the limit
+          closeFr: closeFr(te),
           price: prices.get(`${o.exchangeId}:${o.symbol}`) || null, ...(exchange ? { onExchange: exchange } : {}),
         };
       }));

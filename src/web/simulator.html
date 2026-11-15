@@ -92,6 +92,12 @@
 .sim-chart.drawing { cursor: crosshair; touch-action: none; }
 .sim-legend { position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px); background: rgba(19,23,34,0.88); border-radius: 4px; padding: 3px 7px; font: 400 11px/1.4 var(--font-mono); color: var(--muted); }
 .sim-legend b { color: var(--text); font-weight: 600; }
+/* hover a trade line (REAL or practice entry / stop / TP) or its price label: what it means in dollars */
+.sim-lvtip { position: absolute; z-index: 4; pointer-events: none; max-width: min(340px, calc(100% - 8px)); background: rgba(19,23,34,0.95); border: 1px solid #334155;
+  border-radius: 6px; padding: 6px 9px; font: 400 11.5px/1.5 var(--font-mono); color: var(--muted); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+.sim-lvtip b { color: var(--text); font-weight: 600; }
+.sim-lvtip b.pos { color: #10b981; } .sim-lvtip b.neg { color: #ef4444; }
+.sim-lvtip small { color: var(--muted); opacity: .85; }
 .sim-posblk { display: grid; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
 .sim-posblk:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
 .sim-poshead { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font: 600 13px/1.3 var(--font-mono); }
@@ -419,7 +425,7 @@
       </div>
       <div class="sim-cmpsum" id="sim-cmp-sum" aria-live="polite" hidden></div>
       <div class="sim-charts" id="sim-charts">
-        <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div></div>
+        <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div><div class="sim-lvtip" id="sim-lvtip" hidden></div></div>
         <div class="sim-chartwrap" id="sim-cmp-wrap" hidden><div class="sim-chart" id="sim-cmp-chart"></div><div class="sim-legend" id="sim-cmp-legend"></div></div>
       </div>
       <div class="sim-hint" id="sim-hint"></div>
@@ -596,6 +602,9 @@
   const liveOpen = () => S.open.filter(p => p.mode === 'live'), MAX_LIVE = 5;
   const wait = ms => new Promise(r => setTimeout(r, ms));
   let chart = null, cs = null, vs = null, started = false, topLine = null, posLines = [], lvlLines = [];
+  const LV = { real: [], pos: [] };   // hover text of the trade lines on the chart (drawReal / drawPos, shown by lvHover)
+  const sgnB = v => `<b class="${v >= 0 ? 'pos' : 'neg'}">${usd(v)}</b>`;
+  const fromEntry = (v, e) => `${(Math.abs(v / e - 1) * 100).toFixed(2)}% from entry`;
   // Real ticket (Live mode): fills in the Telegram /long · /short panel; R.data = read-only open live positions
   const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '', web: false, conf: null, ui: null, msg: null, pick: null };
   // ⚡ quick limit drawn on the chart (see "quick limit from the chart" below); while it is being drawn only its lines show
@@ -1074,7 +1083,7 @@
     if (hi != null) topLine = cs.createPriceLine({ price: hi, color: 'rgba(245,158,11,0.75)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '24h high' });
   }
   function drawPos() {
-    posLines.forEach(l => cs.removePriceLine(l)); posLines = [];
+    posLines.forEach(l => cs.removePriceLine(l)); posLines = []; LV.pos = [];
     const line = (p, color, style, title, label = true) => posLines.push(cs.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: label, title }));
     const p = S.pos, ps = chart.priceScale('right');
     if (ps.options().autoScale) ps.applyOptions({ autoScale: true });   // re-fit so the stop / target you just set come into view
@@ -1089,10 +1098,33 @@
       return;
     }
     if (p) {
+      // dollars as the practice account books them: each close pays its fee (fill), TPs close tp.frac of what is left
+      const f = v => fmtOf(p, v), fee = p.fee != null ? p.fee : FEE, open = p.rem * p.size;
+      const at = (q, v) => q * p.qty * ((p.side === 'short' ? p.entry - v : v - p.entry) - v * fee);   // closing share q at v, after its fee
+      const hov = (price, html) => LV.pos.push({ price, html });
       line(p.entry, '#e5e7eb', 0, p.side === 'short' ? 'Short' : 'Long');
-      line(p.stop, '#ef4444', 2, p.stop === p.entry ? 'Stop (entry)' : 'Stop');
-      p.tps.forEach((tp, i) => { if (!tp.hit) line(tp.price, '#10b981', 2, p.tps.length > 1 ? 'TP' + (i + 1) : 'Target'); });
-      if (p.liq) line(p.liq, '#a855f7', 1, 'Liquidation');
+      const now = pxOf(p), pnl = now != null ? p.realized + unreal(p, now) : null;
+      hov(p.entry, `<b>Practice ${p.side} ${esc(p.sym)}</b> · entry ${f(p.entry)}<br>Now ${now != null ? f(now) : '–'} · P&amp;L ${pnl != null ? sgnB(pnl) : '–'}<br>` +
+        `$${open.toFixed(2)} open${p.margin ? ` · ${money(p.margin)} × ${p.lev}` : ''}<br><small>After fees.</small>`);
+      const stopTot = p.realized + at(p.rem, p.stop), isBe = p.stop === p.entry;
+      line(p.stop, '#ef4444', 2, `${isBe ? 'Stop (entry)' : 'Stop'} ${usd(stopTot)}`);
+      hov(p.stop, `<b>Stop ${f(p.stop)}</b> · ${fromEntry(p.stop, p.entry)}${isBe ? ' (at entry)' : ''}<br>If it hits: ${sgnB(stopTot)} in total` +
+        `${p.tps.some(x => x.hit) ? ` (incl. ${usd(p.realized)} banked)` : ''}<br><small>After fees.</small>`);
+      let left = p.rem, bank = p.realized;
+      const todo = p.tps.map((tp, i) => ({ tp, i })).filter(x => !x.tp.hit);
+      todo.forEach(({ tp, i }, k) => {
+        const last = k === todo.length - 1, q = last ? left : left * tp.frac, book = at(q, tp.price);
+        bank += book; left -= q;
+        const total = bank + at(left, tp.price), name = p.tps.length > 1 ? 'TP' + (i + 1) : 'Target';
+        line(tp.price, '#10b981', 2, `${name} ${usd(total)}`);
+        hov(tp.price, `<b>${name} ${f(tp.price)}</b> · ${fromEntry(tp.price, p.entry)}<br>Closes ${pctTxt(q / (p.rem || 1))} of the open position ($${(q * p.size).toFixed(2)}) → books ${sgnB(book)}<br>` +
+          `P&amp;L if price gets here ≈ ${sgnB(total)}<br><small>${left > 1e-9 ? `the rest still open at this price` : 'everything closed here'}` +
+          `${i === 0 && p.be && p.tps.length > 1 ? ' · then the stop moves to entry' : ''} · after fees</small>`);
+      });
+      if (p.liq) {
+        line(p.liq, '#a855f7', 1, 'Liquidation');
+        hov(p.liq, `<b>Liquidation ${f(p.liq)}</b><br>Takes the margin left in the trade: ${sgnB(p.realized - p.rem * (p.margin || 0))} in total<br><small>${(p.side === 'short' ? p.liq < p.stop : p.liq > p.stop) ? 'Comes BEFORE your stop.' : 'Past your stop.'}</small>`);
+      }
       return;
     }
     const px = price(); if (px == null || qk) return;
@@ -1530,25 +1562,91 @@
     el._ra = () => manage('ord', 'cancel', o.id);   // run by openPop's click handler
     const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
   }
+  // ---------- $ on the trade lines: each REAL / practice line's label carries its dollars; hovering the line or its price
+  // label shows the breakdown (LV holds { price, html } for every line drawn) ----------
+  // the bot's TP ladder on a REAL trade: each TP closes a share of what is still open (closeFr from its executor: TP1, TP2,
+  // TP3 half, TP4 the rest); total = banked so far + that TP + the rest marked at that price. Before fees, like the card.
+  function realLadder(dir, entry, size, realized, tps, fr) {
+    const mv = v => (dir === 'long' ? v - entry : entry - v) / entry;
+    fr = Array.isArray(fr) && fr.length ? fr : [0.33, 0.5, 0.5, 1];
+    let left = size, bank = realized || 0; const out = [];
+    for (const tp of tps) {
+      if (tp.hit || !(tp.price > 0) || left <= 1e-9) continue;
+      const f = Math.min(1, fr[tp.n - 1] != null ? fr[tp.n - 1] : 1), q = tp.n >= 4 ? left : left * f, book = q * mv(tp.price);
+      bank += book; left -= q;
+      out.push({ n: tp.n, price: tp.price, q, share: size > 0 ? q / size : 0, book, bank, left, total: bank + left * mv(tp.price) });
+    }
+    return out;
+  }
   function drawReal() {   // the real trade's levels on its own chart (solid, brighter than the simulated ones)
     if (!cs) return;
-    const live = S.mode === 'live' && R.data, L = [];
+    const live = S.mode === 'live' && R.data, L = [], H = [];
     const t = live ? (R.data.positions || []).find(x => x.symbol === S.sym) : null;
     const o = live && !t ? (R.data.orders || []).find(x => x.symbol === S.sym) : null;
+    const pr = v => (+v).toFixed(precFor(t ? t.entry : o ? o.limitPrice : v));
     if (t) {
-      L.push([t.entry, '#facc15', 0, 'REAL ' + t.direction]);
-      if (t.stop) L.push([t.stop, '#f97316', 0, 'REAL stop']);
-      const nx = (t.tps || []).find(x => !x.hit); if (nx) L.push([nx.price, '#22d3ee', 0, 'REAL TP' + nx.n]);
+      const mv = v => (t.direction === 'long' ? v - t.entry : t.entry - v) / t.entry, banked = t.realized || 0, open = +t.size || 0;
+      L.push([t.entry, '#facc15', 2, 0, 'REAL ' + t.direction]);
+      H.push({ price: t.entry, html: `<b>REAL ${esc(t.direction)} ${esc(t.symbol)}</b> · entry ${pr(t.entry)}<br>Now ${t.price ? pr(t.price) : '–'} · P&amp;L ${t.pnl == null ? '–' : sgnB(t.pnl)}` +
+        `${t.pct != null ? ` (${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%)` : ''}<br>$${open.toFixed(2)} open${banked ? ` · banked ${usd(banked)}` : ''} · $${(+t.margin).toFixed(2)} × ${+t.leverage}x` });
+      if (t.stop) {
+        const lose = open * mv(t.stop), tot = banked + lose;
+        L.push([t.stop, '#f97316', 2, 0, `REAL stop ${usd(tot)}`]);
+        H.push({ price: t.stop, html: `<b>REAL stop ${pr(t.stop)}</b> · ${fromEntry(t.stop, t.entry)}${t.atBreakeven ? ' (at entry)' : ''}<br>` +
+          `If it hits: the $${open.toFixed(2)} open ${lose >= 0 ? 'keeps' : 'loses'} ${sgnB(lose)}` + (banked ? `<br>With the ${usd(banked)} banked: ${sgnB(tot)} in total` : '') + '<br><small>Before fees.</small>' });
+      }
+      const lad = realLadder(t.direction, t.entry, open, banked, t.tps || [], t.closeFr);
+      lad.forEach((x, i) => {
+        L.push([x.price, '#22d3ee', i ? 1 : 2, i ? 2 : 0, `REAL TP${x.n} ${usd(x.total)}`]);
+        H.push({ price: x.price, html: `<b>REAL TP${x.n} ${pr(x.price)}</b> · ${fromEntry(x.price, t.entry)}<br>` +
+          `Closes ${pctTxt(x.share)} of the open position ($${x.q.toFixed(2)}) → books ${sgnB(x.book)}<br>` +
+          `P&amp;L if price gets here ≈ ${sgnB(x.total)}<br><small>${x.left > 1e-9 ? `banked ${usd(x.bank)} + the $${x.left.toFixed(2)} still open at this price` : 'everything closed here'}` +
+          `${x.n === 1 ? ' · then the stop moves to entry' : ''} · before fees</small>` +
+          (i === lad.length - 1 && lad.length > 1 ? `<br>All TPs hit: banked ≈ ${sgnB(x.bank)}` : '') });
+      });
     } else if (o) {
-      L.push([o.limitPrice, '#facc15', 1, 'REAL limit']);
-      if (o.stop) L.push([o.stop, '#f97316', 1, 'REAL stop']);
-      if (o.tp1) L.push([o.tp1, '#22d3ee', 1, 'REAL TP1']);
+      const size = (+o.margin || 0) * (+o.leverage || 0), E = +o.limitPrice, mv = v => (o.direction === 'long' ? v - E : E - v) / E;
+      L.push([E, '#facc15', 2, 1, 'REAL limit']);
+      H.push({ price: E, html: `<b>REAL ${esc(o.direction)} limit ${pr(E)}</b> · ${esc(o.symbol)}<br>$${+o.margin} × ${+o.leverage}x = $${size.toFixed(2)} position when it fills` });
+      if (o.stop) {
+        const lose = size * mv(o.stop);
+        L.push([o.stop, '#f97316', 2, 1, `REAL stop ${usd(lose)}`]);
+        H.push({ price: o.stop, html: `<b>REAL stop ${pr(o.stop)}</b> · ${fromEntry(o.stop, E)}<br>If it fills at the limit and the stop hits: ${sgnB(lose)}<br><small>Before fees.</small>` });
+      }
+      if (o.tp1) {
+        const x = realLadder(o.direction, E, size, 0, [{ n: 1, price: +o.tp1, hit: false }], o.closeFr)[0];
+        if (x) {
+          L.push([o.tp1, '#22d3ee', 2, 1, `REAL TP1 ${usd(x.total)}`]);
+          H.push({ price: +o.tp1, html: `<b>REAL TP1 ${pr(o.tp1)}</b> · ${fromEntry(o.tp1, E)}<br>If it fills at the limit: TP1 closes ${pctTxt(x.share)} ($${x.q.toFixed(2)}) → books ${sgnB(x.book)}<br>` +
+            `P&amp;L if price gets here ≈ ${sgnB(x.total)}<br><small>then the stop moves to entry · before fees</small>` });
+        }
+      }
     }
+    LV.real = H.filter(h => h.price > 0);
     const key = S.sym + JSON.stringify(L);
     if (key === R.lineKey) return;
     R.lines.forEach(l => cs.removePriceLine(l)); R.lines = []; R.lineKey = key;
-    for (const [p, color, style, title] of L) if (p > 0) R.lines.push(cs.createPriceLine({ price: p, color, lineWidth: 2, lineStyle: style, axisLabelVisible: true, title }));
+    for (const [p, color, width, style, title] of L) if (p > 0) R.lines.push(cs.createPriceLine({ price: p, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }));
   }
+  function lvHover(e) {   // the line nearest the cursor (within 7 px, over the chart or its price labels)
+    const tip = $('sim-lvtip'), items = LV.real.concat(LV.pos);
+    LV.last = { clientX: e.clientX, clientY: e.clientY };
+    if (!cs || !items.length) { tip.hidden = true; return; }
+    const cr = $('sim-chart').getBoundingClientRect(), wr = tip.parentElement.getBoundingClientRect(), y = e.clientY - cr.top, x = e.clientX - wr.left;
+    let best = null, bd = 7;
+    for (const it of items) { const c = cs.priceToCoordinate(it.price); if (c == null) continue; const d = Math.abs(c - y); if (d < bd) { bd = d; best = it; } }
+    if (!best) { tip.hidden = true; return; }
+    if (tip._html !== best.html) { tip.innerHTML = best.html; tip._html = best.html; }
+    tip.hidden = false;
+    const w = tip.offsetWidth, h = tip.offsetHeight, W = wr.width, ty = y + (cr.top - wr.top);
+    tip.style.left = Math.max(4, Math.min(W - w - 4, x + 16 + w > W ? x - w - 16 : x + 16)) + 'px';
+    tip.style.top = Math.max(4, ty - h - 12 < 4 ? ty + 16 : ty - h - 12) + 'px';
+  }
+  $('sim-chart').addEventListener('mousemove', lvHover);
+  $('sim-chart').addEventListener('mouseleave', () => { $('sim-lvtip').hidden = true; LV.last = null; });
+  // scrolling / zooming moves the lines under a still mouse too
+  const lvAgain = () => { if (LV.last) requestAnimationFrame(() => { if (LV.last) lvHover(LV.last); }); };
+  $('sim-chart').addEventListener('wheel', lvAgain, { passive: true });
 
   // ---------- simulated position ----------
   function enter() {
@@ -1958,6 +2056,7 @@
     $('sim-to-result').disabled = atEnd || S.mode !== 'replay' || !(S.pos || pendHere());
     $('sim-restart').disabled = S.mode !== 'replay' || !S.replayArgs;   // works at the end of the candles too
     cmpTick();
+    if (LV.last) requestAnimationFrame(() => { if (LV.last) lvHover(LV.last); });   // a still mouse: the line may have moved (new candle, re-fit)
   }
 
   // ---------- replay ----------
