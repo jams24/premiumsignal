@@ -342,6 +342,14 @@ async function handle(url, res) {
       });
     }
 
+    // 🐋 the same positioning for a Replay: one UTC day of 5-minute points, the page reads them at its clock
+    if (url.pathname === '/api/sim/flowday') {
+      const sym = cleanSymbol(url.searchParams.get('symbol')), day = Math.floor(Number(url.searchParams.get('day')) / DAY) * DAY;
+      if (!sym || fxPair(url.searchParams.get('symbol'))) return send(400, { error: 'a crypto perp symbol is required' });
+      if (!(day > 0) || day > Date.now()) return send(400, { error: 'day must be a past UTC day (ms)' });
+      return send(200, await flowDay(sym, day));
+    }
+
     if (url.pathname === '/api/sim/mmr') {   // practice liquidation: the coin's maintenance margin by position size
       const sym = cleanSymbol(url.searchParams.get('symbol'));
       if (!sym || fxPair(url.searchParams.get('symbol'))) return send(400, { error: 'a crypto perp symbol is required' });
@@ -352,6 +360,51 @@ async function handle(url, res) {
   } catch (e) {
     return send(500, { error: e.message });
   }
+}
+
+// ---------- 🐋 positioning history for Replay: one UTC day at a time ----------
+// The live line (/api/sim/flow) reads the newest points; a Replay needs them as they were. Binance keeps the 5-minute
+// top-trader / all-account long-short, open interest and taker series for 30 days only; Bybit's retail long-short and
+// open interest, and both exchanges' funding history, go back much further. Past days are kept (they don't change),
+// today for a minute. Points: [time, value…] ascending; a point is the reading at `time`.
+const DAY = 86400e3, FD = new Map();
+async function tryJson(u) {
+  try { const r = await fetch(u, { signal: AbortSignal.timeout(8000) }); if (!r.ok) return null; const j = await r.json(); return j && j.retCode ? null : j; } catch (e) { return null; }
+}
+async function flowDay(sym, day) {
+  const key = `${sym}|${day}`, hit = FD.get(key), now = Date.now(), today = day + DAY > now;
+  if (hit && (!today || now - hit.at < 60e3)) return hit.d;
+  const s = day, e = Math.min(day + DAY - 1, now), P = `symbol=${sym}&period=5m&startTime=${s}&endTime=${e}&limit=500`;
+  const bnOk = now - day < 29.5 * DAY;   // older: Binance answers "startTime is invalid"
+  const bn = p => (bnOk ? tryJson(`https://fapi.binance.com/futures/data/${p}?${P}`) : null);
+  const ratio = x => (Array.isArray(x) ? x.map(p => [+p.timestamp, +p.longAccount, +p.longShortRatio]) : []);
+  const [wPos, wAcc, rBn, oiBn, tk, rBy, fBn] = await Promise.all([
+    bn('topLongShortPositionRatio'), bn('topLongShortAccountRatio'), bn('globalLongShortAccountRatio'), bn('openInterestHist'), bn('takerlongshortRatio'),
+    tryJson(`https://api.bybit.com/v5/market/account-ratio?category=linear&symbol=${sym}&period=5min&startTime=${s}&endTime=${e}&limit=500`),
+    tryJson(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${sym}&startTime=${s - 8 * 3600e3}&endTime=${e}&limit=200`),
+  ]);
+  let oi = Array.isArray(oiBn) ? oiBn.map(p => [+p.timestamp, +p.sumOpenInterest, +p.sumOpenInterestValue]) : [], oiSrc = 'binance';
+  if (!oi.length) {   // Bybit: 200 points a call, so the day in two halves
+    oiSrc = 'bybit';
+    const half = await Promise.all([[s, Math.min(s + DAY / 2 - 1, e)], [s + DAY / 2, e]].filter(([a, b]) => a <= b).map(([a, b]) =>
+      tryJson(`https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${sym}&intervalTime=5min&startTime=${a}&endTime=${b}&limit=200`)));
+    oi = half.flatMap(j => (j && j.result && j.result.list) || []).map(p => [+p.timestamp, +p.openInterest, null]).sort((a, b) => a[0] - b[0]);
+  }
+  let funding = Array.isArray(fBn) ? fBn.map(f => [+f.fundingTime, +f.fundingRate * 100]) : [], fSrc = 'binance';
+  if (!funding.length) {
+    fSrc = 'bybit';
+    const j = await tryJson(`https://api.bybit.com/v5/market/funding/history?category=linear&symbol=${sym}&startTime=${s - 8 * 3600e3}&endTime=${e}&limit=200`);
+    funding = ((j && j.result && j.result.list) || []).map(f => [+f.fundingRateTimestamp, +f.fundingRate * 100]).sort((a, b) => a[0] - b[0]);
+  }
+  const d = {
+    symbol: sym.replace(/USDT$/, ''), day, bnKept: bnOk,
+    whales: ratio(wPos), whalesAcc: ratio(wAcc), retail: ratio(rBn),
+    retailBybit: ((rBy && rBy.result && rBy.result.list) || []).map(p => [+p.timestamp, +p.buyRatio]).sort((a, b) => a[0] - b[0]),
+    oi, oiSrc, taker: Array.isArray(tk) ? tk.map(p => [+p.timestamp, +p.buyVol, +p.sellVol]) : [], funding, fSrc,
+  };
+  FD.set(key, { at: now, d });
+  while (FD.size > 300) FD.delete(FD.keys().next().value);
+  return d;
 }
 
 // topCoins and the kline fetchers are also used by the Telegram SMC alerts (src/collectors/smcAlerts.js)

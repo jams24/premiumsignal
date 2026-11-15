@@ -2786,47 +2786,129 @@
     RH.open = !RH.open; try { localStorage.setItem(RH.key, JSON.stringify({ open: RH.open })); } catch (err) { /* ignore */ }
     renderRhythm();
   });
-  // ---------- 🐋 positioning: funding, whales vs retail (Live only) ----------
+  // ---------- 🐋 positioning: funding, whales vs retail (Live, and Replay at its clock) ----------
   // The bot's /flow data for the coin on the chart: whales = Binance top traders by position size, retail = all accounts
-  // (Binance, Bybit), funding, open interest. Read every minute while the page is open. It is the positioning right now,
-  // so Replay (a past moment) doesn't show it.
+  // (Binance, Bybit), funding, open interest. Live reads it every minute while the page is open. Replay reads the same
+  // series as they were at the replay clock (/api/sim/flowday, one UTC day of 5-minute points at a time), never a point
+  // from after the clock. Binance keeps whales, its retail, OI and taker for 30 days; older replays show funding,
+  // Bybit retail and Bybit OI.
   const CW = { sym: '', at: 0, busy: false, d: null, err: '', open: false, html: '', key: 'sc_sim_crowd_v1' };
   try { CW.open = !!(JSON.parse(localStorage.getItem(CW.key)) || {}).open; } catch (e) { /* closed */ }
   const lsPct = v => (v == null || !isFinite(v) ? '?' : Math.round(v * 100) + '%');
   const lsBar = v => (v == null || !isFinite(v) ? '' : `<span class="sim-ls" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, v * 100)).toFixed(0)}%"></i></span>`);
   const lsMove = s => (!s || s.h1 == null ? '' : s.now - s.h1 >= 0.02 ? ' ↑' : s.h1 - s.now >= 0.02 ? ' ↓' : '');   // ≥ 2 points vs 1 h ago
-  function fundTxt(f) {
+  function fundTxt(f, paid) {
     if (f == null || !isFinite(f)) return 'funding ?';
     const v = `${f >= 0 ? '+' : ''}${f.toFixed(4)}%`;
     const what = f >= 0.05 ? 'longs paying a lot' : f > 0.0101 ? 'longs pay more than usual' : f >= 0 ? 'longs pay shorts (normal)' : f > -0.05 ? 'shorts pay longs' : 'shorts paying a lot';
-    return `<span class="sim-nw">funding <b>${v}</b></span> ${what}`;
+    return `<span class="sim-nw">funding <b>${v}</b>${paid ? ` <span class="m">paid ${hm(paid)}</span>` : ''}</span> ${what}`;
+  }
+  // the same plain readings as the bot's /flow (src/collectors/coinFlow.js reading / oiReading), not a signal
+  function flowReading(w, r) {
+    if (w == null || r == null) return null;
+    if (w >= 1.2 && r <= 0.9) return '🐋 long vs 👥 short — squeeze-up risk for shorts (the Arslan pattern)';
+    if (w <= 0.83 && r >= 1.1) return '🐋 short vs 👥 long — flush-down risk for longs';
+    if (w >= 1.4 && r >= 1.4) return 'Everyone long — crowded long ⚠️ (October: shorts here lost, see Crowd check)';
+    if (w >= 1.2 && r >= 1.2) return 'Everyone long — crowded long';
+    if (w <= 0.83 && r <= 0.83) return 'Everyone short — crowded short';
+    return 'No strong split between whales and retail';
+  }
+  function flowOiReading(oiCh, priceCh) {
+    if (oiCh == null || priceCh == null) return null;
+    const up = priceCh > 0.5, down = priceCh < -0.5, oiUp = oiCh > 2, oiDown = oiCh < -2;
+    if (up && oiUp) return 'price up + OI up → new positions piling in on the move';
+    if (up && oiDown) return 'price up + OI down → shorts closing (short squeeze / covering)';
+    if (down && oiUp) return 'price down + OI up → new shorts opening';
+    if (down && oiDown) return 'price down + OI down → longs closing / liquidations';
+    return 'OI and price flat-ish';
+  }
+  // Replay: one UTC day per request, kept for the session (today's day re-read after a minute, a failed day after 30 s)
+  const DAYMS = 1440 * MIN, CH = new Map();
+  function chDay(sym, day) {
+    const k = sym + '|' + day, now = Date.now();
+    let e = CH.get(k);
+    if (!e) { e = { d: null, err: '', at: 0, busy: false }; CH.set(k, e); while (CH.size > 40) CH.delete(CH.keys().next().value); }
+    const stale = !e.at || (e.err ? now - e.at > 30e3 : day + DAYMS > now && now - e.at > 60e3);
+    if (stale && !e.busy && !document.hidden) {
+      e.busy = true;
+      api('/api/sim/flowday', { symbol: sym, day }, 25000).then(d => { e.d = d; e.err = ''; }, x => { e.err = x.message; })
+        .then(() => { e.busy = false; e.at = Date.now(); if (S.mode === 'replay' && S.sym === sym) renderCrowd(); });
+    }
+    return e;
+  }
+  // The positioning at replay time t, in the live line's shape. A 5-minute point stamped T is out ~1 min after T
+  // (Binance / Bybit), so it counts from T + 2 min.
+  function crowdAt(sym, t) {
+    const LAG = 2 * MIN, d1 = Math.floor(t / DAYMS) * DAYMS, d0 = Math.floor((t - 4 * HOUR - 10 * MIN) / DAYMS) * DAYMS;
+    const parts = []; let miss = false, err = '';
+    for (let day = d0; day <= d1; day += DAYMS) { const e = chDay(sym, day); if (e.d) parts.push(e.d); else { miss = true; if (e.err) err = e.err; } }
+    const last = parts[parts.length - 1];
+    if (!last || last.day !== d1) return { err: miss && err ? err : '' };   // the clock's own day isn't in yet
+    const all = key => { const out = []; for (const p of parts) for (const x of p[key] || []) if (!out.length || x[0] > out[out.length - 1][0]) out.push(x); return out; };
+    const upto = a => { let i = a.length - 1; while (i >= 0 && a[i][0] + LAG > t) i--; return i; };
+    const back = (a, i, ms) => { const want = a[i][0] - ms; let j = i; while (j > 0 && a[j][0] > want) j--; return Math.abs(a[j][0] - want) <= 3 * MIN ? a[j] : null; };
+    const side = a => {
+      const i = upto(a); if (i < 0 || t - a[i][0] > 30 * MIN) return null;   // nothing in the last half hour = no data
+      const p = a[i], ratio = p[2] != null ? p[2] : p[1] < 1 ? p[1] / (1 - p[1]) : null, h1 = back(a, i, HOUR), h4 = back(a, i, 4 * HOUR);
+      return { now: p[1], ratio, h1: h1 ? h1[1] : null, h4: h4 ? h4[1] : null, at: p[0] };
+    };
+    const pc = (a, b) => (a > 0 && b > 0 ? (a / b - 1) * 100 : null);
+    const whales = side(all('whales')), whalesAcc = side(all('whalesAcc')), retail = side(all('retail')), retailBybit = side(all('retailBybit'));
+    const oiA = all('oi'), oi_i = upto(oiA), oiP = oi_i >= 0 && t - oiA[oi_i][0] <= 30 * MIN ? oiA[oi_i] : null;
+    const oiH1 = oiP && back(oiA, oi_i, HOUR), oiH4 = oiP && back(oiA, oi_i, 4 * HOUR);
+    const tk = all('taker'), tk_i = upto(tk); let buy = 0, sell = 0;
+    for (let j = tk_i; j >= 0 && tk[j][0] > (tk_i >= 0 ? tk[tk_i][0] : 0) - HOUR; j--) { buy += tk[j][1]; sell += tk[j][2]; }
+    const fu = all('funding'); let f = null;
+    for (let j = fu.length - 1; j >= 0; j--) if (fu[j][0] <= t) { f = fu[j]; break; }
+    const k60 = S.cur >= 60 ? S.base[S.cur - 60][4] : null, px = S.cur >= 0 ? S.base[S.cur][4] : null, ch1h = pc(px, k60);
+    const oi1 = oiP && oiH1 ? pc(oiP[1], oiH1[1]) : null, oi4 = oiP && oiH4 ? pc(oiP[1], oiH4[1]) : null;
+    const stamps = [whales, retail, retailBybit].filter(Boolean).map(s => s.at).concat(oiP ? [oiP[0]] : []);
+    return {
+      d: {
+        whales, whalesAcc, retail, retailBybit, funding: f ? f[1] : null, fPaid: f ? f[0] : 0, oi1, oi4,
+        oiUsd: oiP ? oiP[2] || (px ? oiP[1] * px : null) : null, taker: tk_i >= 0 && sell > 0 && t - tk[tk_i][0] <= 30 * MIN ? buy / sell : null, ch1h,
+        reading: flowReading(whales && whales.ratio, retail ? retail.ratio : retailBybit ? retailBybit.ratio : null), oiReading: flowOiReading(oi1, ch1h),
+        at: stamps.length ? Math.max(...stamps) : t, bnOld: parts.some(p => !p.bnKept), oiSrc: last.oiSrc,
+      },
+    };
   }
   function renderCrowd() {
-    const el = $('sim-crowd');
-    if (S.mode !== 'live' || S.cur < 0 || !S.sym || isFx()) { el.hidden = true; CW.html = ''; return; }
+    const el = $('sim-crowd'), rep = S.mode === 'replay';
+    if ((S.mode !== 'live' && !rep) || S.cur < 0 || !S.sym || isFx()) { el.hidden = true; CW.html = ''; return; }
     el.hidden = false;
-    if (CW.sym !== S.sym) { CW.sym = S.sym; CW.d = null; CW.err = ''; CW.at = 0; }
-    if (!CW.busy && !document.hidden && Date.now() - CW.at > 60e3) loadCrowd(S.sym);
     const set = h => { if (h !== CW.html) { CW.html = h; el.innerHTML = h; } };
-    const d = CW.d, sym = esc(S.sym);
-    if (!d) return set(`🐋 Who is long or short on ${sym} · ${CW.err ? 'could not read it: ' + esc(CW.err) : 'reading funding, whales and retail…'}`);
+    const sym = esc(S.sym);
+    let d;
+    if (rep) {
+      const x = crowdAt(S.sym, nowT());
+      if (!x.d) return set(`🐋 Who was long or short on ${sym} at ${utc(nowT())} UTC · ${x.err ? 'could not read it: ' + esc(x.err) : 'reading funding, whales and retail at the replay time…'}`);
+      d = x.d;
+    } else {
+      if (CW.sym !== S.sym) { CW.sym = S.sym; CW.d = null; CW.err = ''; CW.at = 0; }
+      if (!CW.busy && !document.hidden && Date.now() - CW.at > 60e3) loadCrowd(S.sym);
+      d = CW.d;
+      if (!d) return set(`🐋 Who is long or short on ${sym} · ${CW.err ? 'could not read it: ' + esc(CW.err) : 'reading funding, whales and retail…'}`);
+    }
     const w = d.whales, r = d.retail || d.retailBybit, rSrc = d.retail ? 'Binance' : 'Bybit';
-    const side = (name, s, src) => `<span class="sim-nw">${s ? `${name}${src ? ` <span class="m">(${src})</span>` : ''}${lsBar(s.now)}<b>${lsPct(s.now)} long</b>${lsMove(s)}` : `${name} <span class="m">no data</span>`}</span>`;
-    let h = `🐋 ${sym} now · ${fundTxt(d.funding)} · ${side('whales', w)} · ${side('retail', r, d.retail && d.retailBybit ? '' : rSrc)}` +
+    const gone = rep && d.bnOld ? 'Binance keeps 30 days' : 'no data';
+    const side = (name, s, src, none = 'no data') => `<span class="sim-nw">${s ? `${name}${src ? ` <span class="m">(${src})</span>` : ''}${lsBar(s.now)}<b>${lsPct(s.now)} long</b>${lsMove(s)}` : `${name} <span class="m">${none}</span>`}</span>`;
+    let h = `🐋 ${sym} ${rep ? `at ${utc(nowT())} UTC <span class="m">(replay)</span>` : 'now'} · ${fundTxt(d.funding, rep && d.fPaid)} · ${side('whales', w, '', gone)} · ${side('retail', r, d.retail && d.retailBybit ? '' : rSrc)}` +
       (d.oi1 != null ? ` · OI 1h <b>${d.oi1 >= 0 ? '+' : ''}${d.oi1.toFixed(1)}%</b>` : '') +
       (d.reading ? ` · <i>${esc(d.reading)}</i>` : '') +
       `<button type="button" class="b" data-cw="1" aria-expanded="${CW.open}">${CW.open ? '▴ less' : '▾ details'}</button>`;
     if (CW.open) {
-      const row = (name, s) => `<tr><td>${name}</td>` + (s ? `<td>${lsBar(s.now)}<b>${lsPct(s.now)}</b> long · ${s.ratio != null ? s.ratio.toFixed(2) : '?'}</td><td>${lsPct(s.h1)}</td><td>${lsPct(s.h4)}</td>` : '<td class="m">no data</td><td></td><td></td>') + '</tr>';
-      h += `<div style="overflow-x:auto"><table class="sim-crowd-t"><tr><th></th><th>now · long/short</th><th>1 h ago</th><th>4 h ago</th></tr>` +
-        row('🐋 Whales by position (Binance top traders)', w) + row('🐋 Whales by accounts', d.whalesAcc) +
-        row('👥 Retail · Binance (all accounts)', d.retail) + row('👥 Retail · Bybit', d.retailBybit) + '</table></div>' +
-        `<div>${fundTxt(d.funding)}` +
-        (d.oi1 != null ? ` · open interest 1h ${d.oi1 >= 0 ? '+' : ''}${d.oi1.toFixed(1)}%, 4h ${d.oi4 != null ? (d.oi4 >= 0 ? '+' : '') + d.oi4.toFixed(1) + '%' : '?'}${d.oiUsd ? ` ($${(d.oiUsd / 1e6).toFixed(1)}M open)` : ''}` : '') +
+      const row = (name, s, none = 'no data') => `<tr><td>${name}</td>` + (s ? `<td>${lsBar(s.now)}<b>${lsPct(s.now)}</b> long · ${s.ratio != null ? s.ratio.toFixed(2) : '?'}</td><td>${lsPct(s.h1)}</td><td>${lsPct(s.h4)}</td>` : `<td class="m">${none}</td><td></td><td></td>`) + '</tr>';
+      h += `<div style="overflow-x:auto"><table class="sim-crowd-t"><tr><th></th><th>${rep ? 'at the replay time' : 'now'} · long/short</th><th>1 h before</th><th>4 h before</th></tr>` +
+        row('🐋 Whales by position (Binance top traders)', w, gone) + row('🐋 Whales by accounts', d.whalesAcc, gone) +
+        row('👥 Retail · Binance (all accounts)', d.retail, gone) + row('👥 Retail · Bybit', d.retailBybit) + '</table></div>' +
+        `<div>${fundTxt(d.funding, rep && d.fPaid)}` +
+        (d.oi1 != null ? ` · open interest${rep && d.oiSrc === 'bybit' ? ' (Bybit)' : ''} 1h ${d.oi1 >= 0 ? '+' : ''}${d.oi1.toFixed(1)}%, 4h ${d.oi4 != null ? (d.oi4 >= 0 ? '+' : '') + d.oi4.toFixed(1) + '%' : '?'}${d.oiUsd ? ` ($${(d.oiUsd / 1e6).toFixed(1)}M open)` : ''}` : '') +
         (d.taker != null ? ` · taker buy/sell 1h ${d.taker.toFixed(2)} ${d.taker >= 1.1 ? '(buyers hitting harder)' : d.taker <= 0.9 ? '(sellers hitting harder)' : '(even)'}` : '') +
-        (d.oiReading ? ` · last hour: ${esc(d.oiReading)}` : '') + ` · updated ${utc(d.at).slice(-5)} UTC</div>` +
+        (d.oiReading ? ` · last hour: ${esc(d.oiReading)}` : '') + (rep ? ` · 5-minute reading of ${hm(d.at)} UTC` : ` · updated ${utc(d.at).slice(-5)} UTC`) + '</div>' +
         `<div class="sim-crowd-n">Whales = Binance's top traders (the 20% of accounts with the most margin), counted by position size; retail = every account, one vote each. ` +
         `Funding above 0 = longs pay shorts each funding period (more people want to be long); below 0 = shorts pay longs. ` +
+        (rep ? `<b>Replay:</b> read from 5-minute history as it stood at the replay clock, never a later point; funding is the last rate paid (Live shows the rate building for the next payment). ` +
+          `Binance keeps whales, its retail, open interest and taker for 30 days, so older replays show funding, Bybit retail and Bybit open interest only. ` : '') +
         `<b>Positioning, not a signal:</b> in our tests long/short ratios on their own showed no edge. October (one month — Binance keeps 30 days): shorts taken while whales and retail were both ≥ 1.4 lost −$2.58/trade over 22 trades; ` +
         `WEAK pump shorts with funding above +0.005% lost in both replay periods.</div>`;
     }
