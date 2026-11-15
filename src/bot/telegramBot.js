@@ -8,7 +8,7 @@ const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdi
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
 const { SWEEP, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
-const { marginSaverLeverage, liquidationPct } = require('../utils/marginSaver');
+const { marginSaverLeverage, liquidationPct, safeLeverage, LIQ_BUFFER } = require('../utils/marginSaver');
 const manualLimits = require('../engine/manualLimitOrders');
 const { launchPolling } = require('./pollingLaunch');
 const { getFlow, formatFlow, flowLine, CROWD_WARN_AT } = require('../collectors/coinFlow');
@@ -1755,6 +1755,7 @@ class TelegramBot {
     const processLimitOrder = async (te, o) => {
       // Resting on the exchange: its own checks (fill → stop + TPs, cancel, expiry)
       if (o.real) return manualLimits.checkRealOrder(te, o, realLimitHooks(o));
+      if (o._busy) return;   // its stop is being changed from the dashboard (one DB write): check it next round
       const label = `${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)} (#${o.id})`;
       if (Date.now() > o.expiresAt) {
         if (await finishOrder(o, 'expired')) await notifyChat(o.chatId, `⏰ Limit order expired: ${label}`);
@@ -2895,17 +2896,53 @@ class TelegramBot {
       : r === 'gone' ? `Limit #${o.id} ${o.symbol} was already filled, expired or cancelled`
       : `Limit #${o.id} ${o.symbol}: could not confirm the cancel on ${o.exchangeId} — try again or cancel it in the exchange app`);
 
+    // The stop of a waiting limit (dashboard): the bot keeps it and places it when the order fills (adoptFill and the
+    // trigger path read o.stopLoss then), so nothing changes on the exchange now; a book order keeps its place there.
+    // A chosen stop is a typed price (slFixed): it stays put at the fill and when the limit is moved.
+    const orderStop = async (o, sl, done) => {
+      const isLong = o.direction === 'long', E = o.limitPrice, f = (v) => `$${fmtP(v)}`;
+      const gap = (isLong ? E - sl : sl - E) / E * 100;
+      if (!(gap >= 0.3)) return { error: `A ${o.direction} stop goes ${isLong ? 'below' : 'above'} its limit ${f(E)}, at least 0.3% away.` };
+      if (gap > 50) return { error: `That stop is ${gap.toFixed(0)}% from the limit — pick one within 50%.` };
+      if (o.real) {   // the exchange leverage was set for the old stop: a wider stop must still fire before liquidation
+        const te = mtExec(), ex = te?.exchanges?.[o.exchangeId], lev = o.exLeverage || o.leverage;
+        let mmr = o.liqGuard?.mmrPct;
+        if (mmr == null && ex) { try { mmr = await te.maintMarginPct(ex, o.exchangeId, pairOf(o.symbol), o.positionSize || o.margin * o.leverage); } catch (e) { mmr = null; } }
+        if (mmr == null) mmr = 5;   // as at placement when the rate can't be read
+        const safe = safeLeverage(gap, mmr);
+        if (safe && lev > safe) {
+          const liq = liquidationPct(lev, mmr);
+          return { error: `At ${lev}x (set on ${o.exchangeId} when the order was placed) the position would be liquidated ~${liq.toFixed(1)}% from the entry (${mmr}% maintenance margin), before a ${gap.toFixed(1)}% stop. Keep the stop within ${(liq / LIQ_BUFFER).toFixed(1)}% of the limit, or move the limit: that places a new order with a safe leverage.` };
+        }
+      }
+      if (o._busy) return { error: `Limit #${o.id} ${o.symbol} is being checked right now — try again in a few seconds.` };
+      const old = o.stopLoss;
+      o._busy = true;   // a fill check skips a busy order, so it can't fill halfway through this change
+      try {
+        if (!this.pendingLimitOrders.has(o.id) || !(await db.updateManualOrderConfig(o.id, { stopLoss: sl, slFixed: true }))) {
+          return { error: 'That limit order already filled, expired or was cancelled.' };
+        }
+        o.stopLoss = sl; o.slFixed = true;
+      } finally { o._busy = false; }
+      const size = o.positionSize || o.margin * o.leverage;
+      return done(
+        `🛑 <b>${escapeHtml(o.symbol)} limit #${o.id}: stop moved</b>\nSL ${f(old)} → <b>${f(sl)}</b> (${gap.toFixed(2)}% from the limit ${f(E)}) · ${fmtUsd(-gap / 100 * size)} if it fills there and the stop hits\n` +
+        `<i>The bot places this stop when the order fills${o.real ? `; the order stays on the ${escapeHtml(o.exchangeId)} book as it is` : ''}. It stays at this price at the fill and if you move the limit.</i>`,
+        `order stop #${o.id} ${o.symbol} ${old} → ${sl}`);
+    };
+
     const webManage = async (a) => {
       const uid = webOwner();
       if (!uid) return { error: 'No owner Telegram account set (ADMIN_TELEGRAM_IDS)' };
       // a position that is still open keeps its buttons (refresh, close, breakeven, take profit, stop)
       const done = async (html, log, tradeId) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, tradeId ? tradeKb(tradeId) : posKb()); return { ok: true, text: plainText(html) }; };
 
-      if (a.action === 'cancel' || a.action === 'move_limit') {
+      if (a.action === 'cancel' || a.action === 'move_limit' || a.action === 'order_stop') {
         await loadPendingOrders();
         const o = this.pendingLimitOrders.get(a.id);
         if (!o) return { error: 'That limit order already filled, expired or was cancelled.' };
         if (o.mode !== 'live') return { error: 'Only live orders are managed from the dashboard.' };
+        if (a.action === 'order_stop') return orderStop(o, a.price, done);
         if (a.action === 'cancel') {
           const r = await cancelPending(o);
           if (r !== 'cancelled') return { error: cancelWord(o, r) };

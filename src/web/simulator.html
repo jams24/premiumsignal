@@ -1545,7 +1545,7 @@
         `${A('take', t.id, 'Take profit', '', R.busy || !(unreal > 0), unreal > 0 ? '' : 'The open part is not in profit')}${chartBtn(t.symbol, t.exchange)}</div>`;
     };
     const ordActs = o => !R.web ? `<div class="acts">${chartBtn(o.symbol, o.exchange)}</div>`
-      : `<div class="acts">${A('mlimit', o.id, 'Move limit', '', R.busy)}${A('cancel', o.id, 'Cancel order', 'red', R.busy)}${chartBtn(o.symbol, o.exchange)}</div>`;
+      : `<div class="acts">${A('mlimit', o.id, 'Move limit', '', R.busy)}${A('ostop', o.id, 'Move stop', '', R.busy, 'The bot keeps the stop and places it when the order fills: the order stays on the book')}${A('cancel', o.id, 'Cancel order', 'red', R.busy)}${chartBtn(o.symbol, o.exchange)}</div>`;
     const ifHit = (t, v) => ((t.direction === 'long' ? v - t.entry : t.entry - v) / t.entry) * (t.size || 0) + (t.realized || 0);
     R.ifHit = ifHit;
     const pickBtn = (sym, a, id) => sym === S.sym ? A(a, id, 'Click chart', '', R.busy) : '';
@@ -1599,6 +1599,14 @@
         `<div class="sim-row"><input type="number" step="any" inputmode="decimal" data-askin="1" value="${esc(n > 0 ? (+n).toFixed(pr) : '')}" aria-label="${isStop ? 'New stop price' : 'New limit price'}">${R.pickBtn(t.symbol, isStop ? 'pick-stop' : 'pick-limit', u.id)}</div>` +
         `<div data-asknote="1">${note}</div><div class="sim-row">${yes(isStop ? 'yes-stop' : 'yes-mlimit', isStop ? 'Move stop' : 'Move limit')}${no}</div>`;
     }
+    if (u.kind === 'ostop') {   // the waiting limit's stop: kept by the bot, placed when the order fills
+      const n = parseFloat(u.val != null ? u.val : t.stop), x = ordStop(t, n);
+      h = `<div>New stop for the ${side} limit (now ${pf(t.stop)}):</div>` +
+        `<div class="sim-row"><input type="number" step="any" inputmode="decimal" data-askin="1" value="${esc(n > 0 ? n.toFixed(pr) : '')}" aria-label="New stop price">${R.pickBtn(t.symbol, 'pick-ostop', u.id)}</div>` +
+        `<div data-asknote="1">${x.why ? esc(x.why) : `If it fills at the limit and the stop hits ≈ <b>${usd(x.lose)}</b>`}</div>` +
+        `<div><small>The bot keeps this stop and places it when the order fills; the order stays on the book as it is.</small></div>` +
+        `<div class="sim-row">${yes('yes-ostop', 'Move stop')}${no}</div>`;
+    }
     if (u.kind === 'cancel') h = `<div>Cancel the ${side} limit at ${pf(t.limitPrice)}?</div><div class="sim-row">${yes('yes-cancel', 'Yes, cancel it', 'red')}${no}</div>`;
     el.className = 'ask'; el.innerHTML = h;
   }
@@ -1617,11 +1625,15 @@
   function onRealAct(e) {
     const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
     const a = b.dataset.act, id = +b.dataset.id, t = realPos(id), o = realOrd(id);
-    const type = ['cancel', 'mlimit', 'yes-cancel', 'yes-mlimit', 'pick-limit'].includes(a) ? 'ord' : 'pos';
+    const type = ['cancel', 'mlimit', 'ostop', 'yes-cancel', 'yes-mlimit', 'yes-ostop', 'pick-limit', 'pick-ostop'].includes(a) ? 'ord' : 'pos';
     const val = () => { const i = b.closest('.ask') && b.closest('.ask').querySelector('[data-askin]'); return i ? parseFloat(i.value) : NaN; };
-    if (['close', 'be', 'stop', 'take', 'cancel', 'mlimit'].includes(a)) { R.msg = null; R.ui = { type, id, kind: a }; renderRealPos(); askBox(); return; }
-    if (a === 'no') { R.ui = null; if (S.tool === 'rstop' || S.tool === 'rlimit') setTool(null); renderRealPos(); return; }
-    if (a === 'pick-stop' || a === 'pick-limit') { R.pick = { type, id }; setTool(a === 'pick-stop' ? 'rstop' : 'rlimit'); return; }
+    if (['close', 'be', 'stop', 'take', 'cancel', 'mlimit', 'ostop'].includes(a)) { R.msg = null; R.ui = { type, id, kind: a }; renderRealPos(); askBox(); return; }
+    if (a === 'no') { R.ui = null; if (S.tool === 'rstop' || S.tool === 'rlimit' || S.tool === 'rostop') setTool(null); renderRealPos(); return; }
+    if (a === 'pick-stop' || a === 'pick-limit' || a === 'pick-ostop') { R.pick = { type, id }; setTool(a === 'pick-stop' ? 'rstop' : a === 'pick-ostop' ? 'rostop' : 'rlimit'); return; }
+    if (a === 'yes-ostop' && o) {
+      const v = val(), x = ordStop(o, v); if (x.why) return hint(x.why === 'Type the new stop price.' ? 'Type a price first, or use Click chart.' : x.why);
+      return manage('ord', 'order_stop', id, { price: v });
+    }
     if (a === 'yes-close' && t) return manage('pos', 'close', id);
     if (a === 'yes-be' && t) return manage('pos', 'breakeven', id);
     if (a.startsWith('take-') && t) return manage('pos', 'take', id, { pct: +a.slice(5) });
@@ -1632,10 +1644,24 @@
     }
   }
   // a chart pick (popup button or Click chart) for a real stop / limit: ask right in the popup
-  function realAsk(el, kind, v) {   // kind 'stop' | 'tp1'…'tp4' (the open trade) | 'limit' (the waiting order)
-    const t = kind !== 'limit' ? (R.data && R.data.positions || []).find(x => x.symbol === S.sym) : (R.data && R.data.orders || []).find(x => x.symbol === S.sym);
+  function realAsk(el, kind, v) {   // kind 'stop' | 'tp1'…'tp4' (the open trade) | 'limit' | 'ostop' (the waiting order, its stop)
+    const ord = kind === 'limit' || kind === 'ostop';
+    const t = !ord ? (R.data && R.data.positions || []).find(x => x.symbol === S.sym) : (R.data && R.data.orders || []).find(x => x.symbol === S.sym);
     if (!t) { el.innerHTML = '<div class="ask">No real position or order on this coin any more.</div>'; return; }
     const pr = precFor(t.entry || t.limitPrice), pf = x => (+x).toFixed(pr), n = +v;
+    if (kind === 'ostop') {   // kept by the bot until the order fills: nothing changes on the exchange now
+      const x = ordStop(t, n);
+      if (x.why) {
+        el.innerHTML = `<div class="ask">The stop can't go to ${pf(n)}. ${esc(x.why)}</div><div class="sim-row"><button type="button" class="b" data-ra="no">OK</button></div>`;
+        el._ra = null; return;
+      }
+      el.innerHTML = `<div class="ask">Move the stop of the waiting REAL ${t.direction.toUpperCase()} ${esc(t.symbol)} limit ${pf(t.stop)} → <b>${pf(n)}</b> (${x.gap.toFixed(2)}% from the limit ${pf(t.limitPrice)})? ` +
+        `If it fills at the limit and the stop hits ≈ <b>${usd(x.lose)}</b>. The bot places this stop when the order fills; the order stays on the book as it is.</div>` +
+        `<div class="sim-row"><button type="button" class="b go" data-ra="yes">Yes, move stop</button><button type="button" class="b" data-ra="no">No</button></div>`;
+      el._ra = () => manage('ord', 'order_stop', t.id, { price: n });   // run by openPop's click handler
+      const y = el.querySelector('[data-ra="yes"]'); if (y) y.focus({ preventScroll: true });
+      return;
+    }
     if (/^tp[1-4]$/.test(kind)) {   // the bot's ladder with this TP moved: what it then closes and books there
       const k = +kind.slice(2), cur = (t.tps || []).find(x => x.n === k), room = realTpRoom(t, n, t.price || price());
       if (!cur || !room.ok.includes(k)) {
@@ -1675,6 +1701,14 @@
       `<div class="sim-row"><button type="button" class="b red" data-ra="yes">Yes, close it</button><button type="button" class="b" data-ra="no">No</button></div>`;
     el._ra = () => manage('pos', 'close', t.id);   // run by openPop's click handler
     const y = el.querySelector('[data-ra="no"]'); if (y) y.focus({ preventScroll: true });   // Enter doesn't close a trade by accident
+  }
+  // a new stop v for the waiting REAL limit o: why not ('' = fine here; the bot also checks the liquidation at the leverage
+  // already set on the exchange), its distance from the limit and the $ if it fills at the limit and the stop hits
+  function ordStop(o, v) {
+    const L = o.direction === 'long', E = +o.limitPrice, gap = (L ? E - v : v - E) / E * 100, size = (+o.margin || 0) * (+o.leverage || 0);
+    const why = !(v > 0) ? 'Type the new stop price.' : !(gap >= 0.3) ? `A ${o.direction} stop goes ${L ? 'below' : 'above'} its limit ${E.toFixed(precFor(E))}, at least 0.3% away.`
+      : gap > 50 ? 'That is more than 50% from the limit.' : '';
+    return { why, gap, lose: -gap / 100 * size };
   }
   // which TPs of the open REAL trade t may go to price v — the bot's own rules (tradeExecutor.moveTakeProfit): past the
   // entry, ≥ 0.1% past the price now, not hit yet, and still between its neighbours to come. → { ok: [n…], why }
@@ -1740,10 +1774,10 @@
       const size = (+o.margin || 0) * (+o.leverage || 0), E = +o.limitPrice, mv = v => (o.direction === 'long' ? v - E : E - v) / E;
       L.push([E, '#facc15', 2, 1, 'REAL limit', { k: 'limit', id: o.id }]);
       H.push({ price: E, html: `<b>REAL ${esc(o.direction)} limit ${pr(E)}</b> · ${esc(o.symbol)}<br>$${+o.margin} × ${+o.leverage}x = $${size.toFixed(2)} position when it fills` + drag });
-      if (o.stop) {
+      if (o.stop) {   // drag: the bot keeps the new stop and places it at the fill (the order stays on the book)
         const lose = size * mv(o.stop);
-        L.push([o.stop, '#f97316', 2, 1, `REAL stop ${usd(lose)}`]);
-        H.push({ price: o.stop, html: `<b>REAL stop ${pr(o.stop)}</b> · ${fromEntry(o.stop, E)}<br>If it fills at the limit and the stop hits: ${sgnB(lose)}<br><small>Before fees.</small>` });
+        L.push([o.stop, '#f97316', 2, 1, `REAL stop ${usd(lose)}`, { k: 'ostop', id: o.id }]);
+        H.push({ price: o.stop, html: `<b>REAL stop ${pr(o.stop)}</b> · ${fromEntry(o.stop, E)}<br>If it fills at the limit and the stop hits: ${sgnB(lose)}<br><small>Before fees. The bot places it when the order fills.</small>` + drag });
       }
       if (o.tp1) {
         const x = realLadder(o.direction, E, size, 0, [{ n: 1, price: +o.tp1, hit: false }], o.closeFr)[0];
@@ -3549,7 +3583,7 @@
     const p = cs.coordinateToPrice(y); if (p == null || !isFinite(p) || p <= 0) return;
     if (g.lvl) { g.lvl.applyOptions({ price: p }); return; }
     if (g.real) {   // only the line moves; nothing is sent until you say Yes in the popup
-      const m = g.meta, name = m.k === 'tp' ? 'REAL TP' + m.n : m.k === 'stop' ? 'REAL stop' : 'REAL limit';
+      const m = g.meta, name = m.k === 'tp' ? 'REAL TP' + m.n : m.k === 'stop' || m.k === 'ostop' ? 'REAL stop' : 'REAL limit';
       g.to = p; g.lx = x; g.real.applyOptions({ price: p, title: `${name} → ${(+p).toFixed(S.prec)}?` }); return;
     }
     const t = xToT(x); if (t == null || g.t0 == null || g.p0 == null) return;
@@ -3666,7 +3700,7 @@
     $('sim-tool-tp').classList.toggle('on', S.tool === 'tp');
     $('sim-tool-limit').classList.toggle('on', S.tool === 'limit');
     if (S.tool === 'qstop' || S.tool === 'qtp') { $('sim-hint').classList.remove('tip'); hint(S.tool === 'qstop' ? `⚡ ① Entry ${fmt(QK.lim)} ✓ · ② click your stop on the chart (below the entry = long, above = short). Esc cancels.` : `⚡ ① Entry ${fmt(QK.lim)} ✓ · ② stop ${fmt(QK.stop)} ✓ (${quickSide()}) · ③ click your TP1 on the chart. Esc cancels.`); return; }
-    if (S.tool === 'rstop' || S.tool === 'rlimit') { hint(`Click the chart where the REAL ${S.tool === 'rstop' ? 'stop' : 'limit'} goes. You confirm it next.`); $('sim-hint').classList.remove('tip'); return; }
+    if (S.tool === 'rstop' || S.tool === 'rlimit' || S.tool === 'rostop') { hint(`Click the chart where the REAL ${S.tool === 'rlimit' ? 'limit' : 'stop'} goes. You confirm it next.`); $('sim-hint').classList.remove('tip'); return; }
     hint(S.tool === 'quiz' ? 'Your turn: click the chart at the level.' : S.tool === 'line' ? 'Click the chart to draw a level (a top, equal lows, a zone edge). Drag it later to move it.' : S.tool === 'stop' ? 'Click the chart where your stop goes.' : S.tool === 'tp' ? 'Click the chart where your target goes.' : S.tool === 'limit' ? 'Click the chart where your limit entry goes.' :
       'Tip: click any price on the chart to copy it, or send it to the ticket as your stop, target or limit.');
     $('sim-hint').classList.toggle('tip', !S.tool);
@@ -3690,7 +3724,7 @@
     if (S.tool === 'qstop' || S.tool === 'qtp') { const sp = snapPx(param); if (sp) quickPick(S.tool, sp.p); return; }
     if (QK.on && QK.stage === 'ask') quickEnd();   // a click elsewhere drops the unconfirmed quick order
     if (!S.tool) { if (S.cur >= 0) openPop(param); return; }
-    if (S.tool === 'rstop' || S.tool === 'rlimit') { const k = S.tool === 'rstop' ? 'stop' : 'limit'; setTool(null); if (S.cur >= 0) openPop(param, k); return; }
+    if (S.tool === 'rstop' || S.tool === 'rlimit' || S.tool === 'rostop') { const k = S.tool === 'rstop' ? 'stop' : S.tool === 'rostop' ? 'ostop' : 'limit'; setTool(null); if (S.cur >= 0) openPop(param, k); return; }
     const p = cs.coordinateToPrice(param.point.y); if (p == null || !isFinite(p)) return;
     if (S.tool === 'quiz') { quizAnswer(p); setTool(null); refresh(); return; }
     const t = S.tool; setTool(null); usePrice(t, p);
@@ -3730,7 +3764,8 @@
     const GOLD = '#facc15', ORANGE = '#f97316', RED = '#ef4444', GREEN = '#10b981', CYAN = '#22d3ee';
     let mine = '';
     if (rO) mine += `<div class="wl"><div>📍 <b>REAL ${rO.direction.toUpperCase()} limit ${f(rO.limitPrice)}</b> is waiting</div><div class="m">stop ${f(rO.stop)} · TP1 ${f(rO.tp1)}${rO.price > 0 ? ` · now ${f(rO.price)}` : ''}</div>` +
-      (R.web ? `<div class="sim-row">${btn('rlimit', `Move limit to ${v}`, GOLD)}${btn('rcancel', 'Cancel limit', RED)}${btn('rcard', 'Its card ↓')}</div><div class="m">To change its stop or TP1: cancel it and place a new one.</div>`
+      (R.web ? `<div class="sim-row">${btn('rlimit', `Move limit to ${v}`, GOLD)}${ordStop(rO, +v).why ? '' : btn('rostop', `Move stop to ${v}`, ORANGE)}${btn('rcancel', 'Cancel limit', RED)}${btn('rcard', 'Its card ↓')}</div>` +
+          '<div class="m">Or drag its limit / stop lines. You confirm each change. To change TP1: cancel it and place a new one.</div>'
         : '<div class="m">Read-only here: manage it in Telegram (/orders), or send /webtrade on.</div>') + '</div>';
     if (rP) {   // past the price (the profit side): a TP can go here; on the other side: the stop
       const now = rP.price || price(), up = now > 0 && (rP.direction === 'long' ? +v > now : +v < now), room = up ? realTpRoom(rP, +v, now) : null;
@@ -3755,7 +3790,7 @@
           `<button type="button" class="b" data-a="stop">Stop</button><button type="button" class="b" data-a="tp">${real ? 'TP1' : 'Target'}</button></div>`) +
       `<div class="sim-row"><button type="button" class="b go" data-a="copy">Copy</button><button type="button" class="b" data-a="line">Level</button><button type="button" class="b" data-a="x" aria-label="Close">✕</button></div>`;
     wrap.appendChild(el); $('sim-lvtip').hidden = true;   // the line's hover note would sit under the popup
-    if (realKind && R.web && (realKind === 'limit' ? rO : rP)) realAsk(el, realKind, +v);
+    if (realKind && R.web && (realKind === 'limit' || realKind === 'ostop' ? rO : rP)) realAsk(el, realKind, +v);
     const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
     let x = param.point.x + 12, y = param.point.y - h - 10;
     if (x + w > W - 4) x = Math.max(4, param.point.x - w - 12);
@@ -3770,7 +3805,7 @@
         copyText(v).then(ok => { a.textContent = ok ? 'Copied ✓' : 'Select it ↑'; hint(ok ? `Copied ${v}. In Telegram: /sl ${v} · /tp ${v} · /entry ${v}` : 'The browser blocked copying. Select the number and copy it.'); if (ok) setTimeout(closePop, 600); });
         return;
       }
-      if (act === 'rstop' || act === 'rlimit') { e.stopPropagation(); realAsk(el, act === 'rstop' ? 'stop' : 'limit', +v); return; }
+      if (act === 'rstop' || act === 'rlimit' || act === 'rostop') { e.stopPropagation(); realAsk(el, act === 'rstop' ? 'stop' : act === 'rostop' ? 'ostop' : 'limit', +v); return; }
       if (/^rtp[1-4]$/.test(act)) { e.stopPropagation(); realAsk(el, act.slice(1), +v); return; }
       if (act === 'rcancel') { e.stopPropagation(); realCancelAsk(el); return; }
       if (act === 'rclose') { e.stopPropagation(); realCloseAsk(el); return; }
@@ -4331,6 +4366,8 @@
     R.ui.val = e.target.value;
     const t = realPos(R.ui.id), n = parseFloat(e.target.value), note = e.target.closest('.ask').querySelector('[data-asknote]');
     if (R.ui.kind === 'stop' && t && note) note.innerHTML = n > 0 ? `If hit ≈ <b>${usd(R.ifHit(t, n))}</b>` : 'Type the new stop price.';
+    const o = R.ui.kind === 'ostop' ? realOrd(R.ui.id) : null;
+    if (o && note) { const x = ordStop(o, n); note.innerHTML = x.why ? esc(x.why) : `If it fills at the limit and the stop hits ≈ <b>${usd(x.lose)}</b>`; }
   });
   $('sim-r-cmd').onclick = copyCmd;
   // any price on the page marked data-px (or a command marked data-copy): click to copy it

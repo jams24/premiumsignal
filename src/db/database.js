@@ -682,6 +682,15 @@ async function getPendingManualOrders() {
   return rows;
 }
 
+// Change fields of a waiting order's saved config (e.g. its stop from the dashboard). False if it is no longer pending.
+async function updateManualOrderConfig(id, patch) {
+  const { rowCount } = await query(
+    "UPDATE manual_orders SET config = config || $2::jsonb WHERE id = $1 AND status = 'pending'",
+    [id, JSON.stringify(patch)]
+  );
+  return rowCount > 0;
+}
+
 async function setManualOrderStatus(id, status) {
   const { rowCount } = await query(
     "UPDATE manual_orders SET status = $1, closed_at = NOW() WHERE id = $2 AND status = 'pending'",
@@ -1401,4 +1410,4 @@ async function getDemandZoneOpenTrades() {
   return rows;
 }
 
-module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, savePumpWatch, getActivePumpWatches, saveSweepWait, getActiveSweepWaits, saveChannelTrack, getOpenChannelTracks, getPumpAutoConfig, savePumpAutoConfig, mergePumpAutoConfig, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, getManualPrefs, saveManualPrefs, getAlertMutes, saveAlertMutes, getWebTrading, saveWebTrading, getSmcAlerts, saveSmcAlerts };
+module.exports = { init, query, pool: { end: () => pool?.end() }, isKnownListing, addListing, saveSignal, getActiveSignals, updateSignalHit, closeSignal, getClosedSignals, getAllSignals, saveWhaleTx, saveSnapshot, getRecentSnapshots, getSignalStats, saveOISnapshot, saveDexAlert, saveIntelBrief, logAlert, logSkip, getUncheckedSkips, updateSkipOutcome, getAnalysisData, saveTrade, getOpenTrades, updateTradeHit, closeTrade, getTradeStats, updateTradeStopLoss, updateTradePeakPrice, updateTradePartialClose, updateTradeDCA, saveSettings, loadSettings, getTodayPnL, getAllTimePnL, getUser, createUser, grantUser, revokeUser, listUsers, getActiveUsers, setPaperFollow, getFollowers, getOnchainFollowers, saveUserPaperTrade, getOpenUserTrades, updateUserPaperTrade, closeUserPaperTrade, getUserTradeStats, getUserTradeStatsBySource, getUserDailyPnL, setUserPaperConfig, getUserClosedTrades, getUncheckedAlerts, getActiveAlerts, updateAlertPerformance, getAlertPerformance, getAlertPerformanceBySymbol, getSwingFollowers, getTradeStatsBySource, getSwingTradePerformance, getSwingOpenTrades, getDemandZonePerformance, getDemandZoneOpenTrades, logSpotSignal, logPumpSignal, savePumpWatch, getActivePumpWatches, saveSweepWait, getActiveSweepWaits, saveChannelTrack, getOpenChannelTracks, getPumpAutoConfig, savePumpAutoConfig, mergePumpAutoConfig, getSignalsToTrack, saveSignalTracking, saveManualOrder, getPendingManualOrders, setManualOrderStatus, updateManualOrderConfig, getManualPrefs, saveManualPrefs, getAlertMutes, saveAlertMutes, getWebTrading, saveWebTrading, getSmcAlerts, saveSmcAlerts };
