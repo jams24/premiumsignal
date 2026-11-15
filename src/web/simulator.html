@@ -1067,7 +1067,7 @@
   }
   function cmpSmcLine() {
     const A = cmp.A; if (!A) return '';
-    const last = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, head = `<br>SMC ${tfName(structTf(ctf()))} on <b>${cmpName()}</b>: `;
+    const last = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, head = `<br>SMC ${smcName(ctf())} on <b>${cmpName()}</b>: `;
     if (last && A.now - last.conf < FRESH) return head + `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)} · entry ${cmpFmt(last.entry)} · stop ${cmpFmt(last.stop)} · target ${cmpFmt(last.target)} · <b>${last.R.toFixed(1)}R</b>`;
     if (!leg) return head + 'no live idea right now.';
     const sh = leg.dir === -1, ck = (ok, t) => `${ok ? '✓' : '○'} ${t}`;
@@ -2472,12 +2472,15 @@
   // the one in use on the main chart; the compare chart on its own timeframe reads its own in auto (structTf).
   const STF = [5, 15, 60, 240, 1440, 10080], AUTO_STF = { '1m': 5, '5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440, '1w': 10080 };
   const smc = (() => { let o = {}; try { o = JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { /* private window */ }
-    // the old menu was 15m (default) / 5m: a saved 5m stays, the old default becomes auto
-    const pick = o.pick === 'auto' || STF.includes(o.pick) ? o.pick : o.tf === 5 ? 5 : 'auto';
+    // v2: opening a coin from the alerts / scan used to pin Structure at 5m / 15m and save it, so the chart's timeframe
+    // stopped mattering (a 1W chart read 15m). A 5m / 15m saved before v2 goes back to auto once; 1H and up were picked by hand.
+    const pick = o.v === 2 && (o.pick === 'auto' || STF.includes(o.pick)) ? o.pick : STF.includes(o.pick) && o.pick >= 60 ? o.pick : 'auto';
     return { on: o.on !== false, pick, pause: o.pause !== false, A: null, full: null, setT: new Map(), layers: null, hide: null, seen: Infinity, wait: false }; })();
   const structTf = chartTf => smc.pick === 'auto' ? AUTO_STF[chartTf] || 15 : smc.pick;
   Object.defineProperty(smc, 'tf', { get: () => structTf(S.tf) });
   const tfName = m => m >= 10080 ? '1W' : m >= 1440 ? '1D' : m >= 60 ? m / 60 + 'H' : m + 'm';
+  // the structure's name on the SMC lines; "(fixed)" when the Structure menu holds one that isn't the chart's own
+  const smcName = chartTf => { const m = structTf(chartTf); return tfName(m) + (smc.pick !== 'auto' && m !== AUTO_STF[chartTf] ? ' (fixed)' : ''); };
   // when a structure event was: the clock on 5m / 15m, the date too on 1H / 4H, the day on 1D / 1W
   const atWhen = (t, m) => m >= 1440 ? 'on ' + new Date(t).toISOString().slice(0, 10) : m >= 60 ? 'at ' + utc(t) : 'at ' + hm(t);
   const durName = m => m >= 1440 ? `${+(m / 1440).toFixed(1)} days` : m >= 60 ? `${+(m / 60).toFixed(1)} h` : `${m} min`;
@@ -2497,7 +2500,7 @@
   }
   const mainSmcOpt = () => { const sym = S.sym, ex = S.ex;
     return smcOpt(sym, ex, S.base[0][0], smc.tf, true, () => { if (S.sym === sym && S.ex === ex && S.cur >= 0) { recomputeFull(); refresh(); } }); };
-  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ on: smc.on, pick: smc.pick, tf: smc.tf, pause: smc.pause })); } catch (e) { /* ignore */ } };
+  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ v: 2, on: smc.on, pick: smc.pick, tf: smc.tf, pause: smc.pause })); } catch (e) { /* ignore */ } };
   const COL = { red: '#ef4444', green: '#10b981', gold: '#f59e0b', blue: '#60a5fa', text: '#e5e7eb', muted: '#94a3b8' };
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -2622,7 +2625,7 @@
   }
   function renderWatch() {
     const el = $('sim-watch'), A = smc.A;
-    if (smc.on && !A && smc.wait) { el.hidden = false; el.classList.remove('hot'); el.textContent = `SMC ${tfName(smc.tf)} · loading ${S.sym}'s ${smc.tf >= 1440 ? 'daily' : 'hourly'} history for the structure…`; return; }
+    if (smc.on && !A && smc.wait) { el.hidden = false; el.classList.remove('hot'); el.textContent = `SMC ${smcName(S.tf)} · loading ${S.sym}'s ${smc.tf >= 1440 ? 'daily' : 'hourly'} history for the structure…`; return; }
     if (!smc.on || !A) { el.hidden = true; return; }
     el.hidden = false;
     const leg = A.leg && !A.leg.dead ? A.leg : null, last = A.setups[A.setups.length - 1];
@@ -2632,9 +2635,9 @@
     if (fresh) h = `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)}: entry ${fmt(last.entry)} · stop ${fmt(last.stop)} · target ${fmt(last.target)} · <b>${last.R.toFixed(1)}R</b>` + (S.pos ? '' : '<button type="button" class="b" id="sim-use-setup">Use in ticket</button>');
     else if (leg) {
       const sh = leg.dir === -1;
-      h = `SMC ${tfName(smc.tf)} · <b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} ${atWhen(leg.brk.t, smc.tf)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
+      h = `SMC ${smcName(S.tf)} · <b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} ${atWhen(leg.brk.t, smc.tf)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
         (leg.sweep && leg.trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${fmt(leg.trig.p)}</b>` : '');
-    } else h = A.breaks.length ? `SMC ${tfName(smc.tf)} · no live idea: price closed back past the start of the last move. Wait for the next CHoCH or BOS.` : `SMC ${tfName(smc.tf)} · no structure break yet.`;
+    } else h = A.breaks.length ? `SMC ${smcName(S.tf)} · no live idea: price closed back past the start of the last move. Wait for the next CHoCH or BOS.` : `SMC ${smcName(S.tf)} · no structure break yet.`;
     if (S.mode === 'replay' && smc.full) { const ahead = smc.full.setups.filter(x => x.conf > A.now).length; h += ` <span class="no">· ${ahead ? ahead + ' more A+ setup' + (ahead > 1 ? 's' : '') + (moreLeft() ? ' ahead in the loaded hours' : ' ahead in this replay') : moreLeft() ? 'no more A+ setups in the loaded hours' : 'no more A+ setups ahead'}</span>`; }
     el.classList.toggle('hot', !!fresh);
     el.innerHTML = h;
@@ -4432,7 +4435,13 @@
   function openCoin(sym, ex, tf) {   // Load live from a scan row / alert: same exchange and structure timeframe, overlay on, chart in view
     ex = ex || 'auto'; tf = +tf; listsPop(false);
     if (S.mode !== 'live') { if (replayGate(() => openCoin(sym, ex, tf), `opening ${sym} live`)) return; setMode('live', true); }
-    if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.pick = tf; $('sim-smc-tf').value = String(tf); }   // the alert's structure, so its setup shows
+    // the alert's structure, so its setup shows: the chart goes to the alert's timeframe and Structure auto reads it
+    // (it used to pin the menu at 5m / 15m, and then every other timeframe kept reading that)
+    if (tf === 5 || tf === 15) {
+      const v = tf + 'm';
+      if (smc.pick !== 'auto') { smc.pick = 'auto'; $('sim-smc-tf').value = 'auto'; }
+      if (S.tf !== v) { S.tf = v; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x.dataset.tf === v)); mainTfSync(); }
+    }
     smc.on = true; $('sim-smc-on').checked = true; saveSmc();
     $('sim-symbol-live').value = sym; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
     loadLive(sym, ex).then(() => { if (full.on) return; const c = $('sim-chart').closest('.sim-card').querySelector('.sim-chartbar') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
