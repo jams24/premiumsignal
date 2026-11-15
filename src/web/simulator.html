@@ -108,7 +108,9 @@
 .sim-cmptf button:hover { color: var(--text); }
 .sim-cmptf button.eff { color: var(--text); }   /* = Main: the timeframe it is following */
 .sim-cmptf button.on { color: #60a5fa; border-color: #60a5fa; }
-#sim-cmp-legend { top: 36px; }
+.sim-cmptf .sep { width: 1px; align-self: stretch; margin: 2px 3px; background: #334155; }
+.sim-cmptf button[data-csmc][aria-pressed="true"] { color: var(--text); }
+#sim-cmp-legend, #sim-legend { top: 36px; }   /* under the timeframe strip on each chart */
 /* hover a trade line (REAL or practice entry / stop / TP) or its price label: what it means in dollars */
 .sim-lvtip { position: absolute; z-index: 4; pointer-events: none; max-width: min(340px, calc(100% - 8px)); background: rgba(19,23,34,0.95); border: 1px solid #334155;
   border-radius: 6px; padding: 6px 9px; font: 400 11.5px/1.5 var(--font-mono); color: var(--muted); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
@@ -457,8 +459,8 @@
       </div>
       <div class="sim-cmpsum" id="sim-cmp-sum" aria-live="polite" hidden></div>
       <div class="sim-charts" id="sim-charts">
-        <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div><div class="sim-lvtip" id="sim-lvtip" hidden></div></div>
-        <div class="sim-chartwrap" id="sim-cmp-wrap" hidden><div class="sim-chart" id="sim-cmp-chart"></div><div class="sim-cmptf" id="sim-cmp-tfbar" role="group" aria-label="Second chart: timeframe"><button type="button" data-ctf="" title="Same timeframe as the main chart: both charts scroll and zoom together">= Main</button><button type="button" data-ctf="1m">1m</button><button type="button" data-ctf="5m">5m</button><button type="button" data-ctf="15m">15m</button><button type="button" data-ctf="1h">1H</button><button type="button" data-ctf="4h">4H</button><button type="button" data-ctf="1d">1D</button><button type="button" data-ctf="1w">1W</button></div><div class="sim-legend" id="sim-cmp-legend"></div></div>
+        <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-cmptf" id="sim-tfbar" role="group" aria-label="Main chart: timeframe"><button type="button" data-mtf="1m">1m</button><button type="button" data-mtf="5m">5m</button><button type="button" data-mtf="15m">15m</button><button type="button" data-mtf="1h">1H</button><button type="button" data-mtf="4h">4H</button><button type="button" data-mtf="1d">1D</button><button type="button" data-mtf="1w">1W</button></div><div class="sim-legend" id="sim-legend" hidden></div><div class="sim-lvtip" id="sim-lvtip" hidden></div></div>
+        <div class="sim-chartwrap" id="sim-cmp-wrap" hidden><div class="sim-chart" id="sim-cmp-chart"></div><div class="sim-cmptf" id="sim-cmp-tfbar" role="group" aria-label="Second chart: timeframe"><button type="button" data-ctf="" title="Same timeframe as the main chart: both charts scroll and zoom together">= Main</button><button type="button" data-ctf="1m">1m</button><button type="button" data-ctf="5m">5m</button><button type="button" data-ctf="15m">15m</button><button type="button" data-ctf="1h">1H</button><button type="button" data-ctf="4h">4H</button><button type="button" data-ctf="1d">1D</button><button type="button" data-ctf="1w">1W</button><i class="sep" aria-hidden="true"></i><button type="button" data-csmc="1" title="SMC marks on this chart (zones, premium/discount, structure, sweeps, A+ setups): on / off">☑ SMC</button></div><div class="sim-legend" id="sim-cmp-legend"></div></div>
       </div>
       <div class="sim-hint" id="sim-hint"></div>
       <div class="sim-row" id="sim-replay-bar">
@@ -4046,11 +4048,11 @@
     const d = new Date(Date.now() - 6 * 3600e3); $('sim-time').value = d.toISOString().slice(0, 16);
     S.track = setInterval(trackBg, 4000);   // live trades keep updating in any mode, on any chart
     const v = loadView();   // the chart you had before the reload
-    if (v.tf && TF[v.tf]) { S.tf = v.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x.dataset.tf === v.tf)); }
+    if (v.tf && TF[v.tf]) { S.tf = v.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x.dataset.tf === v.tf)); mainTfSync(); }
     if (v.real === true) R.on = true;
     if (typeof v.cmp === 'string' && /^[A-Z0-9]{1,20}$/.test(v.cmp)) cmp.pending = v.cmp;   // the second chart comes back with the first
     if (TF[v.cmpTf]) { cmp.tf = v.cmpTf; $('sim-cmp-tf').value = v.cmpTf; cmpTfSync(); }
-    if (v.cmpSmc === false) { cmp.smc = false; $('sim-cmp-smc').checked = false; }
+    if (v.cmpSmc === false) { cmp.smc = false; $('sim-cmp-smc').checked = false; cmpTfSync(); }
     const saved = loadPos();
     if (saved.length) { status(`Bringing back your ${saved.length === 1 ? 'open simulated trade' : saved.length + ' open simulated trades'}…`); loadPicks().catch(() => {}); restoreAll(saved); return; }
     if (v.mode === 'live' && /^[A-Z0-9]{1,20}$/.test(v.sym || '')) {
@@ -4268,8 +4270,11 @@
       b.classList.toggle('on', b.dataset.ctf === cur); b.setAttribute('aria-pressed', String(b.dataset.ctf === cur));
       b.classList.toggle('eff', !cur && b.dataset.ctf === S.tf);   // = Main: which one that is now
     });
+    const m = document.querySelector('#sim-cmp-tfbar [data-csmc]');   // the SMC switch on the chart: same as the SMC box above it
+    m.textContent = (cmp.smc ? '☑' : '☐') + ' SMC'; m.setAttribute('aria-pressed', String(cmp.smc));
   }
   $('sim-cmp-tfbar').addEventListener('click', e => {
+    if (e.target.closest('[data-csmc]')) { const c = $('sim-cmp-smc'); c.checked = !c.checked; c.dispatchEvent(new Event('change')); return; }
     const b = e.target.closest('[data-ctf]'); if (!b) return;
     const s = $('sim-cmp-tf'); s.value = b.dataset.ctf; s.dispatchEvent(new Event('change'));
   });
@@ -4281,10 +4286,17 @@
   });
   $('sim-load-live').onclick = () => { const sym = $('sim-symbol-live').value.trim(); if (!sym) return status('Type a coin, for example BTC.', true); loadLive(sym, $('sim-ex-live').value); };
   document.querySelectorAll('#sim .sim-tf .b').forEach(b => b.onclick = () => {
-    S.tf = b.dataset.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x === b));
+    S.tf = b.dataset.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x === b)); mainTfSync();
     if (smc.pick === 'auto' && S.cur >= 0) recomputeFull();   // auto: the structure follows the chart's timeframe
     if (S.cur >= 0) redraw(true);
   });
+  // the same timeframes on the chart itself (top left, in full screen too), Live and Replay: they press the row above
+  function mainTfSync() { document.querySelectorAll('#sim-tfbar [data-mtf]').forEach(b => { const on = b.dataset.mtf === S.tf; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); }
+  $('sim-tfbar').addEventListener('click', e => {
+    const b = e.target.closest('[data-mtf]'); if (!b) return;
+    const row = document.querySelector(`#sim .sim-tf .b[data-tf="${b.dataset.mtf}"]`); if (row) row.click();
+  });
+  mainTfSync();
   $('sim-tool-line').onclick = () => setTool('line');
   $('sim-tool-stop').onclick = () => setTool('stop');
   $('sim-tool-tp').onclick = () => setTool('tp');
@@ -4391,7 +4403,7 @@
   $('sim-go').onclick = enter;
   $('sim-smc-on').onchange = () => { smc.on = $('sim-smc-on').checked; saveSmc(); refresh(); };
   $('sim-smc-tf').onchange = () => { const v = $('sim-smc-tf').value; smc.pick = v === 'auto' ? 'auto' : +v; saveSmc(); recomputeFull(); refresh(); cmpRunSmc(); cmpSum(); };
-  $('sim-cmp-smc').onchange = e => { cmp.smc = e.target.checked; saveView(); cmpRunSmc(); cmpSum(); };
+  $('sim-cmp-smc').onchange = e => { cmp.smc = e.target.checked; saveView(); cmpRunSmc(); cmpSum(); cmpTfSync(); };
   $('sim-smc-pause').onchange = () => { smc.pause = $('sim-smc-pause').checked; saveSmc(); };
   $('sim-next-setup').onclick = nextSetup;
   $('sim-coach-btn').onclick = () => {
