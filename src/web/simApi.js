@@ -1,6 +1,7 @@
 // Read-only data for the dashboard's Trade Simulator tab: exchange candles (public endpoints), recent pump signals
 // and our own live trades to replay. It never places, changes or cancels orders.
 const db = require('../db/database');
+const coinFlow = require('../collectors/coinFlow');
 
 const STEP = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3, '1d': 86400e3 };
 const BYBIT_IV = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' };
@@ -322,6 +323,24 @@ async function handle(url, res) {
     }
 
     if (url.pathname === '/api/sim/news') return send(200, await newsEvents());
+
+    // 🐋 who is positioned on the coin right now: funding, whales (Binance top traders by position), retail (all
+    // accounts, Binance and Bybit), open interest — the same data as /flow in Telegram (cached 60 s there)
+    if (url.pathname === '/api/sim/flow') {
+      const sym = cleanSymbol(url.searchParams.get('symbol'));
+      if (!sym || fxPair(url.searchParams.get('symbol'))) return send(400, { error: 'a crypto perp symbol is required' });
+      const d = await coinFlow.getFlow(sym, { exchange: /bybit/i.test(url.searchParams.get('exchange') || '') ? 'bybit' : 'binance' });
+      if (d.error) return send(404, { error: d.error });
+      const side = s => (s && s.now ? { now: s.now.long, ratio: s.now.ratio, h1: s.h1 ? s.h1.long : null, h4: s.h4 ? s.h4.long : null } : null);
+      const ch = (a, b) => (a > 0 && b > 0 ? (a / b - 1) * 100 : null);
+      const oi1 = d.oi ? ch(d.oi.now, d.oi.h1) : null, oi4 = d.oi ? ch(d.oi.now, d.oi.h4) : null;
+      const w = d.whalesPos?.now?.ratio ?? null, r = d.retailBn?.now?.ratio ?? d.retailBy?.now?.ratio ?? null;
+      return send(200, {
+        symbol: d.symbol, at: Date.now(), funding: d.funding, taker: d.taker, ch1h: d.ch1h,
+        whales: side(d.whalesPos), whalesAcc: side(d.whalesAcc), retail: side(d.retailBn), retailBybit: side(d.retailBy),
+        oi1, oi4, oiUsd: d.oi?.usd || null, reading: coinFlow.reading(w, r), oiReading: coinFlow.oiReading(oi1, d.ch1h),
+      });
+    }
 
     if (url.pathname === '/api/sim/mmr') {   // practice liquidation: the coin's maintenance margin by position size
       const sym = cleanSymbol(url.searchParams.get('symbol'));

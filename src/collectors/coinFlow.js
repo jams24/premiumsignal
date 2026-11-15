@@ -382,4 +382,4 @@ function flowLine(d) {
   return parts.length ? parts.join(' · ') : null;
 }
 
-module.exports = { getFlow, formatFlow, flowLine, switchZone, crowdReading, crowdNote, isCrowded, CROWD_BT, CROWD_WARN_AT, bybitRetailNow };
+module.exports = { getFlow, formatFlow, flowLine, switchZone, crowdReading, crowdNote, isCrowded, CROWD_BT, CROWD_WARN_AT, bybitRetailNow, reading, oiReading };

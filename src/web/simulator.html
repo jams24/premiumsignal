@@ -258,6 +258,15 @@
 .sim-lists.pop .sim-lists-body { display: grid; flex: 1 1 auto; min-height: 0; height: auto; max-height: none; }
 .sim-shade { position: fixed; inset: 0; z-index: 96; background: rgba(0,0,0,.55); }   /* above the full-screen chart (95): the list pops up over it */
 /* ⏱ when the coin moves: busy / quiet hours and weekdays from its 1H history */
+/* 🐋 positioning line: a long / short split bar (green = long share, red = short) next to the % it shows */
+.sim-ls { display: inline-block; width: 44px; height: 7px; border-radius: 4px; background: #ef4444; overflow: hidden; vertical-align: middle; margin: 0 4px 2px; }
+.sim-ls i { display: block; height: 100%; background: #10b981; border-right: 2px solid var(--bg); }
+.sim table.sim-crowd-t { border-collapse: collapse; margin-top: 8px; font-size: 12px; width: auto; min-width: 0; }   /* not the journal tables' 820px */
+.sim-crowd-t th, .sim-crowd-t td { text-align: left; padding: 2px 14px 2px 0; font-weight: 400; white-space: nowrap; }
+.sim-crowd-t th { color: var(--muted); }
+.sim-crowd-t td:first-child { white-space: normal; min-width: 150px; }
+.sim-nw { white-space: nowrap; }
+.sim-crowd-n { color: var(--muted); font-size: 11.5px; line-height: 1.55; margin-top: 6px; max-width: 900px; }
 .sim-rhythm-d { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 18px; margin-top: 8px; }
 .sim-rhythm-d figure { margin: 0; max-width: 540px; }
 .sim-rhythm-d figcaption { font: 600 11.5px/1.4 var(--font-mono); color: var(--text); margin-bottom: 2px; }
@@ -416,6 +425,7 @@
       <div class="sim-watch sim-htf" id="sim-htf" hidden></div>
       <div class="sim-watch" id="sim-rhythm" hidden></div>
       <div class="sim-watch" id="sim-watch" aria-live="polite" hidden></div>
+      <div class="sim-watch" id="sim-crowd" hidden></div>
       <div class="sim-clock" id="sim-clock">No chart loaded</div>
       <button type="button" class="sim-newsline" id="sim-news-next" hidden></button>
       <div class="sim-watch hot" id="sim-pend" aria-live="polite" hidden></div>
@@ -2051,7 +2061,7 @@
   function refresh() {
     if (!cs) return;
     runSmc();
-    drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos(); renderPend(); renderRhythm();
+    drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos(); renderPend(); renderRhythm(); renderCrowd();
     const end = nowT();
     $('sim-clock').textContent = end ? (isFx() ? `${S.sym.slice(0, 3)}/${S.sym.slice(3)} forex · Yahoo, practice only` : `${S.sym}USDT perp · ${S.ex}`) + ` · ${S.tf} · ${utc(end)} UTC` +
       (S.mode === 'replay' ? ` · ${Math.round((S.base.length - 1 - S.cur) / 60)}h of data ahead` : ' · live') : 'No chart loaded';
@@ -2579,6 +2589,64 @@
     RH.open = !RH.open; try { localStorage.setItem(RH.key, JSON.stringify({ open: RH.open })); } catch (err) { /* ignore */ }
     renderRhythm();
   });
+  // ---------- 🐋 positioning: funding, whales vs retail (Live only) ----------
+  // The bot's /flow data for the coin on the chart: whales = Binance top traders by position size, retail = all accounts
+  // (Binance, Bybit), funding, open interest. Read every minute while the page is open. It is the positioning right now,
+  // so Replay (a past moment) doesn't show it.
+  const CW = { sym: '', at: 0, busy: false, d: null, err: '', open: false, html: '', key: 'sc_sim_crowd_v1' };
+  try { CW.open = !!(JSON.parse(localStorage.getItem(CW.key)) || {}).open; } catch (e) { /* closed */ }
+  const lsPct = v => (v == null || !isFinite(v) ? '?' : Math.round(v * 100) + '%');
+  const lsBar = v => (v == null || !isFinite(v) ? '' : `<span class="sim-ls" aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, v * 100)).toFixed(0)}%"></i></span>`);
+  const lsMove = s => (!s || s.h1 == null ? '' : s.now - s.h1 >= 0.02 ? ' ↑' : s.h1 - s.now >= 0.02 ? ' ↓' : '');   // ≥ 2 points vs 1 h ago
+  function fundTxt(f) {
+    if (f == null || !isFinite(f)) return 'funding ?';
+    const v = `${f >= 0 ? '+' : ''}${f.toFixed(4)}%`;
+    const what = f >= 0.05 ? 'longs paying a lot' : f > 0.0101 ? 'longs pay more than usual' : f >= 0 ? 'longs pay shorts (normal)' : f > -0.05 ? 'shorts pay longs' : 'shorts paying a lot';
+    return `<span class="sim-nw">funding <b>${v}</b></span> ${what}`;
+  }
+  function renderCrowd() {
+    const el = $('sim-crowd');
+    if (S.mode !== 'live' || S.cur < 0 || !S.sym || isFx()) { el.hidden = true; CW.html = ''; return; }
+    el.hidden = false;
+    if (CW.sym !== S.sym) { CW.sym = S.sym; CW.d = null; CW.err = ''; CW.at = 0; }
+    if (!CW.busy && !document.hidden && Date.now() - CW.at > 60e3) loadCrowd(S.sym);
+    const set = h => { if (h !== CW.html) { CW.html = h; el.innerHTML = h; } };
+    const d = CW.d, sym = esc(S.sym);
+    if (!d) return set(`🐋 Who is long or short on ${sym} · ${CW.err ? 'could not read it: ' + esc(CW.err) : 'reading funding, whales and retail…'}`);
+    const w = d.whales, r = d.retail || d.retailBybit, rSrc = d.retail ? 'Binance' : 'Bybit';
+    const side = (name, s, src) => `<span class="sim-nw">${s ? `${name}${src ? ` <span class="m">(${src})</span>` : ''}${lsBar(s.now)}<b>${lsPct(s.now)} long</b>${lsMove(s)}` : `${name} <span class="m">no data</span>`}</span>`;
+    let h = `🐋 ${sym} now · ${fundTxt(d.funding)} · ${side('whales', w)} · ${side('retail', r, d.retail && d.retailBybit ? '' : rSrc)}` +
+      (d.oi1 != null ? ` · OI 1h <b>${d.oi1 >= 0 ? '+' : ''}${d.oi1.toFixed(1)}%</b>` : '') +
+      (d.reading ? ` · <i>${esc(d.reading)}</i>` : '') +
+      `<button type="button" class="b" data-cw="1" aria-expanded="${CW.open}">${CW.open ? '▴ less' : '▾ details'}</button>`;
+    if (CW.open) {
+      const row = (name, s) => `<tr><td>${name}</td>` + (s ? `<td>${lsBar(s.now)}<b>${lsPct(s.now)}</b> long · ${s.ratio != null ? s.ratio.toFixed(2) : '?'}</td><td>${lsPct(s.h1)}</td><td>${lsPct(s.h4)}</td>` : '<td class="m">no data</td><td></td><td></td>') + '</tr>';
+      h += `<div style="overflow-x:auto"><table class="sim-crowd-t"><tr><th></th><th>now · long/short</th><th>1 h ago</th><th>4 h ago</th></tr>` +
+        row('🐋 Whales by position (Binance top traders)', w) + row('🐋 Whales by accounts', d.whalesAcc) +
+        row('👥 Retail · Binance (all accounts)', d.retail) + row('👥 Retail · Bybit', d.retailBybit) + '</table></div>' +
+        `<div>${fundTxt(d.funding)}` +
+        (d.oi1 != null ? ` · open interest 1h ${d.oi1 >= 0 ? '+' : ''}${d.oi1.toFixed(1)}%, 4h ${d.oi4 != null ? (d.oi4 >= 0 ? '+' : '') + d.oi4.toFixed(1) + '%' : '?'}${d.oiUsd ? ` ($${(d.oiUsd / 1e6).toFixed(1)}M open)` : ''}` : '') +
+        (d.taker != null ? ` · taker buy/sell 1h ${d.taker.toFixed(2)} ${d.taker >= 1.1 ? '(buyers hitting harder)' : d.taker <= 0.9 ? '(sellers hitting harder)' : '(even)'}` : '') +
+        (d.oiReading ? ` · last hour: ${esc(d.oiReading)}` : '') + ` · updated ${utc(d.at).slice(-5)} UTC</div>` +
+        `<div class="sim-crowd-n">Whales = Binance's top traders (the 20% of accounts with the most margin), counted by position size; retail = every account, one vote each. ` +
+        `Funding above 0 = longs pay shorts each funding period (more people want to be long); below 0 = shorts pay longs. ` +
+        `<b>Positioning, not a signal:</b> in our tests long/short ratios on their own showed no edge. October (one month — Binance keeps 30 days): shorts taken while whales and retail were both ≥ 1.4 lost −$2.58/trade over 22 trades; ` +
+        `WEAK pump shorts with funding above +0.005% lost in both replay periods.</div>`;
+    }
+    set(h);
+  }
+  async function loadCrowd(sym) {
+    CW.busy = true; CW.at = Date.now();
+    try { const r = await api('/api/sim/flow', { symbol: sym, exchange: S.ex || '' }, 20000); if (CW.sym === sym) { CW.d = r; CW.err = ''; } }
+    catch (e) { if (CW.sym === sym) CW.err = e.message; }
+    CW.busy = false;
+    if (CW.sym === sym) renderCrowd();
+  }
+  $('sim-crowd').addEventListener('click', e => {
+    if (!e.target.closest('[data-cw]')) return;
+    CW.open = !CW.open; try { localStorage.setItem(CW.key, JSON.stringify({ open: CW.open })); } catch (err) { /* ignore */ }
+    renderCrowd();
+  });
   function useSetup(x) {
     if (!x || S.pos) return;
     S.side = x.side; $('sim-stop').value = (+x.stop).toFixed(S.prec);
@@ -2995,7 +3063,7 @@
     $('sim-next-setup').hidden = m !== 'replay'; $('sim-pause-wrap').hidden = m !== 'replay';
     if (!quiet && m === 'live') { const sym = S.sym || 'BTC'; $('sim-symbol-live').value = sym; loadLive(sym, $('sim-ex-live').value); }
     if (!quiet && m === 'replay') status('Pick a signal or a coin and time to replay.');
-    renderTicket(); renderRecent();   // the Practice / Real switch is for Live only; recent coins load in this mode
+    renderTicket(); renderRecent(); renderCrowd();   // the Practice / Real switch is for Live only; recent coins load in this mode
   }
   // ---------- ✏️ drawing: pencil, zig-zag, straight line ----------
   // Points are kept as [time, price], so a drawing stays on the same candles and prices when you scroll, zoom or change
