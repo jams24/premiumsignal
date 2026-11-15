@@ -380,7 +380,7 @@
           <input id="sim-symbol-live" list="sim-coin-list" placeholder="BTC" aria-label="Symbol" autocomplete="off" spellcheck="false" style="width:110px;text-transform:uppercase">
           <select id="sim-ex-live" aria-label="Exchange"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
           <button type="button" class="b go" id="sim-load-live">Load live chart</button>
-          <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the chosen structure timeframe">🔎 Find setups</button>
+          <button type="button" class="b" id="sim-scan-btn" title="Check coins for SMC setups on the structure timeframe (5m or 15m; with 1H and up it scans on 15m, from each coin's last day of minutes)">🔎 Find setups</button>
           <select id="sim-scan-scope" aria-label="Which coins to scan"><option value="all">every coin we traded + signals 48 h</option><option value="recent">coins traded in 30 days + signals 48 h</option><option value="signals">signals 48 h only</option><option value="top">top 50 coins by volume + signals 48 h</option><option value="alltop">every coin we traded + top 50 by volume + signals 48 h</option></select>
           <span class="sim-status" style="margin:0">Updates every 4 s. Fills use the last traded price.</span>
           <div class="sim-coins" style="flex-basis:100%"><span class="sim-status" style="margin:0">Big coins:</span><button type="button" class="b" data-coin="BTC">BTC</button><button type="button" class="b" data-coin="ETH">ETH</button><button type="button" class="b" data-coin="SOL">SOL</button><button type="button" class="b" data-coin="BNB">BNB</button><button type="button" class="b" data-coin="XRP">XRP</button><button type="button" class="b" data-coin="LTC">LTC</button><button type="button" class="b" data-coin="DOGE">DOGE</button></div>
@@ -434,7 +434,7 @@
       </div>
       <div class="sim-smcbar">
         <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-smc-on" checked> SMC overlay</label>
-        <select id="sim-smc-tf" aria-label="Structure timeframe"><option value="15">Structure 15m</option><option value="5">Structure 5m</option></select>
+        <select id="sim-smc-tf" aria-label="Structure timeframe" title="Which candles the SMC marks (swings, BOS / CHoCH, zones, premium / discount, sweeps, A+) are read from. Auto: the timeframe on the chart (a 1m chart uses 5m). 1H and up use the coin's long history (120 days hourly, 1,000 days daily)."><option value="auto">Structure auto</option><option value="5">Structure 5m</option><option value="15">Structure 15m</option><option value="60">Structure 1H</option><option value="240">Structure 4H</option><option value="1440">Structure 1D</option><option value="10080">Structure 1W</option></select>
         <button type="button" class="b" id="sim-coach-btn">🎓 Walk me through</button>
         <button type="button" class="b" id="sim-next-setup" title="Jump forward to the next setup the simulator finds">⏭ Next setup</button>
         <label class="sim-opt" style="margin:0" id="sim-pause-wrap"><input type="checkbox" id="sim-smc-pause" checked> Pause on setups</label>
@@ -793,7 +793,7 @@
     ['pointerup', 'touchend', 'wheel'].forEach(ev => el.addEventListener(ev, () => setTimeout(fitHint, 60), { passive: true }));
     vs = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    smcLayer = makeLayer(() => ({ main: true, A: smc.A, chart, cs, bucket, tf: S.tf, base: S.base, cur: S.cur })); cs.attachPrimitive(smcLayer);
+    smcLayer = makeLayer(() => ({ main: true, A: smc.A, chart, cs, bucket, tf: S.tf, stf: smc.tf, t0: S.Bt[0], base: S.base, cur: S.cur })); cs.attachPrimitive(smcLayer);
     drawLayer = makeDrawLayer(); cs.attachPrimitive(drawLayer);
     newsLayer = makeNewsLayer(); cs.attachPrimitive(newsLayer);
     chart.subscribeClick(onChartClick);
@@ -928,7 +928,7 @@
     cmp.cs = cmp.chart.addCandlestickSeries({ upColor: '#10b981', downColor: '#ef4444', borderUpColor: '#10b981', borderDownColor: '#ef4444', wickUpColor: '#10b981', wickDownColor: '#ef4444' });
     cmp.vs = cmp.chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     cmp.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    cmp.layer = makeLayer(() => ({ main: false, A: cmp.smc ? cmp.A : null, chart: cmp.chart, cs: cmp.cs, bucket: cbucket, tf: ctf(), base: cmp.base, cur: cmp.cur }));
+    cmp.layer = makeLayer(() => ({ main: false, A: cmp.smc ? cmp.A : null, chart: cmp.chart, cs: cmp.cs, bucket: cbucket, tf: ctf(), stf: structTf(ctf()), t0: cmp.Bt[0], base: cmp.base, cur: cmp.cur }));
     cmp.cs.attachPrimitive(cmp.layer);
     cmp.chart.timeScale().subscribeVisibleLogicalRangeChange(() => cmpAlign(true));
     cmp.chart.subscribeCrosshairMove(p => { cmpLegend(p); cmpCross(p, true); });
@@ -1050,17 +1050,22 @@
     const c = base[upto][4];
     return { chg: (c / open - 1) * 100, pos: hi > lo ? (c - lo) / (hi - lo) : 0.5, hrs: (end - base[i + 1][0]) / HOUR };
   }
-  function cmpRunSmc() {   // the same SMC read as the main chart (its structure timeframe), on the compare coin up to the main chart's clock
-    cmp.A = cmp.on && cmp.smc && cmp.cur >= 0 && window.SMC ? SMC.analyze(cmp.base, cmp.cur, { tf: smc.tf * MIN }) : null;
+  function cmpRunSmc() {   // the same SMC read as the main chart, on the compare coin up to the main chart's clock (auto: its own timeframe's structure)
+    cmp.A = cmp.on && cmp.smc && cmp.cur >= 0 && window.SMC ? cmpSmcA() : null;
     if (cmp.layer) cmp.layer.update();
+  }
+  function cmpSmcA() {
+    const sym = cmp.sym, ex = cmp.ex;
+    const o = smcOpt(sym, ex, cmp.base[0][0], structTf(ctf()), false, () => { if (cmp.on && cmp.sym === sym && cmp.ex === ex) { cmpRunSmc(); cmpSum(); } });
+    return o.wait ? null : SMC.analyze(cmp.base, cmp.cur, o);
   }
   function cmpSmcLine() {
     const A = cmp.A; if (!A) return '';
-    const last = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, head = `<br>SMC ${smc.tf}m on <b>${cmpName()}</b>: `;
+    const last = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, head = `<br>SMC ${tfName(structTf(ctf()))} on <b>${cmpName()}</b>: `;
     if (last && A.now - last.conf < FRESH) return head + `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)} · entry ${cmpFmt(last.entry)} · stop ${cmpFmt(last.stop)} · target ${cmpFmt(last.target)} · <b>${last.R.toFixed(1)}R</b>`;
     if (!leg) return head + 'no live idea right now.';
     const sh = leg.dir === -1, ck = (ok, t) => `${ok ? '✓' : '○'} ${t}`;
-    return head + `<b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} at ${hm(leg.brk.t)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
+    return head + `<b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} ${atWhen(leg.brk.t, structTf(ctf()))} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
       (leg.sweep && leg.trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${cmpFmt(leg.trig.p)}</b>` : '');
   }
   function cmpSum() {
@@ -2435,9 +2440,36 @@
 
   // ---------- SMC overlay: the engine's marks drawn on the chart canvas (series primitive) ----------
   const SKEY = 'sc_sim_smc_v1';
+  // Structure timeframe: 'auto' follows the chart's timeframe (a 1m chart reads 5m), or a fixed one, in minutes. smc.tf is
+  // the one in use on the main chart; the compare chart on its own timeframe reads its own in auto (structTf).
+  const STF = [5, 15, 60, 240, 1440, 10080], AUTO_STF = { '1m': 5, '5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440, '1w': 10080 };
   const smc = (() => { let o = {}; try { o = JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { /* private window */ }
-    return { on: o.on !== false, tf: o.tf === 5 ? 5 : 15, pause: o.pause !== false, A: null, full: null, setT: new Map(), layers: null, hide: null, seen: Infinity }; })();
-  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ on: smc.on, tf: smc.tf, pause: smc.pause })); } catch (e) { /* ignore */ } };
+    // the old menu was 15m (default) / 5m: a saved 5m stays, the old default becomes auto
+    const pick = o.pick === 'auto' || STF.includes(o.pick) ? o.pick : o.tf === 5 ? 5 : 'auto';
+    return { on: o.on !== false, pick, pause: o.pause !== false, A: null, full: null, setT: new Map(), layers: null, hide: null, seen: Infinity, wait: false }; })();
+  const structTf = chartTf => smc.pick === 'auto' ? AUTO_STF[chartTf] || 15 : smc.pick;
+  Object.defineProperty(smc, 'tf', { get: () => structTf(S.tf) });
+  const tfName = m => m >= 10080 ? '1W' : m >= 1440 ? '1D' : m >= 60 ? m / 60 + 'H' : m + 'm';
+  // when a structure event was: the clock on 5m / 15m, the date too on 1H / 4H, the day on 1D / 1W
+  const atWhen = (t, m) => m >= 1440 ? 'on ' + new Date(t).toISOString().slice(0, 10) : m >= 60 ? 'at ' + utc(t) : 'at ' + hm(t);
+  const durName = m => m >= 1440 ? `${+(m / 1440).toFixed(1)} days` : m >= 60 ? `${+(m / 60).toFixed(1)} h` : `${m} min`;
+  const scanTf = () => smc.tf <= 15 ? smc.tf : 15;   // the setup finder and alerts read 5m / 15m (one day of minutes per coin)
+  function smcTfLabel() {   // the menu says what auto is reading now
+    const o = $('sim-smc-tf').options[0]; if (o) o.textContent = `Structure auto · ${tfName(structTf(S.tf))}`;
+  }
+  // analyze() options for a chart: 1H and up put the coin's older candles in front of its one day of minutes (hourly
+  // for 1H / 4H, daily for 1D / 1W, the same ones the chart shows); while they load, wait = true and nothing is drawn
+  function smcOpt(sym, ex, first, m, main, done) {
+    const o = { tf: m * MIN };
+    if (m === 10080) o.off = 4 * 1440 * MIN;   // weeks from Monday 00:00 UTC, like the 1W candles
+    if (m < 60) return o;
+    const H = m >= 1440 ? histFor(sym, ex, '1d', first, done) : main ? htfHours() : histFor(sym, ex, '1h', first, done);
+    if (H) o.hist = H; else o.wait = true;
+    return o;
+  }
+  const mainSmcOpt = () => { const sym = S.sym, ex = S.ex;
+    return smcOpt(sym, ex, S.base[0][0], smc.tf, true, () => { if (S.sym === sym && S.ex === ex && S.cur >= 0) { recomputeFull(); refresh(); } }); };
+  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ on: smc.on, pick: smc.pick, tf: smc.tf, pause: smc.pause })); } catch (e) { /* ignore */ } };
   const COL = { red: '#ef4444', green: '#10b981', gold: '#f59e0b', blue: '#60a5fa', text: '#e5e7eb', muted: '#94a3b8' };
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -2463,21 +2495,24 @@
     const A = V.A, cs = V.cs; if (!A || !cs || (V.main && !(smc.on || coach.open))) return;
     // 4H chart: a 15m/5m swing, break or sweep sits inside one candle, so those labels would pile up on the last bars —
     // keep the zones, premium/discount and levels only (the walk-through still shows whatever it points at)
-    const tiny = (V.tf === '4h' || V.tf === '1d' || V.tf === '1w') && !(V.main && coach.open);
+    const tiny = TF[V.tf] >= 16 * (V.stf || 15) * MIN && !(V.main && coach.open);   // chart candles 16× the structure's or more
     const show = k => (!V.main || ((!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k)) && !(tiny && (k === 'swings' || k === 'structure'));   // the walk-through steers the main chart only
     const ts = V.chart.timeScale(), W = m.width;
     const X = t => ts.timeToCoordinate(V.bucket(t) / 1000);
+    // where a line or zone starts: before the chart's first candle (a 1H+ structure reads further back than a small
+    // timeframe chart shows) it starts at the left edge
+    const XL = t => { const x = X(t); return x != null ? x : V.t0 != null && V.bucket(t) < V.t0 ? 0 : null; };
     const Y = p => cs.priceToCoordinate(p);
     const ok = (...v) => v.every(x => x != null && isFinite(x));
     const leg = A.leg && !A.leg.dead ? A.leg : null;
     g.save();
     if (back) {
       if (show('range') && leg) {
-        const x0 = X(leg.dir === -1 ? leg.hiT : leg.loT), yH = Y(leg.hi), yE = Y((leg.hi + leg.lo) / 2), yL = Y(leg.lo);
+        const x0 = XL(leg.dir === -1 ? leg.hiT : leg.loT), yH = Y(leg.hi), yE = Y((leg.hi + leg.lo) / 2), yL = Y(leg.lo);
         if (ok(x0, yH, yE, yL)) { g.fillStyle = 'rgba(239,68,68,0.07)'; g.fillRect(x0, yH, W - x0, yE - yH); g.fillStyle = 'rgba(16,185,129,0.07)'; g.fillRect(x0, yE, W - x0, yL - yE); }
       }
       if (show('zones')) for (const z of A.zones.filter(z => !z.broken).slice(-3)) {
-        const x0 = X(z.t), y1 = Y(z.top), y2 = Y(z.bot); if (!ok(x0, y1, y2)) continue;
+        const x0 = XL(z.t), y1 = Y(z.top), y2 = Y(z.bot); if (!ok(x0, y1, y2)) continue;
         const sup = z.type === 'supply';
         g.fillStyle = sup ? 'rgba(239,68,68,0.16)' : 'rgba(16,185,129,0.16)'; g.fillRect(x0, y1, W - x0, Math.max(2, y2 - y1));
         g.strokeStyle = sup ? 'rgba(239,68,68,0.55)' : 'rgba(16,185,129,0.55)'; g.lineWidth = 1; g.strokeRect(Math.round(x0) + .5, Math.round(y1) + .5, W - x0, Math.max(2, Math.round(y2 - y1)));
@@ -2495,7 +2530,7 @@
       g.fillStyle = 'rgba(19,23,34,0.88)'; g.fillRect(x0, yy - 7, w, 14); g.fillStyle = color; g.textAlign = 'left'; g.fillText(txt, x0 + 4, yy + .5);
     };
     if (show('setup')) {
-      if (leg && leg.sweep && leg.trig) { line(X(leg.trig.t), W, Y(leg.trig.p), COL.blue, [5, 3], 1.5); tag('1m CHoCH level', W - 4, Y(leg.trig.p) + (leg.dir === -1 ? 9 : -9), COL.blue, 'right'); }
+      if (leg && leg.sweep && leg.trig) { line(XL(leg.trig.t), W, Y(leg.trig.p), COL.blue, [5, 3], 1.5); tag('1m CHoCH level', W - 4, Y(leg.trig.p) + (leg.dir === -1 ? 9 : -9), COL.blue, 'right'); }
       for (const s of A.setups.slice(-4).reverse()) {
         const x = X(s.t), ye = Y(s.entry), ys = Y(s.stop), yt = Y(s.target); if (!ok(x, ye, ys, yt)) continue;
         const res = setupResult(s, V.base, V.cur), xr = res ? X(res.t) : W;
@@ -2508,41 +2543,46 @@
       }
     }
     if (show('range') && leg) {
-      const x0 = X(leg.dir === -1 ? leg.hiT : leg.loT), eq = (leg.hi + leg.lo) / 2;
+      const x0 = XL(leg.dir === -1 ? leg.hiT : leg.loT), eq = (leg.hi + leg.lo) / 2;
       line(x0, W, Y(eq), 'rgba(229,231,235,0.55)', [6, 4]);
       tag('50% · EQ', W - 4, Y(eq) - 9, COL.text, 'right');
       tag('Premium', W - 4, Y(leg.hi) + 9, '#fca5a5', 'right'); tag('Discount', W - 4, Y(leg.lo) - 9, '#6ee7b7', 'right');
     }
     if (show('zones')) for (const z of A.zones.filter(z => !z.broken).slice(-3)) {
-      const sup = z.type === 'supply'; tag(sup ? 'Supply zone' : 'Demand zone', X(z.t), Y(sup ? z.top : z.bot) + (sup ? -9 : 9), sup ? '#fca5a5' : '#6ee7b7');
+      const sup = z.type === 'supply'; tag(sup ? 'Supply zone' : 'Demand zone', XL(z.t), Y(sup ? z.top : z.bot) + (sup ? -9 : 9), sup ? '#fca5a5' : '#6ee7b7');
     }
     if (show('swings')) {
       g.textAlign = 'center'; g.font = '600 9.5px "JetBrains Mono", monospace';
-      for (const s of A.swings.slice(-40)) { const x = X(s.t), y = Y(s.p); if (!ok(x, y)) continue; g.fillStyle = /HH|HL/.test(s.label) ? '#6ee7b7' : /LH|LL/.test(s.label) ? '#fca5a5' : COL.muted; g.fillText(s.label, x, s.side === 'H' ? y - 9 : y + 10); }
+      for (const s of A.swings.slice(-40)) { const x = X(s.at || s.t), y = Y(s.p); if (!ok(x, y)) continue; g.fillStyle = /HH|HL/.test(s.label) ? '#6ee7b7' : /LH|LL/.test(s.label) ? '#fca5a5' : COL.muted; g.fillText(s.label, x, s.side === 'H' ? y - 9 : y + 10); }
       g.font = '600 10px "JetBrains Mono", monospace';
     }
     if (show('structure')) for (const b of A.breaks.slice(-10).reverse()) {
-      const x1 = X(b.fromT), x2 = X(b.t), y = Y(b.p), c = b.dir === -1 ? COL.red : COL.green;
+      const x1 = XL(b.fromT), x2 = X(b.t), y = Y(b.p), c = b.dir === -1 ? COL.red : COL.green;
       line(x1, x2, y, c, b.kind === 'BOS' ? [4, 3] : [], b.kind === 'CHoCH' ? 1.6 : 1);
       if (ok(x1, x2, y)) tag(b.kind, (x1 + x2) / 2, y + (b.dir === -1 ? 9 : -9), c, 'center');
     }
     if (show('liq')) {
       const side = leg ? (leg.dir === -1 ? 'H' : 'L') : null, eq = leg ? (leg.hi + leg.lo) / 2 : 0;
-      if (leg) for (const l of A.liq.filter(l => l.kind === 'swing' && l.side === side && (side === 'H' ? l.p >= eq : l.p <= eq)).slice(-4)) line(X(l.t), W, Y(l.p), 'rgba(245,158,11,0.5)', [1, 3]);
-      for (const e of A.eqs.filter(e => !e.taken).slice(-4)) { line(X(e.t1), W, Y(e.p), COL.gold, [3, 3], 1.2); tag(e.kind + ' · stops', X(e.t1), Y(e.p) + (e.side === 'H' ? -9 : 9), COL.gold); }
+      if (leg) for (const l of A.liq.filter(l => l.kind === 'swing' && l.side === side && (side === 'H' ? l.p >= eq : l.p <= eq)).slice(-4)) line(XL(l.t), W, Y(l.p), 'rgba(245,158,11,0.5)', [1, 3]);
+      for (const e of A.eqs.filter(e => !e.taken).slice(-4)) { line(XL(e.t1), W, Y(e.p), COL.gold, [3, 3], 1.2); tag(e.kind + ' · stops', XL(e.t1), Y(e.p) + (e.side === 'H' ? -9 : 9), COL.gold); }
       if (!tiny) for (const s of A.sweeps.slice(-5).reverse()) {
-        line(X(s.levelT), X(s.t), Y(s.p), COL.gold, [1, 2]);
-        const x = X(s.t), y = Y(s.wick); if (ok(x, y)) tag('✕ sweep', x, s.dir === -1 ? y - 10 : y + 10, COL.gold, 'center');
+        line(XL(s.levelT), X(s.t), Y(s.p), COL.gold, [1, 2]);
+        const x = X(s.wickT || s.t), y = Y(s.wick); if (ok(x, y)) tag('✕ sweep', x, s.dir === -1 ? y - 10 : y + 10, COL.gold, 'center');
       }
     }
     g.restore();
   }
   function recomputeFull() {
-    smc.full = S.mode === 'replay' && S.base.length ? SMC.analyze(S.base, S.base.length - 1, { tf: smc.tf * MIN }) : null;
+    const o = S.mode === 'replay' && S.base.length ? mainSmcOpt() : null;
+    smc.fullWait = !!(o && o.wait);   // its history is still loading: runSmc does it again once it is in
+    smc.full = o && !o.wait ? SMC.analyze(S.base, S.base.length - 1, o) : null;
     smc.setT = new Map((smc.full ? smc.full.setups : []).map(x => [x.t, x]));
   }
   function runSmc() {
-    smc.A = (smc.on || coach.open) && S.cur >= 0 && window.SMC ? SMC.analyze(S.base, S.cur, { tf: smc.tf * MIN }) : null;
+    const o = (smc.on || coach.open) && S.cur >= 0 && window.SMC ? mainSmcOpt() : null;
+    smc.wait = !!(o && o.wait); smcTfLabel();
+    if (o && !o.wait && smc.fullWait) recomputeFull();
+    smc.A = o && !o.wait ? SMC.analyze(S.base, S.cur, o) : null;
     const A = smc.A;
     if (A && S.mode === 'live' && A.setups.length) {
       const l = A.setups[A.setups.length - 1];
@@ -2554,6 +2594,7 @@
   }
   function renderWatch() {
     const el = $('sim-watch'), A = smc.A;
+    if (smc.on && !A && smc.wait) { el.hidden = false; el.classList.remove('hot'); el.textContent = `SMC ${tfName(smc.tf)} · loading ${S.sym}'s ${smc.tf >= 1440 ? 'daily' : 'hourly'} history for the structure…`; return; }
     if (!smc.on || !A) { el.hidden = true; return; }
     el.hidden = false;
     const leg = A.leg && !A.leg.dead ? A.leg : null, last = A.setups[A.setups.length - 1];
@@ -2563,9 +2604,9 @@
     if (fresh) h = `🎯 <b>A+ ${last.side}</b> at ${hm(last.t)}: entry ${fmt(last.entry)} · stop ${fmt(last.stop)} · target ${fmt(last.target)} · <b>${last.R.toFixed(1)}R</b>` + (S.pos ? '' : '<button type="button" class="b" id="sim-use-setup">Use in ticket</button>');
     else if (leg) {
       const sh = leg.dir === -1;
-      h = `SMC ${smc.tf}m · <b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} at ${hm(leg.brk.t)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
+      h = `SMC ${tfName(smc.tf)} · <b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} ${atWhen(leg.brk.t, smc.tf)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
         (leg.sweep && leg.trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${fmt(leg.trig.p)}</b>` : '');
-    } else h = A.breaks.length ? `SMC ${smc.tf}m · no live idea: price closed back past the start of the last move. Wait for the next CHoCH or BOS.` : `SMC ${smc.tf}m · no structure break yet.`;
+    } else h = A.breaks.length ? `SMC ${tfName(smc.tf)} · no live idea: price closed back past the start of the last move. Wait for the next CHoCH or BOS.` : `SMC ${tfName(smc.tf)} · no structure break yet.`;
     if (S.mode === 'replay' && smc.full) { const ahead = smc.full.setups.filter(x => x.conf > A.now).length; h += ` <span class="no">· ${ahead ? ahead + ' more A+ setup' + (ahead > 1 ? 's' : '') + (moreLeft() ? ' ahead in the loaded hours' : ' ahead in this replay') : moreLeft() ? 'no more A+ setups in the loaded hours' : 'no more A+ setups ahead'}</span>`; }
     el.classList.toggle('hot', !!fresh);
     el.innerHTML = h;
@@ -2587,7 +2628,7 @@
     } catch (e) { err = e.message; }
     if (HTF.busy !== key) return;   // another chart was loaded meanwhile
     Object.assign(HTF, { key, busy: null, k, H0, err, at: Date.now(), memo: null });
-    if (S.cur >= 0) { if ((S.tf === '4h' || S.tf === '1h') && k.length) redraw(true); renderHtf(); renderTicket(); renderRhythm(); }
+    if (S.cur >= 0) { if ((S.tf === '4h' || S.tf === '1h') && k.length) redraw(true); else if (smc.tf >= 60 && smc.tf < 1440) { recomputeFull(); refresh(); } renderHtf(); renderTicket(); renderRhythm(); }   // a 1H / 4H structure reads these hours too
   }
   function htfHours() {   // this chart's hourly history (the hours before its first 1m candle), or null while it loads
     return HTF.key && S.base.length && HTF.key === `${S.sym}|${S.ex}|${Math.ceil(S.base[0][0] / HOUR) * HOUR}` ? { k: HTF.k, step: HOUR } : null;
@@ -2637,7 +2678,7 @@
         v = `4H favours <b>${sh ? 'shorts' : 'longs'}</b>` + (past ? `, but price is ${sh ? 'above its last swing high: a 4H close up there flips it to up' : 'below its last swing low: a 4H close down there flips it to down'}`
           : inZ ? ` and price is in its ${sh ? 'premium' : 'discount'} ✓` : ` but price is in its ${sh ? 'discount' : 'premium'}: wait for a bounce`);
         const leg = smc.A && smc.A.leg && !smc.A.leg.dead ? smc.A.leg : null;
-        if (leg) v += leg.dir === h4.trend ? ` · <span class="ok">your ${smc.tf}m ${leg.dir === -1 ? 'short' : 'long'} idea goes with it</span>` : ` · <span class="no">your ${smc.tf}m ${leg.dir === -1 ? 'short' : 'long'} idea is against it</span>`;
+        if (leg) v += leg.dir === h4.trend ? ` · <span class="ok">your ${tfName(smc.tf)} ${leg.dir === -1 ? 'short' : 'long'} idea goes with it</span>` : ` · <span class="no">your ${tfName(smc.tf)} ${leg.dir === -1 ? 'short' : 'long'} idea is against it</span>`;
       }
       el.innerHTML = `Direction · ${one('4H', h4)}${where} · ${st.h1 ? one('1H', st.h1) : ''}<br>${v}` + help;
     }
@@ -2829,8 +2870,8 @@
       if (!(await replayMore()) || my !== S.load) break;
     }
     if (my !== S.load) return;
-    if (!x) return status(moreLeft() ? `No A+ setup up to ${utc(lastT())} UTC on the ${smc.tf}m structure. Press ⏭ again to look further, or try Structure ${smc.tf === 5 ? '15m' : '5m'}.`
-      : `No more A+ setups up to now on the ${smc.tf}m structure. Load another signal, or try Structure ${smc.tf === 5 ? '15m' : '5m'}.`);
+    if (!x) return status(moreLeft() ? `No A+ setup up to ${utc(lastT())} UTC on the ${tfName(smc.tf)} structure. Press ⏭ again to look further, or try another Structure timeframe.`
+      : `No more A+ setups up to now on the ${tfName(smc.tf)} structure. Load another signal, or try another Structure timeframe.`);
     const idx = S.base.findIndex(k => k[0] === x.t); if (idx < 0) return;
     stopPlay();
     if (S.pos) { step(idx - S.cur); if (S.cur !== idx) return; }   // stepping stops early if your trade closes
@@ -2843,7 +2884,7 @@
   const LAYERS = ['swings', 'structure', 'range', 'zones', 'liq', 'setup', 'setup'];
   const TESTED = 'Practice, not signals: on the 207 coins our bot traded (14 Oct – 13 Nov 2026) these exact rules lost after fees (15m: −0.18R a trade over 6,014 setups; 5m: −0.12R over 6,834), no better than entering at a random time with the same stop and target.';
   function coachSteps(A) {
-    const tfN = smc.tf + 'm', leg = A.leg && !A.leg.dead ? A.leg : null, lb = A.breaks[A.breaks.length - 1];
+    const tfN = tfName(smc.tf), leg = A.leg && !A.leg.dead ? A.leg : null, lb = A.breaks[A.breaks.length - 1];
     const sh = leg ? leg.dir === -1 : lb ? lb.dir === -1 : true;
     const w = sh ? { hl: 'high', pd: 'premium', zn: 'supply', ab: 'above', be: 'below', side: 'short', end: 'low' }
                  : { hl: 'low', pd: 'discount', zn: 'demand', ab: 'below', be: 'above', side: 'long', end: 'high' };
@@ -2851,9 +2892,9 @@
     const out = [];
     const sw = A.swings.slice(-6), lastS = A.swings.filter(s => s.side === (sh ? 'H' : 'L')).slice(-1)[0];
     out.push({ title: '1 · Read the swings', html:
-      `<p>Every confirmed swing point is labelled. A swing high is a candle with ${A.len} lower highs on each side, so it is only confirmed ${A.len} candles (${A.len * smc.tf} min) later. On a live chart you can't know it sooner either.</p>` +
+      `<p>Every confirmed swing point is labelled. A swing high is a candle with ${A.len} lower highs on each side, so it is only confirmed ${A.len} candles (${durName(A.len * smc.tf)}) later. On a live chart you can't know it sooner either.</p>` +
       `<p><b>HH</b> + <b>HL</b> (higher highs, higher lows) = uptrend. <b>LH</b> + <b>LL</b> = downtrend.</p>` +
-      (sw.length ? `<p>Latest on the ${tfN} chart: ${sw.map(s => `<b>${s.label}</b> ${fmt(s.p)} <span class="m">${hm(s.t)}</span>`).join(' → ')}</p>` : '<p>No swing confirmed yet. Step forward a little.</p>') +
+      (sw.length ? `<p>Latest on the ${tfN} chart: ${sw.map(s => `<b>${s.label}</b> ${fmt(s.p)} <span class="m">${atWhen(s.at || s.t, smc.tf).replace(/^(at|on) /, '')}</span>`).join(' → ')}</p>` : '<p>No swing confirmed yet. Step forward a little.</p>') +
       '<p class="m">On each step, <b>Try it first</b> hides the answer so you can find the level yourself.</p>',
       quiz: lastS ? { ask: `Click the most recent swing ${w.hl}.`, ans: lastS.p, tol, why: `A swing ${w.hl} is a candle whose ${w.hl} has ${A.len} candles with ${sh ? 'lower highs' : 'higher lows'} on each side. The newest one is at ${hm(lastS.t)}.` } : null });
 
@@ -3038,7 +3079,7 @@
     const scope = $('sim-scan-scope').value;
     if (scope !== 'signals') box.innerHTML = '<div class="sim-empty">Getting the coins we traded…</div>';
     const { list, why } = await coinList(scope, true);
-    const rows = [], tf = smc.tf; let next = 0, done = 0;
+    const rows = [], tf = scanTf(); let next = 0, done = 0;
     const scopeTxt = SCOPE_TXT[scope] || SCOPE_TXT.all;
     const render = (head, short) => {
       rows.sort((a, b) => b.score - a.score);
@@ -3096,9 +3137,9 @@
   }
   function makeAlert(kind, sym, ex, x, px) {
     const sh = x.dir === -1, side = sh ? 'short' : 'long', f = v => (+v).toFixed(precFor(px));
-    const a = { kind, sym, ex, tf: smc.tf, t: Date.now(), side };
+    const a = { kind, sym, ex, tf: scanTf(), t: Date.now(), side };
     if (kind === 'zone') return Object.assign(a, { title: `🧱 ${sym} at the ${sh ? 'supply' : 'demand'} zone`,   // no sweep yet: nothing to place
-      body: `${f(x.zone.bot)}–${f(x.zone.top)} · ${side} idea (${smc.tf}m), first touch · next: a sweep, then a 1m close ${sh ? 'below' : 'above'} the last 1m swing` });
+      body: `${f(x.zone.bot)}–${f(x.zone.top)} · ${side} idea (${tfName(scanTf())}), first touch · next: a sweep, then a 1m close ${sh ? 'below' : 'above'} the last 1m swing` });
     const where = whereOf(x), a3 = isA3(x);
     if (kind === 'aplus') return Object.assign(a, { title: `🎯 ${sym} ${a3 ? 'A+++' : 'A+'} ${side}`, body: `entry ${f(x.entry)} · stop ${f(x.stop)} · target ${f(x.target)} · ${x.R.toFixed(1)}R · wick ${where}` });
     return Object.assign(a, { title: `⚠️ ${sym} ${a3 ? 'A+++ ' : ''}${side} 3/4`, body: `swept ${f(x.sweep.wick)} (${where}) · A+ if a 1m candle closes ${sh ? 'below' : 'above'} ${f(x.trig.p)}` });
@@ -3177,7 +3218,7 @@
       let drop = 0; const cut = now - 26 * 3600e3; while (drop < e.c.length && e.c[drop][0] < cut) drop++; if (drop > 60) e.c.splice(0, drop);
     }
     const last = e.c.length - 1, upto = e.c[last][0] + MIN > Date.now() ? last - 1 : last;   // closed candles only: a forming candle can still undo a trigger
-    checkAlerts(sym, e.ex, SMC.analyze(e.c, upto, { tf: smc.tf * MIN }), quiet);
+    checkAlerts(sym, e.ex, SMC.analyze(e.c, upto, { tf: scanTf() * MIN }), quiet);
   }
   async function alertCycle() {
     const run = AL.run, t0 = Date.now(), first = AL.cycle === 0, before = AL.list.length;
@@ -3192,7 +3233,7 @@
     if (run !== AL.run) return;
     AL.cycle++;
     if (first && AL.list.length > before) ping(`${AL.list.length - before} setups right now`, 'Listed under the coin buttons. New ones from here on make a sound.', null);
-    $('sim-alert-info').textContent = `On · ${list.length} coins (${which}) on the ${smc.tf}m structure · checked ${hm(Date.now())} UTC` + (fails ? ` · ${fails} could not be read` : '') + ' · runs while this page is open';
+    $('sim-alert-info').textContent = `On · ${list.length} coins (${which}) on the ${tfName(scanTf())} structure · checked ${hm(Date.now())} UTC` + (fails ? ` · ${fails} could not be read` : '') + ' · runs while this page is open';
     AL.timer = setTimeout(alertCycle, Math.max(5000, 60000 - (Date.now() - t0)));
   }
   function setAlerts(on, byClick) {
@@ -3892,7 +3933,7 @@
 
   function start() {
     if (started) return; started = true;
-    $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.tf); $('sim-smc-pause').checked = smc.pause;
+    $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.pick); $('sim-smc-pause').checked = smc.pause;
     $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early; $('sim-alert-zone').checked = AL.zone !== false;
     if (AL.scope && [...$('sim-scan-scope').options].some(o => o.value === AL.scope)) $('sim-scan-scope').value = AL.scope;   // your coin choice stays after a reload
     $('sim-margin').value = ACC.margin; $('sim-lev').value = ACC.lev;   // your last margin × leverage
@@ -4138,6 +4179,7 @@
   $('sim-load-live').onclick = () => { const sym = $('sim-symbol-live').value.trim(); if (!sym) return status('Type a coin, for example BTC.', true); loadLive(sym, $('sim-ex-live').value); };
   document.querySelectorAll('#sim .sim-tf .b').forEach(b => b.onclick = () => {
     S.tf = b.dataset.tf; document.querySelectorAll('#sim .sim-tf .b').forEach(x => x.classList.toggle('on', x === b));
+    if (smc.pick === 'auto' && S.cur >= 0) recomputeFull();   // auto: the structure follows the chart's timeframe
     if (S.cur >= 0) redraw(true);
   });
   $('sim-tool-line').onclick = () => setTool('line');
@@ -4244,7 +4286,7 @@
   ['sim-plan', 'sim-c1', 'sim-c2', 'sim-c3', 'sim-c4'].forEach(id => $(id).addEventListener('change', refresh));
   $('sim-go').onclick = enter;
   $('sim-smc-on').onchange = () => { smc.on = $('sim-smc-on').checked; saveSmc(); refresh(); };
-  $('sim-smc-tf').onchange = () => { smc.tf = +$('sim-smc-tf').value; saveSmc(); recomputeFull(); refresh(); cmpRunSmc(); cmpSum(); };
+  $('sim-smc-tf').onchange = () => { const v = $('sim-smc-tf').value; smc.pick = v === 'auto' ? 'auto' : +v; saveSmc(); recomputeFull(); refresh(); cmpRunSmc(); cmpSum(); };
   $('sim-cmp-smc').onchange = e => { cmp.smc = e.target.checked; saveView(); cmpRunSmc(); cmpSum(); };
   $('sim-smc-pause').onchange = () => { smc.pause = $('sim-smc-pause').checked; saveSmc(); };
   $('sim-next-setup').onclick = nextSetup;
@@ -4269,7 +4311,7 @@
   function openCoin(sym, ex, tf) {   // Load live from a scan row / alert: same exchange and structure timeframe, overlay on, chart in view
     ex = ex || 'auto'; tf = +tf; listsPop(false);
     if (S.mode !== 'live') { if (replayGate(() => openCoin(sym, ex, tf), `opening ${sym} live`)) return; setMode('live', true); }
-    if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.tf = tf; $('sim-smc-tf').value = String(tf); }
+    if ((tf === 5 || tf === 15) && tf !== smc.tf) { smc.pick = tf; $('sim-smc-tf').value = String(tf); }   // the alert's structure, so its setup shows
     smc.on = true; $('sim-smc-on').checked = true; saveSmc();
     $('sim-symbol-live').value = sym; if ([...$('sim-ex-live').options].some(o => o.value === ex)) $('sim-ex-live').value = ex;
     loadLive(sym, ex).then(() => { if (full.on) return; const c = $('sim-chart').closest('.sim-card').querySelector('.sim-chartbar') || $('sim-chart'); c.scrollIntoView({ behavior: 'smooth', block: 'start' }); });

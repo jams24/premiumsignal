@@ -3,8 +3,10 @@
    structure candles after it (as on a real chart), structure breaks use closed candles, and a setup triggers on a
    closed 1-minute candle. It is a mechanical version of the SMC Playbook steps for teaching, not a trade signal.
 
-   analyze(base, upto, { tf }) with base = [[openTimeMs, o, h, l, c, v], ...] in 1-minute candles. Returns:
-     swings  [{side:'H'|'L', t, p, label:'HH'|'LH'|'HL'|'LL', conf}]
+   analyze(base, upto, { tf }) with base = [[openTimeMs, o, h, l, c, v], ...] in 1-minute candles. For 1H and up a day of
+   minutes is too short: { hist: { k: older candles (hourly / daily) before base[0], step } } puts them in front, and
+   { off } shifts the candle grid (1W: 4 days, so weeks start Monday 00:00 UTC). Returns:
+     swings  [{side:'H'|'L', t, at, p, label:'HH'|'LH'|'HL'|'LL', conf}]    t: its structure candle, at: when the high / low printed
      breaks  [{kind:'BOS'|'CHoCH', dir:1|-1, p, fromT, t, conf, close}]       dir -1 = broke down
      zones   [{type:'supply'|'demand', top, bot, t, conf, broken, touched}]   order block of the leg that broke
      eqs     [{side, kind:'EQH'|'EQL', p, t1, t, conf, taken}]                  equal highs / lows (resting stops)
@@ -24,6 +26,8 @@
     const BUF = opt.buf == null ? 0.001 : opt.buf;      // stop goes this far past the sweep wick
     const TRIG_WIN = (opt.trigWindow || 90) * MIN;      // the 1m CHoCH must come within this long after the sweep
     const n = Math.min(upto == null ? base.length - 1 : upto, base.length - 1);
+    const OFF = opt.off || 0, bk = t => Math.floor((t - OFF) / tf) * tf + OFF;   // the structure candle a time is in (1W: off = 4 days, weeks from Monday)
+    const H = opt.hist && opt.hist.k && opt.hist.k.length && n >= 0 ? opt.hist : null;   // { k: older candles before base[0], step }
     const R = { tf, len: L, ltfLen: L1, swings: [], breaks: [], zones: [], eqs: [], sweeps: [], setups: [], ltf: [], liq: [],
       leg: null, trend: 0, forming: null, atr: null, now: n >= 0 ? base[n][0] + MIN : null, price: n >= 0 ? base[n][4] : null };
     if (n < 0) return R;
@@ -50,8 +54,7 @@
         if (hi ? B.h > lv.p : B.l < lv.p) {
           lv.taken = end;
           if (hi ? B.c < lv.p : B.c > lv.p) {
-            let w = B.i0; for (let q = B.i0; q <= B.i1; q++) if (hi ? base[q][2] > base[w][2] : base[q][3] < base[w][3]) w = q;
-            const sw = { dir: hi ? -1 : 1, p: lv.p, kind: lv.kind, levelT: lv.t, t: B.t, wickT: base[w][0], wick: hi ? B.h : B.l, close: B.c, conf: end };
+            const sw = { dir: hi ? -1 : 1, p: lv.p, kind: lv.kind, levelT: lv.t, t: B.t, wickT: hi ? B.hT : B.lT, wick: hi ? B.h : B.l, close: B.c, conf: end };
             if (!R.sweeps.length || R.sweeps[R.sweeps.length - 1].t !== sw.t || R.sweeps[R.sweeps.length - 1].dir !== sw.dir) R.sweeps.push(sw);
             onSweep(sw);
           }
@@ -80,12 +83,12 @@
         if (q < pi ? T[q].l <= P.l : T[q].l < P.l) isL = false;
       }
       if (isH) {
-        const s = { side: 'H', i: pi, t: P.t, p: P.h, conf: end, label: prevH ? (P.h > prevH.p ? 'HH' : 'LH') : 'H' };
+        const s = { side: 'H', i: pi, t: P.t, at: P.hT, p: P.h, conf: end, label: prevH ? (P.h > prevH.p ? 'HH' : 'LH') : 'H' };
         R.swings.push(s); prevH = s; top = Object.assign({ crossed: false }, s);
         eqCheck(s); liq.push({ side: 'H', kind: 'swing', t: s.t, p: s.p, conf: end, taken: null });
       }
       if (isL) {
-        const s = { side: 'L', i: pi, t: P.t, p: P.l, conf: end, label: prevL ? (P.l < prevL.p ? 'LL' : 'HL') : 'L' };
+        const s = { side: 'L', i: pi, t: P.t, at: P.lT, p: P.l, conf: end, label: prevL ? (P.l < prevL.p ? 'LL' : 'HL') : 'L' };
         R.swings.push(s); prevL = s; btm = Object.assign({ crossed: false }, s);
         eqCheck(s); liq.push({ side: 'L', kind: 'swing', t: s.t, p: s.p, conf: end, taken: null });
       }
@@ -184,13 +187,25 @@
       }
     }
 
+    // one candle (1m, or a history candle `step` long) into the forming structure candle; hT / lT: when its high / low printed
+    function add(k, b, step) {
+      if (!cur) cur = { t: b, o: k[1], h: k[2], l: k[3], c: k[4], hT: k[0], lT: k[0] };
+      else { if (k[2] > cur.h) { cur.h = k[2]; cur.hT = k[0]; } if (k[3] < cur.l) { cur.l = k[3]; cur.lT = k[0]; } cur.c = k[4]; }
+      if (k[0] + step >= b + tf) closeBar();
+    }
+    // older candles first (opt.hist), when base[] alone is too short for this timeframe: only those closed by the clock;
+    // base[] minutes before the end of the last one are already in it
+    let from = -Infinity;
+    if (H) for (const k of H.k) {
+      if (k[0] + H.step > base[n][0] + MIN) break;
+      const b = bk(k[0]); if (cur && cur.t !== b) closeBar();
+      add(k, b, H.step); from = k[0] + H.step;
+    }
     for (let i = 0; i <= n; i++) {
-      const k = base[i], b = Math.floor(k[0] / tf) * tf;
-      if (cur && cur.t !== b) closeBar();
+      const k = base[i], b = bk(k[0]), own = k[0] >= from;
+      if (own && cur && cur.t !== b) closeBar();
       ltfStep(i);
-      if (!cur) cur = { t: b, o: k[1], h: k[2], l: k[3], c: k[4], i0: i, i1: i };
-      else { if (k[2] > cur.h) cur.h = k[2]; if (k[3] < cur.l) cur.l = k[3]; cur.c = k[4]; cur.i1 = i; }
-      if (k[0] + MIN >= b + tf) closeBar();
+      if (own) add(k, b, MIN);
     }
     R.forming = cur; R.atr = atr; R.leg = leg; R.bars = T.length;
     R.liq = liq.filter(l => !l.taken).slice(-40);
