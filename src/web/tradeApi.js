@@ -8,7 +8,7 @@
 //                              the same functions as the /mpositions and /orders buttons; tp (move TP1–4 of an open
 //                              trade, tradeExecutor.moveTakeProfit — the dashboard chart only); order_stop (the stop of a
 //                              waiting limit: the bot keeps it and places it when the order fills — nothing changes on
-//                              the exchange now)
+//                              the exchange now); order_tp (TP1 of a waiting limit, TP2–4 follow as a typed TP1)
 // Telegram confirm (always available):
 //   POST /api/trade/panel    — fill in the /long · /short panel in Telegram; nothing is placed until ✅ there
 // Read-only:
@@ -57,7 +57,7 @@ function cleanOrder(b) {
   return { order: out };
 }
 
-const MANAGE = { close: [], stop: ['price'], breakeven: [], take: ['pct'], cancel: [], move_limit: ['price'], order_stop: ['price'], tp: ['price', 'level'] };
+const MANAGE = { close: [], stop: ['price'], breakeven: [], take: ['pct'], cancel: [], move_limit: ['price'], order_stop: ['price'], order_tp: ['price'], tp: ['price', 'level'] };
 function cleanManage(b) {
   if (!Object.prototype.hasOwnProperty.call(MANAGE, b.action)) return { error: 'Unknown action' };
   const id = Number(b.id);

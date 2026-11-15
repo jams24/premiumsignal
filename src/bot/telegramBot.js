@@ -2140,7 +2140,7 @@ class TelegramBot {
         }
         return {
           id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
-          stop: o.stopLoss, tp1: o.tp1, margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
+          stop: o.stopLoss, tp1: o.tp1, tps: [o.tp1, o.tp2, o.tp3, o.tp4], margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
           slFixed: !!o.slFixed,   // a typed stop stays put when the dashboard moves the limit
           closeFr: closeFr(te),
           price: prices.get(`${o.exchangeId}:${o.symbol}`) || null, ...(exchange ? { onExchange: exchange } : {}),
@@ -2896,6 +2896,35 @@ class TelegramBot {
       : r === 'gone' ? `Limit #${o.id} ${o.symbol} was already filled, expired or cancelled`
       : `Limit #${o.id} ${o.symbol}: could not confirm the cancel on ${o.exchangeId} — try again or cancel it in the exchange app`);
 
+    // Save new levels of a waiting limit (DB first, then memory). The order is busy meanwhile: a fill check skips a busy
+    // order, so it can't fill halfway through the change. → error text, or null when saved.
+    const saveOrderLevels = async (o, patch) => {
+      if (o._busy) return `Limit #${o.id} ${o.symbol} is being checked right now — try again in a few seconds.`;
+      o._busy = true;
+      try {
+        if (!this.pendingLimitOrders.has(o.id) || !(await db.updateManualOrderConfig(o.id, patch))) return 'That limit order already filled, expired or was cancelled.';
+        Object.assign(o, patch);
+        return null;
+      } finally { o._busy = false; }
+    };
+
+    // TP1 of a waiting limit (dashboard): saved as a typed TP1 — TP2–4 follow at 2 / 3 / 4.5× its distance from the limit,
+    // as a typed TP1 in /short · /long — and used when the order fills; nothing changes on the exchange now.
+    const orderTp = async (o, tp, done) => {
+      const isLong = o.direction === 'long', E = o.limitPrice, f = (v) => `$${fmtP(v)}`, sign = isLong ? 1 : -1;
+      const gap = sign * (tp - E) / E * 100;
+      if (!(gap >= 0.3)) return { error: `A ${o.direction} TP goes ${isLong ? 'above' : 'below'} its limit ${f(E)}, at least 0.3% away.` };
+      if (isLong ? gap > 300 : gap * 4.5 >= 95) return { error: isLong ? 'That TP1 is more than 300% above the limit.' : `For a short, TP1 can be at most ${(95 / 4.5).toFixed(0)}% below the limit (TP4 goes 4.5× as far).` };
+      const d = Math.abs(tp - E), tps = [tp, ...[2, 3, 4.5].map(m => E + sign * d * m)];
+      const old = o.tp1;
+      const err = await saveOrderLevels(o, { tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3], tpFixed: true });
+      if (err) return { error: err };
+      return done(
+        `🎯 <b>${escapeHtml(o.symbol)} limit #${o.id}: TP1 moved</b>\nTP1 ${f(old)} → <b>${f(tp)}</b> (${gap.toFixed(2)}% from the limit ${f(E)}) · TP2–4 ${tps.slice(1).map(f).join(' / ')}\n` +
+        `<i>The bot places these when the order fills${o.real ? `; the order stays on the ${escapeHtml(o.exchangeId)} book as it is` : ''}. TP1 stays at this price at the fill and if you move the limit.</i>`,
+        `order TP1 #${o.id} ${o.symbol} ${old} → ${tp}`);
+    };
+
     // The stop of a waiting limit (dashboard): the bot keeps it and places it when the order fills (adoptFill and the
     // trigger path read o.stopLoss then), so nothing changes on the exchange now; a book order keeps its place there.
     // A chosen stop is a typed price (slFixed): it stays put at the fill and when the limit is moved.
@@ -2915,15 +2944,9 @@ class TelegramBot {
           return { error: `At ${lev}x (set on ${o.exchangeId} when the order was placed) the position would be liquidated ~${liq.toFixed(1)}% from the entry (${mmr}% maintenance margin), before a ${gap.toFixed(1)}% stop. Keep the stop within ${(liq / LIQ_BUFFER).toFixed(1)}% of the limit, or move the limit: that places a new order with a safe leverage.` };
         }
       }
-      if (o._busy) return { error: `Limit #${o.id} ${o.symbol} is being checked right now — try again in a few seconds.` };
       const old = o.stopLoss;
-      o._busy = true;   // a fill check skips a busy order, so it can't fill halfway through this change
-      try {
-        if (!this.pendingLimitOrders.has(o.id) || !(await db.updateManualOrderConfig(o.id, { stopLoss: sl, slFixed: true }))) {
-          return { error: 'That limit order already filled, expired or was cancelled.' };
-        }
-        o.stopLoss = sl; o.slFixed = true;
-      } finally { o._busy = false; }
+      const err = await saveOrderLevels(o, { stopLoss: sl, slFixed: true });
+      if (err) return { error: err };
       const size = o.positionSize || o.margin * o.leverage;
       return done(
         `🛑 <b>${escapeHtml(o.symbol)} limit #${o.id}: stop moved</b>\nSL ${f(old)} → <b>${f(sl)}</b> (${gap.toFixed(2)}% from the limit ${f(E)}) · ${fmtUsd(-gap / 100 * size)} if it fills there and the stop hits\n` +
@@ -2937,12 +2960,13 @@ class TelegramBot {
       // a position that is still open keeps its buttons (refresh, close, breakeven, take profit, stop)
       const done = async (html, log, tradeId) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, tradeId ? tradeKb(tradeId) : posKb()); return { ok: true, text: plainText(html) }; };
 
-      if (a.action === 'cancel' || a.action === 'move_limit' || a.action === 'order_stop') {
+      if (a.action === 'cancel' || a.action === 'move_limit' || a.action === 'order_stop' || a.action === 'order_tp') {
         await loadPendingOrders();
         const o = this.pendingLimitOrders.get(a.id);
         if (!o) return { error: 'That limit order already filled, expired or was cancelled.' };
         if (o.mode !== 'live') return { error: 'Only live orders are managed from the dashboard.' };
         if (a.action === 'order_stop') return orderStop(o, a.price, done);
+        if (a.action === 'order_tp') return orderTp(o, a.price, done);
         if (a.action === 'cancel') {
           const r = await cancelPending(o);
           if (r !== 'cancelled') return { error: cancelWord(o, r) };
