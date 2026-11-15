@@ -402,6 +402,7 @@
           <button type="button" class="b" data-tf="1h" title="Hourly candles: the chart's own minutes plus the coin's last 120 days of hourly history">1H</button>
           <button type="button" class="b" data-tf="4h" title="4-hour candles: the chart's own minutes plus the coin's last 120 days of hourly history">4H</button>
           <button type="button" class="b" data-tf="1d" title="Daily candles (UTC days): the chart's own minutes plus up to 1,000 days of the coin's daily history">1D</button>
+          <button type="button" class="b" data-tf="1w" title="Weekly candles (weeks start Monday 00:00 UTC, like the exchanges): the coin's last 1,000 days of daily history grouped by week, plus the chart's own minutes">1W</button>
         </div>
         <div class="sim-row">
           <span class="sim-fsym-wrap"><input id="sim-fsym" list="sim-coin-list" placeholder="Coin…" aria-label="Load another coin: type its name, then Enter" autocomplete="off" spellcheck="false" title="Type a coin (INJ, SOL, GOLD…) and press Enter: it loads here without leaving full screen. Suggestions: big coins, your recent ones and the top 50 by volume."><span class="sim-ftime" id="sim-ftime-wrap"><input id="sim-ftime" type="datetime-local" aria-label="Replay start time (UTC)" title="Replay: the coin starts from this time (UTC) and plays on up to now. The same time as in the 🪙 loader. Change it, then Load (or Enter)."><span class="sim-status" style="margin:0">UTC</span><select id="sim-fex" aria-label="Replay exchange" title="Which exchange's candles the replay uses (same as the 🪙 loader)"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select></span><button type="button" class="b go" id="sim-fsym-go">Load</button></span>
@@ -450,14 +451,14 @@
         <input id="sim-cmp-sym" list="sim-coin-list" placeholder="ETH" aria-label="Second chart: symbol" autocomplete="off" spellcheck="false">
         <button type="button" class="b" id="sim-cmp-load">Load</button>
         <button type="button" class="b" data-cmp="BTC">BTC</button><button type="button" class="b" data-cmp="ETH">ETH</button><button type="button" class="b" data-cmp="SOL">SOL</button>
-        <select id="sim-cmp-tf" aria-label="Second chart: timeframe" title="Same as main: both charts scroll and zoom together. Another timeframe: the second chart keeps its own zoom; the crosshair still points at the same moment on both."><option value="">Timeframe: same as main</option><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1H</option><option value="4h">4H</option><option value="1d">1D</option></select>
+        <select id="sim-cmp-tf" aria-label="Second chart: timeframe" title="Same as main: both charts scroll and zoom together. Another timeframe: the second chart keeps its own zoom; the crosshair still points at the same moment on both."><option value="">Timeframe: same as main</option><option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1H</option><option value="4h">4H</option><option value="1d">1D</option><option value="1w">1W</option></select>
         <label class="sim-opt" style="margin:0" title="The same SMC marks as the main chart (zones, premium/discount, structure, sweeps, A+ setups) on the second coin, with the main chart's structure timeframe"><input type="checkbox" id="sim-cmp-smc" checked> SMC</label>
         <button type="button" class="b" id="sim-cmp-close" title="Close the second chart">✕ Close</button>
       </div>
       <div class="sim-cmpsum" id="sim-cmp-sum" aria-live="polite" hidden></div>
       <div class="sim-charts" id="sim-charts">
         <div class="sim-chartwrap"><div class="sim-chart" id="sim-chart"></div><div class="sim-legend" id="sim-legend" hidden></div><div class="sim-lvtip" id="sim-lvtip" hidden></div></div>
-        <div class="sim-chartwrap" id="sim-cmp-wrap" hidden><div class="sim-chart" id="sim-cmp-chart"></div><div class="sim-cmptf" id="sim-cmp-tfbar" role="group" aria-label="Second chart: timeframe"><button type="button" data-ctf="" title="Same timeframe as the main chart: both charts scroll and zoom together">= Main</button><button type="button" data-ctf="1m">1m</button><button type="button" data-ctf="5m">5m</button><button type="button" data-ctf="15m">15m</button><button type="button" data-ctf="1h">1H</button><button type="button" data-ctf="4h">4H</button><button type="button" data-ctf="1d">1D</button></div><div class="sim-legend" id="sim-cmp-legend"></div></div>
+        <div class="sim-chartwrap" id="sim-cmp-wrap" hidden><div class="sim-chart" id="sim-cmp-chart"></div><div class="sim-cmptf" id="sim-cmp-tfbar" role="group" aria-label="Second chart: timeframe"><button type="button" data-ctf="" title="Same timeframe as the main chart: both charts scroll and zoom together">= Main</button><button type="button" data-ctf="1m">1m</button><button type="button" data-ctf="5m">5m</button><button type="button" data-ctf="15m">15m</button><button type="button" data-ctf="1h">1H</button><button type="button" data-ctf="4h">4H</button><button type="button" data-ctf="1d">1D</button><button type="button" data-ctf="1w">1W</button></div><div class="sim-legend" id="sim-cmp-legend"></div></div>
       </div>
       <div class="sim-hint" id="sim-hint"></div>
       <div class="sim-row" id="sim-replay-bar">
@@ -601,7 +602,9 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN, '4h': 240 * MIN, '1d': 1440 * MIN };
+  const MIN = 60000, TF = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN, '4h': 240 * MIN, '1d': 1440 * MIN, '1w': 10080 * MIN };
+  // the candle a time falls in: weeks start Monday 00:00 UTC (like the exchanges' 1W), the rest on whole steps since 1970
+  const tfFloor = (t, tf) => tf === '1w' ? Math.floor((t - 4 * 1440 * MIN) / TF['1w']) * TF['1w'] + 4 * 1440 * MIN : Math.floor(t / TF[tf]) * TF[tf];
   const FEE = 0.0005, JKEY = 'sc_sim_journal_v1', PKEY = 'sc_sim_live_pos_v1';
   // forex (Yahoo prices, practice only): cost ≈ a retail spread + commission, ~1–2 pips a round trip, not the perp's 0.05% taker fee
   const FX_FEE = 0.00004, feeOf = ex => (ex === 'fx' ? FX_FEE : FEE);
@@ -725,6 +728,7 @@
   const fmt = p => (p == null || !isFinite(p)) ? '–' : (+p).toFixed(S.prec);
   const usd = v => (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(2);
   const utc = t => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
+  const candleT = (t, tf) => tf === '1d' || tf === '1w' ? new Date(t).toISOString().slice(0, 10) : utc(t);   // hover legends: daily / weekly candles span years
   const precFor = p => p > 0 ? Math.min(8, Math.max(2, 4 - Math.floor(Math.log10(p)))) : 4;
   const status = (msg, bad) => { const e = $('sim-status'); e.textContent = msg || ''; e.classList.toggle('bad', !!bad); };
   const hint = msg => { $('sim-hint').textContent = msg || ''; $('sim-hint').classList.remove('static'); };
@@ -800,7 +804,7 @@
       if (!d || d.open == null) { el.hidden = true; return; }
       const ch = (d.close / d.open - 1) * 100, cur = param.point ? cs.coordinateToPrice(param.point.y) : null;
       el.hidden = false;
-      el.innerHTML = `${utc(param.time * 1000)} · O <b>${fmt(d.open)}</b> H <b>${fmt(d.high)}</b> L <b>${fmt(d.low)}</b> C <b>${fmt(d.close)}</b> ` +
+      el.innerHTML = `${candleT(param.time * 1000, S.tf)} · O <b>${fmt(d.open)}</b> H <b>${fmt(d.high)}</b> L <b>${fmt(d.low)}</b> C <b>${fmt(d.close)}</b> ` +
         `<span class="${ch >= 0 ? 'pos' : 'neg'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</span>` + (cur != null && isFinite(cur) ? ` · cursor ${fmt(cur)}` : '');
     });
     new ResizeObserver(() => { if (el.clientWidth) chart.resize(el.clientWidth, el.clientHeight); }).observe(el);
@@ -820,13 +824,13 @@
     const off = !chart.priceScale('right').options().autoScale, b = $('sim-fit');
     b.classList.toggle('on', off); b.textContent = off ? '⤢ Fit (chart moved)' : '⤢ Fit';
   }
-  const bucket = t => Math.floor(t / TF[S.tf]) * TF[S.tf];
+  const bucket = t => tfFloor(t, S.tf);
   // ---------- older candles in front of a chart's one day of minutes ----------
   // Fetched the first time a timeframe is shown for a coin and kept: 5m about 5 days, 15m about 15 days, 1H/4H 120 days
   // of hourly candles, 1D up to 1,000 days. Every candle ends before the chart's first whole step; a replay starts a day
   // after its first minute, so these all closed before its clock (histAdd still drops any that didn't).
   const HIST = { '5m': { iv: '5m', step: 5 * MIN, n: 1440 }, '15m': { iv: '15m', step: 15 * MIN, n: 1440 },
-    '1h': { iv: '1h', step: 60 * MIN, n: 2880 }, '4h': { iv: '1h', step: 60 * MIN, n: 2880 }, '1d': { iv: '1d', step: 1440 * MIN, n: 1000 } };
+    '1h': { iv: '1h', step: 60 * MIN, n: 2880 }, '4h': { iv: '1h', step: 60 * MIN, n: 2880 }, '1d': { iv: '1d', step: 1440 * MIN, n: 1000 }, '1w': { iv: '1d', step: 1440 * MIN, n: 1000 } };   // 1W: daily candles grouped by week
   const histMem = new Map();   // sym|ex|interval|first step → { k, step } loaded · { busy } loading · { at } failed
   function histFor(sym, ex, tf, first, done) {   // the candles before `first` for this timeframe, or null (it starts loading them, then calls done)
     const h = HIST[tf]; if (!h || !sym || first == null) return null;
@@ -859,7 +863,7 @@
       else out.push({ t: b, o, h, l, c, v });
     };
     // The chart's own 1m candles cover one day, so older candles go in front: 1H/4H the coin's hourly history (the same
-    // candles as the Direction line), 5m/15m/1D their own (see histFor). Only candles that closed by the chart's clock, so a
+    // candles as the Direction line), 5m/15m/1D their own, 1W the daily ones (see histFor). Only candles that closed by the chart's clock, so a
     // replay never sees the future; the minutes take over where they stop.
     const tf = S.tf, sym = S.sym, ex = S.ex;
     const H = tf === '4h' || tf === '1h' ? htfHours() : histFor(sym, ex, tf, S.base[0][0], () => { if (S.sym === sym && S.ex === ex && S.tf === tf && S.cur >= 0) redraw(true); });
@@ -894,7 +898,7 @@
     refresh();
   }
   function pushLast() {
-    const b = S.tf === '4h' ? bars(S.cur).pop() : lastBar(); cs.update(toC(b)); vs.update(toV(b));
+    const b = S.tf === '4h' || S.tf === '1w' ? bars(S.cur).pop() : lastBar(); cs.update(toC(b)); vs.update(toV(b));   // 4H / 1W: the last bar also holds history candles
     if (S.Bt.length && S.Bt[S.Bt.length - 1] === b.t) S.Bc[S.Bc.length - 1] = b.c; else { S.Bt.push(b.t); S.Bc.push(b.c); }
   }
 
@@ -908,7 +912,7 @@
   const atOrBefore = (n, get, t) => { let lo = 0, hi = n - 1, r = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (get(m) <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
   const cmpFmt = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(cmp.prec);
   const cmpName = () => (cmp.ex === 'fx' ? `${cmp.sym.slice(0, 3)}/${cmp.sym.slice(3)}` : cmp.sym);
-  const ctf = () => cmp.tf || S.tf, cbucket = t => Math.floor(t / TF[ctf()]) * TF[ctf()];   // its own timeframe, or the main one
+  const ctf = () => cmp.tf || S.tf, cbucket = t => tfFloor(t, ctf());   // its own timeframe, or the main one
   function cmpNote(msg, bad) { const el = $('sim-cmp-sum'); el.textContent = msg; el.classList.toggle('bad', !!bad); }
   function cmpInit() {
     if (cmp.chart) return;
@@ -1001,7 +1005,7 @@
     if (!cmp.on || !cmp.cs || !cmp.base.length) return;
     const c = cmpCut();
     if (c === cmp.cur) return;
-    if (c < cmp.cur || cmp.cur < 0 || ctf() === '4h') return cmpRedraw(false);
+    if (c < cmp.cur || cmp.cur < 0 || ctf() === '4h' || ctf() === '1w') return cmpRedraw(false);
     for (let i = cmp.cur + 1; i <= c; i++) {
       const b = cbucket(cmp.base[i][0]);
       if (i < c && cbucket(cmp.base[i + 1][0]) === b) continue;   // only a bar's latest minute needs drawing
@@ -1075,7 +1079,7 @@
     const el = $('sim-cmp-legend'), d = p && p.time != null && p.seriesData ? p.seriesData.get(cmp.cs) : null;
     if (d && d.open != null) {
       const ch = (d.close / d.open - 1) * 100;
-      el.innerHTML = `<b>${cmpName()}</b> ${utc(p.time * 1000)} · O <b>${cmpFmt(d.open)}</b> H <b>${cmpFmt(d.high)}</b> L <b>${cmpFmt(d.low)}</b> C <b>${cmpFmt(d.close)}</b> ` +
+      el.innerHTML = `<b>${cmpName()}</b> ${candleT(p.time * 1000, ctf())} · O <b>${cmpFmt(d.open)}</b> H <b>${cmpFmt(d.high)}</b> L <b>${cmpFmt(d.low)}</b> C <b>${cmpFmt(d.close)}</b> ` +
         `<span class="${ch >= 0 ? 'pos' : 'neg'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</span>`;
       return;
     }
@@ -1098,7 +1102,7 @@
     if (now < (fromCmp ? cmp.xIgn.cmp : cmp.xIgn.main)) return;
     const dst = fromCmp ? chart : cmp.chart, ser = fromCmp ? cs : cmp.cs, T = fromCmp ? S.Bt : cmp.Bt, C = fromCmp ? S.Bc : cmp.Bc;
     if (fromCmp) cmp.xIgn.main = now + 60; else cmp.xIgn.cmp = now + 60;
-    const step = TF[fromCmp ? S.tf : ctf()], t = p && p.time != null ? Math.floor(p.time * 1000 / step) * step : null;   // the other chart's candle at that moment
+    const t = p && p.time != null ? tfFloor(p.time * 1000, fromCmp ? S.tf : ctf()) : null;   // the other chart's candle at that moment
     const i = t != null ? atOrBefore(T.length, k => T[k], t) : -1;
     if (i < 0 || T[i] !== t) return dst.clearCrosshairPosition();
     dst.setCrosshairPosition(C[i], t / 1000, ser);
@@ -2459,7 +2463,7 @@
     const A = V.A, cs = V.cs; if (!A || !cs || (V.main && !(smc.on || coach.open))) return;
     // 4H chart: a 15m/5m swing, break or sweep sits inside one candle, so those labels would pile up on the last bars —
     // keep the zones, premium/discount and levels only (the walk-through still shows whatever it points at)
-    const tiny = (V.tf === '4h' || V.tf === '1d') && !(V.main && coach.open);
+    const tiny = (V.tf === '4h' || V.tf === '1d' || V.tf === '1w') && !(V.main && coach.open);
     const show = k => (!V.main || ((!smc.layers || smc.layers.indexOf(k) >= 0) && smc.hide !== k)) && !(tiny && (k === 'swings' || k === 'structure'));   // the walk-through steers the main chart only
     const ts = V.chart.timeScale(), W = m.width;
     const X = t => ts.timeToCoordinate(V.bucket(t) / 1000);
