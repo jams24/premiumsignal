@@ -169,6 +169,10 @@
 .sim-two .b[aria-pressed="true"].pick { border-color: #60a5fa; color: #60a5fa; }
 .sim-rconf { display: grid; gap: 6px; font: 400 12.5px/1.5 var(--font-mono); color: var(--text2); background: var(--surface2); border: 1px solid var(--gold); border-radius: 8px; padding: 10px; }
 .sim-rconf .sim-row { margin-top: 4px; }
+.sim-rconf .sim-csize { margin-top: 0; align-items: center; gap: 10px; }
+.sim-rconf .sim-csize label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.sim-rconf .sim-csize input { width: 84px; min-width: 0; padding: 4px 7px; font: 400 12.5px/1.4 var(--font-mono); }
+.sim-rconf .sim-csize small { color: var(--muted); }
 .sim .warn { color: var(--gold); }
 .sim-rp .acts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
 .sim-rp .ask { display: grid; gap: 6px; background: var(--surface2); border: 1px solid var(--gold); border-radius: 6px; padding: 8px; margin-top: 4px; }
@@ -623,7 +627,7 @@
   const fromEntry = (v, e) => `${(Math.abs(v / e - 1) * 100).toFixed(2)}% from entry`;
   // Real ticket (Live mode): fills in the Telegram /long · /short panel; R.data = read-only open live positions
   const R = { on: false, entry: 'market', busy: false, poll: null, data: null, err: null, lines: [], lineKey: '', web: false, conf: null, ui: null, msg: null, pick: null,
-    dragging: false, dragAsk: null };   // a REAL stop / TP / limit line being dragged · its move waiting for Yes in the chart popup
+    dragging: false, dragAsk: null, redo: false, redoKey: '', redoT: null };   // redo: inputs changed under a review, asking the bot again   // a REAL stop / TP / limit line being dragged · its move waiting for Yes in the chart popup
   const realMeta = new WeakMap();   // REAL price line → { k: 'stop' | 'tp' | 'limit', n, id, title, from } (drawReal; drag to move)
   // ⚡ quick limit drawn on the chart (see "quick limit from the chart" below); while it is being drawn only its lines show
   const QK = { on: false, stage: '', lim: null, stop: null, tp: null, lines: [], bar: null };
@@ -1247,7 +1251,18 @@
   function renderReal(px) {
     const short = S.side === 'short', side = short ? 'SHORT' : 'LONG', live = $('sim-r-mode').value === 'live';
     const rp0 = realPlan(), key = rp0 ? JSON.stringify(realBody(rp0)) : '';
-    if (R.conf && (R.conf.key !== key || Date.now() - R.conf.at > 90000)) { R.conf = null; renderConf(); }   // inputs changed or too old: review again
+    // inputs changed (margin, leverage, a level…) or the review is 90 s old: the order stays open and the bot is asked again
+    // for its exact order (places nothing; ✅ is needed again). Another coin drops it.
+    if (R.conf && (R.conf.key !== key || Date.now() - R.conf.at > 90000)) { const same = R.conf.body.symbol === S.sym; R.conf = null; R.redo = same; R.redoKey = ''; renderConf(); }
+    if (R.redo && !R.busy && R.redoKey !== key) {
+      R.redoKey = key; clearTimeout(R.redoT);
+      if (rp0 && !rp0.errs.length && !realOpenOn(S.sym)) R.redoT = setTimeout(() => {
+        if (!R.redo || R.conf) return;
+        if (R.busy || document.hidden) { R.redoKey = ''; return; }   // the next refresh tries again
+        R.redo = false; R.redoKey = ''; reviewReal();
+      }, 700);
+      renderConf();   // the box says what it waits for (or what to fix)
+    }
     // ask the bot for its exact stop / TP1–4 (places nothing) once the inputs settle, and again every 30 s while shown
     if (rp0 && !rp0.errs.length && S.sym && !realOpenOn(S.sym) && !document.hidden && key !== R.pvWant &&
         (!R.pv || R.pv.key !== key || Date.now() - R.pv.at > 30000)) pvSchedule(key, realBody(rp0));
@@ -1325,16 +1340,35 @@
     try {
       const r = await apiPost('/api/trade/preview', body);
       R.web = !!r.webTrading;
-      if (!R.web) { R.conf = null; res.className = 'sim-rres real-only bad'; res.textContent = 'Web trading was turned off — send /webtrade on in Telegram, or use the Telegram panel.'; return; }
+      if (!R.web) { dropReview(); res.className = 'sim-rres real-only bad'; res.textContent = 'Web trading was turned off — send /webtrade on in Telegram, or use the Telegram panel.'; return; }
       R.conf = { key: JSON.stringify(body), body, setup: r.setup, nonce: nonce(), at: Date.now() };
       res.textContent = '';
-    } catch (e) { R.conf = null; res.className = 'sim-rres real-only bad'; res.textContent = 'Can\'t place it: ' + e.message; }
+    } catch (e) { dropReview(); res.className = 'sim-rres real-only bad'; res.textContent = 'Can\'t place it: ' + e.message; }
     finally { R.busy = false; renderConf(); renderTicket(); }
   }
   function renderConf() {
     const box = $('sim-r-conf'), c = R.conf;
-    if (!c) { box.hidden = true; box.innerHTML = ''; } else { box.innerHTML = confHtml(c); box.hidden = false; }
+    if (c) { box.innerHTML = confHtml(c); box.hidden = false; }
+    else if (R.redo) { box.innerHTML = redoHtml(); box.hidden = false; }
+    else { box.hidden = true; box.innerHTML = ''; }
     quickConfSync();
+  }
+  function dropReview() { R.conf = null; R.redo = false; R.redoKey = ''; clearTimeout(R.redoT); }   // Back, placed, another setup: no review
+  // margin / leverage right in the review box (the ticket's and the chart's ⚡ bar): Enter or leaving the field writes the
+  // ticket's own field, and the bot is asked again for the exact order
+  const sizeRow = (m, l) => `<div class="sim-row sim-csize"><label>margin $<input type="number" min="1" step="any" inputmode="decimal" data-cs="sim-r-margin" value="${m > 0 ? +m : ''}" placeholder="saved" aria-label="Margin in dollars"></label>` +
+    `<label>×<input type="number" min="1" max="125" step="1" inputmode="numeric" data-cs="sim-r-lev" value="${l > 0 ? +l : ''}" placeholder="saved" aria-label="Leverage"></label><small>Enter to update</small></div>`;
+  function confSize(e) {
+    const i = e.target.closest && e.target.closest('[data-cs]'); if (!i) return;
+    if (e.type === 'keydown') { if (e.key === 'Enter') { e.preventDefault(); i.blur(); } return; }   // blur fires the change
+    const f = $(i.dataset.cs); if (!f || f.value === i.value) return;
+    f.value = i.value; f.dispatchEvent(new Event('input', { bubbles: true }));   // the ticket's own path: touch → refresh → ask again
+  }
+  function redoHtml() {   // the review is being asked for again, or waits for a fix
+    const rp = realPlan(), why = !rp ? 'No price yet.' : rp.errs.length ? rp.errs.join(' ') : realOpenOn(S.sym) ? `You already have a real ${S.sym} trade or order (one per coin).` : '';
+    return `<div><b>${S.side === 'long' ? 'LONG' : 'SHORT'} ${esc(S.sym)}</b>${rp && rp.isLim && rp.lim > 0 ? ` · limit ${(+rp.lim).toFixed(S.prec)}` : ''}</div>` +
+      (why ? `<div class="neg">⛔ ${esc(why)}</div>` : '<div>↻ Changed: asking the bot for the exact order again… Nothing is placed until you press ✅.</div>') +
+      sizeRow(rp && rp.margin, rp && rp.lev) + '<div class="sim-row"><button type="button" class="b" data-c="no">Back</button></div>';
   }
   function confHtml(c) {   // the bot's exact order with Place / Back: the ticket and the chart's ⚡ quick bar both show it
     const s = c.setup, pr = precFor(s.entry || s.market), pf = v => (v == null || !isFinite(v)) ? '–' : (+v).toFixed(pr);
@@ -1344,6 +1378,7 @@
       ? `<div>Entry: limit <b>${pf(s.entry)}</b> · ${s.onBook ? 'rests on the exchange order book' : 'the bot enters at market when price touches it'} (now ${pf(s.market)})</div>`
       : `<div>Entry: market ~<b>${pf(s.market)}</b></div>`;
     h += setupMoney(s).map(x => `<div>${x}</div>`).join('');
+    h += sizeRow(s.margin, s.leverage);
     h += `<div>$${+s.margin} × ${+s.leverage}x = <b>$${(+s.posSize).toFixed(2)}</b>${s.exLeverage > s.leverage ? ` · margin saver runs ${+s.exLeverage}x` : ''}${s.freeBalance != null ? ` · free $${(+s.freeBalance).toFixed(2)}` : ''}</div>`;
     (s.warnings || []).forEach(w => { h += `<div class="warn">⚠️ ${esc(w)}</div>`; });
     errs.forEach(e => { h += `<div class="neg">⛔ ${esc(e)}</div>`; });
@@ -1362,12 +1397,12 @@
         ? `📍 Limit order #${r.id} placed${r.onBook ? ' on the exchange order book' : ''}. The bot sets the stop and TPs when it fills. Telegram has the details.`
         : `✅ ${s.direction === 'long' ? 'LONG' : 'SHORT'} ${s.symbol} opened at ${(+r.entry).toFixed(pr)} with its stop and TPs. Telegram has the details.`;
     } catch (e) { res.className = 'sim-rres real-only bad'; res.textContent = 'Not placed: ' + e.message; }
-    finally { R.busy = false; R.conf = null; renderConf(); renderTicket(); loadRealPos(); }
+    finally { R.busy = false; dropReview(); renderConf(); renderTicket(); loadRealPos(); }
   }
   // ✕ Clear: the real ticket back to empty (market, blanks = saved settings, no lines). Nothing on the exchange changes.
   function clearTicket(keepRes) {
     ['sim-r-limit', 'sim-stop', 'sim-tp', 'sim-r-margin', 'sim-r-lev'].forEach(id => { $(id).value = ''; });
-    R.entry = 'market'; $('sim-r-tp').value = 'plan'; R.conf = null; R.touched = false;
+    R.entry = 'market'; $('sim-r-tp').value = 'plan'; dropReview(); R.touched = false;
     if (!keepRes) { $('sim-r-res').className = 'sim-rres real-only'; $('sim-r-res').textContent = ''; }
     if (QK.on && QK.stage !== 'review') quickEnd();
     renderConf(); refresh();
@@ -2702,7 +2737,7 @@
     S.side = x.side; $('sim-stop').value = (+x.stop).toFixed(S.prec);
     $('sim-plan').value = 'price'; $('sim-tp').value = (+x.target).toFixed(S.prec);
     // Real ticket too: same stop, the target as TP1 (TP2–4 follow like /tp), entry at market like the plan
-    $('sim-r-tp').value = 'price'; R.entry = 'market'; R.conf = null; R.touched = true; renderConf();
+    $('sim-r-tp').value = 'price'; R.entry = 'market'; dropReview(); R.touched = true; renderConf();
     [1, 2, 3, 4].forEach(i => { $('sim-c' + i).checked = true; });
     S.auto = true;
     const tgt = x.tgtKind === 'leg' ? 'the end of the leg' : 'at 2R';
@@ -3566,6 +3601,7 @@
     if (!QK.bar) {
       QK.bar = document.createElement('div'); QK.bar.className = 'sim-pxpop sim-qbar';
       QK.bar.setAttribute('role', 'dialog'); QK.bar.setAttribute('aria-label', 'Quick limit order'); QK.bar.onclick = quickClick;
+      QK.bar.addEventListener('change', confSize); QK.bar.addEventListener('keydown', confSize);
       $('sim-chart').parentNode.appendChild(QK.bar);
     }
     const side = quickSide(), real = realOn();
@@ -3602,7 +3638,7 @@
   function quickClick(e) {
     const b = e.target.closest('[data-q],[data-c]'); if (!b || b.disabled) return;
     if (b.dataset.c === 'place') return placeReal();
-    if (b.dataset.c === 'no') { R.conf = null; quickEnd(); renderConf(); renderTicket(); return; }
+    if (b.dataset.c === 'no') { dropReview(); quickEnd(); renderConf(); renderTicket(); return; }
     if (b.dataset.q === 'x') return quickEnd();
     if (b.dataset.q === 'go') quickGo();
   }
@@ -3634,6 +3670,7 @@
   function quickConfSync() {   // the ticket's review changed: show it in the bar too
     if (!QK.bar || QK.stage !== 'review') return;
     if (R.conf) { QK.bar.innerHTML = `<div class="sim-rconf">${confHtml(R.conf)}</div>`; quickPlace(); return; }
+    if (R.redo) { QK.bar.innerHTML = `<div class="sim-rconf">${redoHtml()}</div>`; quickPlace(); return; }   // changed: the order stays, asked again
     if (!R.busy) quickDone();
   }
   function quickDone() {   // the result, from the ticket's result line
@@ -3646,7 +3683,7 @@
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape' || !QK.on || R.busy) return;
     e.preventDefault();   // full screen stays
-    if (QK.stage === 'review') { R.conf = null; quickEnd(); renderConf(); renderTicket(); } else quickEnd();
+    if (QK.stage === 'review') { dropReview(); quickEnd(); renderConf(); renderTicket(); } else quickEnd();
   });
 
   // ---------- 📅 news calendar ----------
@@ -4011,8 +4048,9 @@
   ['sim-r-mode', 'sim-r-ex'].forEach(id => $(id).addEventListener('change', refresh));
   $('sim-r-clear').onclick = () => clearTicket(false);
   $('sim-real-go').onclick = () => (R.web ? reviewReal() : sendReal());
-  $('sim-r-tg').onclick = () => { R.conf = null; renderConf(); sendReal(); };
-  $('sim-r-conf').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || b.disabled) return; if (b.dataset.c === 'place') placeReal(); else { R.conf = null; renderConf(); renderTicket(); } };
+  $('sim-r-tg').onclick = () => { dropReview(); renderConf(); sendReal(); };
+  $('sim-r-conf').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || b.disabled) return; if (b.dataset.c === 'place') placeReal(); else { dropReview(); renderConf(); renderTicket(); } };
+  $('sim-r-conf').addEventListener('change', confSize); $('sim-r-conf').addEventListener('keydown', confSize);
   $('sim-rp-body').addEventListener('click', onRealAct);
   $('sim-rp-refresh').addEventListener('click', refreshRealPos);
   $('sim-pos-refresh').addEventListener('click', refreshPos);
