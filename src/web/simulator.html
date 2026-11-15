@@ -76,9 +76,13 @@
 .sim-status:empty { display: none; }
 .sim-status .b { margin: 6px 6px 0 0; padding: 6px 10px; }   /* the open-replay-trade question: close / cancel / keep */
 /* full screen: a coin box right on the toolbar */
-.sim-fsym-wrap { display: none; gap: 4px; align-items: center; }
+.sim-fsym-wrap { display: none; gap: 4px; align-items: center; flex-wrap: wrap; }
 .sim-card.full .sim-fsym-wrap { display: inline-flex; }
 #sim-fsym { width: 120px; text-transform: uppercase; }
+/* Replay: the start time and exchange next to it (the loader's own values) */
+.sim-ftime { display: inline-flex; gap: 4px; align-items: center; }
+#sim-ftime { width: 196px; }
+#sim-time, #sim-ftime { color-scheme: dark; }   /* a light calendar icon on the dark field */
 .sim-recent { gap: 6px; }
 .sim-recent .b { padding: 6px 9px; }
 #sim-coin-btn.on, #sim-side-btn.on { border-color: #60a5fa; color: #60a5fa; }
@@ -393,7 +397,7 @@
           <button type="button" class="b" data-tf="1d" title="Daily candles (UTC days): the chart's own minutes plus up to 1,000 days of the coin's daily history">1D</button>
         </div>
         <div class="sim-row">
-          <span class="sim-fsym-wrap"><input id="sim-fsym" list="sim-coin-list" placeholder="Coin…" aria-label="Load another coin: type its name, then Enter" autocomplete="off" spellcheck="false" title="Type a coin (INJ, SOL, GOLD…) and press Enter: it loads here without leaving full screen. Suggestions: big coins, your recent ones and the top 50 by volume."><button type="button" class="b go" id="sim-fsym-go">Load</button></span>
+          <span class="sim-fsym-wrap"><input id="sim-fsym" list="sim-coin-list" placeholder="Coin…" aria-label="Load another coin: type its name, then Enter" autocomplete="off" spellcheck="false" title="Type a coin (INJ, SOL, GOLD…) and press Enter: it loads here without leaving full screen. Suggestions: big coins, your recent ones and the top 50 by volume."><span class="sim-ftime" id="sim-ftime-wrap"><input id="sim-ftime" type="datetime-local" aria-label="Replay start time (UTC)" title="Replay: the coin starts from this time (UTC) and plays on up to now. The same time as in the 🪙 loader. Change it, then Load (or Enter)."><span class="sim-status" style="margin:0">UTC</span><select id="sim-fex" aria-label="Replay exchange" title="Which exchange's candles the replay uses (same as the 🪙 loader)"><option value="auto">Binance → Bybit</option><option value="binance">Binance</option><option value="bybit">Bybit</option></select></span><button type="button" class="b go" id="sim-fsym-go">Load</button></span>
           <button type="button" class="b" id="sim-coin-btn" aria-expanded="false" title="Change coin or signal. In full screen the whole loader (signals, time, exchange, big coins) opens here, above the chart.">🪙 Coin</button>
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
@@ -1003,11 +1007,16 @@
     }
     cmp.cur = c; cmpRunSmc(); cmpSum(); cmpLegend(null);
   }
-  async function cmpPoll() {   // live: the second coin's own new candles (shown once the main chart's clock reaches them)
-    if (!cmp.on || S.mode !== 'live' || cmp.busy || !cmp.base.length) return;
+  async function cmpPoll() {   // live: the second coin's own new candles (shown once the main chart's clock reaches them) ·
+    // replay: when the main replay loaded more candles (it runs on to now), the second coin catches up to them
+    if (!cmp.on || cmp.busy || !cmp.base.length || !S.base.length) return;
+    const rep = S.mode === 'replay', from = cmp.base[cmp.base.length - 1][0], mainEnd = S.base[S.base.length - 1][0];
+    if (rep && (from >= mainEnd || cmp.ex === 'fx' && Date.now() - (cmp.idleAt || 0) < 60e3)) return;   // forex weekends come back empty: ask once a minute
     cmp.busy = true; const my = cmp.load;
     try {
-      const r = await api('/api/sim/klines', { symbol: cmp.sym, interval: '1m', start: cmp.base[cmp.base.length - 1][0], exchange: cmp.ex }, 12000);
+      const r = await api('/api/sim/klines', Object.assign({ symbol: cmp.sym, interval: '1m', start: from, exchange: cmp.ex },
+        rep ? { end: Math.min(mainEnd + MIN, from + 48 * HOUR) } : {}), 12000);   // 48 h: under the 3,000-candle cap of one answer
+      if (rep && !(r.candles || []).some(k => k[0] > from)) cmp.idleAt = Date.now();
       if (my !== cmp.load) return;
       if (cmp.fails >= 3) { cmp.fails = 0; cmpSum(); } else cmp.fails = 0;   // working again: the normal line comes back
       let first = Infinity;
@@ -1019,7 +1028,7 @@
       if (first <= cmp.cur) cmp.cur = first - 1;   // the minute on screen changed: draw it again
       cmpTick();
     } catch (e) {   // one missed update is normal; say so when it keeps failing (it used to go stale without a word)
-      if (my === cmp.load && (cmp.fails = (cmp.fails || 0) + 1) >= 3) cmpNote(`${cmpName()} live update failed ${cmp.fails}× in a row: ${e.message} — still retrying every 4 s.`, true);
+      if (my === cmp.load && (cmp.fails = (cmp.fails || 0) + 1) >= 3) cmpNote(`${cmpName()} ${rep ? 'candle' : 'live'} update failed ${cmp.fails}× in a row: ${e.message} — still retrying every 4 s.`, true);
     }
     finally { cmp.busy = false; }
   }
@@ -2149,8 +2158,8 @@
     drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos(); renderPend(); renderRhythm(); renderCrowd();
     const end = nowT();
     $('sim-clock').textContent = end ? (isFx() ? `${S.sym.slice(0, 3)}/${S.sym.slice(3)} forex · Yahoo, practice only` : `${S.sym}USDT perp · ${S.ex}`) + ` · ${S.tf} · ${utc(end)} UTC` +
-      (S.mode === 'replay' ? ` · ${Math.round((S.base.length - 1 - S.cur) / 60)}h of data ahead` : ' · live') : 'No chart loaded';
-    const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1;
+      (S.mode === 'replay' ? ' · ' + replayAhead() : ' · live') : 'No chart loaded';
+    const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1 && !moreLeft();   // only at the present: before it, more candles load
     document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = atEnd || S.cur < 0; });
     $('sim-until-exit').disabled = atEnd || !S.pos;
     $('sim-to-result').disabled = atEnd || S.mode !== 'replay' || !(S.pos || pendHere());
@@ -2160,10 +2169,58 @@
   }
 
   // ---------- replay ----------
+  // A replay runs on up to the present: it loads 24 h past its start, and the next day of 1m candles loads while you
+  // play (once 6 h or less are left), so Play, +1h, ⏩ Play to exit and ⏭ Result now carry on to now.
+  const lastT = () => S.base.length ? S.base[S.base.length - 1][0] : 0;
+  const moreLeft = () => S.mode === 'replay' && S.base.length > 0 && Date.now() - lastT() >= 2 * MIN;   // a closed minute after the last one loaded
+  function replayMore() {   // → a promise: true when candles were added
+    if (S.more && S.more.load === S.load) return S.more.p;   // already on its way
+    if (!moreLeft() || Date.now() - (S.moreIdle || 0) < 5000) return Promise.resolve(false);   // after an empty answer or an error: not again for 5 s
+    const my = S.load, sym = S.sym, ex = S.ex;
+    const p = (async () => {
+      let from = lastT();   // from the last loaded minute: it may have been the unfinished one
+      for (let tries = 0; tries < 8; tries++) {   // a forex weekend comes back empty: look at the next day
+        const end = Math.min(Date.now(), from + 24 * HOUR);
+        const r = await api('/api/sim/klines', { symbol: sym, interval: '1m', start: from, end, exchange: ex });
+        if (my !== S.load) return false;   // another chart was loaded meanwhile
+        let n = 0;
+        for (const k of r.candles || []) {
+          const i = S.base.length - 1;
+          if (k[0] === S.base[i][0]) { S.base[i] = k; if (i === S.cur) pushLast(); }
+          else if (k[0] > S.base[i][0]) { S.base.push(k); n++; }
+        }
+        if (n) { S.moreErr = null; recomputeFull(); return true; }
+        if (end >= Date.now() - 2 * MIN) return false;   // nothing newer yet
+        from = end;
+      }
+      return false;
+    })().catch(e => { if (my === S.load) S.moreErr = e.message; return false; })
+      .then(added => {
+        if (S.more && S.more.p === p) S.more = null;
+        if (my === S.load) S.moreIdle = added ? 0 : Date.now();
+        if (my === S.load && S.cur >= 0) {
+          if (added && /^Loading the next hours/.test($('sim-status').textContent)) status(`More candles in, up to ${utc(lastT())} UTC.${S.play ? '' : ' Press Play or → to go on.'}`);
+          refresh();
+        }
+        return added;
+      });
+    S.more = { load: my, p };
+    return p;
+  }
+  function replayAhead() {   // the clock line: how far the loaded candles go
+    const m = S.base.length - 1 - S.cur, h = Math.round(m / 60), left = m >= 60 ? h + 'h' : m + ' min';
+    return moreLeft() ? `${left} loaded ahead, more loads as you play (up to now)` : m ? `${left} ahead, up to now` : 'at the present';
+  }
   function step(n) {
     if (S.mode !== 'replay' || S.cur < 0) return;
     for (let i = 0; i < n; i++) {
-      if (S.cur >= S.base.length - 1) { stopPlay(); status('That\'s the end of the loaded candles.'); break; }
+      if (S.cur >= S.base.length - 1) {
+        if (moreLeft() && !S.moreErr) { replayMore(); status('Loading the next hours of candles…'); break; }   // Play goes on once they are in
+        stopPlay();
+        if (S.moreErr) { status(`Could not load more candles: ${S.moreErr}. Press Play or → to try again.`, true); S.moreErr = null; }
+        else status(`You've reached the present (${utc(lastT())} UTC). Switch to Live to keep watching ${S.sym}.`);
+        break;
+      }
       S.cur++;
       const k = S.base[S.cur];
       pushLast();
@@ -2173,6 +2230,7 @@
         stopPlay(); status(`🎯 Paused: the simulator found an A+ ${smc.setT.get(k[0]).side} on this candle. See the line above the chart, or open the coach.`); break;
       }
     }
+    if (S.base.length - 1 - S.cur <= 360) replayMore();   // 6 h or less left: the next day loads in the background
     refresh();
   }
   function stopPlay() { if (S.play) clearInterval(S.play); S.play = null; S.untilExit = false; $('sim-play').textContent = '▶ Play'; }
@@ -2224,6 +2282,8 @@
     if (replayGate(() => loadReplay(sym, t, ex, extraMarks, label), 'loading another chart')) return;
     S.replayArgs = [sym, t, ex, extraMarks, label];   // ↺ Restart loads the same replay again from its start
     stopAll(); setMode('replay', true); coinPanel(false);
+    $('sim-time').value = new Date(t).toISOString().slice(0, 16); ftimeSync();   // the time boxes show this replay's start (a signal's too)
+    S.moreErr = null; S.moreIdle = 0;
     const start = t - 24 * 3600e3, end = Math.min(Date.now(), t + 24 * 3600e3);
     status(`Loading ${sym} candles around ${utc(t)} UTC…`);
     const my = ++S.load;
@@ -2495,7 +2555,7 @@
       h = `SMC ${smc.tf}m · <b>${sh ? 'short' : 'long'} idea</b> since the ${leg.brk.kind} at ${hm(leg.brk.t)} · ` + [ck(true, 'break'), ck(!!leg.prem, sh ? 'premium' : 'discount'), ck(!!leg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
         (leg.sweep && leg.trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${fmt(leg.trig.p)}</b>` : '');
     } else h = A.breaks.length ? `SMC ${smc.tf}m · no live idea: price closed back past the start of the last move. Wait for the next CHoCH or BOS.` : `SMC ${smc.tf}m · no structure break yet.`;
-    if (S.mode === 'replay' && smc.full) { const ahead = smc.full.setups.filter(x => x.conf > A.now).length; h += ` <span class="no">· ${ahead ? ahead + ' more A+ setup' + (ahead > 1 ? 's' : '') + ' ahead in this replay' : 'no more A+ setups ahead'}</span>`; }
+    if (S.mode === 'replay' && smc.full) { const ahead = smc.full.setups.filter(x => x.conf > A.now).length; h += ` <span class="no">· ${ahead ? ahead + ' more A+ setup' + (ahead > 1 ? 's' : '') + (moreLeft() ? ' ahead in the loaded hours' : ' ahead in this replay') : moreLeft() ? 'no more A+ setups in the loaded hours' : 'no more A+ setups ahead'}</span>`; }
     el.classList.toggle('hot', !!fresh);
     el.innerHTML = h;
     const u = $('sim-use-setup'); if (u) u.onclick = () => useSetup(last);
@@ -2746,11 +2806,20 @@
       : `Ticket filled from the A+ ${x.side}: stop just past the sweep wick, target ${tgt}. It fills at the current price when you press the button.`);
     refresh();
   }
-  function nextSetup() {
+  async function nextSetup() {
     if (S.mode !== 'replay' || S.cur < 0) return;
     if (!smc.full) recomputeFull();
-    const now = nowT(), x = smc.full.setups.find(s => s.conf > now);
-    if (!x) return status(`No more A+ setups in the rest of this replay on the ${smc.tf}m structure. Load another signal, or try Structure ${smc.tf === 5 ? '15m' : '5m'}.`);
+    const my = S.load; let x;
+    for (let n = 0; ; n++) {   // none in the loaded candles: load up to 3 more days and look again
+      x = smc.full && smc.full.setups.find(s => s.conf > nowT());
+      if (x || n >= 3 || !moreLeft()) break;
+      status(`⏭ Looking for the next A+ setup past ${utc(lastT())} UTC…`);
+      S.moreIdle = 0;
+      if (!(await replayMore()) || my !== S.load) break;
+    }
+    if (my !== S.load) return;
+    if (!x) return status(moreLeft() ? `No A+ setup up to ${utc(lastT())} UTC on the ${smc.tf}m structure. Press ⏭ again to look further, or try Structure ${smc.tf === 5 ? '15m' : '5m'}.`
+      : `No more A+ setups up to now on the ${smc.tf}m structure. Load another signal, or try Structure ${smc.tf === 5 ? '15m' : '5m'}.`);
     const idx = S.base.findIndex(k => k[0] === x.t); if (idx < 0) return;
     stopPlay();
     if (S.pos) { step(idx - S.cur); if (S.cur !== idx) return; }   // stepping stops early if your trade closes
@@ -3984,7 +4053,21 @@
   });
   // full screen: the toolbar's coin box. Type (or just start typing anywhere), Enter loads: Live now, Replay from the
   // loader's time and exchange. Suggestions: the big coins, your recent ones and the top 50 by volume.
-  function fsymSync() { const i = $('sim-fsym'); if (i && document.activeElement !== i) i.value = S.sym || ''; }
+  function fsymSync() { const i = $('sim-fsym'); if (i && document.activeElement !== i) i.value = S.sym || ''; ftimeSync(); }
+  // Replay: the start time and exchange sit next to the coin box in full screen. They are the loader's own values (one
+  // edited here changes the loader too), so Load / Enter replays the coin from that time, like "Load replay".
+  function ftimeSync() {
+    $('sim-ftime-wrap').hidden = S.mode !== 'replay';
+    if (document.activeElement !== $('sim-ftime')) $('sim-ftime').value = $('sim-time').value;
+    $('sim-fex').value = $('sim-ex').value;
+  }
+  ['input', 'change'].forEach(ev => {
+    $('sim-ftime').addEventListener(ev, () => { $('sim-time').value = $('sim-ftime').value; });
+    $('sim-time').addEventListener(ev, ftimeSync);
+  });
+  $('sim-fex').addEventListener('change', () => { $('sim-ex').value = $('sim-fex').value; });
+  $('sim-ex').addEventListener('change', ftimeSync);
+  $('sim-ftime').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('sim-ftime').blur(); fsymLoad(); } });
   async function fsymFill() {
     if (FS.filled) return; FS.filled = true;
     const dl = $('sim-coin-list'), have = new Set([...dl.options].map(o => o.value));
@@ -3996,7 +4079,7 @@
     } catch (e) { FS.filled = false; }   // try again next time
   }
   function fsymLoad() {
-    const sym = $('sim-fsym').value.trim().toUpperCase();
+    const sym = ($('sim-fsym').value.trim() || S.sym || '').toUpperCase();
     if (!sym) return;
     $('sim-fsym').blur(); coinPanel(false);
     if (S.mode === 'live') { $('sim-symbol-live').value = sym; $('sim-load-live').click(); }
@@ -4101,12 +4184,23 @@
     $('sim-margin').value = (size / levNow()).toFixed(2); ACC.margin = +(size / levNow()).toFixed(2); saveAcc(); refresh();
     status(`Margin set to ${money(size / levNow())} × ${levNow()}: hitting the stop costs about ${money(lose)} (${pct}% of your balance).`);
   });
-  $('sim-to-result').onclick = () => {   // replay straight to the exit (or to the end of the loaded candles)
+  $('sim-to-result').onclick = async () => {   // replay straight to the exit, loading more candles as needed (up to now, at most 30 days)
     if (S.mode !== 'replay' || S.cur < 0 || !(S.pos || pendHere())) return;
-    stopPlay(); S.untilExit = true;
-    step(S.base.length - 1 - S.cur);
-    S.untilExit = false;
-    if (S.pos || pendHere()) status(`No result yet: the loaded candles end at ${utc(nowT())} UTC with your ${S.pos ? 'trade still open' : 'limit still waiting'}.`);
+    stopPlay();
+    const my = S.load, open = () => S.pos || pendHere();
+    const go = () => { S.untilExit = true; step(S.base.length - 1 - S.cur); S.untilExit = false; };
+    go();
+    for (let n = 0; n < 30 && open() && my === S.load && S.cur >= S.base.length - 1 && moreLeft(); n++) {
+      status(`⏭ Looking further for the result… ${utc(nowT())} UTC`);
+      S.moreIdle = 0;   // no 5 s wait here
+      if (!(await replayMore()) || my !== S.load) break;
+      go();
+    }
+    if (my !== S.load || !open()) return;
+    const what = S.pos ? 'trade still open' : 'limit still waiting';
+    if (S.moreErr) { status(`No result yet at ${utc(nowT())} UTC (your ${what}): could not load more candles — ${S.moreErr}.`, true); S.moreErr = null; }
+    else status(moreLeft() ? `No result in the next 30 days: your ${what} at ${utc(nowT())} UTC. Press ⏭ Result now again to look further.`
+      : `No result yet: your ${what} at ${utc(nowT())} UTC — that is now, the present.`);
   };
   $('sim-pos-body').addEventListener('click', e => { if (e.target.closest('[data-rclose]')) { S.result = null; renderPos(); } });
   $('sim-status').addEventListener('click', e => { const b = e.target.closest('[data-rg]'); if (b) gateAct(b.dataset.rg); });
