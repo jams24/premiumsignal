@@ -418,7 +418,7 @@
           <button type="button" class="b" id="sim-coin-btn" aria-expanded="false" title="Change coin or signal. In full screen the whole loader (signals, time, exchange, big coins) opens here, above the chart.">🪙 Coin</button>
           <button type="button" class="b" id="sim-tool-line" title="Click the chart to draw a level">✎ Level</button>
           <button type="button" class="b" id="sim-clear-lines">Clear levels</button>
-          <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag or a straight line. Saved per coin, and they stay put when you scroll, zoom or change timeframe. Drag a drawing to move it; click it, then Delete, to remove it.">✏️ Draw</button>
+          <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag, a straight line or Fibonacci levels. Saved per coin, and they stay put when you scroll, zoom or change timeframe. Drag a drawing to move it; click it, then Delete, to remove it.">✏️ Draw</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
           <button type="button" class="b" id="sim-info-btn" aria-pressed="false" title="Full screen: show or hide the read-outs around the chart (4H/1H direction, when the coin moves, news, recent coins, the clock line, the second chart's coin box and summary, 24h high). Hidden = a bigger chart.">ⓘ Info</button>
@@ -435,6 +435,7 @@
         <button type="button" class="b on" data-draw="pen" title="Press and drag on the chart">✏️ Pencil</button>
         <button type="button" class="b" data-draw="zig" title="Click each turn; double-click, Enter or ✓ Finish to end it">〰 Zig-zag</button>
         <button type="button" class="b" data-draw="line" title="Click the start and the end">／ Line</button>
+        <button type="button" class="b" data-draw="fib" title="Fibonacci retracement: click where the move starts (its low for a move up, its high for a move down), then where it ends. 0% sits at the end, 100% at the start; the shaded band is 61.8–78.6%, and 127.2% / 161.8% ext are past the end.">📐 Fib</button>
         <span style="display:flex;gap:5px;align-items:center"><button type="button" class="sim-swatch on" data-color="#f59e0b" style="background:#f59e0b" aria-label="Gold"></button><button type="button" class="sim-swatch" data-color="#60a5fa" style="background:#60a5fa" aria-label="Blue"></button><button type="button" class="sim-swatch" data-color="#10b981" style="background:#10b981" aria-label="Green"></button><button type="button" class="sim-swatch" data-color="#ef4444" style="background:#ef4444" aria-label="Red"></button><button type="button" class="sim-swatch" data-color="#e5e7eb" style="background:#e5e7eb" aria-label="White"></button></span>
         <button type="button" class="b" id="sim-draw-undo">↶ Undo</button>
         <button type="button" class="b" id="sim-draw-clear">Clear drawings</button>
@@ -444,6 +445,7 @@
       <div class="sim-smcbar">
         <label class="sim-opt" style="margin:0"><input type="checkbox" id="sim-smc-on" checked> SMC overlay</label>
         <select id="sim-smc-tf" aria-label="Structure timeframe" title="Which candles the SMC marks (swings, BOS / CHoCH, zones, premium / discount, sweeps, A+) are read from. Auto: the timeframe on the chart (a 1m chart uses 5m). 1H and up use the coin's long history (120 days hourly, 1,000 days daily)."><option value="auto">Structure auto</option><option value="5">Structure 5m</option><option value="15">Structure 15m</option><option value="60">Structure 1H</option><option value="240">Structure 4H</option><option value="1440">Structure 1D</option><option value="10080">Structure 1W</option></select>
+        <label class="sim-opt" style="margin:0" title="Fibonacci levels on the move the SMC overlay is reading (the same move as premium / discount): 0% at its newest extreme, 100% where it started, the 61.8–78.6% band shaded. They follow the move as it grows. Needs the SMC overlay on. For a move you pick yourself: ✏️ Draw → 📐 Fib."><input type="checkbox" id="sim-smc-fib"> Auto fib</label>
         <button type="button" class="b" id="sim-coach-btn">🎓 Walk me through</button>
         <button type="button" class="b" id="sim-next-setup" title="Jump forward to the next setup the simulator finds">⏭ Next setup</button>
         <label class="sim-opt" style="margin:0" id="sim-pause-wrap"><input type="checkbox" id="sim-smc-pause" checked> Pause on setups</label>
@@ -2555,7 +2557,7 @@
     // v2: opening a coin from the alerts / scan used to pin Structure at 5m / 15m and save it, so the chart's timeframe
     // stopped mattering (a 1W chart read 15m). A 5m / 15m saved before v2 goes back to auto once; 1H and up were picked by hand.
     const pick = o.v === 2 && (o.pick === 'auto' || STF.includes(o.pick)) ? o.pick : STF.includes(o.pick) && o.pick >= 60 ? o.pick : 'auto';
-    return { on: o.on !== false, pick, pause: o.pause !== false, A: null, full: null, setT: new Map(), layers: null, hide: null, seen: Infinity, wait: false }; })();
+    return { on: o.on !== false, pick, pause: o.pause !== false, fib: o.fib === true, A: null, full: null, setT: new Map(), layers: null, hide: null, seen: Infinity, wait: false }; })();
   const structTf = chartTf => smc.pick === 'auto' ? AUTO_STF[chartTf] || 15 : smc.pick;
   Object.defineProperty(smc, 'tf', { get: () => structTf(S.tf) });
   const tfName = m => m >= 10080 ? '1W' : m >= 1440 ? '1D' : m >= 60 ? m / 60 + 'H' : m + 'm';
@@ -2580,7 +2582,7 @@
   }
   const mainSmcOpt = () => { const sym = S.sym, ex = S.ex;
     return smcOpt(sym, ex, S.base[0][0], smc.tf, true, () => { if (S.sym === sym && S.ex === ex && S.cur >= 0) { recomputeFull(); refresh(); } }); };
-  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ v: 2, on: smc.on, pick: smc.pick, tf: smc.tf, pause: smc.pause })); } catch (e) { /* ignore */ } };
+  const saveSmc = () => { try { localStorage.setItem(SKEY, JSON.stringify({ v: 2, on: smc.on, pick: smc.pick, tf: smc.tf, pause: smc.pause, fib: smc.fib })); } catch (e) { /* ignore */ } };
   const COL = { red: '#ef4444', green: '#10b981', gold: '#f59e0b', blue: '#60a5fa', text: '#e5e7eb', muted: '#94a3b8' };
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -2601,6 +2603,30 @@
       if (s.dir === -1 ? k[3] <= s.target : k[2] >= s.target) return { kind: 'target', t: k[0] };
     }
     return null;
+  }
+  // ---------- Fibonacci levels (📐 Fib drawing and Auto fib on the SMC move) ----------
+  // a = where the move starts, b = where it ends: 0% = the end, 100% = the start, a level r sits at b + (a − b)·r, so
+  // 61.8% is a 61.8% pull back from the end. 127.2% / 161.8% ext = the move carried on 1.272× / 1.618× from its start.
+  const FIB = [[0, '0%'], [1, '100%'], [0.618, '61.8%'], [0.5, '50%'], [0.382, '38.2%'], [0.786, '78.6%'], [0.236, '23.6%'], [-0.272, '127.2% ext'], [-0.618, '161.8% ext']];   // label order: these win a crowded spot
+  const fibAt = (a, b, r) => b + (a - b) * r;
+  function fibPaint(g, a, b, x0, W, Y, c, hot, fmtP, placed = []) {   // placed: labels already on the chart ({x, y, w}, 14 px tall) — a fib label never covers one
+    if (!(a > 0 && b > 0) || a === b || x0 == null || !isFinite(x0)) return;
+    x0 = Math.max(0, Math.min(W, x0));
+    g.save(); g.font = '600 10px "JetBrains Mono", monospace'; g.textBaseline = 'middle'; g.textAlign = 'left';
+    const y1 = Y(fibAt(a, b, 0.618)), y2 = Y(fibAt(a, b, 0.786));
+    if (y1 != null && y2 != null) { g.globalAlpha = 0.11; g.fillStyle = c; g.fillRect(x0, Math.min(y1, y2), W - x0, Math.abs(y2 - y1)); g.globalAlpha = 1; }
+    for (const [r, name] of FIB) {
+      const p = fibAt(a, b, r); if (!(p > 0)) continue;
+      const y = Y(p); if (y == null || !isFinite(y)) continue;
+      g.strokeStyle = c; g.globalAlpha = r === 0 || r === 1 ? 0.95 : r < 0 ? 0.5 : 0.75; g.lineWidth = (r === 0 || r === 1 ? 1.3 : 1) + (hot ? 0.8 : 0);
+      g.setLineDash(r === 0.5 ? [6, 4] : r < 0 ? [2, 3] : []);
+      g.beginPath(); g.moveTo(x0, Math.round(y) + .5); g.lineTo(W, Math.round(y) + .5); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+      const txt = `${name} ${fmtP(p)}`, w = g.measureText(txt).width + 8, lx = Math.min(x0 + 2, W - w - 2);
+      if (placed.some(q => lx + w > q.x && lx < q.x + q.w && Math.abs(q.y - y) < 14)) continue;   // a label already there: the line alone
+      placed.push({ x: lx, y, w });
+      g.fillStyle = 'rgba(19,23,34,0.86)'; g.fillRect(lx, y - 7, w, 14); g.fillStyle = c; g.fillText(txt, lx + 4, y + .5);
+    }
+    g.restore();
   }
   function paintSmc(g, m, back, V) {   // V: the chart to paint — main or compare: its analysis, chart, series, candle bucket, timeframe, candles
     const A = V.A, cs = V.cs; if (!A || !cs || (V.main && !(smc.on || coach.open))) return;
@@ -2655,8 +2681,8 @@
     }
     if (show('range') && leg) {
       const x0 = XL(leg.dir === -1 ? leg.hiT : leg.loT), eq = (leg.hi + leg.lo) / 2;
-      line(x0, W, Y(eq), 'rgba(229,231,235,0.55)', [6, 4]);
-      tag('50% · EQ', W - 4, Y(eq) - 9, COL.text, 'right');
+      if (smc.fib) fibPaint(g, leg.dir === -1 ? leg.hi : leg.lo, leg.dir === -1 ? leg.lo : leg.hi, x0, W, Y, '#c4b5fd', false, V.main ? fmt : cmpFmt, placed);   // its 50% is the EQ line
+      else { line(x0, W, Y(eq), 'rgba(229,231,235,0.55)', [6, 4]); tag('50% · EQ', W - 4, Y(eq) - 9, COL.text, 'right'); }
       tag('Premium', W - 4, Y(leg.hi) + 9, '#fca5a5', 'right'); tag('Discount', W - 4, Y(leg.lo) - 9, '#6ee7b7', 'right');
     }
     if (show('zones')) for (const z of A.zones.filter(z => !z.broken).slice(-3)) {
@@ -3489,10 +3515,10 @@
   }
   function makeDrawLayer() {
     let req = null;
-    const view = { zOrder: () => 'top', renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintDraw(sc.context)) }) };
+    const view = { zOrder: () => 'top', renderer: () => ({ draw: tg => tg.useMediaCoordinateSpace(sc => paintDraw(sc.context, sc.mediaSize.width)) }) };
     return { attached: p => { req = p.requestUpdate; }, detached: () => { req = null; }, paneViews: () => [view], updateAllViews: () => {}, update: () => { if (req) req(); } };
   }
-  function paintDraw(g) {
+  function paintDraw(g, W) {
     if (!cs || !S.sym) return;
     const list = myDrawings().slice();
     if (DR.cur) list.push(DR.hover && DR.cur.k !== 'pen' ? Object.assign({}, DR.cur, { pts: DR.cur.pts.concat([DR.hover]) }) : DR.cur);
@@ -3501,10 +3527,14 @@
     for (const d of list) {
       const P = d.pts.map(([t, p]) => [tToX(t), cs.priceToCoordinate(p)]);
       const sel = d === DG.sel || (DG.drag && DG.drag.d === d), hot = sel || (DG.hit && DG.hit.d === d);   // picked / under the pointer: thicker
-      g.strokeStyle = d.c; g.lineWidth = (d.k === 'pen' ? 2 : 1.8) + (hot ? 1.2 : 0); g.beginPath();
+      if (d.k === 'fib' && d.pts.length >= 2) {   // levels from its left end to the right edge; the move itself as a dashed line
+        const xs = P.map(q => q[0]).filter(x => x != null);
+        if (xs.length) fibPaint(g, d.pts[0][1], d.pts[1][1], Math.min(...xs), W || chart.timeScale().width(), p => cs.priceToCoordinate(p), d.c, hot, fmt);
+      }
+      g.strokeStyle = d.c; g.lineWidth = (d.k === 'pen' ? 2 : d.k === 'fib' ? 1.2 : 1.8) + (hot ? 1.2 : 0); g.setLineDash(d.k === 'fib' ? [4, 4] : []); g.beginPath();
       let on = false;
       for (const [x, y] of P) { if (x == null || y == null) { on = false; continue; } if (!on) { g.moveTo(x, y); on = true; } else g.lineTo(x, y); }
-      g.stroke();
+      g.stroke(); g.setLineDash([]);
       if (d.k === 'pen') continue;
       g.fillStyle = d.c;
       P.forEach(([x, y]) => {   // its points; picked: a ring you can grab to move that end
@@ -3527,9 +3557,10 @@
     const n = myDrawings().length;
     $('sim-draw-hint').textContent = !DR.on ? '' :
       (DR.kind === 'pen' ? 'Pencil: press and drag on the chart.' : DR.kind === 'zig' ? (DR.cur ? `Zig-zag: ${DR.cur.pts.length} point${DR.cur.pts.length > 1 ? 's' : ''} — click the next turn; double-click, Enter or ✓ Finish to end it, Esc to drop it.` : 'Zig-zag: click each turn (each leg shows its % move); double-click, Enter or ✓ Finish to end it.')
+        : DR.kind === 'fib' ? (DR.cur ? 'Fib: click where the move ends (the top of a move up, the bottom of a move down). 0% goes there.' : 'Fib: click where the move starts (its low for a move up, its high for a move down), then where it ends. The levels show how far price pulls back; the shaded band is 61.8–78.6%.')
         : (DR.cur ? 'Line: click where it ends.' : 'Line: click where it starts, then where it ends.')) +
       ` The chart doesn't scroll while drawing — ✓ Done when you're finished. ${n ? `${n} drawing${n > 1 ? 's' : ''} on ${S.sym}. Drag one (or a line's end) to move it${DR.kind === 'pen' ? ' after ✓ Done' : ''}.` : ''}`;
-    $('sim-draw-done').textContent = DR.cur && DR.cur.k !== 'pen' ? '✓ Finish line' : '✓ Done';
+    $('sim-draw-done').textContent = DR.cur && DR.cur.k !== 'pen' ? (DR.cur.k === 'fib' ? '✓ Finish fib' : '✓ Finish line') : '✓ Done';
     $('sim-draw-undo').disabled = !n && !DR.cur;
   }
   function drawMode(on) {
@@ -3576,6 +3607,13 @@
       const d = list[i], P = d.pts.map(([t, p]) => [tToX(t), cs.priceToCoordinate(p)]);
       if (d.k !== 'pen') for (let j = 0; j < P.length; j++) if (ok(P[j]) && Math.hypot(x - P[j][0], y - P[j][1]) <= 8) return { d, end: j };
       for (let j = 1; j < P.length; j++) if (ok(P[j - 1]) && ok(P[j]) && segDist(x, y, P[j - 1], P[j]) <= 6) return { d, end: -1 };
+      if (d.k === 'fib' && d.pts.length >= 2) {   // any of its levels (right of its left end) moves the whole fib
+        const xs = P.map(q => q[0]).filter(v => v != null);
+        if (xs.length && x >= Math.min(...xs) - 2) for (const [r] of FIB) {
+          const yy = cs.priceToCoordinate(fibAt(d.pts[0][1], d.pts[1][1], r));
+          if (yy != null && Math.abs(yy - y) <= 4) return { d, end: -1 };
+        }
+      }
     }
     for (let i = lvlLines.length - 1; i >= 0; i--) {
       const l = lvlLines[i]; if (!myLvls.has(l)) continue;
@@ -3599,7 +3637,7 @@
     if (old && old !== DG.sel && !old.pts && lvlLines.includes(old)) old.applyOptions({ lineWidth: 1 });
     if (DG.sel && !DG.sel.pts) DG.sel.applyOptions({ lineWidth: 2 });
     if (DG.sel) {
-      const what = !DG.sel.pts ? 'Level' : DG.sel.k === 'pen' ? 'Pencil drawing' : DG.sel.k === 'zig' ? 'Zig-zag' : 'Line';
+      const what = !DG.sel.pts ? 'Level' : DG.sel.k === 'pen' ? 'Pencil drawing' : DG.sel.k === 'zig' ? 'Zig-zag' : DG.sel.k === 'fib' ? 'Fib' : 'Line';
       hint(`${what} picked: drag it to move it${DG.sel.pts && DG.sel.k !== 'pen' ? ', or drag a ring to move that end' : ''}. Delete removes it, Esc lets go.`);
     } else if (old && !S.tool && !DR.on) setTool(null);   // the usual tip back
     drawRedraw();
@@ -3678,7 +3716,7 @@
         else {
           const L = DR.cur.pts[DR.cur.pts.length - 1], lx = tToX(L[0]), ly = cs.priceToCoordinate(L[1]);
           if (lx == null || ly == null || Math.hypot(q.x - lx, q.y - ly) > 4) DR.cur.pts.push(q.pt);   // a double-click's second press adds nothing
-          if (DR.kind === 'line' && DR.cur.pts.length >= 2) return drawFinish();
+          if ((DR.kind === 'line' || DR.kind === 'fib') && DR.cur.pts.length >= 2) return drawFinish();
         }
       }
       drawHint(); drawRedraw();
@@ -4171,7 +4209,7 @@
 
   function start() {
     if (started) return; started = true;
-    $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.pick); $('sim-smc-pause').checked = smc.pause;
+    $('sim-smc-on').checked = smc.on; $('sim-smc-tf').value = String(smc.pick); $('sim-smc-pause').checked = smc.pause; $('sim-smc-fib').checked = smc.fib;
     $('sim-alert-side').value = AL.side; $('sim-alert-early').checked = AL.early; $('sim-alert-zone').checked = AL.zone !== false;
     if (AL.scope && [...$('sim-scan-scope').options].some(o => o.value === AL.scope)) $('sim-scan-scope').value = AL.scope;   // your coin choice stays after a reload
     $('sim-margin').value = ACC.margin; $('sim-lev').value = ACC.lev;   // your last margin × leverage
@@ -4542,6 +4580,11 @@
   $('sim-smc-tf').onchange = () => { const v = $('sim-smc-tf').value; smc.pick = v === 'auto' ? 'auto' : +v; saveSmc(); recomputeFull(); refresh(); cmpRunSmc(); cmpSum(); };
   $('sim-cmp-smc').onchange = e => { cmp.smc = e.target.checked; saveView(); cmpRunSmc(); cmpSum(); cmpTfSync(); };
   $('sim-smc-pause').onchange = () => { smc.pause = $('sim-smc-pause').checked; saveSmc(); };
+  $('sim-smc-fib').onchange = () => {
+    smc.fib = $('sim-smc-fib').checked; saveSmc();
+    if (smc.fib && !smc.on) { smc.on = true; $('sim-smc-on').checked = true; saveSmc(); status('Auto fib reads the SMC move, so the SMC overlay is on again.'); }
+    refresh(); if (cmp.layer) cmp.layer.update();
+  };
   $('sim-next-setup').onclick = nextSetup;
   $('sim-coach-btn').onclick = () => {
     coach.open = !coach.open;
