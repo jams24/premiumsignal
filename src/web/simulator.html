@@ -421,7 +421,7 @@
           <button type="button" class="b" id="sim-draw-btn" aria-pressed="false" title="Draw on the chart: pencil, zig-zag, a straight line or Fibonacci levels. Saved per coin, and they stay put when you scroll, zoom or change timeframe. Drag a drawing to move it; click it, then Delete, to remove it.">✏️ Draw</button>
           <button type="button" class="b" id="sim-fit" title="Fit the chart to the price again (after you drag or zoom an axis)">⤢ Fit</button>
           <button type="button" class="b" id="sim-full" aria-pressed="false" title="Chart full screen (Shift+F). Esc or this button comes back; the order ticket is below the chart again then.">⛶ Full screen</button>
-          <button type="button" class="b" id="sim-info-btn" aria-pressed="false" title="Full screen: show or hide the read-outs around the chart (4H/1H direction, when the coin moves, news, recent coins, the clock line, the second chart's coin box and summary, 24h high). Hidden = a bigger chart.">ⓘ Info</button>
+          <button type="button" class="b" id="sim-info-btn" aria-pressed="false" title="Full screen: show or hide the read-outs around the chart (4H/1H direction, when the coin moves, news, recent coins, the clock line with the 24h volume, the second chart's coin box and summary, 24h high). Hidden = a bigger chart.">ⓘ Info</button>
           <button type="button" class="b" id="sim-cmp-btn" aria-pressed="false" title="Open a second chart next to this one (same timeframe and time) to compare two coins">⧉ Compare</button>
           <button type="button" class="b" id="sim-news-btn" title="This week's economic news (CPI, jobs, FOMC…) and the next Fed rate decisions, in UTC like the chart">📅 News</button>
           <button type="button" class="b" id="sim-lists-btn" title="Open the alert / setup list in a big window (works in full screen too)" hidden>🔔 Alerts</button>
@@ -1103,7 +1103,7 @@
         `<span class="${ch >= 0 ? 'pos' : 'neg'}">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</span>`;
       return;
     }
-    el.innerHTML = cmp.cur >= 0 ? `<b>${cmpName()}</b> · ${cmp.ex === 'fx' ? 'Yahoo forex' : cmp.ex} · ${ctf()} · ${cmpFmt(cmp.base[cmp.cur][4])}` : '';
+    el.innerHTML = cmp.cur >= 0 ? `<b>${cmpName()}</b> · ${cmp.ex === 'fx' ? 'Yahoo forex' : cmp.ex} · ${ctf()} · ${cmpFmt(cmp.base[cmp.cur][4])}${vol24Text(cmp.base, cmp.cur, cmp.ex)}` : '';
   }
   function cmpAlign(fromCmp) {   // same zoom and the same last candle on both charts
     if (!cmp.on || !cmp.chart || !cmp.Bt.length || !S.Bt.length || ctf() !== S.tf) return;   // its own timeframe: its own zoom and scroll
@@ -1148,6 +1148,22 @@
     if (topLine) { cs.removePriceLine(topLine); topLine = null; }
     S.topHi = hi;
     if (hi != null) topLine = cs.createPriceLine({ price: hi, color: 'rgba(245,158,11,0.75)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '24h high' });
+  }
+  // 24h USDT volume up to the chart's clock (a replay: up to its time): each 1m candle's coin volume × its typical price
+  // (high + low + close) / 3, over the same 24 h as the 24h-high line, on the exchange the chart shows. The exchange's
+  // own 24h figure is counted trade by trade, so it can differ by about 1%. Fewer than 23 h of minutes (a coin listed
+  // today) says how many hours it counted. Forex (Yahoo) has no volume.
+  function vol24(base, cur) {
+    if (!base || cur < 0 || !base[cur]) return null;
+    const t0 = base[cur][0] - 24 * 3600e3; let usd = 0, first = base[cur][0];
+    for (let i = cur; i >= 0 && base[i][0] > t0; i--) { const k = base[i]; usd += (+k[5] || 0) * (k[2] + k[3] + k[4]) / 3; first = k[0]; }
+    return { usd, hrs: (base[cur][0] - first) / 3600e3 + 1 / 60 };
+  }
+  const bigUsd = v => v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(v >= 1e8 ? 0 : 1)}M` : `$${Math.round(v / 1e3)}K`;
+  function vol24Text(base, cur, ex) {
+    if (ex === 'fx') return '';
+    const v = vol24(base, cur); if (!v || !(v.usd > 0)) return '';
+    return ` · 24h vol ${bigUsd(v.usd)}` + (v.hrs < 23 ? ` (${Math.max(1, Math.round(v.hrs))} h of candles)` : '');
   }
   function drawPos() {
     posLines.forEach(l => cs.removePriceLine(l)); posLines = []; LV.pos = [];
@@ -2267,7 +2283,7 @@
     drawTop(); drawMarks(); drawPos(); drawReal(); renderTicket(); renderPos(); renderPend(); renderRhythm(); renderCrowd();
     const end = nowT();
     $('sim-clock').textContent = end ? (isFx() ? `${S.sym.slice(0, 3)}/${S.sym.slice(3)} forex · Yahoo, practice only` : `${S.sym}USDT perp · ${S.ex}`) + ` · ${S.tf} · ${utc(end)} UTC` +
-      (S.mode === 'replay' ? ' · ' + replayAhead() : ' · live') : 'No chart loaded';
+      vol24Text(S.base, S.cur, S.ex) + (S.mode === 'replay' ? ' · ' + replayAhead() : ' · live') : 'No chart loaded';
     const atEnd = S.mode === 'replay' && S.cur >= S.base.length - 1 && !moreLeft();   // only at the present: before it, more candles load
     document.querySelectorAll('#sim-replay-bar .b').forEach(b => { b.disabled = b.dataset.back ? S.mode !== 'replay' || S.cur <= 0 : atEnd || S.cur < 0; });   // back works at the present too
     $('sim-until-exit').disabled = atEnd || !S.pos;
