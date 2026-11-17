@@ -8,6 +8,9 @@
      Alerts     price alerts: a line on the chart, a toast + sound + browser notification when price gets there
      Trend      4H / 1H / 15m structure (SMC on closed candles)
      Hours      the coin's average 1-hour range by UTC hour over 30 days, the hour now highlighted
+     Price act. the last 24h / 48h on closed 15m candles: range, structure, sweeps, nearest zones — read for a long and a short
+     Zones      how this coin's SMC demand / supply zones did on their first touch (held vs went through), next to the same
+                trade at random times (zonestats.js), recent touches, where price is now; touches can be marked on the chart
    Market data comes straight from Binance / Bybit in this browser (never through our server); news from /api/site/news.
    Alerts and which sections are open are kept in this browser only. In a replay the panel still shows the market now. */
 (function () {
@@ -44,10 +47,14 @@
   const live = () => !R.on;
 
   // ---------------------------------------------------------------- state
-  const OPEN0 = { ov: true, fu: true, oi: false, ls: false, nw: true, al: true, tr: false, hr: false };
+  const OPEN0 = { ov: true, fu: true, oi: false, ls: false, nw: true, al: true, tr: false, hr: false, pa: false, zr: false };
   const M = { open: Object.assign({}, OPEN0, store.get('rd-mk-v1', null) || {}), d: {}, err: {}, at: {}, busy: {}, key: '', nwTab: store.get('rd-mk-nwtab', 'cal'),
-    imp: store.get('rd-mk-imp', 'hm'), hlCoin: !!store.get('rd-mk-hlcoin', false), warn: !!store.get('rd-mk-warn', false), warned: new Set(), news: null, newsAt: 0, newsErr: '' };
+    imp: store.get('rd-mk-imp', 'hm'), zrTf: store.get('rd-mk-zrtf', '15m'), zrDays: +store.get('rd-mk-zrdays', 30) || 30, zrMarks: !!store.get('rd-mk-zrmk', false), again: {}, hlCoin: !!store.get('rd-mk-hlcoin', false), warn: !!store.get('rd-mk-warn', false), warned: new Set(), news: null, newsAt: 0, newsErr: '' };
   const saveOpen = () => store.set('rd-mk-v1', M.open);
+  const zrDays = () => (M.zrTf === '5m' ? Math.min(M.zrDays, 30) : M.zrDays);   // 5m: 30 days at most (8,640 candles)
+  const nearZones = (zs, px) => { let dem = null, sup = null;
+    for (const z of zs) { if (z.type === 'demand' && z.bot <= px && (!dem || z.top > dem.top)) dem = z; if (z.type === 'supply' && z.top >= px && (!sup || z.bot < sup.bot)) sup = z; }
+    return { dem, sup }; };
   const visible = () => !pane.closest('[data-pane]').hidden && (!u.phone() || document.querySelector('.dk-side').classList.contains('open')) && !document.hidden;
   const keyNow = () => U.ex + '|' + U.sym;
 
@@ -115,6 +122,34 @@
       }));
       return out;
     },
+    async pa() {
+      if (!window.SMC) throw new Error('the SMC engine did not load');
+      const ms = 15 * MIN, now = Date.now();
+      const ks = (await u.api(U.ex).klines(U.sym, '15m', { limit: 400 })).filter(k => k[0] + ms <= now);   // closed candles only
+      if (ks.length < 200) throw new Error('not enough candles yet (a new listing?)');
+      const l = ks[ks.length - 1], px = l[4], end = l[0] + ms, since = end - 48 * HOUR;
+      const A = window.SMC.analyze(ks.concat([[end, px, px, px, px, 0]]), ks.length, { tf: ms });
+      const win = h => { const k = ks.filter(x => x[0] >= end - h * HOUR); let hi = -Infinity, lo = Infinity, hiT = 0, loT = 0;
+        for (const x of k) { if (x[2] > hi) { hi = x[2]; hiT = x[0]; } if (x[3] < lo) { lo = x[3]; loT = x[0]; } }
+        return { hi, lo, hiT, loT, chg: (px / k[0][1] - 1) * 100, pos: hi > lo ? (px - lo) / (hi - lo) : 0.5 }; };
+      const lastLab = side => { for (let q = A.swings.length - 1; q >= 0; q--) { const w = A.swings[q]; if (w.side === side && w.label.length === 2) return w; } return null; };
+      // equal highs / lows nothing has traded through since they formed (checked on the candles, not only the engine's list)
+      const clean = e => !ks.some(x => x[0] >= e.conf && (e.side === 'H' ? x[2] > e.p : x[3] < e.p));
+      let eqh = null, eql = null;
+      for (const e of A.eqs) { if (e.side === 'H' && e.p > px && (!eqh || e.p < eqh.p) && clean(e)) eqh = e; if (e.side === 'L' && e.p < px && (!eql || e.p > eql.p) && clean(e)) eql = e; }
+      return { px, end, d24: win(24), d48: win(48), trend: A.trend, brk: A.breaks[A.breaks.length - 1] || null,
+        brks: A.breaks.filter(b => b.conf >= since), sweeps: A.sweeps.filter(w => w.conf >= since).slice(-3).reverse(),
+        hiLab: lastLab('H'), loLab: lastLab('L'), zones: A.zones.filter(z => !z.broken), eqh, eql };
+    },
+    async zr() {
+      if (!window.SMC || !window.ZoneStats) throw new Error('the SMC engine did not load');
+      const tf = M.zrTf, days = zrDays(), ms = u.TF[tf].ms, to = Math.floor(Date.now() / ms) * ms;
+      const K = await u.fetchRange(U.sym, tf, to - days * DAY, to, U.ex);   // closed candles only
+      if (K.length < 60) throw new Error('not enough candles yet (a new listing?)');
+      const z = window.ZoneStats.zoneStats(window.SMC, K, ms, { seed: U.ex + U.sym + tf + days });
+      z.tf = tf; z.days = days;
+      return z;
+    },
     async hr() {
       const ks = await u.api(U.ex).klines(U.sym, '1H', { limit: 720 });
       const sum = new Array(24).fill(0), n = new Array(24).fill(0);
@@ -132,16 +167,16 @@
     return d;
   }
   // how often each section refreshes while the panel is open (ms)
-  const EVERY = { ov: 15e3, fu: 15e3, oi: 60e3, ls: 60e3, tr: 120e3, hr: 30 * 60e3 };
+  const EVERY = { ov: 15e3, fu: 15e3, oi: 60e3, ls: 60e3, tr: 120e3, hr: 30 * 60e3, pa: 60e3, zr: 5 * 60e3 };
 
   async function loadSec(k, force) {
-    if (M.busy[k]) return;
+    if (M.busy[k]) { if (force) M.again[k] = true; return; }
     if (!force && M.at[k] && Date.now() - M.at[k] < EVERY[k]) return;
     const key = keyNow(); M.busy[k] = true;
     try { const d = await L[k](); if (key !== keyNow()) return; d.key = key; M.d[k] = d; M.err[k] = ''; M.at[k] = Date.now(); }
     catch (e) { if (key !== keyNow()) return; M.err[k] = e.message || String(e); M.at[k] = Date.now(); }
-    finally { M.busy[k] = false; }
-    if (key === keyNow()) { paintSec(k); if (k === 'ov') { paintSec('fu'); legendSoon(); } }
+    finally { M.busy[k] = false; if (M.again[k]) { M.again[k] = false; setTimeout(() => loadSec(k, true), 0); } }
+    if (key === keyNow()) { paintSec(k); if (k === 'ov') { paintSec('fu'); legendSoon(); } if (k === 'zr' && M.zrMarks && RD.setMarkers) RD.setMarkers(); }
   }
   async function loadNews(force) {
     if (M.newsBusy || (!force && Date.now() - M.newsAt < 5 * 60e3)) return;
@@ -154,6 +189,7 @@
   function refresh(force) {
     if (!visible()) return;
     for (const k of Object.keys(L)) if (M.open[k] || (k === 'ov' && (M.open.fu || M.open.oi))) loadSec(k, force);
+    if (M.zrMarks && !M.open.zr) loadSec('zr', force);
     if (M.open.nw) loadNews(force);
   }
 
@@ -161,6 +197,7 @@
   const SECS = [
     ['ov', 'Overview', 'activity'], ['fu', 'Funding', 'percent'], ['oi', 'Open interest', 'layers'], ['ls', 'Long / short', 'users'],
     ['nw', 'News', 'newspaper'], ['al', 'Alerts', 'bell'], ['tr', 'Trend · 4H 1H 15m', 'trending-up'], ['hr', 'When the coin moves', 'clock'],
+    ['pa', 'Price action · 24h / 48h', 'activity'], ['zr', 'SMC zones · how this coin reacts', 'target'],
   ];
   pane.innerHTML = `<div class="mk-note" data-mk-rp hidden>${u.ic('info')}<span>Replay: this panel shows the market <b>now</b>, not at the replay time.</span></div>` +
     SECS.map(([k, t, i]) => `<section class="mk-sec" data-mk="${k}">
@@ -342,6 +379,86 @@
         after: b => tips(b, 'hr'),
       };
     },
+    pa() {
+      const d = M.d.pa;
+      if (!d) return { html: M.err.pa ? errBox('pa', M.err.pa) : spin };
+      const px = live() && S.lastPx ? S.lastPx : d.px;
+      const dist = p => pc1((p / px - 1) * 100);
+      const zr = (z) => `${fp(z.bot)}–${fp(z.top)}`;
+      const rng = (h, w) => `<div class="pa-r"><div class="mk-fh-h"><span>${h} <b class="${tone(w.chg)}">${pc1(w.chg)}</b></span><span class="mono">L ${fp(w.lo)} · H ${fp(w.hi)}</span></div>
+        <div class="mk-rbar" title="Where price sits in the ${h} range"><i style="left:${(Math.max(0, Math.min(1, w.pos)) * 100).toFixed(1)}%"></i></div>
+        <div class="mk-rl"><span>low ${ago(w.loT)}</span><span>${Math.round(w.pos * 100)}% up the range</span><span>high ${ago(w.hiT)}</span></div></div>`;
+      const H = d.hiLab && d.hiLab.label, Lb = d.loLab && d.loLab.label;
+      const st = H === 'HH' && Lb === 'HL' ? ['up', 'Higher highs and higher lows'] : H === 'LH' && Lb === 'LL' ? ['down', 'Lower highs and lower lows']
+        : H === 'LH' && Lb === 'HL' ? ['', 'A lower high and a higher low: squeezing into a range'] : H === 'HH' && Lb === 'LL' ? ['', 'A higher high and a lower low: swinging wider both ways'] : ['', 'Not enough swings yet'];
+      const up = d.brks.filter(b => b.dir === 1).length, dn = d.brks.length - up, ch = d.brks.filter(b => b.kind === 'CHoCH').length;
+      const { dem, sup } = nearZones(d.zones, px);
+      const inD = dem && px <= dem.top, inS = sup && px >= sup.bot;
+      const touch = z => (z.touched ? 'touched before' : 'not touched yet');
+      const sw = d.sweeps.map(w => `<div class="pa-sw"><span>${ago(w.conf)}</span><b class="${w.dir === 1 ? 'up' : 'down'}">${w.dir === 1 ? 'Swept a low' : 'Swept a high'} ${fp(w.p)}${/EQ/.test(w.kind) ? ' (' + w.kind + ')' : ''}, closed back ${w.dir === 1 ? 'above' : 'below'}</b></div>`).join('');
+      const li = (cls, word, txt) => `<li><span class="pa-t ${cls}">${word}</span>${txt}</li>`;
+      const p48 = d.d48.pos;
+      const longs = [
+        inD ? li('w', 'zone', `Price is in a demand zone ${zr(dem)} · ${touch(dem)}`) : dem ? li('', 'zone', `Demand ${zr(dem)}, ${dist(dem.top)} away · ${touch(dem)}`) : li('a', 'zone', 'No unbroken demand below in the last 4 days'),
+        d.eql ? li('', 'stops', `Equal lows ${fp(d.eql.p)} (${dist(d.eql.p)}): stops resting below, untaken`) : '',
+        d.trend === 1 ? li('w', 'with', '15m structure is up') : d.trend === -1 ? li('a', 'against', '15m structure is down') : '',
+        p48 <= 0.33 ? li('w', 'with', `Bottom third of the 48h range (discount)`) : p48 >= 0.67 ? li('a', 'against', `Top third of the 48h range (premium)`) : '',
+        d.sweeps.some(w => w.dir === 1) ? li('w', 'with', 'A low was swept and price closed back above') : '',
+      ].join('');
+      const shorts = [
+        inS ? li('w', 'zone', `Price is in a supply zone ${zr(sup)} · ${touch(sup)}`) : sup ? li('', 'zone', `Supply ${zr(sup)}, ${dist(sup.bot)} away · ${touch(sup)}`) : li('a', 'zone', 'No unbroken supply above in the last 4 days'),
+        d.eqh ? li('', 'stops', `Equal highs ${fp(d.eqh.p)} (${dist(d.eqh.p)}): stops resting above, untaken`) : '',
+        d.trend === -1 ? li('w', 'with', '15m structure is down') : d.trend === 1 ? li('a', 'against', '15m structure is up') : '',
+        p48 >= 0.67 ? li('w', 'with', `Top third of the 48h range (premium)`) : p48 <= 0.33 ? li('a', 'against', `Bottom third of the 48h range (discount)`) : '',
+        d.sweeps.some(w => w.dir === -1) ? li('w', 'with', 'A high was swept and price closed back below') : '',
+      ].join('');
+      return {
+        sum: `<span class="${tone(d.d24.chg)}">${pc1(d.d24.chg)}</span> / <span class="${tone(d.d48.chg)}">${pc1(d.d48.chg)}</span>`,
+        html: rng('24h', d.d24) + rng('48h', d.d48) +
+          `<p class="mk-day">Structure · 15m</p>
+          <p class="mk-p" style="margin-top:0"><b class="${st[0]}">${st[1]}.</b> ${d.brks.length ? `Last 48h: ${up} break${up === 1 ? '' : 's'} up, ${dn} down${ch ? ` (${ch} CHoCH)` : ''}.` : 'No structure break in the last 48h.'}${d.brk ? ` Last: ${d.brk.kind} ${d.brk.dir === 1 ? 'up' : 'down'} at ${fp(d.brk.p)}, ${ago(d.brk.conf)}.` : ''}</p>
+          ${sw ? `<p class="mk-day">Sweeps · last 48h</p>${sw}` : ''}
+          <div class="pa-two"><div class="pa-col l"><b>▲ For a long</b><ul>${longs}</ul></div><div class="pa-col s"><b>▼ For a short</b><ul>${shorts}</ul></div></div>
+          <p class="mk-p m">What the chart did, on closed 15m candles. Each line is a fact, not a vote: in our tests zones, trend agreement and premium / discount did not pick winners on their own. See <b>SMC zones</b> below for how this coin's zones did.</p>`,
+      };
+    },
+    zr() {
+      const d = M.d.zr, Z = window.ZoneStats, tf = M.zrTf, days = zrDays();
+      const ctl = `<div class="mk-tools"><div class="mk-seg sm" aria-label="Zone timeframe">${['5m', '15m', '1H'].map(t => `<button type="button" data-mk-zrtf="${t}" class="${tf === t ? 'on' : ''}">${t}</button>`).join('')}</div>
+        <div class="mk-seg sm" aria-label="How far back">${[7, 30, 90].map(n => `<button type="button" data-mk-zrd="${n}" class="${days === n ? 'on' : ''}"${tf === '5m' && n === 90 ? ' disabled title="5m: 30 days at most"' : ''}>${n}d</button>`).join('')}</div></div>`;
+      if (!d || d.tf !== tf || d.days !== days || !Z) return { html: ctl + (M.err.zr ? errBox('zr', M.err.zr) : spin) };
+      const V = { demand: Z.verdict(d.demand, d.rnd.demand), supply: Z.verdict(d.supply, d.rnd.supply) };
+      const say = (v) => (v.n < 20 ? ['', 'too few touches to tell'] : v.base == null ? ['', 'no random comparison'] : !v.beyond ? ['', 'same as random'] : v.diff > 0 ? ['up', 'held more often than random'] : ['down', 'went through more often than random']);
+      const side = (k, name) => {
+        const S = d[k], v = V[k], n = S.held + S.against;
+        if (!n) return `<div class="zr-side"><div class="zr-h"><b>${name}</b><em>no finished first touches</em></div></div>`;
+        const hp = S.held / n * 100, w = say(v);
+        return `<div class="zr-side" data-zr-side="${k}"><div class="zr-h"><b>${name}</b><em>${n} first touches${S.open ? ` · ${S.open} still open` : ''}</em></div>
+          <div class="zr-bar" title="Held ${hp.toFixed(0)}% · the same trade at random times ${v.base == null ? '—' : v.base.toFixed(0) + '%'} (the white tick)"><i class="up" style="width:${hp.toFixed(1)}%"></i><i class="down" style="width:${(100 - hp).toFixed(1)}%"></i>${v.base == null ? '' : `<s style="left:${v.base.toFixed(1)}%"></s>`}</div>
+          <div class="zr-num"><span class="up">Held ${S.held} · ${hp.toFixed(0)}%</span><span class="down">Went through ${S.against} · ${(100 - hp).toFixed(0)}%</span></div>
+          <p class="zr-v">Same trade at random times: <b>${v.base == null ? '—' : v.base.toFixed(0) + '%'}</b> held${v.luck == null ? '' : ` · luck ±${v.luck.toFixed(0)}`} → <b class="${w[0]}" data-zr-say="${k}">${w[1]}</b></p></div>`;
+      };
+      const px = live() && S.lastPx ? S.lastPx : d.price;
+      const { dem, sup } = nearZones(d.active, px);
+      const pc = v => (v.pct == null ? '—' : v.pct.toFixed(0) + '%'), bs = v => (v.base == null ? '—' : v.base.toFixed(0) + '%');
+      const first = z => (z.touched ? ' It was touched before, so this would not be a first touch.' : '');
+      const now = dem && px <= dem.top ? `Price is <b>in a demand zone</b> ${fp(dem.bot)}–${fp(dem.top)}: a long here is the trade above, held <b>${pc(V.demand)}</b> on ${esc(coin())} vs ${bs(V.demand)} at random.${first(dem)}`
+        : sup && px >= sup.bot ? `Price is <b>in a supply zone</b> ${fp(sup.bot)}–${fp(sup.top)}: a short here is the trade above, held <b>${pc(V.supply)}</b> on ${esc(coin())} vs ${bs(V.supply)} at random.${first(sup)}`
+        : `Not in a zone. ${dem ? `Demand ${fp(dem.bot)}–${fp(dem.top)} is ${pc1((dem.top / px - 1) * 100)} away` : 'No unbroken demand below'}; ${sup ? `supply ${fp(sup.bot)}–${fp(sup.top)} is ${pc1((sup.bot / px - 1) * 100)} away` : 'no unbroken supply above'}.`;
+      const last = d.touches.slice(-30);
+      const tip = t => `${t.type === 'demand' ? 'Demand' : 'Supply'} ${fp(t.bot)}–${fp(t.top)} · ${day(t.t)} ${hhmm(t.t)} UTC · ${t.res === 1 ? 'held (1R first)' : t.res === 0 ? 'went through (stop first)' : 'still open'}`;
+      const dots = last.map(t => `<i class="${t.res === 1 ? 'up' : t.res === 0 ? 'down' : 'op'}" data-tip="${esc(tip(t))}">${t.type === 'demand' ? '▲' : '▼'}</i>`).join('');
+      const any = ['demand', 'supply'].some(k => V[k].n >= 20 && V[k].beyond);
+      return {
+        sum: `D ${pc(V.demand)} · S ${pc(V.supply)}${any ? '' : ' <em>≈ random</em>'}`,
+        html: ctl + side('demand', '▲ Demand · longs') + side('supply', '▼ Supply · shorts') +
+          `<div class="zr-now" data-zr-now>${now}</div>
+          ${dots ? `<p class="mk-day">Last ${last.length} touches · oldest → newest</p><div class="zr-dots" data-mk-tips="zr">${dots}</div><div class="mk-read zr-read" data-mk-read="zr" data-def="▲ demand · ▼ supply · green held, red went through. Hover or tap one.">▲ demand · ▼ supply · green held, red went through. Hover or tap one.</div>` : ''}
+          <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-zrmk${M.zrMarks ? ' checked' : ''}><span></span>Mark the touches on the chart</label></div>
+          <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} days, fetched live from ${esc(u.api(U.ex).name)}. Each zone's first touch: entry at its edge, stop 0.1% past the far edge, target the same distance (1R). Random = the same stop and target from 20 random candles of this coin per touch. In our tests (207 coins, 3 months) a coin's score did not carry into the next month and zones overall held about as often as random, so read this as how ${esc(coin())} behaved, not a forecast.</p>`,
+        after: b => tips(b, 'zr'),
+      };
+    },
   };
   const fq = v => (v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : (+v).toFixed(v >= 1 ? 0 : 2));
   const short = t => (t.length > 26 ? t.slice(0, 25) + '…' : t);
@@ -356,7 +473,7 @@
     const box = $(`[data-mk-tips="${k}"]`, b), out = $(`[data-mk-read="${k}"]`, b); if (!box || !out || box._on) return; box._on = true;
     const show = e => { const i = e.target.closest('i[data-tip]'); if (!i) return; $$('i.hov', box).forEach(x => x.classList.remove('hov')); i.classList.add('hov'); out.textContent = i.dataset.tip; };
     box.addEventListener('pointerover', show); box.addEventListener('pointerdown', show);
-    box.addEventListener('pointerleave', () => { $$('i.hov', box).forEach(x => x.classList.remove('hov')); out.textContent = k === 'hr' ? 'hover a bar' : 'hover a bar'; });
+    box.addEventListener('pointerleave', () => { $$('i.hov', box).forEach(x => x.classList.remove('hov')); out.textContent = out.dataset.def || 'hover a bar'; });
   }
   // a small line chart (SVG); hovering shows the value at that time
   function spark(k, pts, fmt) {
@@ -460,12 +577,25 @@
     return parts.join('');
   });
 
+  // zone touches on the chart (Zones → "Mark the touches"): ✓ held, ✗ went through, · still open. Not in a replay: the mark
+  // would show how a touch ended before the replay clock gets there.
+  if (X.marks) X.marks.push(() => {
+    const d = M.d.zr;
+    if (!M.zrMarks || !d || d.key !== keyNow() || R.on) return [];
+    const C = RD.COL || {};
+    return d.touches.map(t => ({ t: t.t, position: t.type === 'demand' ? 'belowBar' : 'aboveBar', shape: 'circle',
+      color: t.res === 1 ? C.up || '#22c55e' : t.res === 0 ? C.down || '#ef4444' : '#8b93a1',
+      text: (t.type === 'demand' ? 'D' : 'S') + (t.res === 1 ? ' ✓' : t.res === 0 ? ' ✗' : ' ·') }));
+  });
+
   // ---------------------------------------------------------------- events
   pane.addEventListener('click', e => {
     const h = e.target.closest('[data-mk-h]');
     if (h) { const k = h.dataset.mkH; M.open[k] = !M.open[k]; saveOpen(); openUI(); delete body(k).dataset.html; paintSec(k); if (M.open[k]) { if (k === 'nw') loadNews(); else if (L[k]) loadSec(k); if (k === 'fu' || k === 'oi') loadSec('ov'); } return; }
     const rt = e.target.closest('[data-mk-retry]'); if (rt) { const k = rt.dataset.mkRetry; if (k === 'nw') loadNews(true); else { M.d[k] = null; M.err[k] = ''; paintSec(k); loadSec(k, true); } return; }
     const nt = e.target.closest('[data-mk-nt]'); if (nt) { M.nwTab = nt.dataset.mkNt; store.set('rd-mk-nwtab', M.nwTab); paintSec('nw'); return; }
+    const zt = e.target.closest('[data-mk-zrtf]'); if (zt) { M.zrTf = zt.dataset.mkZrtf; store.set('rd-mk-zrtf', M.zrTf); M.err.zr = ''; paintSec('zr'); loadSec('zr', true); return; }
+    const zd = e.target.closest('[data-mk-zrd]'); if (zd && !zd.disabled) { M.zrDays = +zd.dataset.mkZrd; store.set('rd-mk-zrdays', M.zrDays); M.err.zr = ''; paintSec('zr'); loadSec('zr', true); return; }
     const im = e.target.closest('[data-mk-imp]'); if (im) { M.imp = im.dataset.mkImp; store.set('rd-mk-imp', M.imp); paintSec('nw'); return; }
     const del = e.target.closest('[data-mk-aldel]'); if (del) { AL.list = AL.list.filter(a => a.id !== del.dataset.mkAldel); saveAl(); RD.syncLines(); paintSec('al'); return; }
     const go = e.target.closest('[data-mk-algo]'); if (go) { const a = AL.list.find(x => x.id === go.dataset.mkAlgo); if (a) RD.setSymbol(a.sym, a.ex); return; }
@@ -475,6 +605,7 @@
     const t = e.target;
     if (t.matches('[data-mk-warn]')) { M.warn = t.checked; store.set('rd-mk-warn', M.warn); if (M.warn) { beep('news'); askNotify(); RD.toast('You will get a warning 15 minutes before each red news event while this page is open.'); } }
     else if (t.matches('[data-mk-hlcoin]')) { M.hlCoin = t.checked; store.set('rd-mk-hlcoin', M.hlCoin); paintSec('nw'); }
+    else if (t.matches('[data-mk-zrmk]')) { M.zrMarks = t.checked; store.set('rd-mk-zrmk', M.zrMarks); if (M.zrMarks && !M.d.zr) loadSec('zr', true); if (RD.setMarkers) RD.setMarkers(); }
     else if (t.matches('[data-mk-snd]')) { AL.sound = t.checked; store.set('rd-al-sound', AL.sound); if (AL.sound) beep('alert'); }
     else if (t.matches('[data-mk-ntf]')) { AL.notify = t.checked; store.set('rd-al-notify', AL.notify); if (AL.notify) { const ok = await askNotify(); if (!ok) { AL.notify = false; store.set('rd-al-notify', false); t.checked = false; RD.toast('The browser blocked notifications for this site. Allow them in the site settings to use this.', 'down'); } } }
   });
@@ -497,6 +628,7 @@
     M.key = keyNow(); M.d = {}; M.err = {}; M.at = {};
     for (const [k] of SECS) { const b = body(k); if (b) delete b.dataset.html; }
     openUI(); paintAll(); refresh(true);
+    if (M.zrMarks && !visible()) loadSec('zr', true);   // the chart marks need the zone data even with the panel closed
   }
   RD.on('sym', () => { reset(); RD.syncLines(); });
   RD.on('load', () => { if (M.key !== keyNow()) reset(); openUI(); });
@@ -518,6 +650,7 @@
   setInterval(pollAlerts, 15000);
   setInterval(() => { if (M.warn || (X.legend && !visible())) loadNews(false); }, 60000);
   M.key = keyNow(); openUI(); paintAll(); setTimeout(glance, 1500);
+  if (M.zrMarks) setTimeout(() => loadSec('zr'), 2000);
   if (M.warn) loadNews(false); else setTimeout(() => loadNews(false), 4000);   // the legend's red-news glance
   window.__rdMkt = { M, AL, refresh, loadSec, loadNews, addAlert, checkAt, pollAlerts, P };   // for tests
 })();
