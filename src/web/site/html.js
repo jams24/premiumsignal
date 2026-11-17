@@ -41,7 +41,7 @@ const FAVICON = LOGO_SVG(32, 'fav').replace('<svg ', '<svg xmlns="http://www.w3.
 const btn = (href, label, cls = 'btn-primary') => `<a href="${esc(href)}" class="btn ${cls}">${label}</a>`;
 
 /** The whole document. nonce: per-request CSP nonce for the theme line. */
-function page({ title, description, body, nonce, scripts = [], bodyClass = '', noindex = false, head = '' }) {
+function page({ title, description, body, nonce, scripts = [], bodyClass = '', noindex = false, head = '', bodyData = {} }) {
   const full = title ? `${title} · ${SITE.name}` : `${SITE.name} — ${SITE.tagline}`;
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -55,7 +55,7 @@ ${noindex ? '<meta name="robots" content="noindex">' : ''}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="${asset('site.css')}">${head}
-</head><body class="${bodyClass}">
+</head><body class="${bodyClass}"${Object.entries(bodyData).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('')}>
 ${body}
 <script src="${asset('site.js')}" defer></script>
 ${scripts.join('\n')}

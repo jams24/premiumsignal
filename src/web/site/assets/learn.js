@@ -1,383 +1,3 @@
-<!-- SMC Playbook tab, inserted into the dashboard's tab-smc panel by src/dashboard.js. Self-contained: CSS scoped under .smc, one IIFE, ids prefixed smc-. -->
-<style>
-/* SMC Playbook tab: the dashboard's own tokens (dark only) plus a few chart colours. Everything is scoped under .smc. */
-.smc { --s-fg: var(--text); --s-muted: var(--text2); --s-faint: var(--muted); --s-line: var(--border); --s-surface: var(--surface); --s-soft: var(--surface2);
-  --s-up: var(--accent); --s-down: var(--danger); --s-liq: var(--gold); --s-sweep: #60a5fa;
-  --s-zone: rgba(239, 68, 68, 0.10); --s-fvg: rgba(245, 158, 11, 0.14); --s-ote: rgba(96, 165, 250, 0.14); --s-disc: rgba(16, 185, 129, 0.10);
-  --s-risk: rgba(239, 68, 68, 0.14); --s-reward: rgba(96, 165, 250, 0.14);
-  max-width: 980px; margin: 0 auto; padding-block: 4px 48px; display: grid; gap: 44px; color: var(--s-fg); font: 400 15px/1.6 var(--font-body); }
-.smc header { display: grid; gap: 12px; }
-.smc .eyebrow { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--s-faint); }
-.smc h1 { font: 700 clamp(24px, 4.6vw, 34px)/1.1 var(--font-body); letter-spacing: -.01em; text-wrap: balance; }
-.smc h2 { font: 600 clamp(18px, 3vw, 21px)/1.25 var(--font-body); text-wrap: balance; display: flex; gap: 12px; align-items: baseline; }
-.smc h2 .n { font: 600 13px/1 var(--font-mono); color: var(--s-up); min-width: 1.6em; }
-.smc h3 { font: 600 16px/1.3 var(--font-body); }
-.smc p { max-width: 70ch; }
-.smc .lede { font-size: 16px; }
-.smc .muted { color: var(--s-muted); }
-.smc .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.smc b { font-weight: 600; }
-
-.smc nav.toc ol { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
-.smc nav.toc a { display: inline-flex; gap: 8px; align-items: baseline; padding: 6px 12px; border: 1px solid var(--s-line); border-radius: 999px;
-  background: var(--s-surface); color: var(--s-fg); text-decoration: none; font-size: 13px; }
-.smc nav.toc a span { font: 600 11px/1 var(--font-mono); color: var(--s-up); }
-.smc nav.toc a:hover { border-color: var(--s-up); }
-
-.smc section { display: grid; gap: 14px; scroll-margin-top: 16px; }
-.smc .figure { background: var(--s-surface); border: 1px solid var(--s-line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; min-width: 0; }
-.smc .chart { width: 100%; min-width: 0; overflow: hidden; }
-.smc .chart svg { display: block; }
-.smc .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.smc .controls input[type=range] { flex: 1 1 160px; min-width: 120px; accent-color: var(--s-up); }
-.smc button { font: 500 13px/1 var(--font-body); color: var(--s-fg); background: var(--s-soft); border: 1px solid var(--s-line); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
-.smc button:hover { border-color: var(--s-up); }
-.smc button:focus-visible, .smc input:focus-visible, .smc a:focus-visible { outline: 2px solid var(--s-sweep); outline-offset: 2px; }
-.smc button.primary { background: var(--s-up); border-color: var(--s-up); color: #04120c; font-weight: 600; }
-.smc .counter { font: 400 12px/1 var(--font-mono); color: var(--s-muted); font-variant-numeric: tabular-nums; min-width: 9em; text-align: right; }
-.smc .caption { font-size: 14.5px; padding: 10px 12px; background: var(--s-soft); border-radius: 6px; min-height: 3.2em; max-width: none; }
-
-.smc ol.notes { list-style: none; display: grid; gap: 2px; }
-.smc ol.notes button { width: 100%; text-align: left; display: grid; grid-template-columns: 4.6em 1fr; gap: 10px; background: transparent; border: 0;
-  border-radius: 6px; padding: 8px 10px; font: 400 14.5px/1.5 var(--font-body); }
-.smc ol.notes button:hover { background: var(--s-soft); }
-.smc ol.notes button .k { font: 500 12px/1.9 var(--font-mono); color: var(--s-faint); }
-.smc ol.notes button.on { background: var(--s-soft); box-shadow: inset 3px 0 0 var(--s-up); }
-
-.smc svg text { font: 500 12px var(--font-body); fill: var(--s-fg); paint-order: stroke; stroke: var(--s-surface); stroke-width: 3.5px; stroke-linejoin: round; }
-.smc svg text.ax { font: 400 10.5px var(--font-mono); fill: var(--s-faint); stroke-width: 0; }
-.smc svg .grid { stroke: var(--s-line); stroke-width: 1; }
-.smc svg .cu { fill: var(--s-up); } .smc svg .cd { fill: var(--s-down); }
-.smc svg .wu { stroke: var(--s-up); stroke-width: 1.2; } .smc svg .wd { stroke: var(--s-down); stroke-width: 1.2; }
-.smc svg .z-supply, .smc svg .z-prem { fill: var(--s-zone); } .smc svg .z-fvg { fill: var(--s-fvg); } .smc svg .z-ote { fill: var(--s-ote); } .smc svg .z-disc { fill: var(--s-disc); }
-.smc svg .l-liq, .smc svg .l-top { stroke: var(--s-liq); stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; }
-.smc svg .l-bos { stroke: var(--s-fg); stroke-width: 1.2; fill: none; }
-.smc svg .l-choch { stroke: var(--s-sweep); stroke-width: 1.5; stroke-dasharray: 7 3; fill: none; }
-.smc svg .l-stop { stroke: var(--s-down); stroke-width: 1.4; stroke-dasharray: 2 3; fill: none; }
-.smc svg .l-tight { stroke: var(--s-muted); stroke-width: 1.4; stroke-dasharray: 2 3; fill: none; }
-.smc svg .l-tp { stroke: var(--s-up); stroke-width: 1.3; stroke-dasharray: 5 3; fill: none; }
-.smc svg .l-entry { stroke: var(--s-sweep); stroke-width: 1.5; fill: none; }
-.smc svg .l-eq { stroke: var(--s-muted); stroke-width: 1.2; stroke-dasharray: 3 3; fill: none; }
-.smc svg .risk { fill: var(--s-risk); } .smc svg .reward { fill: var(--s-reward); }
-.smc svg text.t-liq, .smc svg text.t-top { fill: var(--s-liq); } .smc svg text.t-choch, .smc svg text.t-entry, .smc svg text.t-sweep { fill: var(--s-sweep); }
-.smc svg text.t-stop { fill: var(--s-down); } .smc svg text.t-tp { fill: var(--s-up); }
-.smc svg text.t-tight, .smc svg text.t-eq, .smc svg text.t-struct, .smc svg text.t-zone { fill: var(--s-muted); }
-.smc svg text.t-struct { font: 600 11.5px var(--font-mono); }
-.smc svg .m-sweep { fill: var(--s-sweep); } .smc svg .m-bot { fill: var(--s-fg); } .smc svg .m-stop { fill: var(--s-down); } .smc svg .m-tp { fill: var(--s-up); } .smc svg .m-struct { fill: var(--s-muted); }
-.smc svg circle { stroke: var(--s-surface); stroke-width: 2; }
-
-.smc .drills { display: grid; gap: 24px; }
-.smc .drill { display: grid; gap: 12px; }
-.smc .drill .q { font-weight: 500; }
-.smc .choices { display: flex; flex-wrap: wrap; gap: 8px; }
-.smc .choices button[aria-pressed="true"] { border-color: var(--s-fg); }
-.smc .choices button:disabled { cursor: default; opacity: .7; }
-.smc .choices button.right { border-color: var(--s-up); color: var(--s-up); opacity: 1; }
-.smc .fb { padding: 12px 14px; border-radius: 6px; background: var(--s-soft); display: grid; gap: 6px; max-width: none; }
-.smc .fb b { font-size: 15px; }
-.smc .fb.ok b { color: var(--s-up); } .smc .fb.bad b { color: var(--s-down); } .smc .fb.mix b { color: var(--s-liq); }
-.smc .score { font: 600 13px/1 var(--font-mono); color: var(--s-muted); }
-
-.smc .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
-.smc .card { background: var(--s-surface); border: 1px solid var(--s-line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
-.smc .card ol { padding-left: 20px; display: grid; gap: 6px; }
-.smc .card ol li::marker { font-family: var(--font-mono); color: var(--s-faint); font-size: 12px; }
-.smc .tag { justify-self: start; font: 600 11px/1 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; padding: 5px 8px; border-radius: 4px; background: var(--s-soft); color: var(--s-muted); }
-.smc .tag.go { color: var(--s-up); background: var(--accent-dim); } .smc .tag.no { color: var(--s-down); background: var(--danger-dim); }
-
-.smc .table-wrap { overflow-x: auto; background: var(--s-surface); border: 1px solid var(--s-line); border-radius: 10px; }
-.smc table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
-.smc th, .smc td { padding: 10px 12px; text-align: left; vertical-align: top; }
-.smc thead th { font: 600 11px/1.3 var(--font-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--s-faint); border-bottom: 1px solid var(--s-line); }
-.smc tbody tr + tr td { border-top: 1px solid var(--s-line); }
-.smc td.r { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.smc .pos { color: var(--s-up); } .smc .neg { color: var(--s-down); } .smc .mix { color: var(--s-liq); }
-.smc footer { font-size: 13px; color: var(--s-muted); border-top: 1px solid var(--s-line); padding-top: 16px; display: grid; gap: 6px; }
-/* grid tracks must be allowed to shrink, or the 640px table widens the whole tab on phones */
-.smc .sub { display: grid; gap: 14px; min-width: 0; }
-.smc .sub h3 { display: flex; gap: 10px; align-items: baseline; }
-.smc .sub h3 .tf { font: 600 12px/1 var(--font-mono); color: var(--s-sweep); padding: 4px 7px; border-radius: 4px; background: var(--s-soft); }
-.smc, .smc header, .smc section, .smc .figure, .smc .drills, .smc .drill, .smc .sub { grid-template-columns: minmax(0, 1fr); }
-@media (max-width: 520px) { .smc .counter { min-width: 0; text-align: left; } .smc ol.notes button { grid-template-columns: 3.8em 1fr; } }
-@media (prefers-reduced-motion: reduce) { .smc * { scroll-behavior: auto; } }
-</style>
-<div class="smc" id="smc">
-  <header>
-    <div class="eyebrow">Manual trading · smart money concepts (SMC / ICT)</div>
-    <h1>SMC Short Playbook</h1>
-    <p class="lede">How smart-money traders read candles, taught one candle at a time. Press <b>▶ Replay</b> on any chart to watch the setup form, or tap a note to jump to that candle. Then test yourself on the drills at the end.</p>
-    <p><a href="#" onclick="document.querySelector('[data-tab=sim]').click();window.scrollTo(0,0);return false">Practise on real charts in the Simulator tab →</a></p>
-    <p class="muted">The lessons use made-up candles so each idea is clean. Lesson 10 is real: BARD on Bybit, 12 Nov 2026, the trade that stopped us out. The last two sections say which parts our own backtests support and which they don't.</p>
-  </header>
-
-  <nav class="toc" aria-label="Lessons">
-    <ol>
-      <li><a href="#smc-structure"><span>1</span>Market structure</a></li>
-      <li><a href="#smc-liquidity"><span>2</span>Liquidity &amp; the sweep</a></li>
-      <li><a href="#smc-breakout"><span>3</span>Sweep or breakout?</a></li>
-      <li><a href="#smc-supply"><span>4</span>Supply zone &amp; FVG</a></li>
-      <li><a href="#smc-premium"><span>5</span>Premium &amp; discount</a></li>
-      <li><a href="#smc-setup"><span>6</span>The full short setup</a></li>
-      <li><a href="#smc-tf"><span>7</span>Timeframes</a></li>
-      <li><a href="#smc-retest"><span>8</span>Zone retest</a></li>
-      <li><a href="#smc-inducement"><span>9</span>Inducement</a></li>
-      <li><a href="#smc-bard"><span>10</span>BARD, 12 Nov</a></li>
-      <li><a href="#smc-drills"><span>11</span>Practice drills</a></li>
-      <li><a href="#smc-checklist"><span>12</span>Our checklist</a></li>
-      <li><a href="#smc-evidence"><span>13</span>What our tests say</a></li>
-    </ol>
-  </nav>
-
-  <section id="smc-structure" data-lesson="structure">
-    <h2><span class="n">1</span>Market structure: who is in control</h2>
-    <p>Everything starts with swings. Higher highs and higher lows mean buyers are in control. Lower highs and lower lows mean sellers are. A <b>BOS</b> (break of structure) is a close past the last swing in the trend's direction. A <b>CHoCH</b> (change of character) is the first close past a swing against the trend, the first warning that control is changing hands.</p>
-  </section>
-
-  <section id="smc-liquidity" data-lesson="liquidity">
-    <h2><span class="n">2</span>Liquidity and the sweep</h2>
-    <p>Above every obvious high sit stop-losses of shorts and buy orders of breakout traders. Below every obvious low sit longs' stops. SMC calls these pools <b>liquidity</b>. Large players need them to fill size, so price often spikes through a pool and reverses. That spike-and-fail is a <b>sweep</b> (also called a swing failure pattern).</p>
-  </section>
-
-  <section id="smc-breakout" data-lesson="breakout">
-    <h2><span class="n">3</span>Sweep or breakout?</h2>
-    <p>The same spike can be the start of a real breakout. The difference is the close. A sweep closes back below the level within a candle or two. A breakout closes above it and stays there. Shorting before the close back below is guessing.</p>
-  </section>
-
-  <section id="smc-supply" data-lesson="supply">
-    <h2><span class="n">4</span>Supply zone (order block) and fair value gap</h2>
-    <p>A strong drop usually starts where sellers placed big orders. SMC marks the last up candle before that drop as an <b>order block</b>, a supply zone. A drop that fast often leaves a <b>fair value gap</b> (FVG): three candles where the third candle's high never reaches the first candle's low. When price comes back up into these areas, sellers often defend them.</p>
-  </section>
-
-  <section id="smc-premium" data-lesson="premium">
-    <h2><span class="n">5</span>Premium and discount</h2>
-    <p>Take the last swing from high to low and split it at 50%. Above the middle is <b>premium</b>, where shorts are taken. Below is <b>discount</b>, where SMC traders look for longs. ICT's favourite short entry is the 62–79% retracement, which he calls the optimal trade entry (OTE).</p>
-  </section>
-
-  <section id="smc-setup" data-lesson="setup">
-    <h2><span class="n">6</span>The full short setup</h2>
-    <p>Now put the pieces together in the order a trader checks them: bearish structure, a bounce into premium or a supply zone, a sweep of the liquidity above, a lower-timeframe CHoCH, then an entry with the stop above the sweep and the target at the liquidity below.</p>
-  </section>
-
-  <section id="smc-tf">
-    <h2><span class="n">7</span>Timeframes: direction, zone, entry</h2>
-    <p>SMC traders read one move on three charts, each about four times faster than the one above. The slow chart decides the <b>direction</b>, the middle chart finds the <b>zone</b> and the sweep, and the fast chart times the <b>entry</b>. This is called top-down analysis. Lesson 6 already used it: the supply zone came from the higher timeframe and the CHoCH from the lower one.</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>How long you hold</th><th>Direction (slow)</th><th>Zone and sweep (middle)</th><th>Entry trigger (fast)</th></tr></thead>
-        <tbody>
-          <tr><td>Scalp: minutes to an hour</td><td>1H</td><td>15m or 5m</td><td>1m</td></tr>
-          <tr><td>Day trade: a few hours</td><td>4H</td><td>1H or 15m</td><td>5m or 1m</td></tr>
-          <tr><td>Swing: days</td><td>Daily</td><td>4H</td><td>1H or 15m</td></tr>
-          <tr><td>Our pump shorts: 1–24 hours</td><td>The pump and its 24h high (the bot does this)</td><td>5m sweep of the 24h high</td><td>5m close back below</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="cols">
-      <div class="card">
-        <span class="tag">1 · Slow chart</span>
-        <h3>Direction: which way</h3>
-        <ol>
-          <li>Read two things only: the last BOS or CHoCH (who is in control) and where price sits in the last leg (premium or discount).</li>
-          <li>Shorts when it's bearish and price is in its premium. Longs the other way round.</li>
-          <li>It changes a few times a week, not every hour. If it flips, stop looking for that side.</li>
-        </ol>
-      </div>
-      <div class="card">
-        <span class="tag">2 · Middle chart</span>
-        <h3>Zone: where</h3>
-        <ol>
-          <li>Find the supply zone and the liquidity (equal highs, the last high) inside the slow chart's premium.</li>
-          <li>Wait for a candle to sweep it and close back.</li>
-          <li>Targets come from here or the slow chart: the start of the bounce, then the leg's low.</li>
-        </ol>
-      </div>
-      <div class="card">
-        <span class="tag">3 · Fast chart</span>
-        <h3>Entry: when</h3>
-        <ol>
-          <li>Only after the middle chart's sweep candle has closed.</li>
-          <li>Enter on the first close past the last swing before the sweep (the CHoCH). Stop just past the sweep wick.</li>
-          <li>Never take direction from this chart. It flips both ways many times an hour.</li>
-        </ol>
-      </div>
-    </div>
-    <p>The three charts below are the same move. Step 1 is the 4H. Step 2 zooms into one 4H candle on the 15m. Step 3 zooms into one 15m candle on the 1m.</p>
-    <div class="sub" data-lesson="tf4h"><h3><span class="tf">4H</span>Step 1 · Direction</h3></div>
-    <div class="sub" data-lesson="tf15"><h3><span class="tf">15m</span>Step 2 · Zone and sweep</h3></div>
-    <div class="sub" data-lesson="tf1"><h3><span class="tf">1m</span>Step 3 · Entry</h3></div>
-    <div class="card">
-      <span class="tag">In the Simulator</span>
-      <h3>Which control is which step</h3>
-      <ol>
-        <li><b>Direction line</b> under the chart: the coin's 4H and 1H, the last break and premium or discount. That's step 1.</li>
-        <li><b>Structure 15m or 5m</b> (the SMC overlay): the leg, the zone, the liquidity and the sweep. That's step 2. Use 15m for gold and big coins, 5m for fast pump coins.</li>
-        <li><b>The 1m candles</b> are step 3. When the watch line says "waiting for a 1m close below …", switch the chart to 1m.</li>
-        <li>The <b>1m / 5m / 15m / 1H</b> buttons only change how the candles are drawn. They don't change the overlay.</li>
-        <li>Each paper trade saves whether the 4H agreed with it (4H ✓ or ✗ in your journal), so your own results show whether it helps you.</li>
-      </ol>
-    </div>
-    <p class="muted"><b>What our test says.</b> On 204 coins our bot traded (14 Sep – 13 Nov 2026), the simulator's 15m A+ shorts made −0.09R a trade with the 4H trend and −0.03R against it. A+ longs made −0.21R with the 4H trend and −0.33R against it, the worst group. Random entries did the same with or without the 4H trend. So on our coins, agreeing with the slow chart kept you out of the worst longs. It didn't make the setup profitable.</p>
-  </section>
-
-  <section id="smc-retest">
-    <h2><span class="n">8</span>Zone retest: the version in the group charts</h2>
-    <p>The NZDJPY, USDCHF, oil and Nikkei charts from the Telegram group use the same SMC idea with fewer steps. Mark the order block at the top of a move (the grey box), wait for a break of structure, then put a sell limit at the box's edge for the first return. The stop goes above the box and the target is the recent low. There's no sweep and no lower-timeframe CHoCH.</p>
-    <div class="sub" data-lesson="retest"></div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Step</th><th>Zone retest (group charts)</th><th>Our A+ setup (lessons 6 and 7)</th></tr></thead>
-        <tbody>
-          <tr><td>Direction</td><td>Break of structure on the same chart</td><td>The same, plus the slow chart</td></tr>
-          <tr><td>Where</td><td>First return to the order block</td><td>Premium of the leg, or the supply zone</td></tr>
-          <tr><td>Liquidity sweep</td><td>Not needed</td><td>Needed: a wick past a high, then a close back</td></tr>
-          <tr><td>Entry</td><td>Sell limit already waiting at the zone edge</td><td>Close of the fast-chart CHoCH after the sweep</td></tr>
-          <tr><td>Stop</td><td>Just above the zone</td><td>Just above the sweep wick</td></tr>
-          <tr><td>Target</td><td>The recent low, about 3R</td><td>The leg's low, or 2R</td></tr>
-          <tr><td>Charts</td><td>1H and 4H on forex, oil and indices</td><td>15m and 5m on pump coins</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>Skipping the sweep and the CHoCH gets a better price and a bigger R when the zone holds. When price runs straight through the box, the stop is hit with no warning. Our version waits for confirmation: fewer fills and a worse price, but it skips some of the run-throughs.</p>
-    <p class="muted"><b>What our test says.</b> We tested the zone retest on 18 forex, metal, oil and index markets (Nov 2023 – Oct 2026, spreads in). On the 4H it made −0.04R a trade over 5,017 trades, about the same as random entries (−0.05R). Gold was the one exception: +0.26R on the 4H, and +0.14R on an unseen 2022–24 period, but only with forex-tight spreads. With crypto perp fees it lost (−0.13R). The group's winning screenshots are the trades that worked. Nobody posts the stops.</p>
-  </section>
-
-  <section id="smc-inducement">
-    <h2><span class="n">9</span>Inducement: when a break is only a wick</h2>
-    <p>This lesson comes from a trading video (@varisthetrader, "Inducement liquidity"). It builds on one rule from lesson 1: <b>a low is broken only when a candle's body closes past it.</b> A wick that pokes through and comes back doesn't count. The video says that kind of fake break tells you where price goes next.</p>
-    <div class="cols">
-      <div class="card">
-        <span class="tag go">Real break</span>
-        <h3>Jump over the puddle</h3>
-        <p>The candle's body closes below the low. Like jumping over a puddle and landing on the other side. The low is broken.</p>
-      </div>
-      <div class="card">
-        <span class="tag no">Fake break</span>
-        <h3>Dip a toe in</h3>
-        <p>Only the wick goes below the low, and the body closes back above. Like dipping a toe in the puddle and pulling it back. The low is not broken.</p>
-      </div>
-      <div class="card">
-        <span class="tag">Inducement</span>
-        <h3>The bait</h3>
-        <p>The small high just before a fake break. Traders who sold there hide their stop-losses just above it. That pile of stops is bait: big players like to grab it first.</p>
-      </div>
-      <div class="card">
-        <span class="tag">Order block</span>
-        <h3>The box</h3>
-        <p>The last up candle before the last real break, from its open to its top. That's where big sellers started the drop. The video says price climbs back to it before falling again.</p>
-      </div>
-    </div>
-    <p>The whole story in one line: <b>real break → fake break → price climbs and grabs the bait → touches the box → falls through the wick low.</b> For longs it's the same story upside down. The charts below show it working, upside down, going wrong, and cancelled.</p>
-    <div class="sub" data-lesson="ind1"><h3><span class="tf">Example 1</span>Real break or fake break?</h3></div>
-    <div class="sub" data-lesson="ind2"><h3><span class="tf">Example 2</span>The short, when it works</h3></div>
-    <div class="sub" data-lesson="ind3"><h3><span class="tf">Example 3</span>The long: the same idea upside down</h3></div>
-    <div class="sub" data-lesson="ind4"><h3><span class="tf">Example 4</span>When it goes wrong (the usual ending)</h3></div>
-    <div class="sub" data-lesson="ind5"><h3><span class="tf">Example 5</span>No trade: the wick turns into a real break</h3></div>
-    <div class="card">
-      <span class="tag">The rules we tested</span>
-      <h3>The short, step by step (a long is the mirror)</h3>
-      <ol>
-        <li>Find a real break: a candle body closes below the last low.</li>
-        <li>Mark the order block: the last up candle before that drop, from its open to its top.</li>
-        <li>Wait for a fake break: the next drop goes below the new low with only a wick. The small high before it is the inducement.</li>
-        <li>Put a sell limit at the bottom of the box. Only if the box is above the inducement high, so price has to grab the bait to reach it.</li>
-        <li>Stop just above the box. Target the wick low.</li>
-        <li>Cancel if a body closes below the low (the break became real), or if price doesn't reach the box within 40 candles.</li>
-      </ol>
-    </div>
-    <h3>What our test says</h3>
-    <p>We turned those rules into code and replayed them with fees and spreads. The markets were 18 forex, metal and index markets (Nov 2023 – Oct 2026), 10 big coins (Nov 2025 – Nov 2026) and the 207 coins our bot traded (Aug – Nov 2026), on four timeframes. Each trade was compared with random entries on the same market, same side, same stop size and same target. <b>R</b> is the amount you risk: −0.14R means losing 14 cents for every dollar risked, on average.</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Timeframe</th><th>Trades</th><th>Inducement trade</th><th>Random entry</th></tr></thead>
-        <tbody>
-          <tr><td>15m (crypto only)</td><td class="r">3,691</td><td class="r neg">−0.12R</td><td class="r neg">−0.23R</td></tr>
-          <tr><td>1H</td><td class="r">1,446</td><td class="r neg">−0.24R</td><td class="r neg">−0.07R</td></tr>
-          <tr><td>4H</td><td class="r">375</td><td class="r mix">−0.02R</td><td class="r mix">−0.03R</td></tr>
-          <tr><td>Daily</td><td class="r">32</td><td class="r neg">−0.57R</td><td class="r pos">+0.05R</td></tr>
-          <tr><td><b>All</b></td><td class="r">5,544</td><td class="r neg">−0.14R</td><td class="r neg">−0.17R</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="muted">About 3 trades in 4 hit the stop before the wick low. Each win paid about 3R, but there weren't enough wins. On the 15m it beat random entries by 0.11R a trade and still lost after fees. On the 4H it was about break-even, the same as random. Our coins' 4H shorts made +0.48R a trade (96 trades), but more than half of that came from one crash day (4 Nov, 15 trades), and with slightly wider swing points it fell to −0.01R. Gold had only 9 setups on the 4H in three years, too few to judge. So the video's picture does happen, just not more often than chance.</p>
-  </section>
-
-  <section id="smc-bard" data-lesson="bard">
-    <h2><span class="n">10</span>Real example: BARD, 12 Nov 2026</h2>
-    <p>Bybit perp, 5-minute candles, 17:00–19:30 UTC. Our bot shorted this WEAK pump at ENTER and got stopped for −$62. Replay it to see where the sweep rule would have shorted instead, and why a tight SMC stop would also have been hit.</p>
-  </section>
-
-  <section id="smc-drills">
-    <h2><span class="n">11</span>Practice drills</h2>
-    <p>Each chart stops at a decision. Pick an answer, then watch what happened. Drills 1–7 have a right answer (6 and 7 practise lesson 9). Drill 8 doesn't; it shows the price of the sweep rule.</p>
-    <div class="score" id="smc-score" aria-live="polite">Score: 0 of 7 right</div>
-    <div class="drills" id="smc-drill-list"></div>
-  </section>
-
-  <section id="smc-checklist">
-    <h2><span class="n">12</span>Our manual short checklist</h2>
-    <p>Pump coins and big coins need different handling. Pump coins wick through tight stops: in our tests, every stop tighter than 8% lost money on them. Big coins allow a tight stop, but then the fees eat the edge.</p>
-    <div class="cols">
-      <div class="card">
-        <span class="tag go">Tested · pump coins</span>
-        <h3>WEAK pump short with the 🎯 sweep</h3>
-        <ol>
-          <li>The bot posts ENTER on a WEAK pump (pump under 40%).</li>
-          <li>Mark the 24h high. That's the top, with liquidity above it.</li>
-          <li>Wait for a 5m candle to wick above the top and close back below it. Allow 2 hours.</li>
-          <li>If price closes above and holds for 6 candles, the new high becomes the top. Keep waiting.</li>
-          <li>Short at the close. If that candle closed more than 10 minutes ago, skip it.</li>
-          <li>Stop 8% above entry, never just above the wick. TPs at −5%, −12%, −20%, −30%.</li>
-          <li>No sweep in 2 hours: no trade. You will miss some winners this way.</li>
-        </ol>
-      </div>
-      <div class="card" id="smc-majors-card">
-        <span class="tag no">Tested · loses after fees</span>
-        <h3>Big coins with a tight stop</h3>
-        <p>We tested this on a year of 15m candles (Nov 2025 – Nov 2026) for BTC, ETH, BNB, DOGE, ADA and AVAX. The rule: short when a 15m candle sweeps a 1H swing high and closes back below it, with the stop just above the sweep and a target of 1–3R, using Bybit fees.</p>
-        <ol>
-          <li>Tight stop (median 0.44%), with the bearish 4H and premium filters: <b class="neg">−0.19R per trade</b> over 1,045 trades. It loses in both halves of the year and on all 6 coins.</li>
-          <li>Before fees it makes +0.10R per trade. The 0.11% round-trip fee is a quarter of a 0.44% stop, so fees cost 0.29R a trade.</li>
-          <li>Wider stops (0.6–3%) only get to break-even: +0.05R per trade at 2R, and negative with the next stop setting.</li>
-          <li>The slower version (4H swing high, 1H trigger) loses too: −0.26R per trade.</li>
-        </ol>
-        <p class="muted">A tight stop on a big coin isn't cheap risk: the fee becomes a big part of it. We won't send big-coin signals until a version passes this test.</p>
-      </div>
-    </div>
-  </section>
-
-  <section id="smc-evidence">
-    <h2><span class="n">13</span>What our tests say</h2>
-    <p>SMC is popular and easy to draw after the fact. When we turned its rules into exact code and replayed them with fees, most versions lost money. The table lists what we tested and the result.</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Setup</th><th>Market and period</th><th>Result</th></tr></thead>
-        <tbody>
-          <tr><td>🎯 Sweep-and-reclaim short, 8% stop, WEAK pumps</td><td>Live auto shorts since 10 Oct</td><td class="r pos">−$78 → +$90</td></tr>
-          <tr><td>Same</td><td>November real trades (BARD, INIT, EDGE, CAP, FLUID …)</td><td class="r pos">−$173.51 → +$116.70</td></tr>
-          <tr><td>Same</td><td>Replay Jun–Oct / Dec–May (fewer trades, better entries)</td><td class="r mix">+$596 → +$453 / +$353 → +$218</td></tr>
-          <tr><td>Same, but stop just above the sweep wick</td><td>Pump coin replay</td><td class="r mix">+$93 / −$36</td></tr>
-          <tr><td>Sweep entry on STRONG / PERFECT or switch shorts</td><td>Pump coin replay</td><td class="r neg">worse in both periods</td></tr>
-          <tr><td>ICT 4H FVG return (the gold video)</td><td>Gold, BTC, ETH, pump coins</td><td class="r neg">gold ≈ 0 to +0.3R, big coins lose</td></tr>
-          <tr><td>New York first hour and Asia range sweep</td><td>BTC, ETH, gold, QQQ (1m)</td><td class="r neg">≈ 0R before fees, loses after</td></tr>
-          <tr><td>Asia range and previous-day high/low sweeps</td><td>Forex majors</td><td class="r neg">loses in both halves</td></tr>
-          <tr id="smc-majors-row"><td>1H swing-high sweep, 15m close back below, tight stop</td><td>BTC, ETH, BNB, DOGE, ADA, AVAX, 12 months</td><td class="r neg">−0.19R per trade (+0.10R before fees)</td></tr>
-          <tr><td>The Simulator's A+ setup (lesson 6 rules), 15m structure</td><td>207 coins our bot traded, 14 Oct – 13 Nov 2026</td><td class="r neg">−0.18R per trade, same as random entries</td></tr>
-          <tr><td>Same, only with the 4H trend (lesson 7)</td><td>204 traded coins, 14 Sep – 13 Nov 2026</td><td class="r neg">shorts −0.09R, longs −0.21R per trade</td></tr>
-          <tr><td>Zone retest, sell limit at the zone edge (lesson 8)</td><td>18 forex, metal, oil and index markets, 4H, Nov 2023 – Oct 2026</td><td class="r neg">−0.04R per trade (random −0.05R)</td></tr>
-          <tr><td>Same, gold only</td><td>Gold 4H 2023–26, then PAXG 2022–24 unseen</td><td class="r mix">+0.26R, then +0.14R with tight spreads; −0.13R with perp fees</td></tr>
-          <tr><td>Inducement: wick-only break, sell limit at the last real break's order block, target the wick low (lesson 9)</td><td>18 forex, metal and index markets, 10 big coins, 207 traded coins; 15m, 1H, 4H, daily</td><td class="r neg">−0.14R per trade over 5,544 trades (random −0.17R)</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="muted">The sweep rule's gain comes from a better entry price, not from finding more trades. In the replay, about 2 of every 3 WEAK winners never sweep the top (148 of 224 in Jun–Oct, 222 of 309 in Dec–May), so the rule skips them. It also skips about 4 in 10 losers. On the trades it does take, the result goes from −$91 to +$453 (Jun–Oct) and from −$584 to +$218 (Dec–May).</p>
-  </section>
-
-  <footer>
-    <p>Not financial advice. This tab teaches chart concepts and reports our own backtests. It does not tell you what to trade.</p>
-    <p>Lesson charts 1–9 and the drills use invented candles. BARD candles: Bybit BARDUSDT perpetual, 5m, 12 Nov 2026 17:00–19:30 UTC.</p>
-  </footer>
-</div>
-<script>
 (() => {
   const NS = 'http://www.w3.org/2000/svg';
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -551,7 +171,7 @@
       { at: 18, t: 'Same spike as lesson 2, but this candle closes above the equal highs.' },
       { at: 19, t: 'The next candle stays above too. No close back below means no sweep. A short here is a guess.' },
       { at: 20, t: 'Price drops back to the old highs and they hold as support. That retest is buyers defending the breakout.' },
-      { at: 23, t: 'Breakout. The bot uses the same idea: if price holds above the top for 6 candles, the new high becomes the level to watch.' },
+      { at: 23, t: 'Breakout. A simple rule many traders use: if price holds above the top for 6 candles, the new high becomes the level to watch.' },
       { at: 25, t: 'Rule of thumb: a sweep is a wick through the level and a close back inside within 1–2 candles. Anything else, stand aside.' },
     ],
   };
@@ -832,34 +452,11 @@
       { at: 17, t: 'Price falls without ever coming back to the box. No trade and no loss, even though price went your way. Our test also cancelled the order if price didn\'t reach the box within 40 candles.' },
     ],
   };
-  const bardK = [[0.11299,0.12184,0.11036,0.12135],[0.12135,0.12971,0.11987,0.12514],[0.12514,0.12891,0.12232,0.12503],[0.12503,0.12837,0.1223,0.12591],[0.12591,0.13062,0.11959,0.1201],[0.1201,0.12347,0.11836,0.12221],[0.12221,0.12496,0.11721,0.12365],[0.12365,0.12721,0.12227,0.1238],[0.1238,0.12804,0.12345,0.12593],[0.12593,0.13231,0.11336,0.12232],[0.12232,0.12413,0.12011,0.1219],[0.1219,0.126,0.12096,0.12395],[0.12395,0.12694,0.12196,0.12616],[0.12616,0.12624,0.12299,0.12379],[0.12379,0.12925,0.12342,0.12908],[0.12908,0.13424,0.12828,0.13087],[0.13087,0.13281,0.13024,0.13187],[0.13187,0.13431,0.1298,0.13101],[0.13101,0.13958,0.13101,0.13955],[0.13955,0.13955,0.13555,0.13652],[0.13652,0.13771,0.13309,0.13523],[0.13523,0.13789,0.13259,0.13448],[0.13448,0.1347,0.13077,0.13281],[0.13281,0.1344,0.13172,0.1323],[0.1323,0.13504,0.13019,0.1343],[0.1343,0.13661,0.13258,0.13517],[0.13517,0.13521,0.13134,0.13297],[0.13297,0.135,0.13177,0.13324],[0.13324,0.13339,0.12547,0.12639],[0.12639,0.12823,0.12628,0.12721],[0.12721,0.12874,0.12558,0.12806]];
-  L.bard = {
-    aria: 'BARD 5 minute candles: 24h top at 0.13231, bot short at 0.12554 stopped at 18:30, sweep at 18:15 and a sweep short at 0.13087 that survives with an 8 percent stop',
-    candles: bardK, digits: 5, xEvery: 6, speed: 520,
-    times: bardK.map((_, i) => { const m = 17 * 60 + 5 * i; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }),
-    ann: [
-      { type: 'line', y: 0.13231, i0: 9, i1: 30, cls: 'top', label: '24h top 0.13231', lp: 'before', at: 9 },
-      { type: 'mark', i: 13, y: 0.12554, label: 'Bot short 0.12554', cls: 'bot', pos: 'below', at: 13 },
-      { type: 'line', y: 0.13558, i0: 13, i1: 18, cls: 'stop', label: 'its 8% stop 0.13558', lp: 'before', minW: 560, at: 13 },
-      { type: 'mark', i: 15, y: 0.13424, label: 'Sweep', cls: 'sweep', anchor: 'start', at: 15 },
-      { type: 'box', i0: 16, i1: 30, entry: 0.13087, stop: 0.14134, tp: 0.12433, entryLabel: 'Sweep short', stopLabel: '8% stop', tpLabel: 'TP1 −5%', noR: true, at: 16 },
-      { type: 'line', y: 0.13464, i0: 16, i1: 18, cls: 'tight', label: 'tight stop', lp: 'after', minW: 560, at: 17 },
-      { type: 'mark', i: 18, y: 0.13958, label: 'Bot short stopped (−$62)', cls: 'stop', anchor: 'end', at: 18 },
-    ],
-    notes: [
-      { at: 0, t: 'BARD has already pumped from 0.0864 to 0.12 in half an hour. The pump signal is WEAK (under 40%).' },
-      { at: 9, t: 'A wick to 0.13231 sets the 24h high. That is the top the 🎯 sweep rule watches, with buy-side liquidity above it.' },
-      { at: 13, t: 'The bot shorts at ENTER, 0.12554, below a fresh high with no sweep yet. Late longs still have fuel, and our stop sits above their target.' },
-      { at: 15, t: 'Sweep: the candle\'s high 0.13424 takes the 0.13231 top, and it closes back under at 0.13087.' },
-      { at: 16, t: 'The 🎯 rule would short here, around 0.13087. Stop 8% higher at 0.14134. TP1 at −5%, 0.12433.' },
-      { at: 18, t: 'Spike to 0.13958. The bot\'s ENTER short hits its 8% stop: −$62. A tight SMC stop just above the sweep wick (about 0.1346) is gone too. The sweep short\'s 8% stop survives.' },
-      { at: 28, t: 'Dump to 0.12547, just above TP1.' },
-      { at: 30, t: '19:30 close 0.12806: the sweep short would be about +2% and still open. The toggle was off, so this trade was not taken.' },
-    ],
-  };
+  // replays of our bot's own trades come with the admin-only lesson pages, not in this public file
+  document.querySelectorAll('script[type="application/json"][data-replay]').forEach(el => { try { const o = JSON.parse(el.textContent); if (o.gen) o.candles = gen(...o.gen); L[el.dataset.replay] = o; } catch (err) { /* a broken block leaves that replay out */ } });
 
   function lesson(id) {
-    const S = L[id], sec = document.querySelector(`[data-lesson="${id}"]`), N = S.candles.length;
+    const S = L[id], sec = document.querySelector(`[data-lesson="${id}"]`); if (!S || !sec) return; const N = S.candles.length;
     const fig = document.createElement('div'); fig.className = 'figure';
     fig.innerHTML = `<div class="chart"></div>
       <div class="controls">
@@ -895,7 +492,7 @@
     range.oninput = () => { stop(); n = +range.value; render(); };
     observe(host, render); render();
   }
-  ['structure', 'liquidity', 'breakout', 'supply', 'premium', 'setup', 'tf4h', 'tf15', 'tf1', 'retest', 'ind1', 'ind2', 'ind3', 'ind4', 'ind5', 'bard'].forEach(lesson);
+  document.querySelectorAll('[data-lesson]').forEach(el => lesson(el.dataset.lesson));
 
   // ---------- drills ----------
   const D = [
@@ -959,7 +556,7 @@
     { title: 'Where does the stop go?', digits: 4,
       candles: gen([0.620, 0.655, 0.700, 0.760, 0.820, 0.880, 0.920, 0.945, 0.950, 0.915, 0.890, 0.905, 0.945, 0.990, 0.960, 0.920, 0.880, 0.860, 0.840, 0.810, 0.830],
         { H: { 8: 0.962, 12: 0.981, 13: 1.012, 14: 1.015 }, L: { 19: 0.80 } }), d: 12,
-      q: 'Pump coin, WEAK signal. The sweep is confirmed and you short at 0.945. Where does the stop go?',
+      q: 'Pump coin. The sweep is confirmed and you short at 0.945. Where does the stop go?',
       ann: [
         { type: 'line', y: 0.962, i0: 8, i1: 20, cls: 'top', label: '24h top', lp: 'before', at: 8 },
         { type: 'mark', i: 12, y: 0.981, label: 'Sweep', cls: 'sweep', at: 12 },
@@ -1003,25 +600,26 @@
         { k: 'Sell now at 0.527', v: 'wrong', fb: 'The idea says price goes up first, so a short here starts by losing, and the wick low is only 0.011 away.' },
       ],
       result: 'Price grabs the bait, fills the limit at 0.546 and falls to the wick low: +2.3R. It worked this time; in our test about 3 in 4 of these hit the stop first.' },
-    { title: 'ENTER, but no sweep yet', digits: 3, unscored: true,
+    { title: 'Signal now, but no sweep yet', digits: 3, unscored: true,
       candles: gen([1.40, 1.46, 1.55, 1.63, 1.74, 1.86, 1.95, 2.03, 1.98, 1.95, 1.93, 1.96, 1.98, 1.93, 1.89, 1.86, 1.87, 1.82, 1.79, 1.81, 1.77, 1.74, 1.75],
         { H: { 7: 2.08, 12: 2.02 } }), d: 10,
-      q: 'WEAK pump. The bot says ENTER at 1.93. The top hasn\'t been swept. What do you do?',
+      q: 'A small pump stalls under its 24h top. Your signal says short now at 1.93, but the top hasn\'t been swept. What do you do?',
       ann: [
         { type: 'line', y: 2.08, i0: 7, i1: 22, cls: 'top', label: '24h top', lp: 'before', at: 7 },
-        { type: 'mark', i: 10, y: 1.93, label: 'ENTER 1.93', cls: 'bot', pos: 'below', at: 10 },
-        { type: 'line', y: 1.8335, i0: 11, i1: 22, cls: 'tp', label: 'TP1 −5% from ENTER', lp: 'end', ly: 'below', post: true, at: 11 },
+        { type: 'mark', i: 10, y: 1.93, label: 'Signal 1.93', cls: 'bot', pos: 'below', at: 10 },
+        { type: 'line', y: 1.8335, i0: 11, i1: 22, cls: 'tp', label: 'TP1 −5% from the signal', lp: 'end', ly: 'below', post: true, at: 11 },
       ],
       choices: [
-        { k: 'Short at ENTER', v: 'mix', fb: 'This time it pays: price never returns to the top and bleeds 10%. The next WEAK ENTER might squeeze to the stop like BARD did.' },
+        { k: 'Short at the signal', v: 'mix', fb: 'This time it pays: price never returns to the top and bleeds 10%. The next one might squeeze into the stop first.' },
         { k: 'Wait for the sweep', v: 'mix', fb: 'No sweep came within 2 hours, so no trade. You missed a winner, and that is the cost of the rule.' },
       ],
-      result: 'No answer is right here. In the replay about 2 of 3 WEAK winners never sweep the top, so the rule skips them; it also skips about 4 in 10 losers, and the trades it takes start from a better price.' },
+      result: 'No answer is right here. In our pump replay about 2 of 3 small-pump winners never swept the top, so waiting skipped them; it also skipped about 4 in 10 losers, and the trades it took started from a better price.' },
   ];
 
   const list = document.getElementById('smc-drill-list'), scoreEl = document.getElementById('smc-score');
+  if (list) {
   const answers = new Map();
-  const updScore = () => { const right = [...answers.values()].filter(v => v === 'right').length; scoreEl.textContent = `Score: ${right} of ${D.filter(x => !x.unscored).length} right`; };
+  const updScore = () => { const right = [...answers.values()].filter(v => v === 'right').length, of = D.filter(x => !x.unscored).length; scoreEl.textContent = `Score: ${right} of ${of} right`; if (right === of && slug) markDone(slug); };
   D.forEach((S, k) => {
     const N = S.candles.length, card = document.createElement('div'); card.className = 'figure drill';
     card.innerHTML = `<h3>Drill ${k + 1} · ${S.title}</h3><div class="chart"></div><p class="q"></p><div class="choices"></div><div class="fb" hidden><b></b><span></span><span class="muted res"></span></div><div><button type="button" class="again" hidden>Try again</button></div>`;
@@ -1052,5 +650,349 @@
     };
     observe(host, render); render();
   });
+  }
+
+  // =====================================================================================================================
+  // ReplayDesk Academy: progress, quizzes and the interactive widgets (data-widget="…"). Plain DOM, no libraries.
+  // =====================================================================================================================
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const KEY = 'rd-learn-v1';
+  const prog = () => { try { const p = JSON.parse(localStorage.getItem(KEY) || '{}'); return p && typeof p === 'object' && p.done ? p : { done: {} }; } catch (e) { return { done: {} }; } };
+  const saveProg = p => { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch (e) { /* private mode: progress isn't kept */ } };
+  const slug = document.body.dataset.lxSlug || '';
+  function markDone(s, on = true) {
+    const p = prog(); if (on) p.done[s] = Date.now(); else delete p.done[s]; p.last = s; saveProg(p); paintProgress();
+  }
+  function paintProgress() {
+    const p = prog();
+    $$('[data-slug]').forEach(e => e.classList.toggle('is-done', !!p.done[e.dataset.slug]));
+    $$('[data-track-prog]').forEach(e => {
+      const ss = e.dataset.trackProg.split(','), n = ss.filter(s => p.done[s]).length;
+      const bar = $('i', e); if (bar) bar.style.width = (n / ss.length * 100).toFixed(1) + '%';
+      const t = $('[data-n]', e.parentElement); if (t) t.textContent = `${n} of ${ss.length} done`;
+    });
+    const all = $('[data-all-prog]');
+    if (all) { const ss = all.dataset.allProg.split(','), n = ss.filter(s => p.done[s]).length; all.textContent = n ? `${n} of ${ss.length} lessons done` : `${ss.length} lessons`; }
+    const cont = $('[data-continue]');
+    if (cont) {
+      const order = cont.dataset.continue.split(','), next = order.find(s => !p.done[s]);
+      if (Object.keys(p.done).length && next) { cont.href = '/learn/' + next; cont.querySelector('span').textContent = 'Continue where you left off'; }
+    }
+    const mb = $('[data-mark]');
+    if (mb && slug) { const d = !!p.done[slug]; mb.classList.toggle('is-done', d); mb.querySelector('span').textContent = d ? 'Completed' : 'Mark as complete'; }
+  }
+  if (slug) { const p = prog(); p.last = slug; saveProg(p); }
+  document.addEventListener('click', e => {
+    const mb = e.target.closest('[data-mark]'); if (mb && slug) { markDone(slug, !prog().done[slug]); }
+  });
+
+  // ---- quick check: one question at a time is overkill; all questions show, each answers on click
+  $$('[data-quiz]').forEach(box => {
+    let qs; try { qs = JSON.parse($('script', box).textContent); } catch (e) { return; }
+    buildQuiz(box, qs);
+  });
+  function buildQuiz(box, qs) {
+    $$('.qz, .qz-res, .qz-again', box).forEach(x => x.remove());
+    const res = el('p', 'qz-res'); let right = 0, answered = 0;
+    qs.forEach((q, i) => {
+      const card = el('div', 'qz'), head = el('p', 'qz-q'); head.innerHTML = `<span>${i + 1}</span>${esc(q.q)}`; card.appendChild(head);
+      const opts = el('div', 'qz-opts'), why = el('p', 'qz-why'); why.hidden = true;
+      q.o.forEach((o, k) => {
+        const b = el('button', 'qz-o'); b.type = 'button'; b.textContent = o; opts.appendChild(b);
+        b.onclick = () => {
+          if (card.dataset.done) return; card.dataset.done = '1'; answered++;
+          const ok = k === q.a; if (ok) right++;
+          $$('.qz-o', opts).forEach((x, j) => { x.disabled = true; if (j === q.a) x.classList.add('ok'); });
+          if (!ok) b.classList.add('bad');
+          why.innerHTML = `<b>${ok ? 'Right.' : 'Not quite.'}</b> ${esc(q.why)}`; why.hidden = false; why.className = 'qz-why ' + (ok ? 'ok' : 'bad');
+          if (answered === qs.length) {
+            res.textContent = right === qs.length ? `${right} of ${qs.length} right. Lesson marked complete.` : `${right} of ${qs.length} right. Read the explanations, then try again.`;
+            res.className = 'qz-res ' + (right === qs.length ? 'ok' : '');
+            if (right === qs.length && slug) markDone(slug);
+            again.hidden = right === qs.length;
+          }
+        };
+      });
+      card.appendChild(opts); card.appendChild(why); box.appendChild(card);
+    });
+    const again = el('button', 'btn btn-secondary btn-sm qz-again', 'Try again'); again.type = 'button'; again.hidden = true;
+    again.onclick = () => buildQuiz(box, qs);
+    box.appendChild(res); box.appendChild(again);
+  }
+
+  // ---- widgets
+  const W = {};
+  const svgEl = (tag, attrs, parent) => mk(tag, attrs, parent);
+  const fmt = (v, d = 2) => (+v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const range = (label, min, max, step, val, unit = '') => `<label class="wx-r"><span>${label}<b data-v></b>${unit ? `<em>${unit}</em>` : ''}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${val}"></label>`;
+  const seg = (name, items, on) => `<div class="wx-seg" role="group" data-seg="${name}">${items.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${v === on}">${l}</button>`).join('')}</div>`;
+  function segVal(root, name) { const b = $(`[data-seg="${name}"] [aria-pressed="true"]`, root); return b ? b.dataset.v : null; }
+  function segWire(root, fn) { $$('[data-seg] button', root).forEach(b => b.addEventListener('click', () => { $$('button', b.parentElement).forEach(x => x.setAttribute('aria-pressed', String(x === b))); fn(); })); }
+
+  // 1 · candle anatomy: drag open / high / low / close and read the candle
+  W.candle = root => {
+    root.innerHTML = `<div class="wx-grid"><div class="wx-fig"><svg viewBox="0 0 240 280" aria-label="A candle you can shape"></svg></div>
+      <div class="wx-side">${range('Open', 0, 100, 1, 35)}${range('High', 0, 100, 1, 92)}${range('Low', 0, 100, 1, 18)}${range('Close', 0, 100, 1, 78)}
+      <div class="wx-chips">${[['bull', 'Strong up'], ['bear', 'Strong down'], ['hammer', 'Hammer'], ['star', 'Shooting star'], ['doji', 'Doji']].map(([k, l]) => `<button type="button" data-p="${k}">${l}</button>`).join('')}</div>
+      <div class="wx-out" aria-live="polite"></div></div></div>`;
+    const svg = $('svg', root), [ro, rh, rl, rc] = $$('input', root), out = $('.wx-out', root);
+    const P = { bull: [20, 96, 14, 92], bear: [88, 92, 6, 12], hammer: [70, 78, 8, 76], star: [24, 92, 20, 30], doji: [50, 84, 16, 51] };
+    $$('[data-p]', root).forEach(b => b.onclick = () => { [ro.value, rh.value, rl.value, rc.value] = P[b.dataset.p]; draw2(); });
+    const Y = v => 250 - v * 2.2;
+    function draw2(src) {
+      let o = +ro.value, h = +rh.value, l = +rl.value, c = +rc.value;
+      if (src === rh) { h = Math.max(h, o, c); } else if (src === rl) { l = Math.min(l, o, c); } else { h = Math.max(h, o, c); l = Math.min(l, o, c); }
+      rh.value = h; rl.value = l;
+      $$('[data-v]', root).forEach((b, i) => { b.textContent = ' ' + (100 + [o, h, l, c][i] / 5).toFixed(1); });
+      const up = c >= o, cls = up ? 'up' : 'dn', rng2 = Math.max(1e-9, h - l), body = Math.abs(c - o), uw = h - Math.max(o, c), lw = Math.min(o, c) - l;
+      svg.replaceChildren();
+      svgEl('line', { x1: 120, x2: 120, y1: Y(h), y2: Y(l), class: 'wx-wick ' + cls }, svg);
+      svgEl('rect', { x: 92, y: Y(Math.max(o, c)), width: 56, height: Math.max(2, Y(Math.min(o, c)) - Y(Math.max(o, c))), rx: 3, class: 'wx-body ' + cls }, svg);
+      const tag = (y, t, side) => { svgEl('line', { x1: side ? 150 : 90, x2: side ? 172 : 68, y1: y, y2: y, class: 'wx-tick' }, svg); txt(svg, side ? 176 : 64, y + 4, t, 'wx-lab', side ? 'start' : 'end'); };
+      tag(Y(h), 'High', true); tag(Y(l), 'Low', true); tag(Y(o), 'Open', false); tag(Y(c), 'Close', false);
+      let name = 'An ordinary candle', what = up ? 'Buyers won this period, but not by much.' : 'Sellers won this period, but not by much.';
+      if (body <= rng2 * 0.1) { name = 'Doji'; what = 'Open and close almost equal: nobody won. Indecision, often before a turn or a pause.'; }
+      else if (lw >= body * 2 && uw <= body * 0.6) { name = 'Hammer'; what = 'Sellers pushed price far down and buyers pushed it all the way back. At a support level that rejection is a bullish sign.'; }
+      else if (uw >= body * 2 && lw <= body * 0.6) { name = 'Shooting star'; what = 'Buyers pushed price far up and sellers slammed it back. At a resistance level that rejection is a bearish sign.'; }
+      else if (uw <= rng2 * 0.06 && lw <= rng2 * 0.06) { name = up ? 'Marubozu (up)' : 'Marubozu (down)'; what = 'Almost no wicks: one side was in full control from open to close.'; }
+      else if (body >= rng2 * 0.7) { name = up ? 'Strong up candle' : 'Strong down candle'; what = up ? 'A tall green body: a decisive move up.' : 'A tall red body: a decisive move down.'; }
+      out.innerHTML = `<b class="${up ? 'up' : 'down'}">${up ? 'Green · price rose' : 'Red · price fell'}</b><b>${name}</b><p>${what}</p>
+        <dl><dt>Body</dt><dd>${(body / rng2 * 100).toFixed(0)}% of the range</dd><dt>Upper wick</dt><dd>${(uw / rng2 * 100).toFixed(0)}%</dd><dt>Lower wick</dt><dd>${(lw / rng2 * 100).toFixed(0)}%</dd></dl>`;
+    }
+    [ro, rh, rl, rc].forEach(r => r.addEventListener('input', () => draw2(r)));
+    draw2();
+  };
+
+  // 2 · open interest: what price and OI together say
+  W.oi = root => {
+    const Q = {
+      'up,up': ['New longs are opening', 'Fresh money is buying with leverage. The move has fuel behind it — as long as OI keeps rising with price.', 'up'],
+      'down,up': ['New shorts are opening', 'Bears are piling in with fresh money. The drop is backed by new positions — and those shorts are fuel for a squeeze if price turns.', 'down'],
+      'up,down': ['Shorts are closing', 'Price rises because shorts buy back, not because new buyers arrive. Short covering often fades once it is done.', 'warn'],
+      'down,down': ['Longs are closing', 'Price falls because longs sell out, not because new shorts arrive. Once the exits are done the selling can dry up.', 'warn'],
+    };
+    root.innerHTML = `<div class="wx-row">${seg('p', [['up', 'Price rising'], ['down', 'Price falling']], 'up')}${seg('oi', [['up', 'OI rising'], ['down', 'OI falling']], 'up')}</div>
+      <div class="wx-grid"><div class="wx-fig"><svg viewBox="0 0 320 180" aria-label="Price line over open interest bars"></svg></div><div class="wx-out" aria-live="polite"></div></div>
+      <div class="wx-quad">${Object.entries(Q).map(([k, v]) => `<div data-q="${k}"><span>${k.split(',')[0] === 'up' ? 'Price ↑' : 'Price ↓'} · ${k.split(',')[1] === 'up' ? 'OI ↑' : 'OI ↓'}</span><b>${v[0]}</b></div>`).join('')}</div>`;
+    const svg = $('svg', root), out = $('.wx-out', root);
+    function upd() {
+      const p = segVal(root, 'p'), o = segVal(root, 'oi'), k = `${p},${o}`, q = Q[k];
+      $$('[data-q]', root).forEach(d => d.classList.toggle('on', d.dataset.q === k));
+      out.innerHTML = `<b class="${q[2] === 'up' ? 'up' : q[2] === 'down' ? 'down' : 'warn'}">${q[0]}</b><p>${q[1]}</p>`;
+      svg.replaceChildren();
+      const n = 24, r = rng(p === 'up' ? 7 : 9);
+      for (let i = 0; i < n; i++) { const v = o === 'up' ? 30 + i * 3 + r() * 8 : 100 - i * 3 + r() * 8; svgEl('rect', { x: 12 + i * 12.5, y: 170 - v * 0.7, width: 8, height: v * 0.7, rx: 1.5, class: 'wx-oi' }, svg); }
+      const pts = []; let y = p === 'up' ? 120 : 30;
+      for (let i = 0; i < n; i++) { y += (p === 'up' ? -3.6 : 3.6) + (r() - 0.5) * 9; pts.push(`${16 + i * 12.5},${Math.max(12, Math.min(150, y)).toFixed(1)}`); }
+      svgEl('polyline', { points: pts.join(' '), class: 'wx-px ' + (p === 'up' ? 'up' : 'dn') }, svg);
+      txt(svg, 14, 16, 'Price', 'wx-lab'); txt(svg, 14, 176, 'Open interest', 'wx-lab');
+    }
+    segWire(root, upd); upd();
+  };
+
+  // 3 · funding rate: who pays whom, how much, how crowded
+  W.funding = root => {
+    root.innerHTML = `<div class="wx-grid"><div class="wx-side">${range('Funding rate', -0.3, 0.3, 0.005, 0.01, '% / 8h')}
+      <label class="wx-r"><span>Your position<b data-pos> $1,000</b></span><input type="range" min="100" max="10000" step="100" value="1000" data-size></label>
+      <div class="wx-chips">${[['-0.15', 'Crowded short'], ['-0.01', 'Slightly short'], ['0.01', 'Normal'], ['0.06', 'Crowded long'], ['0.2', 'Extreme long']].map(([v, l]) => `<button type="button" data-f="${v}">${l}</button>`).join('')}</div></div>
+      <div class="wx-out" aria-live="polite"></div></div><div class="wx-meter"><i></i><span>Short crowded</span><span>Balanced</span><span>Long crowded</span></div>`;
+    const [rf, rs] = $$('input', root), out = $('.wx-out', root), dot = $('.wx-meter i', root);
+    $$('[data-f]', root).forEach(b => b.onclick = () => { rf.value = b.dataset.f; upd(); });
+    function upd() {
+      const f = +rf.value, size = +rs.value, pay = Math.abs(f) / 100 * size;
+      $('[data-v]', root).textContent = ' ' + (f > 0 ? '+' : '') + f.toFixed(3) + '%'; $('[data-pos]', root).textContent = ' $' + size.toLocaleString('en-US');
+      const a = Math.abs(f), lvl = a <= 0.01 ? ['Normal', ''] : a <= 0.05 ? ['Elevated', 'warn'] : a <= 0.1 ? ['Crowded', 'warn'] : ['Extreme', 'down'];
+      const side = f > 0 ? 'longs' : 'shorts', other = f > 0 ? 'shorts' : 'longs';
+      dot.style.left = (50 + Math.max(-1, Math.min(1, f / 0.2)) * 46) + '%';
+      out.innerHTML = a < 0.0001 ? '<b>Zero funding</b><p>Nobody pays. The perp price sits right on spot.</p>' :
+        `<b>${side[0].toUpperCase() + side.slice(1)} pay ${other}</b><p>Every 8 hours a ${side.slice(0, -1)} of $${size.toLocaleString('en-US')} pays <b class="mono">$${fmt(pay)}</b> — <b class="mono">$${fmt(pay * 3)}</b> a day, about <b class="mono">${(a * 3 * 365).toFixed(0)}%</b> a year.</p>
+        <p><b class="${lvl[1]}">${lvl[0]}</b> — ${a <= 0.01 ? 'a normal level, it tells you little.' : `the ${side} side is crowded. ${a > 0.1 ? 'A sharp move against them can force a cascade of exits: a ' + (f > 0 ? 'long squeeze down.' : 'short squeeze up.') : 'Holding that side is getting expensive.'}`}</p>`;
+    }
+    [rf, rs].forEach(r => r.addEventListener('input', upd)); upd();
+  };
+
+  // 4 · squeeze: push price into a ladder of liquidation clusters and watch the chain reaction
+  W.squeeze = root => {
+    root.innerHTML = `<div class="wx-row">${seg('dir', [['short', 'Short squeeze'], ['long', 'Long squeeze']], 'short')}<button type="button" class="btn btn-primary btn-sm" data-push>Push price</button><button type="button" class="btn btn-secondary btn-sm" data-reset>Reset</button></div>
+      <div class="wx-grid"><div class="wx-fig"><svg viewBox="0 0 340 260" aria-label="Price ladder with liquidation clusters"></svg></div><div class="wx-out" aria-live="polite"></div></div>`;
+    const svg = $('svg', root), out = $('.wx-out', root);
+    let px, clusters, log, busy = false;
+    const lv = [[102, 3], [104.5, 4], [107.5, 6], [111.5, 8], [116, 10]];
+    function reset() { px = 100; clusters = lv.map(([p, s]) => ({ p, s, gone: false })); log = []; paint(); }
+    const dir = () => segVal(root, 'dir') === 'short' ? 1 : -1;
+    const Y = p => { const d = dir(), v = d === 1 ? p : 200 - p; return 240 - (v - 98) * 6.6; };
+    function paint() {
+      const d = dir(); svg.replaceChildren();
+      for (const c of clusters) {
+        const p = d === 1 ? c.p : 200 - c.p, y = Y(p);
+        svgEl('rect', { x: 128, y: y - 7, width: c.s * 9, height: 14, rx: 3, class: 'wx-liq' + (c.gone ? ' gone' : '') }, svg);
+        txt(svg, 122, y + 4, fmt(p, 1), 'wx-lab', 'end');
+        txt(svg, 132 + c.s * 9, y + 4, c.gone ? 'liquidated' : `${c.s}k ${d === 1 ? 'short' : 'long'} stops`, 'wx-lab');
+      }
+      const yp = Y(px); svgEl('line', { x1: 20, x2: 330, y1: yp, y2: yp, class: 'wx-pxl ' + (d === 1 ? 'up' : 'dn') }, svg);
+      txt(svg, 20, yp - 6, 'Price ' + fmt(px, 1), 'wx-lab strong');
+      const n = clusters.filter(c => c.gone).length;
+      out.innerHTML = `<b>${n ? `${n} cluster${n > 1 ? 's' : ''} liquidated` : 'Crowded ' + (d === 1 ? 'shorts' : 'longs')}</b><p>${log.length ? log.slice(-3).map(esc).join('<br>') : `Many traders are ${d === 1 ? 'short' : 'long'} with stops and liquidation prices stacked ${d === 1 ? 'above' : 'below'} the price. Push the price and see what happens.`}</p>
+        ${n === clusters.length ? `<p class="mono">Price moved ${fmt(Math.abs(px - 100), 1)}% from a ${d === 1 ? '2' : '2'}% push. That gap is the squeeze.</p>` : ''}`;
+    }
+    async function push() {
+      if (busy) return; busy = true;
+      const d = dir(); let target = d === 1 ? px + 2 : px - 2;
+      for (;;) {
+        await stepTo(target);
+        const hit = clusters.find(c => !c.gone && (d === 1 ? (c.p <= px) : (200 - c.p >= px)));
+        if (!hit) break;
+        hit.gone = true;
+        log.push(`${hit.s}k ${d === 1 ? 'shorts are forced to buy' : 'longs are forced to sell'} at ${fmt(d === 1 ? hit.p : 200 - hit.p, 1)} → price ${d === 1 ? 'jumps' : 'drops'} ${(hit.s * 0.9).toFixed(1)}%`);
+        target = px + d * hit.s * 0.9; paint();
+      }
+      busy = false; paint();
+    }
+    function stepTo(t) { return new Promise(res => { if (reduce) { px = t; paint(); return res(); } const s = px, t0 = performance.now(); (function f(now) { const k = Math.min(1, (now - t0) / 450); px = s + (t - s) * k; paint(); if (k < 1) requestAnimationFrame(f); else res(); })(t0); }); }
+    $('[data-push]', root).onclick = push; $('[data-reset]', root).onclick = reset; segWire(root, reset); reset();
+  };
+
+  // 5 · long/short ratios: retail vs top traders
+  W.ls = root => {
+    root.innerHTML = `<div class="wx-grid"><div class="wx-side">${range('Retail L/S (accounts)', 0.4, 2.6, 0.01, 0.74)}${range('Top traders L/S (positions)', 0.4, 2.6, 0.01, 1.62)}
+      <div class="wx-chips"><button type="button" data-s="0.74,1.62">Squeeze-up setup</button><button type="button" data-s="2.3,0.62">Dump setup</button><button type="button" data-s="1.05,1.1">No divergence</button></div></div>
+      <div class="wx-out" aria-live="polite"></div></div>
+      <div class="wx-scale"><div class="wx-bar"></div><i data-m="r" title="Retail"></i><i data-m="t" title="Top traders"></i><span style="left:0">0.4</span><span style="left:20.5%">0.85</span><span style="left:27.3%">1.0</span><span style="left:50%">1.5</span><span style="left:72.7%">2.0</span><span style="left:100%">2.6</span></div>`;
+    const [rr, rt] = $$('input', root), out = $('.wx-out', root), pos = v => ((v - 0.4) / 2.2 * 100) + '%';
+    $$('[data-s]', root).forEach(b => b.onclick = () => { [rr.value, rt.value] = b.dataset.s.split(','); upd(); });
+    function upd() {
+      const r = +rr.value, t = +rt.value; $$('[data-v]', root)[0].textContent = ' ' + r.toFixed(2); $$('[data-v]', root)[1].textContent = ' ' + t.toFixed(2);
+      $('[data-m="r"]', root).style.left = pos(r); $('[data-m="t"]', root).style.left = pos(t);
+      let v;
+      if (r < 0.85 && t > 1.5) v = ['up', 'Classic squeeze-up setup', 'Retail is crowded short while the big money is long. Retail keeps shorting into buyers who absorb it; if price lifts, those shorts are forced to buy.'];
+      else if (r > 2.0 && t < 0.7) v = ['down', 'Dump setup', 'Everyone small is long while the big money is short. A drop forces those longs out and feeds the fall.'];
+      else if (Math.abs(r - t) < 0.25) v = ['', 'No divergence', 'Retail and top traders lean the same way. No trap is visible here — this reading alone says nothing.'];
+      else v = ['warn', 'Some divergence', `Top traders lean ${t > r ? 'more long' : 'more short'} than retail, but not at the extremes. Watch it; don't trade on it alone.`];
+      out.innerHTML = `<b class="${v[0]}">${v[1]}</b><p>${v[2]}</p><p class="muted">Below 1.0 means more shorts than longs. Account ratios count people; position ratios weigh their money.</p>`;
+    }
+    [rr, rt].forEach(x => x.addEventListener('input', upd)); upd();
+  };
+
+  // 6 · real breakout or leverage trap
+  W.oispot = root => {
+    root.innerHTML = `<div class="wx-grid"><div class="wx-side">${range('Futures volume vs spot', 1, 20, 0.5, 10, ': 1')}${range('Open interest change', -20, 400, 5, 330, '%')}${range('Funding', -0.05, 0.3, 0.005, 0.12, '%')}${range('Short share of liquidations', 0, 100, 1, 85, '%')}
+      <div class="wx-chips"><button type="button" data-s="2,60,0.02,55">Healthy breakout</button><button type="button" data-s="10,330,0.12,85">Leverage trap</button></div></div>
+      <div class="wx-out" aria-live="polite"></div></div>`;
+    const rs = $$('input', root), out = $('.wx-out', root);
+    $$('[data-s]', root).forEach(b => b.onclick = () => { b.dataset.s.split(',').forEach((v, i) => { rs[i].value = v; }); upd(); });
+    function upd() {
+      const [ratio, oi, fund, liq] = rs.map(r => +r.value), V = $$('[data-v]', root);
+      V[0].textContent = ' ' + ratio.toFixed(1); V[1].textContent = ' ' + (oi > 0 ? '+' : '') + oi; V[2].textContent = ' ' + fund.toFixed(3); V[3].textContent = ' ' + liq;
+      const flags = [];
+      if (ratio >= 6) flags.push(`Futures trade ${ratio.toFixed(0)}× the spot volume: the move is mostly leverage.`);
+      if (oi >= 150) flags.push(`OI +${oi}%: a flood of new leveraged positions.`);
+      if (fund > 0.1) flags.push(`Funding ${fund.toFixed(3)}%: the long side is paying heavily to stay in.`);
+      if (liq >= 75) flags.push(`${liq}% of liquidations are shorts: the rise is fed by forced buying, not new demand.`);
+      const good = [];
+      if (ratio < 4) good.push('Spot volume keeps up with futures: real buyers are there.');
+      if (oi > 0 && oi < 150) good.push('OI rises at a sane pace.');
+      if (fund <= 0.05 && fund >= -0.01) good.push('Funding is mild.');
+      if (liq < 70) good.push('Both sides get liquidated.');
+      const s = flags.length, v = s >= 3 ? ['down', 'Leverage trap'] : s === 2 ? ['warn', 'Mixed: be careful'] : ['up', 'Looks like a real breakout'];
+      out.innerHTML = `<b class="${v[0]}">${v[1]}</b>${flags.length ? `<ul>${flags.map(f => `<li class="bad">${esc(f)}</li>`).join('')}</ul>` : ''}${good.length ? `<ul>${good.map(f => `<li class="ok">${esc(f)}</li>`).join('')}</ul>` : ''}<p class="muted">Rule: never chase a pump that only shows up in futures. Check spot volume first.</p>`;
+    }
+    rs.forEach(r => r.addEventListener('input', upd)); upd();
+  };
+
+  // 7 · wallet flow: where tokens go and what it means
+  W.flow = root => {
+    const N = { cold: [72, 50, 'Cold wallet'], whale: [72, 170, 'Self-custody'], dep: [260, 50, 'Deposit address'], hot: [260, 170, 'Exchange hot wallet'], book: [448, 170, 'Order book'], a: [448, 50, 'Wallet A'], b: [448, 110, 'Wallet B'] };
+    const S = {
+      accum: { label: 'Accumulation', tone: 'up', path: [['hot', 'whale']], steps: ['Tokens leave the exchange hot wallet for a self-custody wallet that keeps the balance.', 'Supply on the exchange shrinks: less to sell, so price can rise more easily. A bullish sign — if the wallet holds.'] },
+      queue: { label: 'Preparing to sell', tone: 'warn', path: [['cold', 'dep']], steps: ['A whale moves tokens from cold storage to an exchange deposit address.', 'Supply is queued, not yet for sale. Tokens sitting in a deposit address can still wait for days.'] },
+      dump: { label: 'Supply hits the book', tone: 'down', path: [['dep', 'hot'], ['hot', 'book']], steps: ['The exchange sweeps the deposits into its main hot wallet.', 'Now the tokens can be sold on the order book. This timing is when a squeeze can turn into a sudden crash.'] },
+      route: { label: 'Router pass-through', tone: '', path: [['hot', 'a'], ['a', 'b']], steps: ['A big withdrawal lands in Wallet A…', '…and Wallet A sends it all to Wallet B within hours, back to a near-zero balance. A is a router. Follow B: that is where the tokens really sit.'] },
+    };
+    root.innerHTML = `<div class="wx-chips">${Object.entries(S).map(([k, s], i) => `<button type="button" data-sc="${k}" aria-pressed="${i === 0}">${s.label}</button>`).join('')}</div>
+      <div class="wx-fig wide"><svg viewBox="0 0 520 220" aria-label="Wallet flow diagram"></svg></div><div class="wx-out" aria-live="polite"></div>
+      <div class="wx-row"><button type="button" class="btn btn-secondary btn-sm" data-step>Next step</button><span class="muted mono" data-sn></span></div>`;
+    const svg = $('svg', root), out = $('.wx-out', root); let cur = 'accum', st = 0, anim = 0;
+    function paint() {
+      const s = S[cur], shown = s.path.slice(0, Math.min(s.path.length, st + 1)); svg.replaceChildren();
+      const defs = svgEl('defs', {}, svg), m = svgEl('marker', { id: 'wxa', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs); svgEl('path', { d: 'M0 0L10 5L0 10z', class: 'wx-arrowhead' }, m);
+      const used = new Set(shown.flat());
+      // an edge runs from the first box's border to the second's (boxes are 132 × 34), so neither line nor token crosses a label
+      const ends = (a, b) => { const [ax, ay] = N[a], [bx, by] = N[b], L2 = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / L2, uy = (by - ay) / L2;
+        const t = Math.min(ux ? 66 / Math.abs(ux) : 1e9, uy ? 17 / Math.abs(uy) : 1e9);
+        return [ax + ux * (t + 4), ay + uy * (t + 4), bx - ux * (t + 8), by - uy * (t + 8)]; };
+      for (const [a, b] of shown) { const [x1, y1, x2, y2] = ends(a, b);
+        svgEl('line', { x1, y1, x2, y2, class: 'wx-edge ' + s.tone, 'marker-end': 'url(#wxa)' }, svg); }
+      for (const [k, [x, y, t]] of Object.entries(N)) { const g = svgEl('g', { class: 'wx-node' + (used.has(k) ? ' on' : '') }, svg); svgEl('rect', { x: x - 66, y: y - 17, width: 132, height: 34, rx: 9 }, g); txt(g, x, y + 4, t, 'wx-lab', 'middle'); }
+      const [x1, y1, x2, y2] = ends(...shown[shown.length - 1]);
+      const dotc = svgEl('circle', { r: 5, class: 'wx-token ' + s.tone }, svg); cancelAnimationFrame(anim);
+      if (!reduce) { const t0 = performance.now(); (function f(now) { const k = ((now - t0) % 1600) / 1600; dotc.setAttribute('cx', x1 + (x2 - x1) * k); dotc.setAttribute('cy', y1 + (y2 - y1) * k); anim = requestAnimationFrame(f); })(t0); }
+      else { dotc.setAttribute('cx', x2); dotc.setAttribute('cy', y2); }
+      out.innerHTML = `<b class="${s.tone === 'up' ? 'up' : s.tone === 'down' ? 'down' : s.tone === 'warn' ? 'warn' : ''}">${s.label}</b><p>${esc(s.steps[Math.min(st, s.steps.length - 1)])}</p>`;
+      $('[data-sn]', root).textContent = `step ${Math.min(st, s.steps.length - 1) + 1} of ${s.steps.length}`;
+      $('[data-step]', root).textContent = st >= s.steps.length - 1 ? 'Start again' : 'Next step';
+    }
+    $$('[data-sc]', root).forEach(b => b.onclick = () => { $$('[data-sc]', root).forEach(x => x.setAttribute('aria-pressed', String(x === b))); cur = b.dataset.sc; st = 0; paint(); });
+    $('[data-step]', root).onclick = () => { st = st >= S[cur].steps.length - 1 ? 0 : st + 1; paint(); };
+    paint();
+  };
+
+  // 8 · the 5-step confirmation chain
+  W.chain = root => {
+    const steps = [['On-chain flow', 'Tokens flow out of exchanges (long) or into them (short).'], ['Exchange activity', 'The supply actually reached the hot wallet — not just a deposit address.'],
+      ['Cost basis', 'You know roughly where the big holder bought, and how far price is from it.'], ['Derivatives', 'Funding, OI and the L/S ratios show a crowd on the wrong side.'], ['Price structure', 'A clean entry: a sweep and reclaim with a higher low (or the mirror for shorts).']];
+    root.innerHTML = `<div class="wx-check">${steps.map(([t, d], i) => `<label><input type="checkbox"><span><b>${i + 1} · ${t}</b>${d}</span></label>`).join('')}</div><div class="wx-meter2"><i></i></div><div class="wx-out" aria-live="polite"></div>`;
+    const cb = $$('input', root), bar = $('.wx-meter2 i', root), out = $('.wx-out', root);
+    function upd() {
+      const n = cb.filter(c => c.checked).length; bar.style.width = n * 20 + '%'; bar.className = n >= 4 ? 'ok' : n >= 2 ? 'mid' : '';
+      out.innerHTML = n === 5 ? '<b class="up">Full thesis</b><p>Every link agrees. This is when the framework says size up — and it can still be wrong, so the stop stays.</p>'
+        : n >= 3 ? `<b class="warn">${n} of 5</b><p>A partial story. Trade smaller, or wait for the missing link.</p>`
+        : `<b>${n} of 5</b><p>One big wallet or one signal is not a thesis. Keep building it before you trade.</p>`;
+    }
+    cb.forEach(c => c.addEventListener('change', upd)); upd();
+  };
+
+  // 9 · premium / discount calculator: drag price inside a leg
+  W.zones = root => {
+    root.innerHTML = `<div class="wx-grid"><div class="wx-fig"><svg viewBox="0 0 320 240" aria-label="Range split into premium and discount"></svg></div>
+      <div class="wx-side">${range('Swing low', 80, 100, 0.5, 90)}${range('Swing high', 100, 130, 0.5, 120)}${range('Price now', 80, 130, 0.25, 113)}<div class="wx-out" aria-live="polite"></div></div></div>`;
+    const svg = $('svg', root), [rl, rh, rp] = $$('input', root), out = $('.wx-out', root);
+    function upd() {
+      const lo = +rl.value, hi = +rh.value, p = Math.max(lo, Math.min(hi, +rp.value)), V = $$('[data-v]', root);
+      V[0].textContent = ' ' + lo.toFixed(1); V[1].textContent = ' ' + hi.toFixed(1); V[2].textContent = ' ' + (+rp.value).toFixed(2);
+      const Y = v => 220 - (v - lo) / (hi - lo) * 200, mid = (lo + hi) / 2, o62 = hi - (hi - lo) * 0.62, o79 = hi - (hi - lo) * 0.79;
+      svg.replaceChildren();
+      svgEl('rect', { x: 40, y: Y(hi), width: 250, height: Y(mid) - Y(hi), class: 'wx-prem' }, svg);
+      svgEl('rect', { x: 40, y: Y(mid), width: 250, height: Y(lo) - Y(mid), class: 'wx-disc' }, svg);
+      const lvl = (v, t) => { svgEl('line', { x1: 40, x2: 290, y1: Y(v), y2: Y(v), class: 'wx-tick' }, svg); txt(svg, 36, Y(v) + 4, t, 'wx-lab', 'end'); };
+      lvl(hi, '100%'); lvl(mid, '50%'); lvl(lo, '0%');
+      txt(svg, 286, Y(hi) + 16, 'Premium · look for shorts', 'wx-lab', 'end'); txt(svg, 286, Y(lo) - 8, 'Discount · look for longs', 'wx-lab', 'end');
+      const yp = Y(p); svgEl('line', { x1: 40, x2: 290, y1: yp, y2: yp, class: 'wx-pxl up' }, svg); svgEl('circle', { cx: 165, cy: yp, r: 5, class: 'wx-token' }, svg);
+      const pct = (p - lo) / (hi - lo) * 100, ret = (hi - p) / (hi - lo) * 100;
+      out.innerHTML = `<b class="${pct >= 50 ? 'down' : 'up'}">${pct >= 50 ? 'Premium' : 'Discount'} · ${pct.toFixed(0)}% of the range</b><p>In an up leg this price is a ${ret.toFixed(0)}% pullback from the high. ${pct >= 50 ? 'Shorts belong up here; longs are expensive.' : 'Longs belong down here; shorts are cheap.'}</p><p class="muted">Equilibrium (50%) is ${fmt(mid)}.</p>`;
+    }
+    [rl, rh, rp].forEach(r => r.addEventListener('input', upd)); upd();
+  };
+
+  // 10 · position size: risk a fixed amount, size from the stop
+  W.risk = root => {
+    root.innerHTML = `<div class="wx-grid"><div class="wx-side">${range('Account', 100, 20000, 100, 5000, '$')}${range('Risk per trade', 0.25, 5, 0.25, 1, '%')}${range('Stop distance', 0.25, 15, 0.25, 3, '%')}${range('Leverage', 1, 50, 1, 10, '×')}</div><div class="wx-out" aria-live="polite"></div></div>`;
+    const rs = $$('input', root), out = $('.wx-out', root);
+    function upd() {
+      const [acct, rp, sp, lev] = rs.map(r => +r.value), V = $$('[data-v]', root);
+      V[0].textContent = ' ' + acct.toLocaleString('en-US'); V[1].textContent = ' ' + rp; V[2].textContent = ' ' + sp; V[3].textContent = ' ' + lev;
+      const risk = acct * rp / 100, notional = risk / (sp / 100), margin = notional / lev, liqPct = 100 / lev - 0.5;
+      out.innerHTML = `<b>Position $${fmt(notional, 0)}</b><p>If the stop is hit you lose about <b class="down mono">$${fmt(risk)}</b> (${rp}% of the account), plus fees.</p>
+        <dl><dt>Margin at ${lev}×</dt><dd class="mono">$${fmt(margin)}${margin > acct ? ' — more than the account!' : ''}</dd><dt>Liquidation</dt><dd class="mono">about ${liqPct.toFixed(1)}% away</dd></dl>
+        ${liqPct <= sp ? `<p class="down"><b>Liquidation comes before your stop.</b> Lower the leverage until it sits beyond ${sp}%.</p>` : '<p class="muted">Leverage only changes the margin, not the risk. The stop sets the risk.</p>'}`;
+    }
+    rs.forEach(r => r.addEventListener('input', upd)); upd();
+  };
+
+  // pointer spotlight on cards (the landing's .spot effect)
+  if (!reduce) document.addEventListener('pointermove', e => { const c = e.target.closest && e.target.closest('.spot'); if (!c) return; const r = c.getBoundingClientRect(); c.style.setProperty('--x', (e.clientX - r.left) + 'px'); c.style.setProperty('--y', (e.clientY - r.top) + 'px'); }, { passive: true });
+
+  $$('[data-widget]').forEach(root => { const f = W[root.dataset.widget]; if (f) try { f(root); } catch (e) { root.textContent = 'This example could not load.'; } });
+  paintProgress();
 })();
-</script>

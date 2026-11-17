@@ -14,6 +14,7 @@ const A = require('./auth');
 const mail = require('./mail');
 const G = require('./google');
 const P = require('./pages');
+const LRN = require('./learn');
 const { ASSETS, FAVICON, safeNext } = require('./html');
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
@@ -78,7 +79,7 @@ const PAGES = new Set(['/', '/learn', '/terms', '/privacy', '/risk', '/signin', 
 
 async function handle(req, res, url, opts = {}) {
   const p = url.pathname;
-  if (!(PAGES.has(p) || p.startsWith('/assets/') || p.startsWith('/auth/'))) return false;
+  if (!(PAGES.has(p) || p.startsWith('/assets/') || p.startsWith('/auth/') || /^\/learn\/[a-z0-9-]{1,60}\/?$/.test(p))) return false;
   try {
     return await route(req, res, url, opts);
   } catch (e) {
@@ -110,9 +111,16 @@ async function route(req, res, url, { dashboardHtml }) {
   const userWho = who && !who.keyOnly ? who : null;
   const next = safeNext(url.searchParams.get('next'));
 
+  if (p.startsWith('/learn/')) {   // one lesson; unknown, or admin-only for a visitor → not found
+    const slug = p.slice(7).replace(/\/$/, ''), ok = LRN.canSee(who, slug);
+    html(res, n => (ok ? LRN.learnLesson(who, n, slug) : P.notFound(who, n)), ok ? 200 : 404);
+    return true;
+  }
+
   switch (p) {
     case '/': html(res, n => P.landing(who, n)); return true;
-    case '/learn': case '/terms': case '/privacy': case '/risk': html(res, n => P.contentPage(who, n, P.LEGAL[p.slice(1)]())); return true;
+    case '/learn': html(res, n => LRN.learnIndex(who, n)); return true;
+    case '/terms': case '/privacy': case '/risk': html(res, n => P.contentPage(who, n, P.LEGAL[p.slice(1)]())); return true;
     case '/signin':
       if (userWho) { redirect(res, next); return true; }
       html(res, n => P.signin(n, { next, googleOn: G.enabled() && db.ready(), error: url.searchParams.get('error'), reset: url.searchParams.has('reset'), verified: url.searchParams.has('verified') }));

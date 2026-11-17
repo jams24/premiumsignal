@@ -332,7 +332,7 @@
     <div>
       <div class="eyebrow">Paper trading · real exchange candles · this page never places an order</div>
       <h1>Trade Simulator</h1>
-      <p>Practise the SMC Playbook on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now. For a real trade, switch the ticket to <b>Real · via Telegram</b>: it fills in your <code>/short</code> · <code>/long</code> panel in Telegram, and you place it there with ✅. Click any price on the chart to copy it or put it in the ticket.</p>
+      <p>Practise the <a href="/learn" target="_blank" rel="noopener">Academy</a> lessons on real charts. <b>Replay</b> rewinds a real pump signal (or one of our own trades) and plays it forward candle by candle, so you decide before you see what happened. <b>Live</b> paper-trades the market right now. For a real trade, switch the ticket to <b>Real · via Telegram</b>: it fills in your <code>/short</code> · <code>/long</code> panel in Telegram, and you place it there with ✅. Click any price on the chart to copy it or put it in the ticket.</p>
     </div>
   </div>
 
@@ -2765,7 +2765,7 @@
     el.innerHTML = h;
     const u = $('sim-use-setup'); if (u) u.onclick = () => useSetup(last);
   }
-  // ---------- top-down: the coin's 4H and 1H direction (lesson 7 in the Playbook) ----------
+  // ---------- top-down: the coin's 4H and 1H direction (Academy: /learn/timeframes) ----------
   // Hourly candles: older history from the exchange, the chart's own 1m candles (up to the replay clock) for the rest,
   // so a replay never sees the future. 4H candles are built from the hours (00/04/08… UTC); the last one is still forming.
   const HOUR = 60 * MIN, HTF = { key: null, busy: null, k: [], H0: 0, err: null, at: 0, memo: null, st: null };
@@ -2815,7 +2815,7 @@
     if (!smc.on || S.cur < 0 || !S.base.length) { el.hidden = true; return; }
     el.hidden = false; loadHtf();
     el.title = 'From the coin\'s 1H candles, with 4H candles built from them. Practice, not a signal: on 204 coins our bot traded (Sep–Nov 2026), A+ setups with the 4H trend did no better than against it.';
-    const help = '<a href="#" id="sim-htf-help" title="Which timeframe is for what: SMC Playbook, lesson 7">which timeframe for what?</a>';
+    const help = '<a href="/learn/timeframes" target="_blank" rel="noopener" id="sim-htf-help" title="Which timeframe is for what: Academy lesson">which timeframe for what?</a>';
     const st = htfNow();
     if (!st) el.innerHTML = 'Direction · reading the 1H and 4H history…' + help;
     else if (!st.h4) el.innerHTML = `Direction · ${HTF.err ? 'could not read the 1H history: ' + esc(HTF.err) : 'not enough 1H history for this coin yet'}.` + help;
@@ -2835,8 +2835,6 @@
       }
       el.innerHTML = `Direction · ${one('4H', h4)}${where} · ${st.h1 ? one('1H', st.h1) : ''}<br>${v}` + help;
     }
-    const a = $('sim-htf-help');
-    if (a) a.onclick = e => { e.preventDefault(); const b = document.querySelector('[data-tab=smc]'); if (b) b.click(); setTimeout(() => { const s = document.getElementById('smc-tf'); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); };
   }
   // ---------- ⏱ when the coin moves ----------
   // From the coin's 1H history before the chart (up to 120 days, so a replay never sees later candles): its typical

@@ -1,6 +1,6 @@
 // ReplayDesk pages, as HTML strings. Anything that came from a visitor goes through esc().
 const { SITE, esc, logo, LOGO_SVG, btn, page, navbar, footer, themeBtn, asset, icon } = require('./html');
-const { landing, GUIDES, LEARN_SVG } = require('./home');
+const { landing } = require('./home');
 
 const UPDATED = '16 November 2026';
 const contact = () => process.env.CONTACT_EMAIL
@@ -58,10 +58,6 @@ The guides explain how traders describe price action; they do not say any method
 <h2>Crypto and leverage</h2><p>Crypto prices can move very fast, and perpetual futures with leverage can lose your whole margin in minutes. Liquidation, funding
 payments and exchange failures are real risks. Only trade money you can afford to lose.</p>
 <h2>Market data</h2><p>Candles come from the exchanges' public market data. They can contain gaps or errors, and we cannot promise they are complete or exact.</p>` }),
-  learn: () => ({ eyebrow: 'Learn', title: 'Free trading guides', description: 'Free guides to smart money concepts and price action, written to practise on the replay desk.',
-    intro: "Short, plain-English guides to smart money concepts and price action, each with a replay drill so you practise the idea on real charts. They're being written now.",
-    html: `<div class="guide-list">${GUIDES.map(([k, tag, t, b]) => `<div class="guide"><svg class="g-svg" viewBox="0 0 100 58" aria-hidden="true">${LEARN_SVG[k]}</svg><div class="row"><span class="tag-u">${tag}</span><span class="soon">Coming soon</span></div>
-<h3 style="margin-top:12px">${t}</h3><p>${b}</p></div>`).join('')}</div>` }),
 };
 
 // ---------------------------------------------------------------- auth pages

@@ -81,6 +81,7 @@ const LEARN_SVG = {
   fib: '<rect x="6" y="6" width="90" height="23" fill="color-mix(in oklab, var(--down) 12%, transparent)"/><rect x="6" y="29" width="90" height="23" fill="color-mix(in oklab, var(--up) 12%, transparent)"/><line x1="6" x2="96" y1="29" y2="29" stroke="var(--accent)" stroke-dasharray="3 2"/><text x="10" y="16" class="svg-t down-f">premium</text><text x="10" y="46" class="svg-t up-f">discount</text>',
   risk: '<rect x="14" y="30" width="20" height="10" rx="2" fill="var(--down)" opacity=".8"/><rect x="40" y="6" width="20" height="24" rx="2" fill="var(--up)" opacity=".8"/><line x1="8" x2="96" y1="30" y2="30" stroke="var(--line-strong)"/><text x="66" y="22" class="svg-t up-f">3R</text><text x="66" y="40" class="svg-t down-f">1R</text>',
 };
+const GUIDE_LINK = { structure: 'market-structure', bos: 'bos-choch', sweep: 'liquidity-sweeps', zones: 'order-blocks-fvg', fib: 'premium-discount', risk: 'position-size' };
 const GUIDES = [
   ['structure', 'Basics', 'Market structure', 'Higher highs, lower lows, and how to tell a trend from a range.'],
   ['bos', 'Structure', 'BOS vs CHoCH', 'When a break continues the trend and when it warns of a turn.'],
@@ -193,7 +194,7 @@ function landing(who, nonce) {
   <div class="learn-head"><div>${num(3, 'Learn — free')}<h2 class="h2 display">Smart money concepts, explained on real charts</h2>
     <p class="sec-sub">Short guides in plain words. Each one ends with a replay you can open and practise in one click.</p></div>
     ${btn('/learn', `${icon('book-open')} All guides`, 'btn-glass btn-pill')}</div>
-  <div class="guides">${GUIDES.map(([k, tag, t, b], i) => `<a href="/learn" class="guide2 spot reveal" style="transition-delay:${(i % 3) * 60}ms">
+  <div class="guides">${GUIDES.map(([k, tag, t, b], i) => `<a href="/learn/${GUIDE_LINK[k] || ''}" class="guide2 spot reveal" style="transition-delay:${(i % 3) * 60}ms">
     <svg class="g-svg" viewBox="0 0 100 58" aria-hidden="true">${LEARN_SVG[k]}</svg><span class="tag">${tag}</span><h3>${t}</h3><p>${b}</p>
     <span class="g-more">Read the guide ${icon('arrow-right', 'i-35')}</span></a>`).join('')}</div>
 </div></section>
