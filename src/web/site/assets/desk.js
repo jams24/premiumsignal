@@ -43,7 +43,8 @@
   // load (a new chart is on: coin, timeframe or replay start). menu: sections for the chart's trade menu; quickReal: takes a
   // real order planned on the chart to its review dialog; realActive: true while the Real ticket is the one in use.
   // draw: [(g, W, z)] painted on the chart (z 'bottom' under the candles, 'top' over them) · smcOff: the coach draws the SMC itself
-  const X = { lines: [], marks: [], bottom: {}, ev: {}, menu: [], quickReal: null, realActive: null, realSize: null, draw: [], smcOff: false };
+  // legend: [() => html] more on the legend's second line · chartChips: [(price) => [label, run]] more "Chart:" chips in the menu
+  const X = { lines: [], marks: [], bottom: {}, ev: {}, menu: [], quickReal: null, realActive: null, realSize: null, draw: [], smcOff: false, legend: [], chartChips: [] };
   const emit = (n, a) => { for (const f of X.ev[n] || []) { try { f(a); } catch (e) { console.error(e); } } };
   // ⚡ plan on the chart: entry → stop → target, then confirm (paper, or the admin's real review)
   const Q = { on: false, stage: '', side: 0, entry: null, sl: null, tp: null, mkt: false, real: false, margin: null, lev: null, el: null };
@@ -303,7 +304,17 @@
     cs.setData(S.bars.map(toC)); vs.setData(U.vol ? S.bars.map(toV) : []); setEMAs();
     smcSchedule(); syncLines(); legend(); prim.req();
   }
-  function showRecent() { const n = S.bars.length; chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (phone() ? 90 : 160)), to: n + 10 }); }
+  // a fresh coin / timeframe always re-fits the price axis: dragging the chart up or down switches the axis's auto-fit off,
+  // and a new coin at another price would then sit outside the old range (a blank chart until a reload)
+  function showRecent() { const n = S.bars.length; cs.priceScale().applyOptions({ autoScale: true }); chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (phone() ? 90 : 160)), to: n + 10 }); fitUI(); }
+  // "Auto" on the price axis while the auto-fit is off (after a drag up / down or a squeeze of the axis): one click re-fits
+  const fitBtn = document.createElement('button');
+  fitBtn.type = 'button'; fitBtn.className = 'dk-autofit'; fitBtn.hidden = true; fitBtn.textContent = 'Auto';
+  fitBtn.title = 'Fit the price axis to the candles again'; fitBtn.setAttribute('aria-label', 'Fit the price axis to the candles');
+  box.appendChild(fitBtn);
+  function fitUI() { let off = false; try { off = cs.priceScale().options().autoScale === false; } catch (e) { /* older chart */ } fitBtn.hidden = !off; }
+  fitBtn.addEventListener('click', e => { e.stopPropagation(); cs.priceScale().applyOptions({ autoScale: true }); fitUI(); });
+  for (const ev of ['pointerup', 'wheel', 'touchend', 'dblclick']) box.addEventListener(ev, () => setTimeout(fitUI, 30), { passive: true });
 
   // ------------------------------------------------------------------ live mode
   async function loadLive() {
@@ -1192,7 +1203,8 @@
     const tools = sec('', [
       chips('Paper ticket:', [['Limit', () => { T.type = 'limit'; fld('price').value = v; renderTicket(); syncLines(); showTicket(); }],
         ['Stop', () => { fld('sl').value = v; renderTicket(); syncLines(); showTicket(); }], ['Target', () => { fld('tp').value = v; renderTicket(); syncLines(); showTicket(); }]], { icon: 'crosshair' }),
-      chips('Chart:', [['Line', () => addDrawing({ type: 'hline', pts: [{ t: sp.t != null ? sp.t : lastBar()[0], p: v }] })], ['Copy', () => copyPrice(v)]], { icon: 'minus' }),
+      chips('Chart:', [['Line', () => addDrawing({ type: 'hline', pts: [{ t: sp.t != null ? sp.t : lastBar()[0], p: v }] })], ['Copy', () => copyPrice(v)]]
+        .concat(X.chartChips.map(f => { try { return f(v); } catch (e) { console.error(e); return null; } }).filter(Boolean)), { icon: 'minus' }),
     ], 'tm-tools');
     const el = document.createElement('div');
     el.className = 'dk-tmenu'; el.setAttribute('role', 'menu'); el.setAttribute('aria-label', 'Trade at ' + fp(v));
@@ -1468,6 +1480,7 @@
     const ch = b[4] - b[1], up = ch >= 0, cl = up ? 'up' : 'down';
     let l2 = U.vol ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
+    for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
     if (U.smc && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>`;
     LG.innerHTML = `<div class="l1"><b>${esc(coin(U.sym))}/USDT · ${U.tf} · ${api().name}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
   }
@@ -1751,7 +1764,7 @@
     startPick, clearPick, hint, toast, COL, LS: LC.LineStyle, get PREC() { return PREC; }, get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
-    t2x, p2y, label, req: () => prim.req(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
+    t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
     pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
     util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, bucket, MIN, HOUR, DAY, WEEK_OFF, liqOf } };

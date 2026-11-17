@@ -14,7 +14,8 @@ const TOOLS = [
   ['magnet', 'magnet', 'Magnet: snap to candle high / low / open / close'], ['clear', 'trash-2', 'Remove all drawings on this coin'],
 ];
 // icons the browser code builds rows with
-const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search', 'chevron-left', 'chevron-up', 'chevron-down'];
+const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search', 'chevron-left', 'chevron-up', 'chevron-down',
+  'bell', 'clock', 'layers', 'users', 'activity', 'info', 'percent', 'newspaper'];
 // the admin layer's extra icons (only sent to admins)
 const ADMIN_ICONS = ['rewind', 'refresh-cw', 'send', 'zap', 'triangle-alert', 'circle-check', 'external-link', 'chart-candlestick', 'bot', 'radio', 'users', 'activity', 'crosshair', 'info', 'trending-down'];
 
@@ -158,11 +159,12 @@ function desk(who, nonce) {
 
 <aside class="dk-side" data-sheet="trade">
   <div class="dk-tabs" role="tablist">${A
-    ? `<button type="button" class="on" data-ptab="trade">Paper</button><button type="button" class="tab-real" data-ptab="real"><i class="rdot"></i>Real</button><button type="button" data-ptab="sig">Signals</button><button type="button" data-ptab="watch">Watchlist</button>`
-    : `<button type="button" class="on" data-ptab="trade">${icon('target', 'i-35')} Trade</button><button type="button" data-ptab="watch">${icon('star', 'i-35')} Watchlist</button>`}
+    ? `<button type="button" class="on" data-ptab="trade">Paper</button><button type="button" class="tab-real" data-ptab="real"><i class="rdot"></i>Real</button><button type="button" data-ptab="sig">Signals</button><button type="button" data-ptab="mkt">Market</button><button type="button" data-ptab="watch">Watchlist</button>`
+    : `<button type="button" class="on" data-ptab="trade">${icon('target', 'i-35')} Trade</button><button type="button" data-ptab="mkt">${icon('activity', 'i-35')} Market</button><button type="button" data-ptab="watch">${icon('star', 'i-35')} Watchlist</button>`}
     <button type="button" class="dk-close" data-act="close-sheet" aria-label="Close">${icon('x', 'i-4')}</button></div>
   <section class="dk-pane" data-pane="trade">${ticket()}</section>
   ${A ? `<section class="dk-pane" data-pane="real" hidden>${realTicket()}</section><section class="dk-pane dk-sigpane" data-pane="sig" hidden><div class="sg-wrap" data-sigs></div></section>` : ''}
+  <section class="dk-pane dk-mkpane" data-pane="mkt" hidden><div data-mkt></div></section>
   <section class="dk-pane" data-pane="watch" hidden><div class="wl" data-watch></div><p class="wl-note">Tap ☆ in the coin search to add coins.</p></section>
 </aside>
 
@@ -215,7 +217,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,

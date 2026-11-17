@@ -91,7 +91,7 @@ async function main() {
     }
 
     // site routes (/, /signin, /dashboard gate, /auth/*, /assets/*, …); false = not a site route, or accounts offline
-    if (site && await site.handle(req, res, url, { dashboardHtml })) return;
+    if (site && await site.handle(req, res, url, { dashboardHtml, newsEvents: simApi.newsEvents })) return;
     // a signed-in admin (admin account or dashboard-key session) may use /api/* without ?key= (cross-site POSTs refused)
     if (!authed && site && url.pathname.startsWith('/api/')) authed = await site.isAdminRequest(req);
 

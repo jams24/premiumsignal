@@ -17,6 +17,7 @@ const P = require('./pages');
 const LRN = require('./learn');
 const ADM = require('./admin');
 const { ASSETS, FAVICON, safeNext } = require('./html');
+const NEWS = require('./news');
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 /** Sign-up and email links need: the database, an email sender, and the public address for the links. */
@@ -76,7 +77,7 @@ function serveAsset(req, res, url) {
 }
 
 const PAGES = new Set(['/', '/learn', '/terms', '/privacy', '/risk', '/signin', '/signup', '/check-email', '/forgot', '/reset', '/app', '/account',
-  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico']);
+  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico', '/api/site/news']);
 
 async function handle(req, res, url, opts = {}) {
   const p = url.pathname;
@@ -95,7 +96,7 @@ async function handle(req, res, url, opts = {}) {
 
 let adminDash = null;   // the dashboard page with the "signed in as admin" flag (built once)
 
-async function route(req, res, url, { dashboardHtml }) {
+async function route(req, res, url, { dashboardHtml, newsEvents }) {
   const p = url.pathname;
   if (p.startsWith('/assets/')) { serveAsset(req, res, url); return true; }
   if (p === '/icon.svg' || p === '/favicon.ico') { res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' }); res.end(FAVICON); return true; }
@@ -111,6 +112,12 @@ async function route(req, res, url, { dashboardHtml }) {
   const who = db.ready() ? await A.readSession(req) : null;
   const userWho = who && !who.keyOnly ? who : null;
   const next = safeNext(url.searchParams.get('next'));
+
+  if (p === '/api/site/news') {   // the desk's Market panel: economic calendar + crypto headlines (signed in, rate limited)
+    if (!who) { json(res, 401, { error: 'auth' }); return true; }
+    if (!A.limit(`nw:${A.clientIp(req)}`, 40, 300e3)) { json(res, 429, { error: 'rate', message: 'Too many requests. Wait a few minutes.' }); return true; }
+    json(res, 200, await NEWS.news(newsEvents)); return true;
+  }
 
   if (p.startsWith('/learn/')) {   // one lesson; unknown, or admin-only for a visitor → not found
     const slug = p.slice(7).replace(/\/$/, ''), ok = LRN.canSee(who, slug);

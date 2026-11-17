@@ -580,6 +580,8 @@
   });
 
   // ------------------------------------------------------------------ signals: recent pump signals and the bot's trades
+  // the bot sends signal / trade times as epoch ms (simApi iso()); older rows or other callers may send ISO text: read both
+  const tms = v => (v == null || v === "" ? NaN : typeof v === "number" ? v : /^\d{9,}$/.test(String(v)) ? +v : Date.parse(v));
   const G = { tab: store.get('rd-adm-sigtab', 'sig'), days: store.get('rd-adm-sigdays', 14), q: '', sigs: [], trades: [], at: 0, err: null, busy: false, show: store.get('rd-adm-sigmarks', true) };
   const sigBox = $('[data-sigs]');
   async function loadSigs(force) {
@@ -604,7 +606,7 @@
     else if (G.tab === 'sig') {
       const rows = G.sigs.filter(s => !q || base(s.symbol).includes(q));
       list = rows.length ? rows.map(s => {
-        const t = Date.parse(s.t), weak = s.pumpPct != null && s.pumpPct < 40, here = onChart(s.symbol);
+        const t = tms(s.t), weak = s.pumpPct != null && s.pumpPct < 40, here = onChart(s.symbol);
         return `<div class="sg${here ? ' here' : ''}" data-sgo="${esc(s.symbol)}|${t}"><div class="sg-h"><b>${esc(base(s.symbol))}</b>${s.direction ? `<span class="sd ${s.direction === 'long' ? 'up' : 'down'}">${esc(String(s.direction).toUpperCase())}</span>` : ''}${weak ? '<span class="sg-weak">WEAK</span>' : ''}<time title="${esc(new Date(t).toUTCString())}">${ago(t)}</time></div>
           <div class="sg-m"><span>Pump <b>${s.pumpPct != null ? '+' + Math.round(s.pumpPct) + '%' : '—'}</b></span>${s.score != null ? `<span>Score <b>${esc(s.score)}</b></span>` : ''}${s.funding != null ? `<span>Funding <b>${(+s.funding).toFixed(4)}%</b></span>` : ''}${s.price ? `<span>@ <b>${fmtP(+s.price)}</b></span>` : ''}</div>
           <div class="sg-a"><button type="button" data-sgact="chart">${ic('chart-candlestick')} Chart</button><button type="button" data-sgact="replay">${ic('rewind')} Replay from the signal</button></div></div>`;
@@ -612,7 +614,7 @@
     } else {
       const rows = G.trades.filter(t => !q || base(t.symbol).includes(q));
       list = rows.length ? rows.map(t => {
-        const t0 = Date.parse(t.t), open = !t.t1, pnl = t.pnl != null ? +t.pnl : null;
+        const t0 = tms(t.t), open = !t.t1, pnl = t.pnl != null ? +t.pnl : null;
         return `<div class="sg${onChart(t.symbol) ? ' here' : ''}" data-sgo="${esc(t.symbol)}|${t0 - 15 * MIN}|${exOf(t.exchange)}"><div class="sg-h"><b>${esc(base(t.symbol))}</b>${sideTag(t.direction)}<span class="muted">#${t.id}</span><time title="${esc(new Date(t0).toUTCString())}">${ago(t0)}</time></div>
           <div class="sg-m"><span>${open ? '<b class="warn">Open</b>' : `P&amp;L <b class="${(pnl || 0) >= 0 ? 'up' : 'down'}">${pnl == null ? '—' : sgn(pnl)}</b>`}</span>${t.reason ? `<span>${esc(String(t.reason).replace(/_/g, ' '))}</span>` : ''}<span>${esc(t.exchange || '')}</span><span>entry <b>${fmtP(+t.entry)}</b></span></div>
           <div class="sg-a"><button type="button" data-sgact="chart">${ic('chart-candlestick')} Chart</button><button type="button" data-sgact="replay">${ic('rewind')} Replay 15 min before entry</button></div></div>`;
@@ -625,11 +627,11 @@
   RD.ext.marks.push(() => {
     if (!G.show) return [];
     const C = RD.COL, M = [];
-    for (const s of G.sigs) if (onChart(s.symbol)) M.push({ t: Date.parse(s.t), position: 'aboveBar', color: C.warn, shape: 'arrowDown', text: 'Signal' + (s.pumpPct != null ? ' +' + Math.round(s.pumpPct) + '%' : '') });
+    for (const s of G.sigs) if (onChart(s.symbol)) M.push({ t: tms(s.t), position: 'aboveBar', color: C.warn, shape: 'arrowDown', text: 'Signal' + (s.pumpPct != null ? ' +' + Math.round(s.pumpPct) + '%' : '') });
     for (const t of G.trades) if (onChart(t.symbol)) {
       const sh = t.direction === 'short';
-      M.push({ t: Date.parse(t.t), position: sh ? 'aboveBar' : 'belowBar', color: C.pri, shape: sh ? 'arrowDown' : 'arrowUp', text: `Bot ${t.direction}` });
-      if (t.t1) M.push({ t: Date.parse(t.t1), position: sh ? 'belowBar' : 'aboveBar', color: (+t.pnl || 0) >= 0 ? C.up : C.down, shape: 'circle', text: 'Exit ' + (t.pnl != null ? sgn(+t.pnl) : '') });
+      M.push({ t: tms(t.t), position: sh ? 'aboveBar' : 'belowBar', color: C.pri, shape: sh ? 'arrowDown' : 'arrowUp', text: `Bot ${t.direction}` });
+      if (t.t1) M.push({ t: tms(t.t1), position: sh ? 'belowBar' : 'aboveBar', color: (+t.pnl || 0) >= 0 ? C.up : C.down, shape: 'circle', text: 'Exit ' + (t.pnl != null ? sgn(+t.pnl) : '') });
     }
     return M;
   });
@@ -733,7 +735,7 @@
     const sga = t.closest('[data-sgo]');
     if (sga) {
       const [sym, ts, ex] = sga.dataset.sgo.split('|'), when = +ts, act = t.closest('[data-sgact]');
-      if (act && act.dataset.sgact === 'replay') { RD.openAt(pair(sym), ex || RD.U.ex, when); if (phone()) RD.closeSheets(); }
+      if (act && act.dataset.sgact === 'replay') { if (!isFinite(when) || when <= 0) { RD.toast('This row has no readable time, so the replay cannot start.', 'down'); return; } RD.openAt(pair(sym), ex || RD.U.ex, when); if (phone()) RD.closeSheets(); }
       else { if (RD.R.on) RD.exitReplay(); RD.setSymbol(pair(sym), ex || undefined); if (phone()) RD.closeSheets(); }
       setTimeout(renderSigs, 50);
       return;

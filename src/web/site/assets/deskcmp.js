@@ -143,6 +143,7 @@
   }
   function fit() {
     if (!C.bars.length) return;
+    cs.priceScale().applyOptions({ autoScale: true });   // a new coin / timeframe re-fits the price axis (a drag up/down turns its auto-fit off)
     if (!C.tf) { const r = RD.chart.timeScale().getVisibleRange(); if (r) { try { ch.timeScale().setVisibleRange(r); return; } catch (e) { /* fall through */ } } }
     const n = C.bars.length; ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (phone() ? 90 : 160)), to: n + 10 });
   }
