@@ -36,6 +36,10 @@
 .dk-pop input { accent-color: var(--primary); }
 .dk-pop hr { margin: 6px 0; border: 0; border-top: 1px solid var(--dk-line); }
 .dk-pop p { padding: 2px 8px 4px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+.dk-smcall { display: flex; align-items: center; gap: 2px; margin: 0 6px 4px 30px; padding: 2px; border-radius: 8px; background: var(--dk-hover); }
+.dk-smcall span { padding: 0 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.dk-smcall button { flex: 1 1 auto; height: 24px; padding: 0 6px; white-space: nowrap; border-radius: 6px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.dk-smcall button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.16); }
 .dk-rp { display: flex; align-items: center; gap: 4px; flex: none; padding: 3px 4px 3px 6px; border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent); border-radius: 10px; background: color-mix(in oklab, var(--warn) 7%, transparent); }
 .dk-rp select { height: 28px; }
 .dk-clock { padding: 0 6px; font-size: 12px; color: var(--warn); white-space: nowrap; }

@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false,
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false,
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -246,7 +246,10 @@
   function guessPrec(px) { const d = Math.max(0, Math.min(8, 5 - Math.floor(Math.log10(Math.max(px, 1e-9))))); PREC = d; TICK = +Math.pow(10, -d).toFixed(d); }
 
   // ------------------------------------------------------------------ chart
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  // a colour the stylesheets have not given yet (desk.css still loading) falls back to the theme's own value: an empty
+  // background paints the canvas black, which on the light theme stayed until the theme button was pressed
+  const FALL = { '--dk-bg': ['#0b0e14', '#ffffff'], '--up': ['#16c784', '#0d9f6e'], '--down': ['#f0475b', '#dc2f45'], '--muted': ['#727b8f', '#6b7486'], '--primary': ['#4f7cff', '#3461f5'], '--warn': ['#f5a524', '#c27c0e'], '--panel-3': ['#1a2130', '#eceff5'], '--grid': ['rgba(255,255,255,.045)', 'rgba(15,23,42,.05)'], '--dk-line': ['rgba(255,255,255,.075)', 'rgba(15,23,42,.1)'] };
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || (FALL[n] ? FALL[n][document.documentElement.dataset.theme === 'light' ? 1 : 0] : '');
   const COL = {};
   const readCol = () => Object.assign(COL, { up: css('--up'), down: css('--down'), pri: css('--primary'), warn: css('--warn'), acc: css('--accent'), text: css('--text'), muted: css('--muted'), bg: css('--dk-bg'), panel: css('--panel') });
   readCol();
@@ -268,6 +271,7 @@
   const markers = typeof LC.createSeriesMarkers === 'function' ? LC.createSeriesMarkers(cs, []) : null;
 
   function applyTheme() {
+    colSeen = colKey();
     readCol();
     chart.applyOptions({
       layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted },
@@ -280,6 +284,16 @@
     setMarkers(); syncLines(); prim.req(); emit('theme');
   }
   new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  // the colours come from the stylesheets: one that lands after this script (a fresh deploy, a slow network) re-colours
+  // the chart when it arrives, not only when the theme button is pressed
+  function colKey() { return ['--dk-bg', '--up', '--down', '--muted', '--grid', '--dk-line', '--panel-3', '--primary', '--warn'].map(n => getComputedStyle(document.documentElement).getPropertyValue(n).trim()).join('|'); }
+  let colSeen = colKey();
+  function themeCheck() { if (colKey() !== colSeen) applyTheme(); }
+  document.addEventListener('load', e => { if (e.target && e.target.tagName === 'LINK') themeCheck(); }, true);
+  window.addEventListener('load', themeCheck); window.addEventListener('pageshow', themeCheck);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) themeCheck(); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(themeCheck, () => {});
+  for (const ms of [300, 1200, 3000, 8000]) setTimeout(themeCheck, ms);
 
   // ------------------------------------------------------------------ state
   const S = { bars: [], gen: 0, lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
@@ -854,19 +868,29 @@
   }
   function drawSMC(g, W) {
     const r = SMCR; if (!r) return;
-    for (const z of r.zones.filter(z => !z.broken).slice(-6)) {
+    const all = !!U.smcAll;
+    // Whole chart: past zones too, faint, from the order block to the candle that closed through them
+    if (all) for (const z of r.zones) {
+      if (!z.broken) continue;
+      const x0 = t2x(z.t), x1 = t2x(z.broken), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null) continue;
+      const xe = x1 == null ? W : x1; if (xe < 0 || x0 > W) continue;
+      const c = z.type === 'demand' ? COL.up : COL.down;
+      g.fillStyle = hexA(c, 0.05); g.fillRect(x0, Math.min(y0, y1), Math.max(1, xe - x0), Math.abs(y1 - y0));
+      g.strokeStyle = hexA(c, 0.22); g.setLineDash([3, 3]); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), Math.max(1, xe - x0), Math.abs(y1 - y0)); g.setLineDash([]);
+    }
+    for (const z of (all ? r.zones.filter(z => !z.broken) : r.zones.filter(z => !z.broken).slice(-6))) {
       const x0 = t2x(z.t), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null) continue;
       const c = z.type === 'demand' ? COL.up : COL.down;
       g.fillStyle = hexA(c, 0.11); g.fillRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent');
     }
-    for (const e of r.eqs.filter(e => !e.taken).slice(-4)) {
+    for (const e of (all ? r.eqs.filter(e => !e.taken) : r.eqs.filter(e => !e.taken).slice(-4))) {
       const x0 = t2x(e.t1), y = p2y(e.p); if (x0 == null || y == null) continue;
       g.strokeStyle = hexA(COL.warn, 0.85); g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
       label(g, e.kind, W - 4, y + (e.side === 'H' ? -9 : 9), COL.warn, 'right', 'transparent');
     }
-    for (const b of r.breaks.slice(-8)) {
+    for (const b of (all ? r.breaks : r.breaks.slice(-8))) {
       const x0 = t2x(b.fromT), x1 = t2x(b.t), y = p2y(b.p); if (x0 == null || x1 == null || y == null) continue;
       const c = b.dir === 1 ? COL.up : COL.down;
       g.strokeStyle = c; g.setLineDash([5, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
@@ -1451,7 +1475,7 @@
     if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); return; }
     const B = S.bars, ms = TF[U.tf].ms;
     let n = B.length; if (n && B[n - 1][0] + ms > nowT()) n--;   // the forming candle is not closed yet
-    const base = B.slice(Math.max(0, n - 500), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);
+    const base = B.slice(Math.max(0, n - (U.smcAll ? 6000 : 500)), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);   // Recent: last 500 · Whole chart: all loaded
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); return; }
     const l = base[base.length - 1];
     base.push([l[0] + ms, l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
@@ -1462,8 +1486,9 @@
     if (!markers) return;
     const first = S.bars.length ? S.bars[0][0] : 0, M = [];
     if (SMCR && U.smc && !X.smcOff) {
-      for (const s of SMCR.swings.slice(-40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
-      for (const w of SMCR.sweeps.slice(-6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
+      const keep = (a, k) => (U.smcAll ? a : a.slice(-k));   // Recent: the newest only · Whole chart: all
+      for (const s of keep(SMCR.swings, 40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
+      for (const w of keep(SMCR.sweeps, 6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
     }
     // extension marks: { t (ms), position, color, shape, text } — snapped to the chart's candle, never past the replay clock
     const last = S.bars.length ? S.bars[S.bars.length - 1][0] : 0, now = nowT();
@@ -1481,7 +1506,8 @@
     let l2 = U.vol ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
-    if (U.smc && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>`;
+    if (U.smc && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
+      `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
     LG.innerHTML = `<div class="l1"><b>${esc(coin(U.sym))}/USDT · ${U.tf} · ${api().name}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
   }
   chart.subscribeCrosshairMove(p => {
@@ -1493,6 +1519,7 @@
     $('[data-sym]').textContent = U.sym; $('[data-exname]').textContent = api().name;
     $$('[data-tf]').forEach(b => b.classList.toggle('on', b.dataset.tf === U.tf)); $('[data-tfsel]').value = U.tf;
     $('[data-act="smc"]').setAttribute('aria-pressed', String(!!U.smc));
+    $$('[data-act="smcall"]').forEach(b => { if (!b.closest('[data-legend]')) b.classList.toggle('on', (b.dataset.v === '1') === !!U.smcAll); });
     $$('[data-ind]').forEach(i => { i.checked = !!U[i.dataset.ind]; });
     document.title = `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`;
     $$('.wl-row').forEach(r => r.classList.toggle('on', r.dataset.s === U.sym));
@@ -1670,6 +1697,7 @@
       if (act === 'search') openSearch();
       else if (act === 'retry') { hideMsg(); if (S.retry) S.retry(); }
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
+      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc) U.smc = true; saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'smc') { U.smc = !U.smc; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
@@ -1761,7 +1789,7 @@
   window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, LS: LC.LineStyle, get PREC() { return PREC; }, get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,

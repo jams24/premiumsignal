@@ -114,6 +114,7 @@ function desk(who, nonce) {
       <label><input type="checkbox" data-ind="ema50"> EMA 50</label>
       <label><input type="checkbox" data-ind="ema200"> EMA 200</label>
       <hr><label><input type="checkbox" data-ind="smc"> SMC: structure, zones, liquidity</label>
+      <div class="dk-smcall" role="group" aria-label="How much of the chart SMC labels"><span>SMC labels</span><button type="button" data-act="smcall" data-v="0">Recent</button><button type="button" data-act="smcall" data-v="1">Whole chart</button></div>
       <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
       <p>SMC reads closed candles only, so in a replay it never sees the future.</p>
     </div>
