@@ -31,14 +31,14 @@
     const A = SMC.analyze(base, base.length - 1, { tf: tfMs });
     out.zones = A.zones.length;
 
-    // 1 = target first, 0 = stop first, null = neither within HOR candles
+    // [1 = target first | 0 = stop first | null = neither within HOR candles, the candle it happened in]
     function walk(i0, dir, stop, target) {
       for (let i = i0; i < Math.min(n, i0 + HOR); i++) {
         const k = K[i];
-        if (dir === 1 ? k[3] <= stop : k[2] >= stop) return 0;
-        if (dir === 1 ? k[2] >= target : k[3] <= target) return 1;
+        if (dir === 1 ? k[3] <= stop : k[2] >= stop) return [0, i];
+        if (dir === 1 ? k[2] >= target : k[3] <= target) return [1, i];
       }
-      return null;
+      return [null, -1];
     }
     const first = t => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (K[m][0] < t) lo = m + 1; else hi = m; } return lo; };
     const decided = [];
@@ -51,13 +51,13 @@
       const entry = dir === 1 ? Math.min(z.top, k[1]) : Math.max(z.bot, k[1]);
       const stop = dir === 1 ? z.bot * (1 - BUF) : z.top * (1 + BUF);
       const r = (entry - stop) * dir;
-      let res;
+      let res, at = j;
       if (!(r > 0)) res = 0;                                        // opened beyond the whole zone
       else if (dir === 1 ? k[3] <= stop : k[2] >= stop) res = 0;    // went straight through on the touch candle
-      else res = walk(j + 1, dir, stop, entry + dir * r);
+      else [res, at] = walk(j + 1, dir, stop, entry + dir * r);
       const S = out[z.type];
       if (res === 1) S.held++; else if (res === 0) S.against++; else S.open++;
-      out.touches.push({ type: z.type, top: z.top, bot: z.bot, t: k[0], res, entry, stop, target: r > 0 ? entry + dir * r : null });
+      out.touches.push({ type: z.type, top: z.top, bot: z.bot, t: k[0], res, entry, stop, target: r > 0 ? entry + dir * r : null, hitT: res == null ? null : K[at][0] });   // hitT: the candle the stop / target was hit in
       if (res != null && r > 0) decided.push({ type: z.type, dir, pct: r / entry });
     }
 
@@ -72,7 +72,7 @@
       const R = out.rnd[d.type];
       for (let q = 0; q < DRAWS; q++) {
         const i = warm + Math.floor(rand() * span), e = K[i][4];
-        const res = walk(i + 1, d.dir, e * (1 - d.dir * d.pct), e * (1 + d.dir * d.pct));
+        const [res] = walk(i + 1, d.dir, e * (1 - d.dir * d.pct), e * (1 + d.dir * d.pct));
         if (res != null) { R.n++; R.held += res; }
       }
     }

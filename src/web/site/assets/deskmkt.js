@@ -429,13 +429,15 @@
       if (!d || d.tf !== tf || d.days !== days || !Z) return { html: ctl + (M.err.zr ? errBox('zr', M.err.zr) : spin) };
       const V = { demand: Z.verdict(d.demand, d.rnd.demand), supply: Z.verdict(d.supply, d.rnd.supply) };
       const say = (v) => (v.n < 20 ? ['', 'too few touches to tell'] : v.base == null ? ['', 'no random comparison'] : !v.beyond ? ['', 'same as random'] : v.diff > 0 ? ['up', 'held more often than random'] : ['down', 'went through more often than random']);
+      const stopMed = k => { const v = d.touches.filter(t => t.type === k && t.target != null).map(t => Math.abs(t.stop / t.entry - 1) * 100).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)].toFixed(2) + '%' : '—'; };
       const side = (k, name) => {
         const S = d[k], v = V[k], n = S.held + S.against;
         if (!n) return `<div class="zr-side"><div class="zr-h"><b>${name}</b><em>no finished first touches</em></div></div>`;
         const hp = S.held / n * 100, w = say(v);
         return `<div class="zr-side" data-zr-side="${k}"><div class="zr-h"><b>${name}</b><em>${n} first touches${S.open ? ` · ${S.open} still open` : ''}</em></div>
           <div class="zr-bar" title="Held ${hp.toFixed(0)}% · the same trade at random times ${v.base == null ? '—' : v.base.toFixed(0) + '%'} (the white tick)"><i class="up" style="width:${hp.toFixed(1)}%"></i><i class="down" style="width:${(100 - hp).toFixed(1)}%"></i>${v.base == null ? '' : `<s style="left:${v.base.toFixed(1)}%"></s>`}</div>
-          <div class="zr-num"><span class="up">Held ${S.held} · ${hp.toFixed(0)}%</span><span class="down">Went through ${S.against} · ${(100 - hp).toFixed(0)}%</span></div>
+          <div class="zr-num"><span class="up" title="Target hit before the stop">Held ${S.held} · ${hp.toFixed(0)}%</span><span class="down" title="Stop hit before the target">Went through ${S.against} · ${(100 - hp).toFixed(0)}%</span></div>
+          <p class="zr-v">Stop size: median <b>${stopMed(k)}</b> from entry (target the same distance the other way).</p>
           <p class="zr-v">Same trade at random times: <b>${v.base == null ? '—' : v.base.toFixed(0) + '%'}</b> held${v.luck == null ? '' : ` · luck ±${v.luck.toFixed(0)}`} → <b class="${w[0]}" data-zr-say="${k}">${w[1]}</b></p></div>`;
       };
       const px = live() && S.lastPx ? S.lastPx : d.price;
@@ -446,14 +448,23 @@
         : sup && px >= sup.bot ? `Price is <b>in a supply zone</b> ${fp(sup.bot)}–${fp(sup.top)}: a short here is the trade above, held <b>${pc(V.supply)}</b> on ${esc(coin())} vs ${bs(V.supply)} at random.${first(sup)}`
         : `Not in a zone. ${dem ? `Demand ${fp(dem.bot)}–${fp(dem.top)} is ${pc1((dem.top / px - 1) * 100)} away` : 'No unbroken demand below'}; ${sup ? `supply ${fp(sup.bot)}–${fp(sup.top)} is ${pc1((sup.bot / px - 1) * 100)} away` : 'no unbroken supply above'}.`;
       const last = d.touches.slice(-30);
-      const tip = t => `${t.type === 'demand' ? 'Demand' : 'Supply'} ${fp(t.bot)}–${fp(t.top)} · ${day(t.t)} ${hhmm(t.t)} UTC · ${t.res === 1 ? 'held (1R first)' : t.res === 0 ? 'went through (stop first)' : 'still open'}`;
+      const sp = (a, b) => { const v = (b / a - 1) * 100; return (v < 0 ? '−' : '+') + Math.abs(v).toFixed(2) + '%'; };
+      const when = (x, t0) => (day(x) === day(t0) ? '' : day(x) + ' ') + hhmm(x) + ' UTC';
+      const lag = ms => { const q = Math.round(ms / MIN); return q <= 0 ? 'the touch candle itself' : q < 60 ? q + 'm after the touch' : q < 1440 ? Math.floor(q / 60) + 'h ' + String(q % 60).padStart(2, '0') + 'm after the touch' : Math.floor(q / 1440) + 'd ' + Math.floor((q % 1440) / 60) + 'h after the touch'; };
+      const tip = t => {
+        const L = t.type === 'demand', head = `${L ? 'Demand' : 'Supply'} ${fp(t.bot)}–${fp(t.top)} · touched ${day(t.t)} ${hhmm(t.t)} UTC`;
+        if (t.target == null) return head + `\n${L ? 'Long' : 'Short'}: the candle opened past the stop ${fp(t.stop)}, so it counts as went through`;
+        const plan = `${L ? 'Long' : 'Short'} ${fp(t.entry)} · stop ${fp(t.stop)} (${sp(t.entry, t.stop)}) · target ${fp(t.target)} (${sp(t.entry, t.target)})`;
+        const end = t.res === 1 ? `✓ Target hit first · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : t.res === 0 ? `✗ Stop hit first · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : '· Neither hit yet (or not within 96 candles)';
+        return head + '\n' + plan + '\n' + end;
+      };
       const dots = last.map(t => `<i class="${t.res === 1 ? 'up' : t.res === 0 ? 'down' : 'op'}" data-tip="${esc(tip(t))}">${t.type === 'demand' ? '▲' : '▼'}</i>`).join('');
       const any = ['demand', 'supply'].some(k => V[k].n >= 20 && V[k].beyond);
       return {
         sum: `D ${pc(V.demand)} · S ${pc(V.supply)}${any ? '' : ' <em>≈ random</em>'}`,
         html: ctl + side('demand', '▲ Demand · longs') + side('supply', '▼ Supply · shorts') +
           `<div class="zr-now" data-zr-now>${now}</div>
-          ${dots ? `<p class="mk-day">Last ${last.length} touches · oldest → newest</p><div class="zr-dots" data-mk-tips="zr">${dots}</div><div class="mk-read zr-read" data-mk-read="zr" data-def="▲ demand · ▼ supply · green held, red went through. Hover or tap one.">▲ demand · ▼ supply · green held, red went through. Hover or tap one.</div>` : ''}
+          ${dots ? `<p class="mk-day">Last ${last.length} touches · oldest → newest</p><div class="zr-dots" data-mk-tips="zr">${dots}</div><div class="mk-read zr-read" data-mk-read="zr" data-def="▲ demand · ▼ supply · green: target hit first, red: stop hit first. Hover or tap one for its entry, stop and target.">▲ demand · ▼ supply · green: target hit first, red: stop hit first. Hover or tap one for its entry, stop and target.</div>` : ''}
           <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-zrmk${M.zrMarks ? ' checked' : ''}><span></span>Mark the touches on the chart <em class="m">(squares)</em></label></div>
           <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} days, fetched live from ${esc(u.api(U.ex).name)}. Each zone's first touch: entry at its edge, stop 0.1% past the far edge, target the same distance (1R). Random = the same stop and target from 20 random candles of this coin per touch. In our tests (207 coins, 3 months) a coin's score did not carry into the next month and zones overall held about as often as random, so read this as how ${esc(coin())} behaved, not a forecast.</p>`,
         after: b => tips(b, 'zr'),
