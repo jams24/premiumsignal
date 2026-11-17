@@ -203,20 +203,6 @@ ${u.hasPassword ? '<p class="t2" style="margin-top:20px;font-size:14px">Want a n
 <p class="muted" style="margin-top:8px;font-size:13px">More settings (name, password, delete account) are on the way.</p></main>`);
 }
 
-function admin(who, nonce, { counts, latest, accountsOpen }) {
-  const tiles = [['Users', counts.users], ['Confirmed email', counts.verified], ['New in 7 days', counts.week], ['Google sign-ins', counts.google]];
-  return appPage(who, nonce, 'Admin', `<main class="app-main"><h1>Admin</h1>
-<p class="sub">Overview. Controls for plans, signals and branding arrive in a later phase.</p>
-<div class="admin-links">${btn('/dashboard', `${icon('layout-dashboard')} Live dashboard`, 'btn-primary btn-sm')}
-${accountsOpen ? '<span class="chip chip-up" style="align-self:center">Sign-ups open</span>' : '<span class="chip chip-warn" style="align-self:center">Sign-ups closed — set RESEND_API_KEY, EMAIL_FROM and PUBLIC_URL</span>'}</div>
-<div class="tiles">${tiles.map(([k, v]) => `<div class="tile"><span>${k}</span><b>${Number(v).toLocaleString('en-US')}</b></div>`).join('')}</div>
-<h2 class="h3">Newest sign-ups</h2>
-<div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Plan</th><th>Joined</th></tr></thead><tbody>
-${latest.length ? latest.map(u => `<tr><td>${esc(u.name || '—')}</td><td>${esc(u.email)}</td><td>${u.banned ? '<span class="down">Banned</span>' : u.email_verified ? '<span class="up">Confirmed</span>' : '<span class="warn">Unconfirmed</span>'}</td>
-<td style="text-transform:capitalize">${esc(u.plan)}</td><td class="mono muted" style="font-size:12px">${fmtTime(u.created_at)}</td></tr>`).join('') : '<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">No users yet.</td></tr>'}
-</tbody></table></div></main>`);
-}
-
 /** /dashboard without an admin session: sign in as admin, or use the dashboard key (a saved key signs in by itself). */
 function dashboardGate(nonce, { who, googleOn }) {
   const signedInNotAdmin = who && !who.admin;
@@ -238,4 +224,4 @@ ${field({ label: 'Password', name: 'password', type: 'password', auto: 'current-
 
 const notFound = (who, nonce) => contentPage(who, nonce, { title: 'Page not found', intro: 'That page doesn’t exist (yet).', html: `<p><a href="/">Back to the home page</a></p>` });
 
-module.exports = { landing, contentPage, LEGAL, signin, signup, checkEmail, forgot, reset, desk, account, admin, dashboardGate, notFound };
+module.exports = { landing, contentPage, LEGAL, signin, signup, checkEmail, forgot, reset, desk, account, dashboardGate, notFound };

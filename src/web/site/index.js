@@ -15,6 +15,7 @@ const mail = require('./mail');
 const G = require('./google');
 const P = require('./pages');
 const LRN = require('./learn');
+const ADM = require('./admin');
 const { ASSETS, FAVICON, safeNext } = require('./html');
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
@@ -140,12 +141,8 @@ async function route(req, res, url, { dashboardHtml }) {
     case '/admin': {
       if (!who) { toSignin(res, '/admin'); return true; }
       if (!who.admin) { redirect(res, '/app'); return true; }
-      const [c, latest] = await Promise.all([
-        db.q(`SELECT count(*)::int AS users, count(*) FILTER (WHERE email_verified)::int AS verified,
-          count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week, count(google_sub)::int AS google FROM web_users`),
-        db.q(`SELECT name, email, email_verified, plan, banned, created_at FROM web_users ORDER BY created_at DESC LIMIT 25`),
-      ]);
-      html(res, n => P.admin(who, n, { counts: c.rows[0], latest: latest.rows, accountsOpen: accountsOpen() }));
+      const d = await ADM.adminData(db, url, accountsOpen());
+      html(res, n => ADM.adminConsole(who, n, d));
       return true;
     }
     case '/dashboard':
