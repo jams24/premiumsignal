@@ -1384,8 +1384,10 @@ function init() {
   renderHoursGrid();
   var saved = null;
   try { saved = localStorage.getItem('sc_key'); } catch(e) {}
-  if (saved) {
-    apiKey = saved;
+  // window.__RD_ADMIN: the page was served to a signed-in admin (src/web/site) — the session cookie authorises /api/*,
+  // so no key is needed; a saved key is still sent and still works on its own
+  if (saved || window.__RD_ADMIN) {
+    apiKey = saved || '';
     document.getElementById('setup-overlay').hidden = true;
     document.getElementById('main-app').hidden = false;
     updateSizingUI();
@@ -1448,6 +1450,11 @@ function resetConfig() {
   localStorage.removeItem('sc_key');
   apiKey = '';
   clearInterval(refreshInterval);
+  if (window.__RD_ADMIN) {   // signed in through the site: end that session too, back to the home page
+    fetch('/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .catch(function() {}).then(function() { location.href = '/'; });
+    return;
+  }
   document.getElementById('setup-overlay').hidden = false;
   document.getElementById('main-app').hidden = true;
 }

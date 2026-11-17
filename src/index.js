@@ -75,16 +75,25 @@ async function main() {
   const dashboardHtml = require('./dashboard');
   const simApi = require('./web/simApi');
   const tradeApi = require('./web/tradeApi');
+  // ReplayDesk: public landing page, accounts (paper only) and the admin sign-in in front of /dashboard (src/web/site).
+  // Loaded defensively: if it fails, the bot and the old key-gated dashboard run exactly as before.
+  let site = null;
+  try { site = require('./web/site'); site.init(); } catch (e) { logger.error(`[web] site not loaded: ${e.message}`); site = null; }
   const { SmcAlerts } = require('./collectors/smcAlerts');
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const key = (url.searchParams.get('key') || '').trim();
-    const authed = key && key === (process.env.DASHBOARD_KEY || '').trim();
+    let authed = key && key === (process.env.DASHBOARD_KEY || '').trim();
 
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ status: 'ok', dbReady, uptime: process.uptime() }));
     }
+
+    // site routes (/, /signin, /dashboard gate, /auth/*, /assets/*, …); false = not a site route, or accounts offline
+    if (site && await site.handle(req, res, url, { dashboardHtml })) return;
+    // a signed-in admin (admin account or dashboard-key session) may use /api/* without ?key= (cross-site POSTs refused)
+    if (!authed && site && url.pathname.startsWith('/api/')) authed = await site.isAdminRequest(req);
 
 
     if (url.pathname === '/' || url.pathname === '/dashboard') {
