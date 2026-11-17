@@ -1519,8 +1519,8 @@
   function fitTop() {
     fitQ = false;
     if (!topEl) return;
-    const ph = phone(), steps = ph ? ['p1', 'p2'] : ['t1', 't2', 't3', 't4', 't5'];
-    topEl.classList.remove('t1', 't2', 't3', 't4', 't5', 'p1', 'p2');
+    const ph = phone(), steps = ph ? ['p1', 'p2', 'p3'] : ['t1', 't2', 't3', 't4', 't5'];
+    topEl.classList.remove('t1', 't2', 't3', 't4', 't5', 'p1', 'p2', 'p3');
     for (const c of steps) { if (topEl.scrollWidth <= topEl.clientWidth + 1) break; topEl.classList.add(c); }
   }
   const fitSoon = () => { if (!fitQ) { fitQ = true; requestAnimationFrame(fitTop); } };

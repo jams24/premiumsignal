@@ -220,7 +220,9 @@
   .dk { grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr) calc(var(--tabbar) + env(safe-area-inset-bottom)); grid-template-areas: "top" "chart" "tabbar"; }
   .dk.full { grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr) calc(var(--tabbar) + env(safe-area-inset-bottom)); }
   .dk-top { gap: 4px; padding: 0 6px; }
-  .dk-tfs, .dk-ind, .dk-rbtn, .dk-rp, .dk-right [data-act="full"], .dk-vsep, .dk-mode span { display: none !important; }
+  .dk-tfs, .dk-rbtn, .dk-rp, .dk-right [data-act="full"], .dk-vsep, .dk-mode span, .dk-ind .dk-pill span { display: none !important; }
+  .dk-ind .dk-pill { padding: 0 8px; }
+  .dk-pop { position: fixed; left: 8px; right: 8px; top: 52px; width: auto; max-height: calc(100dvh - 150px); overflow-y: auto; overscroll-behavior: contain; }
   .dk-mode { width: 22px; padding: 0; justify-content: center; }
   .dk-tfsel { display: block; height: 32px; padding: 0 6px; font-family: var(--mono); font-weight: 600; }
   .dk-sym { padding: 0 8px; } .dk-sym .icon { display: none; }
@@ -641,7 +643,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
   .cc-head { cursor: default; touch-action: auto; }
   .cc-foot { padding: 6px 8px; } .cc-btn { height: 34px; }
 }
-@media (max-width: 899px) { .dk-top.p1 .dk-logo { display: none; } .dk-top.p2 .dk-mode { display: none; } }
+@media (max-width: 899px) { .dk-top.p1 .dk-logo { display: none; } .dk-top.p2 .dk-mode { display: none; } .dk-top.p3 .dk-smc { display: none; } }
 
 /* ---- Market panel (side tab, deskmkt.js): collapsible sections with a summary in each header ---- */
 .dk-mkpane { padding: 8px 10px 16px; }
