@@ -78,11 +78,17 @@
   new MutationObserver(() => {   // closed with Cancel, Esc or the backdrop: undo what the dialog was about (a dragged line)
     if (xm.hidden && XC && !XC.done && !XC.busy) { const c = XC; XC = null; if (c.cancel) c.cancel(); }
   }).observe(xm, { attributes: true, attributeFilter: ['hidden'] });
+  // the review's size row: typing waits a moment, Enter / leaving the field / a leverage chip asks the bot at once
+  xb.addEventListener('input', e => { if (e.target.closest('[data-xs]') && XC && XC.requoteSoon) XC.requoteSoon(); });
+  xb.addEventListener('change', e => { if (e.target.closest('[data-xs]') && XC && XC.requote) XC.requote(); });
+  xb.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest('[data-xs]')) { e.preventDefault(); e.stopPropagation(); if (XC && XC.requote) XC.requote(); } });
   xb.addEventListener('click', async e => {
     if (e.target.closest('[data-xno]')) { RD.closeModals(); return; }
     const pick = e.target.closest('[data-xpct]');
     if (pick && XC && XC.onPick) { $$('[data-xpct]', xb).forEach(b => b.classList.toggle('on', b === pick)); XC.onPick(+pick.dataset.xpct); return; }
-    const okb = e.target.closest('[data-xok]'); if (!okb || !XC || XC.busy) return;
+    const lv = e.target.closest('[data-xlev]');
+    if (lv && XC && XC.requote) { const li = xb.querySelector('[data-xs="lev"]'); if (li) li.value = lv.dataset.xlev; XC.requote(); return; }
+    const okb = e.target.closest('[data-xok]'); if (!okb || !XC || XC.busy || okb.disabled) return;
     const c = XC; c.busy = true; okb.disabled = true; okb.innerHTML = '<span class="spin-s"></span> Sending to the bot…';
     const err = xb.querySelector('[data-xerr]'); err.hidden = true;
     try {
@@ -429,22 +435,69 @@
     T.busy = false;
     if (r.webTrading != null) L.web = !!r.webTrading;
     const s = r.setup; Object.assign(T, { pv: s, pvKey: JSON.stringify(b), pvAt: Date.now(), pvErr: null, pvOpen: null }); renderT(); RD.syncLines();
-    const long = s.direction === 'long', liveM = s.mode === 'live', bad = (s.errors || []).length;
+    const long = s.direction === 'long', liveM = s.mode === 'live';
     const title = `${liveM ? 'Live' : "Bot's paper"} ${long ? 'long' : 'short'} ${esc(s.symbol)} <span class="xex">${esc(String(s.exchange || '').toUpperCase())}</span>`;
     const lead = `<p class="xlead">${liveM ? '<span class="rx-badge sm"><i></i>Real money</span> ' : ''}The bot will place exactly this order${liveM ? ' with your exchange account' : ''}:</p>`;
-    if (bad) { ask({ title, tone: 'down', html: lead + orderRows(s, true) + notes(s) + '<p class="xnote">Fix the problems above in the ticket, then review again.</p>' }); return; }
-    if (!L.web) {
-      ask({ title, tone: long ? 'up' : 'down', html: lead + orderRows(s, true) + notes(s) + `<p class="xnote">Web trading is off, so this desk can't place it. Send it to your Telegram /${s.direction} panel and tap ✅ there — or send <code>/webtrade on</code> first.</p>`,
-        ok: `${ic('send')} Send to Telegram`, run: () => sendPanel(b) });
-      return;
-    }
-    ask({ title, tone: long ? 'up' : 'down', html: lead + orderRows(s, true) + notes(s), ok: `Place ${liveM ? 'LIVE' : 'paper'} ${long ? 'long' : 'short'} · max loss ${money(+s.maxLoss)}`,
+    // cur = what the dialog shows and what Place sends: always the same body the bot last priced. Changing the margin or
+    // leverage here asks the bot again; Place stays locked until the new exact order is on screen.
+    const cur = { b, s, gen: 0, stale: false };
+    const placeLbl = x => `Place ${x.mode === 'live' ? 'LIVE' : 'paper'} ${long ? 'long' : 'short'} · max loss ${money(+x.maxLoss)}`;
+    const okLbl = x => ((x.errors || []).length ? 'Fix the problems above first' : !L.web ? `${ic('send')} Send to Telegram` : placeLbl(x));
+    const tail = x => notes(x) + ((x.errors || []).length ? '<p class="xnote">Change the size above, or fix it in the ticket and review again.</p>'
+      : !L.web ? `<p class="xnote">Web trading is off, so this desk can't place it. Send it to your Telegram /${x.direction} panel and tap ✅ there — or send <code>/webtrade on</code> first.</p>` : '');
+    const levs = [2, 3, 5, 10, 20];
+    const sizeRow = x => `<div class="xsize" data-xsize><label>Margin<span class="xin"><i>$</i><input inputmode="decimal" autocomplete="off" data-xs="margin" value="${+x.margin || ''}" aria-label="Margin in dollars"></span></label>` +
+      `<label>Leverage<span class="xin"><input inputmode="numeric" autocomplete="off" data-xs="lev" value="${+x.leverage || ''}" aria-label="Leverage"><i>×</i></span></label>` +
+      `<span class="xlevs" role="group" aria-label="Leverage">${levs.map(l => `<button type="button" data-xlev="${l}"${+x.leverage === l ? ' class="on"' : ''}>${l}×</button>`).join('')}</span>` +
+      `<p class="xsnote" data-xsnote>Change the size here — the bot works the exact order out again before you can place it.</p></div>`;
+    const ctx = {
+      title, tone: long ? 'up' : 'down', html: lead + sizeRow(s) + `<div class="xrows" data-xrows>${orderRows(s, true)}${tail(s)}</div>`, ok: okLbl(s),
       run: async () => {
-        const res = await write('/api/trade/open', b, 60000);
+        if (cur.stale) throw new Error('The size changed — wait for the new order.');
+        const body = cur.b, x = cur.s;
+        if ((x.errors || []).length) throw new Error((x.errors || [])[0]);
+        if (!L.web) return sendPanel(body);
+        const res = await write('/api/trade/open', body, 60000);
         return res.kind === 'limit' ? `Limit order #${res.id} placed${res.onBook ? ' on the exchange order book' : ''}. The bot sets the stop and TPs when it fills.`
-          : `${long ? 'Long' : 'Short'} ${s.symbol} opened at ${fmtP(res.entry)} with its stop and TPs.`;
+          : `${long ? 'Long' : 'Short'} ${x.symbol} opened at ${fmtP(res.entry)} with its stop and TPs.`;
       },
-      after: () => { for (const n of ['limit', 'stop', 'tp']) F(n).value = ''; T.entry = 'market'; T.tp = 'plan'; T.pv = null; renderT(); RD.syncLines(); poll(true); RD.setBTab('real'); } });
+      after: () => { if (!L.web) return; for (const n of ['limit', 'stop', 'tp']) F(n).value = ''; T.entry = 'market'; T.tp = 'plan'; T.pv = null; renderT(); RD.syncLines(); poll(true); RD.setBTab('real'); },
+    };
+    ask(ctx);
+    const okb = () => xb.querySelector('[data-xok]'), sNote = () => xb.querySelector('[data-xsnote]');
+    const lockOk = (txt, on) => { const k = okb(); if (!k) return; k.disabled = on; k.innerHTML = txt; ctx.ok = txt; };
+    if ((s.errors || []).length) lockOk(okLbl(s), true);
+    let qT = null;
+    async function requote() {
+      clearTimeout(qT);
+      if (XC !== ctx || ctx.busy) return;
+      const mi = xb.querySelector('[data-xs="margin"]'), li = xb.querySelector('[data-xs="lev"]');
+      const m = num(mi.value), l = num(li.value);
+      const bad = !(m > 0) || m > 100000 ? 'Margin must be a positive number of dollars.' : !(l >= 1 && l <= 125) ? 'Leverage must be 1–125.' : '';
+      mi.classList.toggle('bad', !(m > 0) || m > 100000); li.classList.toggle('bad', !(l >= 1 && l <= 125));
+      $$('[data-xlev]', xb).forEach(btn => btn.classList.toggle('on', +btn.dataset.xlev === Math.round(l)));
+      if (bad) { cur.stale = true; sNote().className = 'xsnote xbad'; sNote().textContent = bad; lockOk(okLbl(cur.s), true); return; }
+      const nb = Object.assign({}, cur.b, { margin: m, leverage: Math.round(l) });
+      if (JSON.stringify(nb) === JSON.stringify(cur.b)) { cur.stale = false; sNote().className = 'xsnote'; sNote().textContent = 'Change the size here — the bot works the exact order out again before you can place it.'; lockOk(okLbl(cur.s), !!(cur.s.errors || []).length); return; }
+      const g = ++cur.gen; cur.stale = true;
+      lockOk('<span class="spin-s"></span> Asking the bot for the new order…', true);
+      sNote().className = 'xsnote'; sNote().textContent = `${money(m)} × ${Math.round(l)}× — asking the bot…`;
+      let r2;
+      try { r2 = await call('/api/trade/preview', nb); } catch (e) {
+        if (g !== cur.gen || XC !== ctx) return;
+        sNote().className = 'xsnote xbad'; sNote().textContent = 'The bot did not accept it: ' + e.message; lockOk(okLbl(cur.s), true); return;
+      }
+      if (g !== cur.gen || XC !== ctx) return;
+      const x = r2.setup; cur.b = nb; cur.s = x; cur.stale = false;
+      if (r2.webTrading != null) L.web = !!r2.webTrading;
+      xb.querySelector('[data-xrows]').innerHTML = orderRows(x, true) + tail(x);
+      sNote().className = 'xsnote ok'; sNote().textContent = `Updated: ${money(+x.margin)} × ${x.leverage}× = ${money(+x.posSize)} position · max loss ${money(+x.maxLoss)}. The ticket has this size too.`;
+      lockOk(okLbl(x), !!(x.errors || []).length);
+      F('margin').value = String(m); F('lev').value = String(Math.round(l));   // the ticket follows what you set here
+      Object.assign(T, { pv: x, pvKey: JSON.stringify(body()), pvAt: Date.now(), pvErr: null, pvOpen: null }); renderT(); RD.syncLines();
+    }
+    ctx.requote = requote;
+    ctx.requoteSoon = () => { if (ctx.busy) return; clearTimeout(qT); cur.stale = true; lockOk('Waiting for you to finish typing…', true); qT = setTimeout(requote, 600); };
   }
   async function sendPanel(b) {
     const r = await write('/api/trade/panel', b);
@@ -471,6 +524,7 @@
   const openReal = () => { if (phone()) RD.openSheet('real'); else RD.sideTab('real'); };
   const needWeb = f => () => { if (!L.web) { RD.toast(offTitle, 'down'); return; } f(); };
   RD.ext.realActive = () => !$('[data-pane="real"]').hidden;
+  RD.ext.realSize = () => ({ margin: val('margin') > 0 ? val('margin') : null, lev: val('lev') > 0 ? Math.round(val('lev')) : null });
   RD.ext.quickReal = q => {
     if (RD.R.on) { RD.toast('Real trading is on the live chart: exit the replay first.', 'down'); return; }
     if (q.keep) {   // Real Buy / Sell on the chart: the ticket as it is, at market, on that side
@@ -479,6 +533,8 @@
     } else {
       T.side = q.side; T.entry = q.kind === 'market' ? 'market' : 'limit';
       F('limit').value = q.entry ? RD.util.rt(q.entry) : ''; F('stop').value = q.sl ? q.sl : ''; F('tp').value = q.tp ? q.tp : ''; T.tp = q.tp ? 'price' : 'plan';
+      if ('margin' in q) F('margin').value = q.margin > 0 ? String(q.margin) : '';   // the plan bar's size (blank = saved)
+      if ('lev' in q) F('lev').value = q.lev > 0 ? String(q.lev) : '';
     }
     Object.assign(T, { pv: null, pvErr: null, pvOpen: null });
     openReal(); renderT(); RD.syncLines();
@@ -513,7 +569,7 @@
     }
     if (!items.length) {   // a new real order: the bot places limit entries — a long below the price, a short above it
       const side = ctx.below ? 'long' : 'short';
-      items.push(ctx.item(`⚡ Real ${side} limit from ${fp(v)}`, 'then click the stop and TP1 — you review it before it is placed', () => RD.qStart(v, true), { icon: 'zap', tone: ctx.below ? 'up' : 'down' }));
+      if (!ctx.realFirst) items.push(ctx.item(`⚡ Real ${side} limit from ${fp(v)}`, 'then click the stop and TP1 — you review it before it is placed', () => RD.qStart(v, true), { icon: 'zap', tone: ctx.below ? 'up' : 'down' }));
       items.push(ctx.item(`Real ticket: ${side} limit at ${fp(v)}`, 'fill the ticket, set the rest there', () => { T.side = side; T.entry = 'limit'; F('stop').value = ''; F('tp').value = ''; setF('limit', v); RD.syncLines(); openReal(); }, { icon: 'crosshair' }));
       const e0 = refPx(), okS = e0 && (T.side === 'long' ? v < e0 : v > e0), okT = e0 && (T.side === 'long' ? v > e0 : v < e0);
       if (okS) items.push(ctx.item(`Real ticket: stop at ${fp(v)}`, `${T.side} ticket`, () => { setF('stop', v); RD.syncLines(); openReal(); }, { icon: 'shield' }));

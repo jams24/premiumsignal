@@ -34,7 +34,7 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
   const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false,
-    magnet: false, bmin: false, margin: 100, lev: 10, qt: true, bh: 0 }, store.get('rd-ui-v1', {}));
+    magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
   const saveUI = () => store.set('rd-ui-v1', U);
@@ -42,10 +42,10 @@
   // and listens to these events: sym (coin changed), mode (live ⇄ replay), tick (prices / clock moved), pane (side tab),
   // load (a new chart is on: coin, timeframe or replay start). menu: sections for the chart's trade menu; quickReal: takes a
   // real order planned on the chart to its review dialog; realActive: true while the Real ticket is the one in use.
-  const X = { lines: [], marks: [], bottom: {}, ev: {}, menu: [], quickReal: null, realActive: null };
+  const X = { lines: [], marks: [], bottom: {}, ev: {}, menu: [], quickReal: null, realActive: null, realSize: null };
   const emit = (n, a) => { for (const f of X.ev[n] || []) { try { f(a); } catch (e) { console.error(e); } } };
   // ⚡ plan on the chart: entry → stop → target, then confirm (paper, or the admin's real review)
-  const Q = { on: false, stage: '', entry: null, sl: null, tp: null, mkt: false, real: false, margin: null, lev: null, el: null };
+  const Q = { on: false, stage: '', side: 0, entry: null, sl: null, tp: null, mkt: false, real: false, margin: null, lev: null, el: null };
 
   let PREC = 2, TICK = 0.01;
   const fp = (p, d = PREC) => p == null || !isFinite(p) ? '—' : (+p).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -701,7 +701,7 @@
     }
     if (Q.on) {   // the ⚡ plan being set up on the chart: drag any of its lines to adjust
       const qd = (k, f, v, color, title) => W.push({ key: 'q' + k, price: v, color, style: LS.Solid, w: 2, title, drag: { set: x => { Q[f] = x; qRender(); }, ok: () => true, ticket: true } });
-      if (!Q.mkt) qd('e', 'entry', Q.entry, COL.warn, '⚡ ENTRY');
+      if (!Q.mkt && Q.entry != null) qd('e', 'entry', Q.entry, COL.warn, Q.side ? `⚡ ${Q.side === 1 ? 'BUY' : 'SELL'} ${qKind().toUpperCase()}` : '⚡ ENTRY');
       if (Q.sl != null) qd('s', 'sl', Q.sl, COL.down, '⚡ STOP');
       if (Q.tp != null) qd('t', 'tp', Q.tp, COL.up, '⚡ TARGET');
     }
@@ -875,7 +875,8 @@
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const { x, y } = loc(e);
     if (!inPane(x, y)) return;
-    if (MEASURE && TOOL !== 'measure') { MEASURE = null; prim.req(); }
+    const hadMeasure = !!MEASURE && TOOL !== 'measure';
+    if (hadMeasure) { MEASURE = null; prim.req(); }
     if (PICK) { PD = { kind: 'pick', x, y }; return; }
     if (TWO.has(TOOL) || ONE.has(TOOL)) {
       e.stopPropagation(); e.preventDefault();
@@ -894,7 +895,11 @@
       PD = { kind: 'drawing', h: H.h, d: H.d, t0: x2t(x), p0: y2p(y), orig: H.d.pts.map(q => Object.assign({}, q)) };
       return;
     }
+    const desel = !!SEL;
     if (SEL) { SEL = null; selUI(); prim.req(); }
+    // a plain click / tap on the candles opens the trade menu at that price (on release, if the pointer stayed put) —
+    // not when the click only closed a menu, dropped a selection or cleared a measurement
+    if (TOOL === 'cursor' || TOOL === 'cross') PD = { kind: 'tap', x, y, at: Date.now(), skip: desel || hadMeasure || Date.now() - MN.closed < 400 };
   }, true);
   window.addEventListener('pointermove', e => {
     const { x, y } = loc(e);
@@ -922,6 +927,10 @@
     if (!PD) return;
     const pd = PD; PD = null;
     if (pd.kind === 'pick') { if (Math.hypot(x - pd.x, y - pd.y) < 6) doPick(x, y); return; }
+    if (pd.kind === 'tap') {
+      if (!pd.skip && Math.hypot(x - pd.x, y - pd.y) < 5 && Date.now() - pd.at < 600 && Date.now() - LP.at > 900 && !PICK && !DRAFT && !MN.el && inPane(x, y)) menuOpen(x, y, snapAt(x, y));
+      return;
+    }
     if (pd.kind === 'line' && DRAG) {
       lock(TWO.has(TOOL) || ONE.has(TOOL));
       const w = DRAG.e.w, v = DRAG.price; DRAG = null;
@@ -951,9 +960,38 @@
     ltip.style.left = Math.max(6, Math.min(W - w - 6, x + 18 + w > W - 70 ? x - w - 18 : x + 18)) + 'px';
     ltip.style.top = Math.max(6, yy - h - 10 < 6 ? yy + 12 : yy - h - 10) + 'px';
   }
-  box.addEventListener('pointerleave', () => { ltip.hidden = true; });
+  // while you pick a price on the chart: a line follows the pointer and says what it will be (BUY LIMIT 0.7254 −1.6%),
+  // greyed out with the reason when that price can't be used
+  const GH = document.createElement('div');
+  GH.className = 'dk-ghost'; GH.hidden = true; GH.setAttribute('aria-hidden', 'true'); GH.innerHTML = '<span></span>';
+  $('.dk-chart').appendChild(GH);
+  function ghostAt(x, y) {
+    if (!PICK || PICK.kind === 'replay' || x == null || !inPane(x, y) || !S.lastPx) { GH.hidden = true; return; }
+    const sp = snapAt(x, y); if (!sp) { GH.hidden = true; return; }
+    const v = sp.p, yy = p2y(v); if (yy == null) { GH.hidden = true; return; }
+    const px = S.lastPx, f = PICK.field, from = (a, b) => pct((a / b - 1) * 100);
+    let lab, tone = '', bad = '';
+    if (f === 'q-entry') {
+      const s = Q.side, k = Q.real ? 'limit' : s === 1 ? (v < px ? 'limit' : 'stop') : (v > px ? 'limit' : 'stop');
+      lab = `${s === 1 ? 'BUY' : 'SELL'} ${k.toUpperCase()} ${fp(v)} · ${from(v, px)}`; tone = s === 1 ? 'up' : 'down';
+      bad = qEntryBad(v) ? (Q.real ? `must be ${s === 1 ? 'below' : 'above'} the price` : 'at the price') : '';
+    } else if (f === 'q-sl') {
+      const e = qEntry(), s = Q.side || (v < e ? 1 : -1);
+      lab = `STOP ${fp(v)} · ${from(v, e)}${Q.side ? '' : s === 1 ? ' · long' : ' · short'}`; tone = 'down';
+      if (Q.side && !okFor(Q.side, e, v, true)) bad = `${Q.side === 1 ? 'below' : 'above'} the entry`;
+    } else if (f === 'q-tp') {
+      const e = qEntry(), r = Q.sl != null ? Math.abs(v - e) / Math.abs(e - Q.sl) : null;
+      lab = `TARGET ${fp(v)} · ${from(v, e)}${r ? ' · ' + r.toFixed(2) + 'R' : ''}`; tone = 'up';
+      if (!okFor(qSide(), e, v, false)) bad = `${qSide() === 1 ? 'above' : 'below'} the entry`;
+    } else lab = `${String(PICK.label || { price: 'limit price', sl: 'stop', tp: 'target' }[f] || 'price').toUpperCase()} ${fp(v)} · ${from(v, px)}`;
+    GH.className = 'dk-ghost' + (tone ? ' ' + tone : '') + (bad ? ' bad' : '');
+    GH.firstChild.textContent = bad ? `${lab} — ${bad}` : lab;
+    GH.style.left = box.offsetLeft + 'px'; GH.style.width = paneW() + 'px'; GH.style.top = (box.offsetTop + yy) + 'px';
+    GH.hidden = false;
+  }
+  box.addEventListener('pointerleave', () => { ltip.hidden = true; GH.hidden = true; });
   function hover(x, y) {
-    lineTip(x, y); plusAt(x, y);
+    lineTip(x, y); plusAt(x, y); ghostAt(x, y);
     let c = '';
     if (PICK) c = 'c-pick';
     else if (TWO.has(TOOL) || ONE.has(TOOL)) c = 'c-draw';
@@ -995,12 +1033,12 @@
   // pick a price for the ticket, or a candle to start the replay from
   // cb (admin layer): the picked price goes to cb instead of the paper ticket; field names the button that lights up
   function startPick(kind, field, cb, label, quiet) {
-    PICK = { kind, field, cb };
+    PICK = { kind, field, cb, label };
     if (phone()) closeSheets();
     if (!quiet) hint(kind === 'replay' ? 'Scroll back and click the candle where the replay should start' : `Click the chart to set the ${label || { price: 'limit price', sl: 'stop', tp: 'target' }[field]}`, [['Cancel', clearPick]]);
     $$('.pick').forEach(b => b.classList.toggle('on', (b.dataset.pickF || b.dataset.pickX) === field));
   }
-  function clearPick() { PICK = null; $$('.pick').forEach(b => b.classList.remove('on')); hint(); box.className = 'dk-canvas'; }
+  function clearPick() { PICK = null; $$('.pick').forEach(b => b.classList.remove('on')); hint(); box.className = 'dk-canvas'; GH.hidden = true; }
   function doPick(x, y) {
     const pk = PICK; clearPick();
     if (pk.kind === 'replay') { const t = x2t(x); if (t != null) enterReplay(t); return; }
@@ -1058,14 +1096,14 @@
   }
 
   // ---- the menu
-  const MN = { el: null, acts: [], at: 0 };
+  const MN = { el: null, acts: [], at: 0, closed: 0 };
   function menuClose() { if (MN.el) { MN.el.remove(); MN.el = null; MN.acts = []; } }
   function menuOpen(x, y, sp) {
     menuClose(); plus.hidden = true; ltip.hidden = true;
     if (!sp || !S.lastPx) return;
     const v = sp.p, px = S.lastPx, below = v < px, md = mode(), t = readT(), acts = [];
     const sz = t.margin > 0 ? `${money(t.margin)} × ${t.lev}×` : 'set a margin';
-    const item = (label, sub, run, o = {}) => { acts.push(run); return `<button type="button" role="menuitem" class="mi${o.tone ? ' ' + o.tone : ''}" data-mi="${acts.length - 1}"${o.dis ? ' disabled' : ''}>${o.icon ? ic(o.icon) : '<i class="mi-i"></i>'}<span>${label}</span>${sub ? `<em>${sub}</em>` : ''}</button>`; };
+    const item = (label, sub, run, o = {}) => { acts.push(run); return `<button type="button" role="menuitem" class="mi${o.tone ? ' ' + o.tone : ''}${o.cls ? ' ' + o.cls : ''}" data-mi="${acts.length - 1}"${o.dis ? ' disabled' : ''}>${o.icon ? ic(o.icon) : '<i class="mi-i"></i>'}<span>${label}</span>${sub ? `<em>${sub}</em>` : ''}</button>`; };
     const chips = (label, list, o = {}) => `<div class="mi-chips${o.tone ? ' ' + o.tone : ''}">${o.icon ? ic(o.icon) : '<i class="mi-i"></i>'}<span>${label}</span><span class="mi-cr">${list.map(([t, run]) => { acts.push(run); return `<button type="button" class="mi-c" data-mi="${acts.length - 1}"${o.dis ? ' disabled' : ''}>${t}</button>`; }).join('')}</span></div>`;
     const sec = (head, items, cls) => (items.filter(Boolean).length ? `<div class="tm-sec${cls ? ' ' + cls : ''}">${head ? `<p class="tm-h2">${head}</p>` : ''}${items.filter(Boolean).join('')}</div>` : '');
     const withTk = side => ({ sl: okFor(side, v, t.sl, true) ? t.sl : null, tp: okFor(side, v, t.tp, false) ? t.tp : null });
@@ -1087,28 +1125,31 @@
       if (ok) mine.push(item(`Move the ${nm} to ${fp(v)}`, '', () => { o.price = v; changed(); toast(`Order moved to ${fp(v)}.`); }, { icon: 'crosshair' }));
       mine.push(item('Cancel the order', '', () => { A.ord = A.ord.filter(q => q !== o); changed(); toast('Order cancelled.'); }, { icon: 'circle-x', tone: 'down' }));
     }
-    const paper = sec(`Paper${R.on ? ' · replay' : ''} <span class="tm-sz">${sz}</span>`, [
+    // ⚡ first, like the classic chart: entry here → click the stop → click the target. Real when the Real ticket is the
+    // one in use (you review the bot's exact order before anything is placed), paper otherwise.
+    const realFirst = realOn(), busy = realFirst && X.realBusy ? X.realBusy() : '';
+    const plan = sec(`New order at ${fp(v)}${realFirst ? ' · <span class="down">real money</span>' : R.on ? ' · replay' : ''}<span class="tm-sz">${realFirst ? 'size: Real ticket' : sz}</span>`, [
+      item('⚡ Entry here → stop → target', busy ? `${busy} — one real trade per coin` : realFirst ? `then click your stop (${below ? 'below = long' : 'above = short'}) and target · you review the bot's order, then Place`
+        : 'then click your stop and target on the chart: below the entry = long, above = short', () => qStart(v, realFirst), { icon: 'zap', tone: 'warn', cls: 'mi-main', dis: !!busy }),
+    ], 'tm-new');
+    const paper = sec(`Paper${R.on ? ' · replay' : ''} · one click${realFirst ? ` <span class="tm-sz">${sz}</span>` : ''}`, [
       below ? item(`Buy limit ${fp(v)}`, tkNote(1) || 'long when price dips here', order(1, 'limit'), { icon: 'arrow-up-right', tone: 'up' })
         : item(`Sell limit ${fp(v)}`, tkNote(-1) || 'short when price rises here', order(-1, 'limit'), { icon: 'arrow-down-right', tone: 'down' }),
       below ? item(`Sell stop ${fp(v)}`, tkNote(-1) || 'short if price falls to here', order(-1, 'stop'), { icon: 'arrow-down-right', tone: 'down' })
         : item(`Buy stop ${fp(v)}`, tkNote(1) || 'long if price breaks up to here', order(1, 'stop'), { icon: 'arrow-up-right', tone: 'up' }),
-      item('⚡ Plan a trade from this entry', 'then click the stop and the target', () => qStart(v, false), { icon: 'zap' }),
     ]);
-    const ctx = { price: v, px, below, sym: U.sym, ex: U.ex, replay: R.on, item, chips, sec };
+    const ctx = { price: v, px, below, sym: U.sym, ex: U.ex, replay: R.on, realFirst, item, chips, sec };
     const ext = [];
     for (const f of X.menu) { try { const s = f(ctx); if (s) ext.push(s); } catch (e) { console.error(e); } }
-    const tools = sec('Trade panel · chart', [
-      item('Use as the limit price', '', () => { T.type = 'limit'; fld('price').value = v; renderTicket(); syncLines(); showTicket(); }, { icon: 'crosshair' }),
-      item('Use as the stop loss', '', () => { fld('sl').value = v; renderTicket(); syncLines(); showTicket(); }, { icon: 'shield' }),
-      item('Use as the take profit', '', () => { fld('tp').value = v; renderTicket(); syncLines(); showTicket(); }, { icon: 'target' }),
-      item('Horizontal line here', '', () => addDrawing({ type: 'hline', pts: [{ t: sp.t != null ? sp.t : lastBar()[0], p: v }] }), { icon: 'minus' }),
-      item('Copy the price', '', () => copyPrice(v)),
+    const tools = sec('', [
+      chips('Paper ticket:', [['Limit', () => { T.type = 'limit'; fld('price').value = v; renderTicket(); syncLines(); showTicket(); }],
+        ['Stop', () => { fld('sl').value = v; renderTicket(); syncLines(); showTicket(); }], ['Target', () => { fld('tp').value = v; renderTicket(); syncLines(); showTicket(); }]], { icon: 'crosshair' }),
+      chips('Chart:', [['Line', () => addDrawing({ type: 'hline', pts: [{ t: sp.t != null ? sp.t : lastBar()[0], p: v }] })], ['Copy', () => copyPrice(v)]], { icon: 'minus' }),
     ], 'tm-tools');
-    const realFirst = realOn();
     const el = document.createElement('div');
     el.className = 'dk-tmenu'; el.setAttribute('role', 'menu'); el.setAttribute('aria-label', 'Trade at ' + fp(v));
-    el.innerHTML = `<div class="tm-head"><b class="mono">${fp(v)}</b><span>${pct((v / px - 1) * 100)} from the price · ${esc(sp.what)}</span></div>` +
-      (mine.length ? `<div class="tm-sec">${mine.join('')}</div>` : '') + (realFirst ? ext.join('') + paper : paper + ext.join('')) + tools;
+    el.innerHTML = `<div class="tm-head"><b class="mono">${fp(v)}</b><span>${pct((v / px - 1) * 100)} from the price · ${esc(sp.what)}</span><button type="button" class="tm-x" data-mx aria-label="Close">${ic('x')}</button></div>` +
+      (mine.length ? `<div class="tm-sec">${mine.join('')}</div>` : '') + plan + (realFirst ? ext.join('') + paper : paper + ext.join('')) + tools;
     MN.acts = acts; MN.el = el; MN.at = Date.now();
     chartEl.appendChild(el);
     const W = chartEl.clientWidth, H = chartEl.clientHeight, w = el.offsetWidth, h = el.offsetHeight, ox = box.offsetLeft, oy = box.offsetTop;
@@ -1117,7 +1158,7 @@
     if (ly + h > H - 6) ly = Math.max(6, H - h - 6);
     el.style.left = lx + 'px'; el.style.top = ly + 'px';
     const first = el.querySelector('.mi:not([disabled]), .mi-c:not([disabled])'); if (first) first.focus({ preventScroll: true });
-    el.addEventListener('click', e => { const b = e.target.closest('[data-mi]'); if (!b || b.disabled) return; const f = MN.acts[+b.dataset.mi]; menuClose(); if (f) f(); });
+    el.addEventListener('click', e => { if (e.target.closest('[data-mx]')) { menuClose(); return; } const b = e.target.closest('[data-mi]'); if (!b || b.disabled) return; const f = MN.acts[+b.dataset.mi]; menuClose(); if (f) f(); });
     el.addEventListener('keydown', e => {
       const items = $$('.mi:not([disabled]), .mi-c:not([disabled])', el), i = items.indexOf(document.activeElement);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]; if (n) n.focus(); }
@@ -1125,7 +1166,7 @@
     });
   }
   function showTicket() { if (phone()) openSheet('trade'); else sideTab('trade'); }
-  document.addEventListener('pointerdown', e => { if (MN.el && !MN.el.contains(e.target)) menuClose(); }, true);
+  document.addEventListener('pointerdown', e => { if (MN.el && !MN.el.contains(e.target)) { menuClose(); MN.closed = Date.now(); } }, true);
   box.addEventListener('contextmenu', e => {
     const { x, y } = loc(e); if (!inPane(x, y)) return;
     e.preventDefault();
@@ -1136,7 +1177,7 @@
   });
   // a long press on a touch screen (iOS has no contextmenu)
   const LP = { t: null, x: 0, y: 0, at: 0 };
-  function lpStart(x, y) { lpStop(); Object.assign(LP, { x, y, t: setTimeout(() => { LP.t = null; if (PD && PD.kind) return; LP.at = Date.now(); menuOpen(LP.x, LP.y, snapAt(LP.x, LP.y)); try { navigator.vibrate && navigator.vibrate(10); } catch (e) { /* none */ } }, 550) }); }
+  function lpStart(x, y) { lpStop(); Object.assign(LP, { x, y, t: setTimeout(() => { LP.t = null; if (PD && PD.kind && PD.kind !== 'tap') return; LP.at = Date.now(); menuOpen(LP.x, LP.y, snapAt(LP.x, LP.y)); try { navigator.vibrate && navigator.vibrate(10); } catch (e) { /* none */ } }, 550) }); }
   function lpStop() { if (LP.t) { clearTimeout(LP.t); LP.t = null; } }
   box.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse' && !PICK && !DRAFT && (TOOL === 'cursor' || TOOL === 'cross')) { const { x, y } = loc(e); if (inPane(x, y)) lpStart(x, y); } });
   window.addEventListener('pointermove', e => { if (LP.t) { const { x, y } = loc(e); if (Math.hypot(x - LP.x, y - LP.y) > 8) lpStop(); } }, true);
@@ -1160,26 +1201,48 @@
   chartEl.addEventListener('pointerleave', () => { plus.hidden = true; });
 
   // ---- ⚡ plan: entry → stop → target, then confirm
+  // Started from a price (the menu): the side follows the stop — below the entry = long. Started from the chart's Buy / Sell
+  // in Limit mode (qStartSide): the side is fixed and the first click on the chart is the entry.
   const qEntry = () => (Q.mkt ? S.lastPx : Q.entry);
-  const qSide = () => (Q.sl != null && Q.sl < qEntry() ? 1 : -1);
+  const qSide = () => Q.side || (Q.sl != null && Q.sl < qEntry() ? 1 : -1);
   const qKind = () => { if (Q.mkt) return 'market'; const px = S.lastPx, s = qSide(); return s === 1 ? (Q.entry < px ? 'limit' : 'stop') : (Q.entry > px ? 'limit' : 'stop'); };
   function qStart(v, real) {
     qEnd(); menuClose();
     if (!S.lastPx) return;
     const t = readT();
-    Object.assign(Q, { on: true, stage: 'sl', entry: v, sl: null, tp: null, mkt: false, real: !!real && !!X.quickReal && !R.on, margin: t.margin > 0 ? t.margin : U.margin, lev: t.lev || U.lev });
+    Object.assign(Q, { on: true, stage: 'sl', side: 0, entry: v, sl: null, tp: null, mkt: false, real: !!real && !!X.quickReal && !R.on, margin: t.margin > 0 ? t.margin : U.margin, lev: t.lev || U.lev });
+    if (Q.real) qRealSize();
     qPick(); qRender(); syncLines();
     if (phone()) closeSheets();
   }
+  // a real plan starts from the Real ticket's margin × leverage (blank = the saved /long · /short size)
+  function qRealSize() { const rs = X.realSize ? X.realSize() : {}; Q.margin = rs.margin || null; Q.lev = rs.lev || null; }
+  function qStartSide(side, real) {
+    qEnd(); menuClose();
+    if (!S.lastPx) return;
+    const t = readT();
+    Object.assign(Q, { on: true, stage: 'entry', side, entry: null, sl: null, tp: null, mkt: false, real: !!real && !!X.quickReal && !R.on, margin: t.margin > 0 ? t.margin : U.margin, lev: t.lev || U.lev });
+    if (Q.real) qRealSize();
+    qPick(); qRender(); syncLines(); qtUI();
+    if (phone()) closeSheets();
+  }
+  // where a limit entry for this side may go: a real one only on the limit side (the bot places limit entries only)
+  const qEntryBad = v => { const px = S.lastPx; if (!px || !Q.side) return ''; if (Math.abs(v / px - 1) < 2e-4) return 'That is the price now — click away from it, or use Market now.';
+    if (Q.real && (Q.side === 1 ? v >= px : v <= px)) return `A real ${Q.side === 1 ? 'buy' : 'sell'} limit goes ${Q.side === 1 ? 'below' : 'above'} the price now (${fp(px)}) — the bot places limit entries only. Or use Market now.`; return ''; };
   function qPick() {
-    if (Q.stage === 'sl') startPick('field', 'q-sl', w => qSet('sl', w), 'stop', true);
+    if (Q.stage === 'entry') startPick('field', 'q-entry', w => qSet('entry', w), 'entry', true);
+    else if (Q.stage === 'sl') startPick('field', 'q-sl', w => qSet('sl', w), 'stop', true);
     else if (Q.stage === 'tp') startPick('field', 'q-tp', w => qSet('tp', w), 'target', true);
     else if (PICK && /^q-/.test(PICK.field || '')) clearPick();
   }
   function qSet(k, v) {
     if (!Q.on) return;
-    if (k === 'sl') {
-      if (Math.abs(v / qEntry() - 1) < 1e-4) { toast('That is the entry itself: click below it for a long, above it for a short.', 'down'); return qPick(); }
+    if (k === 'entry') {
+      const bad = qEntryBad(v); if (bad) { toast(bad, 'down'); return qPick(); }
+      Q.entry = v; Q.stage = 'sl';
+    } else if (k === 'sl') {
+      if (Math.abs(v / qEntry() - 1) < 1e-4) { toast(Q.side ? `That is the entry itself: the stop goes ${Q.side === 1 ? 'below' : 'above'} it.` : 'That is the entry itself: click below it for a long, above it for a short.', 'down'); return qPick(); }
+      if (Q.side && !okFor(Q.side, qEntry(), v, true)) { toast(`The stop of a ${Q.side === 1 ? 'long' : 'short'} goes ${Q.side === 1 ? 'below' : 'above'} the entry (${fp(qEntry())}).`, 'down'); return qPick(); }
       Q.sl = v;
       if (Q.tp != null && !okFor(qSide(), qEntry(), Q.tp, false)) Q.tp = null;
       Q.stage = Q.tp != null ? 'ask' : 'tp';
@@ -1191,10 +1254,10 @@
   }
   function qEnd() {
     if (!Q.on) return;
-    Q.on = false; Q.stage = '';
+    Q.on = false; Q.stage = ''; Q.side = 0;
     if (Q.el) { Q.el.remove(); Q.el = null; }
     if (PICK && /^q-/.test(PICK.field || '')) clearPick();
-    syncLines();
+    syncLines(); qtUI();
   }
   function qOrder() { return { side: qSide(), kind: qKind(), price: qEntry(), sl: Q.sl, tp: Q.tp, margin: Q.margin, lev: Q.lev }; }
   function qRender() {
@@ -1203,23 +1266,26 @@
       Q.el = document.createElement('div'); Q.el.className = 'dk-qbar'; Q.el.setAttribute('role', 'dialog'); Q.el.setAttribute('aria-label', 'Plan a trade');
       chartEl.appendChild(Q.el);
       Q.el.addEventListener('click', qClick);
-      Q.el.addEventListener('input', e => { const f = e.target.dataset.qf; if (!f) return; const n = num(e.target.value); Q[f] = f === 'lev' ? Math.max(1, Math.min(125, Math.round(n) || 1)) : n; qRead(); });
+      Q.el.addEventListener('input', e => { const f = e.target.dataset.qf; if (!f) return; const n = num(e.target.value); Q[f] = n == null && Q.real ? null : f === 'lev' ? Math.max(1, Math.min(125, Math.round(n) || 1)) : n; qRead(); });
       Q.el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.qf) { e.preventDefault(); const b = Q.el.querySelector('[data-q="go"]'); if (b && !b.disabled) b.click(); } });
     }
-    const s = Q.sl != null ? qSide() : 0, kind = Q.sl != null ? qKind() : (Q.mkt ? 'market' : '');
+    const s = Q.side || (Q.sl != null ? qSide() : 0), hasE = Q.mkt || Q.entry != null;
+    const kind = Q.mkt ? 'market' : s && hasE ? qKind() : Q.side ? (Q.real ? 'limit' : 'order') : '';
     const kName = s ? `${s === 1 ? 'Buy' : 'Sell'} ${kind === 'market' ? 'at market' : kind}` : (Q.mkt ? 'Market' : 'Entry');
     const step = (n, lab, val, now) => `<span class="${val != null ? 'done' : now ? 'cur' : ''}">${n} ${lab}${val != null ? ' <b class="mono">' + fp(val) + '</b>' : ''}</span>`;
     const canReal = !!X.quickReal && !R.on;
-    let h = `<div class="qb-top"><b class="${s === 1 ? 'up' : s === -1 ? 'down' : ''}">${ic('zap')} ${s ? (s === 1 ? 'LONG' : 'SHORT') + ' · ' : ''}${kName} ${Q.mkt ? '' : fp(Q.entry)}</b>` +
+    const B = s === 1 ? 'buy' : 'sell', below = s === 1 ? 'below' : 'above', above = s === 1 ? 'above' : 'below';
+    let h = `<div class="qb-top"><b class="${s === 1 ? 'up' : s === -1 ? 'down' : ''}">${ic('zap')} ${s ? (s === 1 ? 'LONG' : 'SHORT') + ' · ' : ''}${kName} ${hasE && !Q.mkt ? fp(Q.entry) : ''}</b>` +
       (canReal ? `<span class="qb-mode" role="radiogroup"><button type="button" data-q="paper" aria-checked="${!Q.real}"${!Q.real ? ' class="on"' : ''}>Paper</button><button type="button" data-q="real" class="${Q.real ? 'on real' : 'real'}" aria-checked="${Q.real}">Real</button></span>` : '<span class="qb-tag">Paper</span>') +
       `<button type="button" class="qb-x" data-q="x" aria-label="Cancel the plan">${ic('x')}</button></div>` +
-      `<div class="qb-steps">${step('①', Q.mkt ? 'Market' : 'Entry', Q.mkt ? null : Q.entry)}${step('②', 'Stop', Q.sl, Q.stage === 'sl')}${step('③', 'Target', Q.tp, Q.stage === 'tp')}</div>`;
-    if (Q.stage === 'sl') h += `<p class="qb-say">Click your <b>stop</b> on the chart — below the entry for a long, above it for a short.</p>`;
+      `<div class="qb-steps">${step('①', Q.mkt ? 'Market' : 'Entry', Q.mkt ? null : Q.entry, Q.stage === 'entry')}${step('②', 'Stop', Q.sl, Q.stage === 'sl')}${step('③', 'Target', Q.tp, Q.stage === 'tp')}</div>`;
+    if (Q.stage === 'entry') h += `<p class="qb-say">Click your <b>${B} price</b> on the chart — ${Q.real ? `${below} the price now (a limit; the bot places limit entries only)` : `${below} the price for a ${B} limit, ${above} it for a ${B} stop`}.</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="mktnow">Market now instead</button></div>`;
+    else if (Q.stage === 'sl') h += `<p class="qb-say">Click your <b>stop</b> on the chart — ${Q.side ? `${below} the entry` : 'below the entry for a long, above it for a short'}.</p>`;
     else if (Q.stage === 'tp') h += `<p class="qb-say">Click your <b>target</b> on the chart (${s === 1 ? 'above' : 'below'} the entry).</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="skip">${Q.real ? "Use the bot's TP plan" : 'No target'}</button></div>`;
     else {
-      h += Q.real ? '' : `<div class="qb-size"><label>Margin <input inputmode="decimal" data-qf="margin" value="${Q.margin || ''}"></label><label>× <input inputmode="numeric" data-qf="lev" value="${Q.lev}"></label>
+      h += Q.real ? `<div class="qb-size"><label>Margin <input inputmode="decimal" data-qf="margin" placeholder="saved" value="${Q.margin > 0 ? Q.margin : ''}"></label><label>× <input inputmode="numeric" data-qf="lev" placeholder="saved" value="${Q.lev > 0 ? Q.lev : ''}"></label><span class="qb-sn">blank = your saved size · you can change it again in the review</span></div>` : `<div class="qb-size"><label>Margin <input inputmode="decimal" data-qf="margin" value="${Q.margin || ''}"></label><label>× <input inputmode="numeric" data-qf="lev" value="${Q.lev}"></label>
         <span class="qb-risk">${[0.5, 1, 2].map(r => `<button type="button" data-qr="${r}" title="Margin so the stop costs ${r}% of the paper balance">${r}%</button>`).join('')}</span></div>`;
-      h += `<div class="qb-read" data-qread></div><div class="qb-row"><button type="button" class="tk2-go ${s === 1 ? 'up' : 'down'}" data-q="go"></button>${Q.mkt ? `<button type="button" class="btn btn-ghost btn-sm" data-q="lim">Back to ${fp(Q.entry)}</button>` : `<button type="button" class="btn btn-ghost btn-sm" data-q="mkt">Market now</button>`}</div>`;
+      h += `<div class="qb-read" data-qread></div><div class="qb-row"><button type="button" class="tk2-go ${s === 1 ? 'up' : 'down'}" data-q="go"></button>${Q.mkt ? (Q.entry != null ? `<button type="button" class="btn btn-ghost btn-sm" data-q="lim">Back to ${fp(Q.entry)}</button>` : '') : `<button type="button" class="btn btn-ghost btn-sm" data-q="mkt">Market now</button>`}</div>`;
     }
     const focused = Q.el.contains(document.activeElement) && document.activeElement.dataset.qf;
     if (!focused) Q.el.innerHTML = h;
@@ -1257,35 +1323,50 @@
     }
     const k = b.dataset.q;
     if (k === 'x') return qEnd();
-    if (k === 'paper' || k === 'real') { Q.real = k === 'real'; return qRender(); }
-    if (k === 'skip') { if (Q.real) { Q.tp = null; Q.stage = 'ask'; } else { Q.tp = null; Q.stage = 'ask'; } qPick(); qRender(); syncLines(); return; }
+    if (k === 'paper' || k === 'real') { Q.real = k === 'real'; if (Q.real) qRealSize(); else { const t = readT(); Q.margin = t.margin > 0 ? t.margin : U.margin; Q.lev = t.lev || U.lev; } return qRender(); }
+    if (k === 'skip') { Q.tp = null; Q.stage = 'ask'; qPick(); qRender(); syncLines(); return; }
+    if (k === 'mktnow') { Q.mkt = true; Q.stage = 'sl'; qPick(); qRender(); syncLines(); return; }
     if (k === 'mkt' || k === 'lim') { Q.mkt = k === 'mkt'; if (Q.sl != null && !okFor(qSide(), qEntry(), Q.sl, true)) { Q.sl = null; Q.tp = null; Q.stage = 'sl'; qPick(); } qRender(); syncLines(); return; }
     if (k === 'go') {
       if (qErr()) return qRead();
       const o = qOrder();
-      if (Q.real) { const r = { side: o.side === 1 ? 'long' : 'short', kind: o.kind, entry: o.kind === 'market' ? null : o.price, sl: o.sl, tp: o.tp }; qEnd(); X.quickReal(r); return; }
+      if (Q.real) { const r = { side: o.side === 1 ? 'long' : 'short', kind: o.kind, entry: o.kind === 'market' ? null : o.price, sl: o.sl, tp: o.tp, margin: Q.margin > 0 ? Q.margin : null, lev: Q.lev > 0 ? Math.round(Q.lev) : null }; qEnd(); X.quickReal(r); return; }
       if (paperSubmit(o)) qEnd();
     }
   }
 
-  // ---- Buy / Sell on the chart: a paper market order with the Trade panel's size (the admin's Real ticket: its review)
+  // ---- Buy / Sell on the chart, Market or Limit
+  // Market: a paper market order with the Trade panel's size (the admin's Real ticket: straight to its review).
+  // Limit: Buy / Sell arms the ⚡ plan with that side — click the entry price on the chart, then the stop, then the target,
+  // then Place (paper) or the review of the bot's exact order (real).
   const QT = document.createElement('div');
-  QT.className = 'dk-qt'; QT.hidden = true; QT.setAttribute('role', 'group'); QT.setAttribute('aria-label', 'Buy or sell at market');
+  QT.className = 'dk-qt'; QT.hidden = true; QT.setAttribute('role', 'group'); QT.setAttribute('aria-label', 'Buy or sell');
   chartEl.appendChild(QT);
+  if (U.qtk !== 'lmt') U.qtk = 'mkt';
   function qtUI() {
     const hide = !U.qt || !S.lastPx; QT.hidden = hide; if (hide) return;
-    const real = realOn(), t = readT(), busy = real && X.realBusy ? X.realBusy() : '';
-    const h = `<button type="button" class="qt-s" data-qt="-1"><span>${real ? 'Real sell' : 'Sell'}</span><b>${fp(S.lastPx)}</b></button>` +
-      `<button type="button" class="qt-m" data-qt="0" title="${busy ? esc(busy) + ' — one real trade per coin' : real ? 'The Real ticket sets the size' : 'Size from the Trade panel — click to change it'}">${busy ? 'Real trade open' : real ? 'Real ticket' : t.margin > 0 ? `${money(t.margin)} × ${t.lev}×` : 'Set size'}</button>` +
-      `<button type="button" class="qt-b" data-qt="1"><span>${real ? 'Real buy' : 'Buy'}</span><b>${fp(S.lastPx)}</b></button>`;
+    const real = realOn(), t = readT(), busy = real && X.realBusy ? X.realBusy() : '', lim = U.qtk === 'lmt';
+    const armed = Q.on && Q.side ? Q.side : 0;
+    const side = s => {
+      const nm = real ? `Real ${s === 1 ? 'buy' : 'sell'}${lim ? ' limit' : ''}` : `${s === 1 ? 'Buy' : 'Sell'}${lim ? ' limit' : ''}`;
+      const tip = lim ? `Then click your ${s === 1 ? 'buy' : 'sell'} price on the chart, your stop and your target${real ? ' — you review the bot\'s exact order before it is placed' : ''}` : `${s === 1 ? 'Buy' : 'Sell'} at market now${real ? ' — you review the bot\'s exact order before it is placed' : ' (paper)'}`;
+      return `<button type="button" class="${s === 1 ? 'qt-b' : 'qt-s'}${armed === s ? ' arm' : ''}" data-qt="${s}" title="${esc(tip)}"><span>${nm}</span><b>${lim ? (armed === s ? 'click the chart' : 'pick a price') : fp(S.lastPx)}</b></button>`;
+    };
+    const sz = busy ? 'Real trade open' : real ? 'Real ticket' : t.margin > 0 ? `${money(t.margin)} × ${t.lev}×` : 'Set size';
+    const h = side(-1) +
+      `<div class="qt-m"><span class="qt-k" role="radiogroup" aria-label="Order type">${[['mkt', 'Market'], ['lmt', 'Limit']].map(([k, l]) => `<button type="button" role="radio" data-qk="${k}" aria-checked="${U.qtk === k}"${U.qtk === k ? ' class="on"' : ''}>${l}</button>`).join('')}</span>` +
+      `<button type="button" class="qt-sz" data-qt="0" title="${busy ? esc(busy) + ' — one real trade per coin' : real ? 'The Real ticket sets the size' : 'Size from the Trade panel — click to change it'}">${sz}</button></div>` + side(1);
     if (QT._h !== h) { QT.innerHTML = h; QT._h = h; }
-    QT.classList.toggle('real', real); QT.classList.toggle('busy', !!busy);
+    QT.classList.toggle('real', real); QT.classList.toggle('busy', !!busy); QT.classList.toggle('lim', lim);
   }
   QT.addEventListener('click', e => {
+    const k = e.target.closest('[data-qk]');
+    if (k) { U.qtk = k.dataset.qk; saveUI(); if (Q.on && Q.side && Q.stage === 'entry' && U.qtk === 'mkt') qEnd(); qtUI(); return; }
     const b = e.target.closest('[data-qt]'); if (!b) return;
     const side = +b.dataset.qt, real = realOn(), busy = real && X.realBusy ? X.realBusy() : '';
     if (busy && side) { toast(`${busy} — one real trade per coin. Manage it in the Real tab.`, 'down'); return; }
     if (!side) { if (real) { if (phone()) openSheet('real'); else sideTab('real'); } else showTicket(); return; }
+    if (U.qtk === 'lmt') { if (Q.on && Q.side === side && Q.stage === 'entry') { qEnd(); return; } qStartSide(side, real); return; }   // pressed again: cancel
     if (real) { X.quickReal({ side: side === 1 ? 'long' : 'short', kind: 'market', entry: null, sl: null, tp: null, keep: true }); return; }
     const t = readT();
     paperSubmit({ side, kind: 'market', margin: t.margin, lev: t.lev, sl: okFor(side, S.lastPx, t.sl, true) ? t.sl : null, tp: okFor(side, S.lastPx, t.tp, false) ? t.tp : null });
