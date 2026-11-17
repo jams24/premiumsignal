@@ -38,6 +38,10 @@
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
   const saveUI = () => store.set('rd-ui-v1', U);
+  // extension points: the admin layer (/assets/deskadmin.js, served to admins only) adds chart lines, markers and bottom tabs
+  // and listens to these events: sym (coin changed), mode (live ⇄ replay), tick (prices / clock moved), pane (side tab)
+  const X = { lines: [], marks: [], bottom: {}, ev: {} };
+  const emit = (n, a) => { for (const f of X.ev[n] || []) { try { f(a); } catch (e) { console.error(e); } } };
 
   let PREC = 2, TICK = 0.01;
   const fp = (p, d = PREC) => p == null || !isFinite(p) ? '—' : (+p).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -221,7 +225,7 @@
     });
     cs.applyOptions({ upColor: COL.up, downColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down });
     if (S.bars.length) vs.setData(U.vol ? S.bars.map(toV) : []);
-    setMarkers(); syncLines(); prim.req();
+    setMarkers(); syncLines(); prim.req(); emit('theme');
   }
   new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
@@ -604,6 +608,7 @@
     $$('[data-cnt="ord"]').forEach(e => { e.textContent = A.ord.length; });
     const pm = $('[data-cnt="pos-m"]'); pm.hidden = !A.pos.length; pm.textContent = A.pos.length;
     $$('[data-btab]').forEach(b => b.classList.toggle('on', b.dataset.btab === BTAB));
+    if (X.bottom[BTAB]) { body.innerHTML = X.bottom[BTAB](); return; }
     let html = '';
     if (BTAB === 'pos') {
       if (!A.pos.length) html = `<div class="pt-empty">No open positions.${R.on ? ' Place a trade from the panel — it plays out as the replay moves.' : ' Place one from the Trade panel, or start a replay.'}</div>`;
@@ -660,12 +665,16 @@
     const W = [], md = mode(), LS = LC.LineStyle;
     for (const p of A.pos) {
       if (p.sym !== U.sym || p.mode !== md) continue;
-      const u = upnl(p), L = p.side === 1;
-      W.push({ key: 'pe' + p.id, price: p.entry, color: COL.pri, style: LS.Solid, w: 1, title: `${L ? 'LONG' : 'SHORT'} ${money(u, true)}` });
-      W.push({ key: 'pq' + p.id, price: p.liq, color: COL.warn, style: LS.Dotted, w: 1, title: 'Liq.' });
-      if (p.sl != null) W.push({ key: 'ps' + p.id, price: p.sl, color: COL.down, style: LS.Dashed, w: 1, title: `SL ${money(p.side * (p.sl - p.entry) * p.qty, true)}`,
+      const u = upnl(p), L = p.side === 1, at = v => p.side * (v - p.entry) * p.qty, rr = v => (p.risk ? ` (${fr(at(v) / p.risk)})` : '');
+      const head = `<b>Paper ${L ? 'long' : 'short'} ${esc(coin(p.sym))}</b> · ${fq(p.qty)} at ${fp(p.entry)}`;
+      W.push({ key: 'pe' + p.id, price: p.entry, color: COL.pri, style: LS.Solid, w: 1, title: `${L ? 'LONG' : 'SHORT'} ${money(u, true)}`,
+        tip: () => `${head}<br>Open P&amp;L ${money(upnl(p), true)} · margin ${money(p.margin)} × ${p.lev}×` });
+      W.push({ key: 'pq' + p.id, price: p.liq, color: COL.warn, style: LS.Dotted, w: 1, title: 'Liq.', tip: () => `${head}<br><b>Liquidation ${fp(p.liq)}</b> · the whole ${money(p.margin)} margin is lost here` });
+      if (p.sl != null) W.push({ key: 'ps' + p.id, price: p.sl, color: COL.down, style: LS.Dashed, w: 1, title: `SL ${money(at(p.sl), true)}`,
+        tip: () => `${head}<br><b>Stop ${fp(p.sl)}</b> · ${pct((p.sl / p.entry - 1) * 100)} from entry<br>If it fills: ${money(at(p.sl), true)}${rr(p.sl)} before the exit fee<br><small>Drag the line to move it.</small>`,
         drag: { set: v => { p.sl = v; }, ok: v => (L ? v < markOf(p) : v > markOf(p)) && (L ? v > p.liq : v < p.liq), bad: L ? "A long's stop has to sit between the liquidation price and the price now" : "A short's stop has to sit between the price now and the liquidation price", undo: p.sl } });
-      if (p.tp != null) W.push({ key: 'pt' + p.id, price: p.tp, color: COL.up, style: LS.Dashed, w: 1, title: `TP ${money(p.side * (p.tp - p.entry) * p.qty, true)}`,
+      if (p.tp != null) W.push({ key: 'pt' + p.id, price: p.tp, color: COL.up, style: LS.Dashed, w: 1, title: `TP ${money(at(p.tp), true)}`,
+        tip: () => `${head}<br><b>Target ${fp(p.tp)}</b> · ${pct((p.tp / p.entry - 1) * 100)} from entry<br>If it fills: ${money(at(p.tp), true)}${rr(p.tp)} before the exit fee<br><small>Drag the line to move it.</small>`,
         drag: { set: v => { p.tp = v; }, ok: v => (L ? v > markOf(p) : v < markOf(p)), bad: L ? "A long's target has to be above the price now" : "A short's target has to be below the price now", undo: p.tp } });
     }
     for (const o of A.ord) {
@@ -680,6 +689,7 @@
     const tf = (f, v, color, title) => { if (v && !isNaN(v)) W.push({ key: 'tk' + f, price: v, color, style: LS.LargeDashed, w: 1, title, drag: { set: x => { fld(f).value = x; }, ok: () => true, ticket: true } }); };
     if (T.type === 'limit') tf('price', t.price, COL.pri, 'Limit');
     tf('sl', t.sl, COL.down, 'Stop'); tf('tp', t.tp, COL.up, 'Target');
+    for (const f of X.lines) { try { for (const w of f()) W.push(w); } catch (e) { console.error(e); } }
     return W;
   }
   function syncLines() {
@@ -872,7 +882,8 @@
     if (!PD) { hover(x, y); return; }
     if (PD.kind === 'line' && DRAG) {
       const v = rt(y2p(y)); if (!isFinite(v)) return;
-      DRAG.price = v; DRAG.e.line.applyOptions({ price: v, title: DRAG.e.w.title.split(' ')[0] + ' ' + fp(v) });
+      DRAG.price = v; DRAG.e.line.applyOptions({ price: v, title: DRAG.e.w.dragTitle ? DRAG.e.w.dragTitle(v) : DRAG.e.w.title.split(' ')[0] + ' ' + fp(v) });
+      ltip.hidden = true;
     } else if (PD.kind === 'drawing') {
       const d = PD.d;
       if (PD.h >= 0) { const pt = tp(x, y); if (pt.t != null && pt.p != null) d.pts[PD.h] = pt; }
@@ -895,6 +906,7 @@
       lock(TWO.has(TOOL) || ONE.has(TOOL));
       const w = DRAG.e.w, v = DRAG.price; DRAG = null;
       if (w.drag.ticket) { w.drag.set(v); renderTicket(); }
+      else if (w.drag.commit) w.drag.commit(v);   // the admin layer asks before it changes a real order
       else if (w.drag.ok(v)) { w.drag.set(v); changed(); }
       else { toast(w.drag.bad, 'down'); }
       syncLines();
@@ -902,7 +914,26 @@
     }
     if (pd.kind === 'drawing') { lock(false); saveDraw(); prim.req(); }
   });
+  // hovering a trade line (or its price label) shows what it means in dollars
+  const ltip = document.createElement('div');
+  ltip.className = 'dk-ltip'; ltip.hidden = true; ltip.setAttribute('role', 'tooltip');
+  $('.dk-chart').appendChild(ltip);
+  function lineTip(x, y) {
+    let best = null, bd = 7;
+    if (!PD && !PICK && !DRAFT && x >= 0 && y >= 0 && x < box.clientWidth && y < paneH()) {
+      for (const [, e] of PL) { if (!e.w.tip) continue; const yy = p2y(e.w.price); if (yy == null) continue; const d = Math.abs(yy - y); if (d < bd) { bd = d; best = e; } }
+    }
+    if (!best) { ltip.hidden = true; return; }
+    const html = typeof best.w.tip === 'function' ? best.w.tip() : best.w.tip;
+    if (ltip._h !== html) { ltip.innerHTML = html; ltip._h = html; }
+    ltip.hidden = false;
+    const W = box.clientWidth, w = ltip.offsetWidth, h = ltip.offsetHeight, yy = p2y(best.w.price);
+    ltip.style.left = Math.max(6, Math.min(W - w - 6, x + 18 + w > W - 70 ? x - w - 18 : x + 18)) + 'px';
+    ltip.style.top = Math.max(6, yy - h - 10 < 6 ? yy + 12 : yy - h - 10) + 'px';
+  }
+  box.addEventListener('pointerleave', () => { ltip.hidden = true; });
   function hover(x, y) {
+    lineTip(x, y);
     let c = '';
     if (PICK) c = 'c-pick';
     else if (TWO.has(TOOL) || ONE.has(TOOL)) c = 'c-draw';
@@ -942,17 +973,19 @@
   function selUI() { if (SEL) hint('Drawing selected', [['Delete', removeSel], ['Done', () => { SEL = null; prim.req(); hint(); }]]); else if (!PICK && TOOL === 'cursor') hint(); }
 
   // pick a price for the ticket, or a candle to start the replay from
-  function startPick(kind, field) {
-    PICK = { kind, field };
+  // cb (admin layer): the picked price goes to cb instead of the paper ticket; field names the button that lights up
+  function startPick(kind, field, cb, label) {
+    PICK = { kind, field, cb };
     if (phone()) closeSheets();
-    hint(kind === 'replay' ? 'Scroll back and click the candle where the replay should start' : `Click the chart to set the ${{ price: 'limit price', sl: 'stop', tp: 'target' }[field]}`, [['Cancel', clearPick]]);
-    $$('.pick').forEach(b => b.classList.toggle('on', b.dataset.pickF === field));
+    hint(kind === 'replay' ? 'Scroll back and click the candle where the replay should start' : `Click the chart to set the ${label || { price: 'limit price', sl: 'stop', tp: 'target' }[field]}`, [['Cancel', clearPick]]);
+    $$('.pick').forEach(b => b.classList.toggle('on', (b.dataset.pickF || b.dataset.pickX) === field));
   }
   function clearPick() { PICK = null; $$('.pick').forEach(b => b.classList.remove('on')); hint(); box.className = 'dk-canvas'; }
   function doPick(x, y) {
     const pk = PICK; clearPick();
     if (pk.kind === 'replay') { const t = x2t(x); if (t != null) enterReplay(t); return; }
     const v = rt(y2p(y)); if (!isFinite(v)) return;
+    if (pk.cb) { pk.cb(v); return; }
     fld(pk.field).value = v; renderTicket(); syncLines();
     if (phone()) openSheet('trade');
   }
@@ -977,10 +1010,14 @@
   }
   function setMarkers() {
     if (!markers) return;
-    if (!SMCR || !U.smc) { markers.setMarkers([]); return; }
     const first = S.bars.length ? S.bars[0][0] : 0, M = [];
-    for (const s of SMCR.swings.slice(-40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
-    for (const w of SMCR.sweeps.slice(-6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
+    if (SMCR && U.smc) {
+      for (const s of SMCR.swings.slice(-40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
+      for (const w of SMCR.sweeps.slice(-6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
+    }
+    // extension marks: { t (ms), position, color, shape, text } — snapped to the chart's candle, never past the replay clock
+    const last = S.bars.length ? S.bars[S.bars.length - 1][0] : 0, now = nowT();
+    for (const f of X.marks) { try { for (const m of f()) if (m.t >= first && m.t <= now && bucket(m.t, U.tf) <= last) M.push({ time: bucket(m.t, U.tf) / 1000, position: m.position, color: m.color, shape: m.shape, text: m.text }); } catch (e) { console.error(e); } }
     M.sort((a, b) => a.time - b.time);
     markers.setMarkers(M);
   }
@@ -1014,7 +1051,7 @@
     $('[data-rp]').hidden = !R.on; $('[data-rpm]').hidden = !R.on;
     $('[data-mode] span').textContent = R.on ? 'REPLAY' : 'LIVE';
     $('[data-speed]').value = String(R.speed); $('[data-stepsize]').value = R.step;
-    clockUI(); headUI(); renderAll();
+    clockUI(); headUI(); renderAll(); emit('mode'); ltip.hidden = true;
   }
   function clockUI() { $$('[data-clock]').forEach(e => { e.textContent = R.on ? tnice(R.clock) : ''; }); }
   function playUI() { $$('[data-act="play"]').forEach(b => { b.innerHTML = ic(R.playing ? 'pause' : 'play'); b.setAttribute('aria-label', R.playing ? 'Pause' : 'Play'); }); }
@@ -1024,7 +1061,7 @@
   let uiQ = false;
   function tickUI() {
     if (uiQ) return; uiQ = true;
-    requestAnimationFrame(() => { uiQ = false; legend(); renderTicket(); renderAcct(); renderBottom(true); syncLines(); document.title = `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`; });
+    requestAnimationFrame(() => { uiQ = false; legend(); renderTicket(); renderAcct(); renderBottom(true); syncLines(); document.title = `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`; emit('tick'); });
   }
   function renderAll() { renderTicket(); renderAcct(); renderBottom(false); syncLines(); legend(); }
 
@@ -1083,8 +1120,18 @@
     U.sym = sym; if (ex) U.ex = ex; saveUI();
     SEL = null; DRAFT = null; MEASURE = null; hoverBar = null; S.lastPx = null; hint();
     symList(U.ex).catch(() => null);
-    headUI();
+    headUI(); emit('sym'); ltip.hidden = true;
     if (R.on) rebuildReplay(); else loadLive();
+  }
+  // open a coin at a past moment (admin signal list): straight into a replay there, or the live chart if it is too recent
+  function openAt(sym, ex, t) {
+    if (!isFinite(t) || t > Date.now() - 2 * TF[U.tf].ms) { setSymbol(sym, ex); return; }
+    if (sym !== U.sym || (ex && ex !== U.ex)) {
+      U.sym = sym; if (ex) U.ex = ex; saveUI();
+      SEL = null; DRAFT = null; MEASURE = null; hoverBar = null; S.lastPx = null; hint();
+      symList(U.ex).catch(() => null); headUI(); emit('sym');
+    }
+    enterReplay(t);
   }
   function setTF(tf) {
     if (!TF[tf] || tf === U.tf) return;
@@ -1094,10 +1141,10 @@
 
   // ------------------------------------------------------------------ sheets, modals, panels
   const side = $('.dk-side'), bottom = $('.dk-bottom'), scrim = $('[data-scrim]');
-  function sideTab(t) { $$('[data-ptab]').forEach(b => b.classList.toggle('on', b.dataset.ptab === t)); $$('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== t; }); if (t === 'watch') { renderWatch(); pollWatch(true); } }
+  function sideTab(t) { $$('[data-ptab]').forEach(b => b.classList.toggle('on', b.dataset.ptab === t)); $$('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== t; }); if (t === 'watch') { renderWatch(); pollWatch(true); } emit('pane', t); }
   function openSheet(name) {
     closeSheets(true);
-    if (name === 'trade' || name === 'watch') { sideTab(name); side.classList.add('open'); }
+    if ($(`[data-pane="${name}"]`)) { sideTab(name); side.classList.add('open'); }
     else if (name === 'pos') { bottom.classList.add('open'); renderBottom(false); }
     scrim.hidden = false;
     $$('[data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === name));
@@ -1225,7 +1272,12 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden && R.on) saveR(); if (!document.hidden) { pollLive(); if (!R.on && S.ws && S.ws.ws.readyState > 1) startStream(S.gen); } });
 
   // ------------------------------------------------------------------ start
-  window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place };   // for tests and the curious
+  window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+    // the admin layer's handles (deskadmin.js loads after this file)
+    ext: X, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
+    startPick, clearPick, hint, toast, COL, LS: LC.LineStyle, get PREC() { return PREC; }, get BTAB() { return BTAB; },
+    setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
+    util: { fp, money, pct, fq, fr, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT } };
   root.classList.toggle('b-min', !!U.bmin);
   playUI(); toolUI(); headUI(); renderWatch(); renderAll(); stepLabel();
   symList(U.ex).then(() => { if (S.bars.length) applyMeta(); }).catch(() => { /* precision guessed from prices */ });

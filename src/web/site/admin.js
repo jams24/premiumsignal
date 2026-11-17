@@ -9,7 +9,7 @@ const VIEWS = [
   ['users', 'Users', 'users'],
 ];
 const TOOLS = [
-  ['/dashboard', 'Live trading', 'Classic page: Simulator with the Real ticket', 'zap'],
+  ['/app#real', 'Live trading', 'Desk: Real ticket, bot positions, signals', 'zap'],
   ['/app', 'Desk', 'Paper and replay desk', 'chart-candlestick'],
   ['/learn', 'Academy', 'Lessons, incl. the admin Desk notes', 'graduation-cap'],
 ];

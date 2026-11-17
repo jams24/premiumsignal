@@ -15,6 +15,8 @@ const TOOLS = [
 ];
 // icons the browser code builds rows with
 const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up'];
+// the admin layer's extra icons (only sent to admins)
+const ADMIN_ICONS = ['rewind', 'refresh-cw', 'send', 'zap', 'triangle-alert', 'circle-check', 'external-link', 'chart-candlestick', 'bot', 'radio', 'users', 'activity', 'crosshair', 'info', 'trending-down'];
 
 const initials = s => String(s || '').split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'RD';
 
@@ -26,7 +28,7 @@ function userMenu(who) {
   return `<div class="umenu" data-umenu><button type="button" class="avatar dk-av" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${av}</button>
 <div class="menu" role="menu" hidden><div class="menu-who"><b>${esc(name)}</b><span>${esc(sub)}</span></div>
 <div class="menu-items"><a role="menuitem" href="/learn">${icon('graduation-cap')} Learn</a>${u ? `<a role="menuitem" href="/account">${icon('settings')} Account</a>` : ''}
-${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin</a><a role="menuitem" href="/dashboard">${icon('layout-dashboard')} Live dashboard</a>` : ''}
+${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin console</a><a role="menuitem" href="/dashboard">${icon('layout-dashboard')} Classic dashboard</a>` : ''}
 <button type="button" role="menuitem" data-signout>${icon('log-out')} Sign out</button></div></div></div>`;
 }
 
@@ -52,8 +54,50 @@ function ticket() {
 <div class="acct" data-acct></div>`;
 }
 
+// ---- admin only: the real-money ticket (through the bot, like /long · /short in Telegram) and the bot's signals
+const seg = (attr, opts, on) => `<div class="rx-seg" role="radiogroup">${opts.map(([v, l]) => `<button type="button" role="radio" aria-checked="${v === on}" data-${attr}="${v}"${v === on ? ' class="on"' : ''}>${l}</button>`).join('')}</div>`;
+const pickBtn = (f, what) => `<button type="button" class="pick" data-pick-x="${f}" title="Pick the ${what} on the chart" aria-label="Pick the ${what} on the chart">${icon('crosshair', 'i-35')}</button>`;
+const chips = (attr, vals, fmt) => `<div class="rx-chips">${vals.map(v => `<button type="button" data-${attr}="${v}">${fmt(v)}</button>`).join('')}</div>`;
+
+function realTicket() {
+  return `<div class="rx" data-rx>
+  <div class="rx-head"><span class="rx-badge"><i></i>Real money</span><span class="rx-wt" data-rx-wt>Checking the bot…</span></div>
+  <div class="rx-block" data-rx-replay hidden>${icon('info', 'i-4')}<div><b>Real trading is on the live chart.</b><span>You're in a replay. Exit it to place or manage real trades.</span>
+    <button type="button" class="btn btn-secondary btn-sm" data-act="rexit">Exit replay</button></div></div>
+  <fieldset class="rx-form" data-rx-form>
+  <div class="tk2-side" role="radiogroup" aria-label="Side"><button type="button" class="on" data-rside="long">Long</button><button type="button" data-rside="short">Short</button></div>
+  <div class="tk2-type" role="tablist" aria-label="Entry"><button type="button" class="on" data-rentry="market">Market</button><button type="button" data-rentry="limit">Limit</button></div>
+  <label class="fld" data-rx-limrow hidden><span>Limit price <em data-rn="limit"></em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="limit" placeholder="0.00">${pickBtn('limit', 'limit price')}</span></label>
+  <div class="rx-two">
+    <label class="fld"><span>Margin <em>USDT</em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="margin" placeholder="saved"></span></label>
+    <label class="fld"><span>Leverage <em>×</em></span><span class="fld-in"><input inputmode="numeric" autocomplete="off" data-rf="lev" placeholder="saved"></span></label>
+  </div>
+  ${chips('rlev', [3, 5, 10, 20], v => v + '×')}
+  <label class="fld"><span>Stop loss <em data-rn="stop"></em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="stop" placeholder="saved stop">${pickBtn('stop', 'stop')}</span></label>
+  ${chips('rstop', [2, 4, 6, 8], v => v + '%')}
+  <div class="fld"><span>Take profit</span>${seg('rtp', [['plan', "Bot's TP plan"], ['price', 'Set TP1']], 'plan')}</div>
+  <div data-rx-tprow hidden>
+    <label class="fld"><span>TP1 price <em data-rn="tp"></em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="tp" placeholder="0.00">${pickBtn('tp', 'TP1')}</span></label>
+    ${chips('rtpp', [5, 7, 12, 20], v => v + '%')}
+  </div>
+  <details class="rx-more" data-rx-more><summary>${icon('settings-2', 'i-35')} Account, exchange, size by risk</summary>
+    <div class="fld"><span>Account</span>${seg('rmode', [['live', 'Live money'], ['paper', "Bot's paper"]], 'live')}</div>
+    <div class="fld"><span>Exchange</span>${seg('rex', [['', 'Saved'], ['binance', 'Binance'], ['bybit', 'Bybit']], '')}</div>
+    <div class="fld"><span>Size by max loss <em>margin fits the stop</em></span><span class="rx-fit"><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="risk" placeholder="$ you accept to lose"></span>
+      <button type="button" class="btn btn-secondary btn-sm" data-act="rx-fit">Fit margin</button></span></div>
+  </details>
+  </fieldset>
+  <div class="rx-pv" data-rx-pv aria-live="polite"></div>
+  <button type="button" class="tk2-go up" data-act="rx-review">Review order</button>
+  <div class="rx-alt"><button type="button" data-act="rx-tg">${icon('send', 'i-35')} Send to Telegram</button><button type="button" data-act="rx-clear">${icon('rotate-ccw', 'i-35')} Clear</button></div>
+  <p class="rx-note">Blank fields use your saved <code>/long</code> · <code>/short</code> settings. Nothing is placed until you confirm, and the bot reports every action in Telegram.</p>
+</div>
+<section class="rx-flow" data-rx-flow aria-label="Positioning"></section>`;
+}
+
 function desk(who, nonce) {
-  const body = `<div class="dk" data-desk>
+  const A = !!who.admin;
+  const body = `<div class="dk${A ? ' dk-admin' : ''}" data-desk>
 <header class="dk-top">
   <a href="/" class="dk-logo" aria-label="ReplayDesk home">${LOGO_SVG(26, 'dk')}</a>
   <button type="button" class="dk-sym" data-act="search" aria-label="Change coin">${icon('search', 'i-35')}<b data-sym>BTCUSDT</b><span data-exname>Binance</span></button>
@@ -84,6 +128,7 @@ function desk(who, nonce) {
     <button type="button" class="dk-pill dk-exit" data-act="rexit">${icon('x', 'i-35')}<span>Exit</span></button>
   </div>
   <div class="dk-right">
+    ${A ? `<button type="button" class="dk-wt" data-wt hidden aria-label="Web trading status"><i></i><span>Web trading</span></button>` : ''}
     <span class="dk-mode" data-mode><i></i><span>LIVE</span></span>
     ${ib('full', 'maximize', 'Full screen')}
     ${themeBtn()}
@@ -109,9 +154,12 @@ function desk(who, nonce) {
 </main>
 
 <aside class="dk-side" data-sheet="trade">
-  <div class="dk-tabs" role="tablist"><button type="button" class="on" data-ptab="trade">${icon('target', 'i-35')} Trade</button><button type="button" data-ptab="watch">${icon('star', 'i-35')} Watchlist</button>
+  <div class="dk-tabs" role="tablist">${A
+    ? `<button type="button" class="on" data-ptab="trade">Paper</button><button type="button" class="tab-real" data-ptab="real"><i class="rdot"></i>Real</button><button type="button" data-ptab="sig">Signals</button><button type="button" data-ptab="watch">Watchlist</button>`
+    : `<button type="button" class="on" data-ptab="trade">${icon('target', 'i-35')} Trade</button><button type="button" data-ptab="watch">${icon('star', 'i-35')} Watchlist</button>`}
     <button type="button" class="dk-close" data-act="close-sheet" aria-label="Close">${icon('x', 'i-4')}</button></div>
   <section class="dk-pane" data-pane="trade">${ticket()}</section>
+  ${A ? `<section class="dk-pane" data-pane="real" hidden>${realTicket()}</section><section class="dk-pane dk-sigpane" data-pane="sig" hidden><div class="sg-wrap" data-sigs></div></section>` : ''}
   <section class="dk-pane" data-pane="watch" hidden><div class="wl" data-watch></div><p class="wl-note">Tap ☆ in the coin search to add coins.</p></section>
 </aside>
 
@@ -119,6 +167,7 @@ function desk(who, nonce) {
   <div class="dk-tabs" role="tablist">
     <button type="button" class="on" data-btab="pos">Positions <b data-cnt="pos">0</b></button><button type="button" data-btab="ord">Orders <b data-cnt="ord">0</b></button>
     <button type="button" data-btab="hist">History</button><button type="button" data-btab="stats">Stats</button>
+    ${A ? `<span class="dk-tsep2" aria-hidden="true"></span><button type="button" class="tab-real" data-btab="real"><i class="rdot"></i>Real <b data-cnt="real">0</b></button>` : ''}
     <span class="dk-tabs-r"><button type="button" class="dk-ib" data-act="collapse" aria-label="Collapse the panel" title="Collapse">${icon('chevron-down', 'i-4')}</button>
     <button type="button" class="dk-close" data-act="close-sheet" aria-label="Close">${icon('x', 'i-4')}</button></span>
   </div>
@@ -159,11 +208,14 @@ function desk(who, nonce) {
   </div>
 </div>
 
+${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
-<script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries(JS_ICONS.map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
+<script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`];
+  if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,
-    head: `<link rel="stylesheet" href="${asset('desk.css')}">`, scripts: [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`],
+    head: `<link rel="stylesheet" href="${asset('desk.css')}">`, scripts,
   });
 }
 
