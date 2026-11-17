@@ -456,6 +456,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       </div>
     </div>
     <div class="header-right">
+      <a class="btn-sm" href="/app" style="text-decoration:none;color:var(--accent)">Open ReplayDesk ↗</a>
       <button class="btn-sm" onclick="refreshAll()">Refresh</button>
       <button class="btn-sm" onclick="resetConfig()">Logout</button>
     </div>

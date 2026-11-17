@@ -1,139 +1,12 @@
 // ReplayDesk pages, as HTML strings. Anything that came from a visitor goes through esc().
 const { SITE, esc, logo, LOGO_SVG, btn, page, navbar, footer, themeBtn, asset, icon } = require('./html');
+const { landing, GUIDES, LEARN_SVG } = require('./home');
 
-const LWC = '<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js" ' +
-  'integrity="sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN" crossorigin="anonymous" defer></script>';
 const UPDATED = '16 November 2026';
 const contact = () => process.env.CONTACT_EMAIL
   ? `email us at <a href="mailto:${esc(process.env.CONTACT_EMAIL)}">${esc(process.env.CONTACT_EMAIL)}</a>`
   : 'reply to any email we have sent you';
 
-const secHead = (eyebrow, title, sub) => `<div class="sec-head"><p class="eyebrow">${eyebrow}</p><h2 class="h2">${title}</h2>${sub ? `<p class="sec-sub">${sub}</p>` : ''}</div>`;
-
-// ---------------------------------------------------------------- landing
-const FEATURES = [
-  ['rewind', 'Replay any coin, any day', 'Choose a coin and a start time. Press play, step one candle, run at speed, or rewind for a second try. What comes next stays hidden.', true],
-  ['target', 'Paper trading that behaves like the real thing', 'Market and limit orders, leverage, a stop and up to four take-profits, breakeven moves and a liquidation price. Drag the lines right on the chart.', true],
-  ['brain', 'Smart money concepts, drawn live', 'Swings, BOS and CHoCH, order blocks, liquidity sweeps, equal highs and lows, premium and discount, auto Fibonacci. Only from candles already printed.'],
-  ['pen-tool', 'Drawing tools', 'Trend lines, horizontal levels, Fibonacci, pencil and zig-zag. Saved per coin, they stay put as you zoom and change timeframe.'],
-  ['notebook-pen', 'Journal and stats', 'Every trade logged with its R multiple. Win rate, average R and your best and worst setups, so practice turns into data.'],
-  ['layers', 'Every timeframe', '1-minute precision underneath, viewed as 1m, 5m, 15m, 1H, 4H, 1D or 1W. Compare two coins side by side.', true],
-  ['chart-line', 'Real exchange data', "Binance and Bybit USDT perpetual candles, loaded straight from the exchanges' public market data. No made-up prices.", true],
-];
-const STEPS = [
-  ['history', 'Pick a coin and a moment', 'BTC on the day of a crash, a meme coin before its pump, or any random Tuesday. Real exchange candles load in seconds.'],
-  ['crosshair', 'Read it and plan the trade', 'Mark your levels. Turn on the SMC overlay to see structure, zones and liquidity — or hide it and test your own eye.'],
-  ['chart-column', 'Take it, play it, review it', 'Place the paper trade, then play the candles forward. Your journal keeps the result, the R and the reason.'],
-];
-const GUIDES = [
-  ['Basics', 'Market structure', 'Higher highs, lower lows, and how to tell a trend from a range.'],
-  ['Structure', 'BOS vs CHoCH', 'When a break continues the trend and when it warns of a turn.'],
-  ['Liquidity', 'Sweeps and stop hunts', 'Why price spikes through obvious highs and lows, then turns.'],
-  ['Zones', 'Order blocks and FVGs', 'The candles that start big moves, and the gaps price comes back to.'],
-  ['Timing', 'Premium, discount and Fibonacci', 'Buying low in the move, not chasing the top of it.'],
-  ['Risk', 'Position size and R', 'Risk the same amount every trade so one loss never hurts.'],
-];
-const FREE = ['Replay every Binance and Bybit USDT perpetual', 'Paper account with leverage, stops and take-profits', 'SMC overlay, auto Fibonacci and drawing tools', 'Trade journal and stats', 'All learning guides'];
-const QA = [
-  ['Is any real money involved?', 'No. Every trade on ReplayDesk is on paper with a practice balance. Nothing is sent to an exchange and you never connect an exchange account.'],
-  ['Where do the charts come from?', 'Real candles from Binance and Bybit USDT perpetual futures, loaded straight from their public market data. Replays use the same 1-minute candles the exchanges recorded.'],
-  ['Can I see what happens next while replaying?', "No. The chart only shows candles up to the replay clock, and the SMC overlay only reads those candles — the same information you'd have had at that moment."],
-  ['Is it really free?', "Yes, everything listed is free during the beta. If a paid plan arrives later, it will add extras; we'll announce it well before anything changes."],
-  ['Does it work on my phone?', 'Yes. The desk has a phone layout with the chart full width and the order ticket, positions and tools in bottom sheets.'],
-  ['Is this financial advice?', "No. ReplayDesk is a practice and education tool. Past charts and paper results don't predict future results, and trading with leverage can lose more than you expect."],
-];
-
-function terminal() {
-  const tools = ['mouse-pointer-2', 'crosshair', 'pen-line', 'git-commit-horizontal', 'minus', 'ruler', 'type'];
-  return `<div class="term">
-<div class="term-top">
-  <span class="dots" aria-hidden="true"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
-  <span class="sym">BTCUSDT <span>Perp</span> ${icon('chevron-down', 'i-3 muted')}</span>
-  <span class="tfs">${['1m', '5m', '15m', '1H', '4H'].map(t => `<span class="${t === '5m' ? 'on' : ''}">${t}</span>`).join('')}</span>
-  <span class="ctrl">${icon('skip-back', 'i-35')}${icon('pause', 'i-35 pri')}${icon('skip-forward', 'i-35')}<span class="sep"></span>${icon('fast-forward', 'i-35')}<span class="mono">4×</span></span>
-  <span class="badge-replay"><i></i>REPLAY</span>
-</div>
-<div class="term-body">
-  <div class="term-tools" aria-hidden="true">${tools.map(t => `<span>${icon(t, 'i-4')}</span>`).join('')}</div>
-  <div class="term-chart"><div class="chart" data-hero-chart></div><span class="stage" data-stage><i></i><span>Loading the replay…</span></span></div>
-  <div class="term-side">
-    <div><div class="muted">Paper account</div><div class="acct-bal" data-bal>$10,000.00</div></div>
-    <div class="bs"><span class="b">Buy / Long</span><span class="s">Sell / Short</span></div>
-    <div class="pos"><div class="pos-head"><span>Position</span><span>Risk $100</span></div><div data-pos><div class="muted">No position. Wait for the setup.</div></div></div>
-    <div class="side-foot"><div><span>SMC overlay</span><span class="pri">On</span></div><div><span>Structure</span><span class="t2">5m</span></div></div>
-  </div>
-</div></div>`;
-}
-
-function landing(who, nonce) {
-  const body = `${navbar(who)}
-<main data-landing${who ? ' data-signed-in' : ''}>
-<section id="top" class="hero">
-  <div class="bg-grid"></div>
-  <div class="glow" style="left:50%;top:0;width:900px;height:520px;transform:translateX(-50%);z-index:-1"></div>
-  <div class="wrap">
-    <div class="hero-top rise">
-      <span class="pill"><span class="ping"></span>Free during beta · paper money only</span>
-      <h1><span class="text-gradient">Rewind the market.</span><br><span class="text-brand">Trade it like it's live.</span></h1>
-      <p class="lead">Pick any crypto coin and any moment. The future is hidden: play the chart candle by candle, take paper trades with
-        real stops and targets, and see smart money concepts drawn as they form.</p>
-      <div class="cta-row">${btn('/signup', `${icon('play')} Start replaying — free`, 'btn-primary btn-lg')}${btn('/learn', `${icon('book-open')} Read the free SMC guide`, 'btn-secondary btn-lg')}</div>
-      <ul class="trust"><li>${icon('chart-line')} Real Binance &amp; Bybit candles</li><li>${icon('shield-check')} No card, no exchange account</li><li>${icon('smartphone')} Works on your phone</li></ul>
-    </div>
-    <div class="hero-shot rise rise-2">
-      <div class="glow"></div>
-      ${terminal()}
-      <p class="caption">Illustration: a scripted replay. Results on paper are not a promise of real results.</p>
-    </div>
-  </div>
-</section>
-
-<section id="features" class="section"><div class="wrap">
-  ${secHead('Features', 'A full trading desk, <span class="text-brand">with a rewind button</span>', 'Practice the exact decisions you face live — when to enter, where the stop goes, when to take profit — hundreds of times faster than waiting for the market.')}
-  <div class="bento">${FEATURES.map(([ic, t, b, big], k) => `<div class="card reveal${big ? ' big' : ''}" style="transition-delay:${k * 50}ms"><div class="glow"></div><span class="card-icon">${icon(ic, 'i-5')}</span><h3>${t}</h3><p>${b}</p></div>`).join('')}</div>
-</div></section>
-
-<section id="how" class="section section-alt"><div class="wrap">
-  ${secHead('How it works', 'Three steps, as many reps as you want')}
-  <ol class="grid-3">${STEPS.map(([ic, t, b], k) => `<li class="card reveal" style="transition-delay:${k * 80}ms"><div class="step-head"><b>0${k + 1}</b><span></span>${icon(ic, 'i-5')}</div><h3>${t}</h3><p>${b}</p></li>`).join('')}</ol>
-</div></section>
-
-<section id="learn" class="section"><div class="wrap">
-  <div class="learn-head"><div><p class="eyebrow">Learn — free</p><h2 class="h2">Smart money concepts, explained on real charts</h2>
-    <p class="sec-sub">Short guides in plain words. Each one ends with a replay you can open and practise in one click.</p></div>
-    ${btn('/learn', `${icon('book-open')} All guides`, 'btn-secondary')}</div>
-  <div class="guides">${GUIDES.map(([tag, t, b], k) => `<a href="/learn" class="guide reveal" style="transition-delay:${k * 40}ms"><span class="tag">${tag}</span><h3>${t}</h3><p>${b}</p></a>`).join('')}</div>
-</div></section>
-
-<section id="pricing" class="section section-alt"><div class="wrap">
-  ${secHead('Pricing', "Free while we're in beta", "No card, no trial clock. A paid plan with extras may come later; we'll say so well before anything changes.")}
-  <div class="plans">
-    <div class="plan featured reveal"><div class="plan-head"><h3>Free</h3><span class="chip chip-pri">Beta</span></div>
-      <p class="price"><b>$0</b><span>/ month</span></p>
-      <ul class="checks">${FREE.map(f => `<li>${icon('check')}${f}</li>`).join('')}</ul>
-      <div style="margin-top:32px">${btn('/signup', 'Create a free account', 'btn-primary btn-block')}</div></div>
-    <div class="plan later reveal" style="transition-delay:80ms"><div class="plan-head"><h3 class="t2">Pro</h3><span class="chip chip-line">Later</span></div>
-      <p class="t2" style="margin-top:16px;font-size:15px;line-height:1.65">Extras for heavy users, such as more layouts and alerts. Not available yet.</p>
-      <p class="muted" style="margin-top:32px;display:flex;align-items:center;gap:8px;font-size:13px">${icon('sparkles')} We'll announce it here first.</p></div>
-  </div>
-</div></section>
-
-<section id="faq" class="section"><div class="wrap wrap-md">
-  ${secHead('FAQ', 'Questions')}
-  <div class="faq">${QA.map(([q, a], k) => `<details${k === 0 ? ' open' : ''}><summary>${q}${icon('chevron-down')}</summary><p>${a}</p></details>`).join('')}</div>
-</div></section>
-
-<section style="padding:0 16px 96px"><div class="cta-box reveal">
-  <div class="bg-grid"></div><div class="glow"></div>
-  ${icon('circle-dollar-sign', 'i-8')}
-  <h2 class="h2" style="margin-top:16px">Your next 100 trades, before you risk a dollar</h2>
-  <p class="t2" style="max-width:576px;margin:16px auto 0">Make the mistakes on paper. Keep the lessons.</p>
-  <div style="margin-top:32px">${btn('/signup', `${icon('play')} Start replaying — free`, 'btn-primary btn-lg')}</div>
-</div></section>
-</main>
-${footer()}`;
-  return page({ body, nonce, scripts: [LWC, `<script src="${asset('hero.js')}" defer></script>`] });
-}
 
 // ---------------------------------------------------------------- long-form pages
 function contentPage(who, nonce, { eyebrow, title, intro, updated, html, description }) {
@@ -187,7 +60,7 @@ payments and exchange failures are real risks. Only trade money you can afford t
 <h2>Market data</h2><p>Candles come from the exchanges' public market data. They can contain gaps or errors, and we cannot promise they are complete or exact.</p>` }),
   learn: () => ({ eyebrow: 'Learn', title: 'Free trading guides', description: 'Free guides to smart money concepts and price action, written to practise on the replay desk.',
     intro: "Short, plain-English guides to smart money concepts and price action, each with a replay drill so you practise the idea on real charts. They're being written now.",
-    html: `<div class="guide-list">${GUIDES.map(([tag, t, b]) => `<div class="guide"><div class="row"><span class="tag-u">${tag}</span><span class="soon">Coming soon</span></div>
+    html: `<div class="guide-list">${GUIDES.map(([k, tag, t, b]) => `<div class="guide"><svg class="g-svg" viewBox="0 0 100 58" aria-hidden="true">${LEARN_SVG[k]}</svg><div class="row"><span class="tag-u">${tag}</span><span class="soon">Coming soon</span></div>
 <h3 style="margin-top:12px">${t}</h3><p>${b}</p></div>`).join('')}</div>` }),
 };
 
@@ -314,12 +187,7 @@ ${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin</a><a ro
 }
 const appPage = (who, nonce, section, main, title) => page({ title: title || section, nonce, noindex: true, body: `<div class="app">${appbar(who, section)}${main}</div>` });
 
-function desk(who, nonce) {
-  const first = who.user && who.user.name ? who.user.name.split(' ')[0] : '';
-  return appPage(who, nonce, 'Desk', `<main class="center"><div style="max-width:448px">
-<h1 style="font-size:24px;font-weight:600;letter-spacing:-.025em">Welcome${first ? `, ${esc(first)}` : ''} 👋</h1>
-<p class="t2" style="margin-top:12px">Your account is ready. The replay terminal is being built and will appear here.</p></div></main>`);
-}
+const { desk } = require('./desk');   // the trading terminal at /app
 
 const fmtDate = d => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const fmtTime = d => new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC';

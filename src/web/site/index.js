@@ -125,7 +125,6 @@ async function route(req, res, url, { dashboardHtml }) {
     case '/reset': html(res, n => P.reset(n, { token: String(url.searchParams.get('token') || '').slice(0, 100) })); return true;
     case '/app':
       if (!who) { toSignin(res, '/app'); return true; }
-      if (who.keyOnly) { redirect(res, '/dashboard'); return true; }
       html(res, n => P.desk(who, n)); return true;
     case '/account':
       if (!userWho) { toSignin(res, '/account'); return true; }

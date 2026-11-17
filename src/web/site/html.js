@@ -20,6 +20,11 @@ for (const f of fs.readdirSync(ASSET_DIR)) {
   const body = fs.readFileSync(path.join(ASSET_DIR, f));
   ASSETS[f] = { body, hash: crypto.createHash('sha256').update(body).digest('hex').slice(0, 10) };
 }
+// the simulator's SMC engine (src/web/smcEngine.js): the desk's SMC overlay runs the same code, served as /assets/smc.js
+try {
+  const body = fs.readFileSync(path.join(__dirname, '..', 'smcEngine.js'));
+  ASSETS['smc.js'] = { body, hash: crypto.createHash('sha256').update(body).digest('hex').slice(0, 10) };
+} catch (e) { /* no overlay; the desk still works */ }
 const asset = f => `/assets/${f}?v=${ASSETS[f] ? ASSETS[f].hash : '0'}`;
 
 const LOGO_SVG = (size = 32, id = 'g') => `<svg viewBox="0 0 32 32" width="${size}" height="${size}" class="logo-mark" aria-hidden="true">
@@ -36,7 +41,7 @@ const FAVICON = LOGO_SVG(32, 'fav').replace('<svg ', '<svg xmlns="http://www.w3.
 const btn = (href, label, cls = 'btn-primary') => `<a href="${esc(href)}" class="btn ${cls}">${label}</a>`;
 
 /** The whole document. nonce: per-request CSP nonce for the theme line. */
-function page({ title, description, body, nonce, scripts = [], bodyClass = '', noindex = false }) {
+function page({ title, description, body, nonce, scripts = [], bodyClass = '', noindex = false, head = '' }) {
   const full = title ? `${title} · ${SITE.name}` : `${SITE.name} — ${SITE.tagline}`;
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -49,7 +54,7 @@ ${noindex ? '<meta name="robots" content="noindex">' : ''}
 <script nonce="${nonce}">try{var t=localStorage.getItem('rd-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="${asset('site.css')}">
+<link rel="stylesheet" href="${asset('site.css')}">${head}
 </head><body class="${bodyClass}">
 ${body}
 <script src="${asset('site.js')}" defer></script>
