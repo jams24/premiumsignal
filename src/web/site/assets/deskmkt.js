@@ -454,7 +454,7 @@
         html: ctl + side('demand', '▲ Demand · longs') + side('supply', '▼ Supply · shorts') +
           `<div class="zr-now" data-zr-now>${now}</div>
           ${dots ? `<p class="mk-day">Last ${last.length} touches · oldest → newest</p><div class="zr-dots" data-mk-tips="zr">${dots}</div><div class="mk-read zr-read" data-mk-read="zr" data-def="▲ demand · ▼ supply · green held, red went through. Hover or tap one.">▲ demand · ▼ supply · green held, red went through. Hover or tap one.</div>` : ''}
-          <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-zrmk${M.zrMarks ? ' checked' : ''}><span></span>Mark the touches on the chart</label></div>
+          <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-zrmk${M.zrMarks ? ' checked' : ''}><span></span>Mark the touches on the chart <em class="m">(squares)</em></label></div>
           <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} days, fetched live from ${esc(u.api(U.ex).name)}. Each zone's first touch: entry at its edge, stop 0.1% past the far edge, target the same distance (1R). Random = the same stop and target from 20 random candles of this coin per touch. In our tests (207 coins, 3 months) a coin's score did not carry into the next month and zones overall held about as often as random, so read this as how ${esc(coin())} behaved, not a forecast.</p>`,
         after: b => tips(b, 'zr'),
       };
@@ -577,13 +577,13 @@
     return parts.join('');
   });
 
-  // zone touches on the chart (Zones → "Mark the touches"): ✓ held, ✗ went through, · still open. Not in a replay: the mark
+  // zone touches on the chart (Zones → "Mark the touches"): squares D / S with ✓ held, ✗ went through, · still open. Not in a replay: the mark
   // would show how a touch ended before the replay clock gets there.
   if (X.marks) X.marks.push(() => {
     const d = M.d.zr;
     if (!M.zrMarks || !d || d.key !== keyNow() || R.on) return [];
     const C = RD.COL || {};
-    return d.touches.map(t => ({ t: t.t, position: t.type === 'demand' ? 'belowBar' : 'aboveBar', shape: 'circle',
+    return d.touches.map(t => ({ t: t.t, position: t.type === 'demand' ? 'belowBar' : 'aboveBar', shape: 'square',   // square: the SMC overlay's swing points are circles
       color: t.res === 1 ? C.up || '#22c55e' : t.res === 0 ? C.down || '#ef4444' : '#8b93a1',
       text: (t.type === 'demand' ? 'D' : 'S') + (t.res === 1 ? ' ✓' : t.res === 0 ? ' ✗' : ' ·') }));
   });
