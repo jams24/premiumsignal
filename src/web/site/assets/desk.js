@@ -103,8 +103,9 @@
         const m = {}; for (const t of d) m[t.symbol] = { px: +t.lastPrice, chg: +t.priceChangePercent, vol: +t.quoteVolume }; return m;
       },
       async ticker(sym) { const t = await getJSON('https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=' + sym); return { px: +t.lastPrice, chg: +t.priceChangePercent, vol: +t.quoteVolume }; },
-      stream(sym, iv, onK) {
-        const ws = new WebSocket('wss://fstream.binance.com/ws/' + sym.toLowerCase() + '@kline_' + TF[iv].b);
+      // Binance moved its futures market streams under /market: the old /ws/ address still connects but never sends
+      socket(sym, iv, onK) {
+        const ws = new WebSocket('wss://fstream.binance.com/market/ws/' + sym.toLowerCase() + '@kline_' + TF[iv].b);
         ws.onmessage = m => { try { const k = JSON.parse(m.data).k; if (k) onK([k.t, +k.o, +k.h, +k.l, +k.c, +k.v]); } catch (e) { /* skip */ } };
         return { ws, close() { ws.onclose = null; try { ws.close(); } catch (e) { /* closed */ } } };
       },
@@ -139,7 +140,7 @@
         const d = await getJSON('https://api.bybit.com/v5/market/tickers?category=linear&symbol=' + sym); const t = d.result.list[0];
         return { px: +t.lastPrice, chg: +t.price24hPcnt * 100, vol: +t.turnover24h };
       },
-      stream(sym, iv, onK) {
+      socket(sym, iv, onK) {
         const ws = new WebSocket('wss://stream.bybit.com/v5/public/linear');
         let ping = null;
         ws.onopen = () => { ws.send(JSON.stringify({ op: 'subscribe', args: ['kline.' + TF[iv].y + '.' + sym] })); ping = setInterval(() => { try { ws.send('{"op":"ping"}'); } catch (e) { /* closed */ } }, 20000); };
@@ -149,7 +150,52 @@
       },
     },
   };
+  for (const ex in EX) EX[ex].stream = (sym, iv, onK, o) => liveFeed(ex, sym, iv, onK, o || {});
   const api = ex => EX[ex || U.ex] || EX.binance;
+
+  // Live candles: the exchange's socket with a REST check behind it. When the socket has been quiet for 10 s the newest
+  // candles are fetched over REST — that keeps the chart moving and fills the hole a sleeping laptop, a lost connection
+  // or a background tab leaves — and if REST had news the socket never sent, the socket is reopened. So a socket that
+  // connects but never sends (what Binance's old stream address does since the move to /market) can't freeze the chart.
+  // o.last = the chart's newest candle · o.gap() = too far behind for one REST call (reload the chart)
+  function liveFeed(ex, sym, iv, onK, o) {
+    const E = EX[ex], ms = TF[iv].ms;
+    let sock = null, dead = false, heard = Date.now(), got = 0, opened = 0, busy = false, top = o.last || null;   // heard: last message or (re)open · got: last message
+    const take = k => { if (!top || k[0] >= top[0]) top = k; onK(k); };
+    function open() {
+      if (dead) return;
+      if (sock) sock.close();
+      opened = heard = Date.now();
+      let me = null;
+      try { me = E.socket(sym, iv, k => { if (sock === me) { heard = got = Date.now(); take(k); } }); } catch (e) { sock = null; return; }
+      sock = me;
+      me.ws.addEventListener('close', () => { if (sock === me) sock = null; });
+    }
+    async function check(now) {
+      if (dead || busy || document.hidden) return;
+      if (!now && Date.now() - heard < 10000) return;
+      busy = true;
+      try {
+        const behind = top ? Math.ceil((Date.now() - top[0]) / ms) + 1 : 1;
+        if (behind > E.cap - 5 && o.gap) { o.gap(); return; }
+        const ks = await E.klines(sym, iv, { limit: Math.max(2, Math.min(E.cap, behind + 1)) });
+        if (dead) return;
+        const was = top ? top.join() : '';
+        for (const k of ks) if (!top || k[0] >= top[0]) take(k);
+        const news = (top ? top.join() : '') !== was;
+        if (!sock || (news && Date.now() - heard > 10000 && Date.now() - opened > 20000)) open();
+      } catch (e) { /* tried again in 5 s */ } finally { busy = false; }
+    }
+    const vis = () => { if (!document.hidden) check(true); }, onl = () => check(true);
+    document.addEventListener('visibilitychange', vis); window.addEventListener('online', onl);
+    const timer = setInterval(() => check(false), 5000);
+    open();
+    return {
+      close() { dead = true; clearInterval(timer); document.removeEventListener('visibilitychange', vis); window.removeEventListener('online', onl); if (sock) sock.close(); sock = null; },
+      check: () => check(true),
+      get live() { return !!sock && Date.now() - got < 15000; },   // the socket itself is sending
+    };
+  }
 
   // candles with open time in [from, to), paged forward
   async function fetchRange(sym, iv, from, to, ex) {
@@ -281,11 +327,10 @@
   function startStream(g) {
     stopStream();
     let h;
-    try { h = api().stream(U.sym, U.tf, onLiveK); } catch (e) { return; }
+    try { h = api().stream(U.sym, U.tf, onLiveK, { last: lastBar(), gap: () => { if (g === S.gen && !R.on) loadLive(); } }); } catch (e) { return; }
     S.ws = h;
-    h.ws.onclose = () => { if (g !== S.gen || R.on) return; S.wsT = setTimeout(() => { if (g === S.gen && !R.on) startStream(g); }, 3000); };
   }
-  function stopStream() { clearTimeout(S.wsT); if (S.ws) { S.ws.close(); S.ws = null; } }
+  function stopStream() { if (S.ws) { S.ws.close(); S.ws = null; } }
   function onLiveK(k) {
     if (R.on) return;
     const last = lastBar(); if (!last) return;
@@ -1684,7 +1729,7 @@
     bres.addEventListener('dblclick', () => { U.bh = 0; setBH(0); saveUI(); });
   }
   window.addEventListener('pagehide', () => { if (R.on) saveR(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && R.on) saveR(); if (!document.hidden) { pollLive(); if (!R.on && S.ws && S.ws.ws.readyState > 1) startStream(S.gen); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && R.on) saveR(); if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
   window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious

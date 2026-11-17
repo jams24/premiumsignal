@@ -94,12 +94,11 @@
   // ---- data: live = the exchange's candles + its stream · replay = history before the clock's candle, then closed finer
   // candles (1m up to 1H, like the main replay) revealed only as the main clock passes them
   const guessPrec = px => Math.max(0, Math.min(8, 5 - Math.floor(Math.log10(Math.max(px, 1e-9)))));
-  function stopWs() { clearTimeout(C.wsT); if (C.ws) { C.ws.close(); C.ws = null; } }
-  function startWs(g) {
+  function stopWs() { if (C.ws) { C.ws.close(); C.ws = null; } }
+  function startWs(g) {   // the shared live feed reconnects and catches up by itself (REST check behind the socket)
     stopWs();
-    let h; try { h = api(C.ex).stream(C.sym, ctf(), onK); } catch (e) { return; }
+    let h; try { h = api(C.ex).stream(C.sym, ctf(), onK, { last: C.bars[C.bars.length - 1], gap: () => { if (g === C.gen && !R.on && C.on) load(); } }); } catch (e) { return; }
     C.ws = h;
-    h.ws.onclose = () => { if (g !== C.gen || R.on || !C.on) return; C.wsT = setTimeout(() => { if (g === C.gen && !R.on && C.on) startWs(g); }, 3000); };
   }
   function onK(k) {
     if (R.on || !C.on) return;
@@ -313,7 +312,7 @@
     if (ch) { cs.setData([]); vs.setData([]); marks(); prim.req(); }
     sumEl.hidden = true; lgEl.innerHTML = ''; say(`<span class="spin-s"></span> Loading ${esc(coin(C.sym))}…`);
   });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && C.on && !R.on && C.ws && C.ws.ws.readyState > 1) startWs(C.gen); });
+  // the live feed checks itself when the tab comes back (fills the gap, reopens a dead socket)
   window.__rdCmp = { C, show, load };   // for tests
   if (C.on) show(true);
 })();
