@@ -76,7 +76,7 @@ function serveAsset(req, res, url) {
 }
 
 const PAGES = new Set(['/', '/learn', '/terms', '/privacy', '/risk', '/signin', '/signup', '/check-email', '/forgot', '/reset', '/app', '/account',
-  '/admin', '/dashboard', '/robots.txt', '/icon.svg', '/favicon.ico']);
+  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico']);
 
 async function handle(req, res, url, opts = {}) {
   const p = url.pathname;
@@ -86,7 +86,7 @@ async function handle(req, res, url, opts = {}) {
   } catch (e) {
     logger.warn(`[web] ${req.method} ${p}: ${e.message}`);
     if (res.headersSent) { try { res.end(); } catch (_) { /* closed */ } return true; }
-    if (p === '/dashboard') return false;   // the old key screen still works
+    if (p === '/dashboard' || p === '/dashboard/classic') return false;   // the old key screen still works
     if (p.startsWith('/auth/')) { json(res, 500, { error: 'server', message: 'Something went wrong. Try again.' }); return true; }
     res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Something went wrong. Please try again.');
     return true;
@@ -101,13 +101,13 @@ async function route(req, res, url, { dashboardHtml }) {
   if (p === '/icon.svg' || p === '/favicon.ico') { res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' }); res.end(FAVICON); return true; }
   if (p === '/robots.txt') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('User-agent: *\nDisallow: /dashboard\nDisallow: /app\nDisallow: /account\nDisallow: /admin\nDisallow: /api/\nDisallow: /auth/\n');
+    res.end('User-agent: *\nDisallow: /dashboard\nDisallow: /dashboard/classic\nDisallow: /app\nDisallow: /account\nDisallow: /admin\nDisallow: /api/\nDisallow: /auth/\n');
     return true;
   }
   if (p.startsWith('/auth/')) return authRoute(req, res, url);
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET' }); res.end(); return true; }
 
-  if (p === '/dashboard' && !db.ready()) return false;   // accounts offline → old behaviour (key screen in the page)
+  if ((p === '/dashboard' || p === '/dashboard/classic') && !db.ready()) return false;   // accounts offline → old behaviour (key screen in the page)
   const who = db.ready() ? await A.readSession(req) : null;
   const userWho = who && !who.keyOnly ? who : null;
   const next = safeNext(url.searchParams.get('next'));
@@ -145,14 +145,18 @@ async function route(req, res, url, { dashboardHtml }) {
       html(res, n => ADM.adminConsole(who, n, d));
       return true;
     }
-    case '/dashboard':
+    case '/dashboard':   // two versions: the modern desk (default) and the classic SignalCommand page
+      if (who && who.admin) { redirect(res, '/app#real'); return true; }
+      html(res, n => P.dashboardGate(n, { who, googleOn: G.enabled(), next: '/dashboard' }));
+      return true;
+    case '/dashboard/classic':
       if (who && who.admin && dashboardHtml) {
         if (!adminDash) adminDash = dashboardHtml.replace('</head>', '<script>window.__RD_ADMIN=1</script></head>');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin' });
         res.end(adminDash);
         return true;
       }
-      html(res, n => P.dashboardGate(n, { who, googleOn: G.enabled() }));
+      html(res, n => P.dashboardGate(n, { who, googleOn: G.enabled(), next: '/dashboard/classic' }));
       return true;
     default: return false;
   }

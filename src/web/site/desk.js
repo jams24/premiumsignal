@@ -14,7 +14,7 @@ const TOOLS = [
   ['magnet', 'magnet', 'Magnet: snap to candle high / low / open / close'], ['clear', 'trash-2', 'Remove all drawings on this coin'],
 ];
 // icons the browser code builds rows with
-const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up'];
+const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search'];
 // the admin layer's extra icons (only sent to admins)
 const ADMIN_ICONS = ['rewind', 'refresh-cw', 'send', 'zap', 'triangle-alert', 'circle-check', 'external-link', 'chart-candlestick', 'bot', 'radio', 'users', 'activity', 'crosshair', 'info', 'trending-down'];
 
@@ -28,7 +28,7 @@ function userMenu(who) {
   return `<div class="umenu" data-umenu><button type="button" class="avatar dk-av" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${av}</button>
 <div class="menu" role="menu" hidden><div class="menu-who"><b>${esc(name)}</b><span>${esc(sub)}</span></div>
 <div class="menu-items"><a role="menuitem" href="/learn">${icon('graduation-cap')} Learn</a>${u ? `<a role="menuitem" href="/account">${icon('settings')} Account</a>` : ''}
-${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin console</a><a role="menuitem" href="/dashboard">${icon('layout-dashboard')} Classic dashboard</a>` : ''}
+${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin console</a><a role="menuitem" href="/dashboard/classic">${icon('history')} Classic dashboard</a>` : ''}
 <button type="button" role="menuitem" data-signout>${icon('log-out')} Sign out</button></div></div></div>`;
 }
 
@@ -105,19 +105,21 @@ function desk(who, nonce) {
   <select class="dk-tfsel" data-tfsel aria-label="Timeframe">${TFS.map(t => `<option>${t}</option>`).join('')}</select>
   <span class="dk-vsep"></span>
   <div class="dk-ind">
-    <button type="button" class="dk-pill" data-act="ind" aria-expanded="false">${icon('activity', 'i-35')}<span>Indicators</span></button>
+    <button type="button" class="dk-pill" data-act="ind" aria-expanded="false" title="Indicators">${icon('activity', 'i-35')}<span>Indicators</span></button>
     <div class="dk-pop" data-indpop hidden>
       <label><input type="checkbox" data-ind="vol" checked> Volume</label>
       <label><input type="checkbox" data-ind="ema20"> EMA 20</label>
       <label><input type="checkbox" data-ind="ema50"> EMA 50</label>
       <label><input type="checkbox" data-ind="ema200"> EMA 200</label>
       <hr><label><input type="checkbox" data-ind="smc"> SMC: structure, zones, liquidity</label>
+      <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
       <p>SMC reads closed candles only, so in a replay it never sees the future.</p>
     </div>
   </div>
   <button type="button" class="dk-pill dk-smc" data-act="smc" aria-pressed="false">SMC</button>
+  <button type="button" class="dk-pill dk-cmpb" data-act="cmp" aria-pressed="false" title="Compare: a second coin beside this chart">${icon('layers', 'i-35')}<span>Compare</span></button>
   <span class="dk-vsep"></span>
-  <button type="button" class="dk-pill dk-rbtn" data-act="replay">${icon('rewind', 'i-35')}<span>Replay</span></button>
+  <button type="button" class="dk-pill dk-rbtn" data-act="replay" title="Replay: trade past candles one by one">${icon('rewind', 'i-35')}<span>Replay</span></button>
   <div class="dk-rp" data-rp hidden>
     ${ib('rstart', 'calendar-clock', 'Choose the start')}
     <button type="button" class="dk-ib dk-play" data-act="play" aria-label="Play" title="Play / pause (Space)">${icon('play', 'i-4')}</button>
@@ -164,6 +166,7 @@ function desk(who, nonce) {
 </aside>
 
 <section class="dk-bottom" data-sheet="pos">
+  <div class="dk-bres" data-bres title="Drag to resize · double-click to reset" aria-hidden="true"></div>
   <div class="dk-tabs" role="tablist">
     <button type="button" class="on" data-btab="pos">Positions <b data-cnt="pos">0</b></button><button type="button" data-btab="ord">Orders <b data-cnt="ord">0</b></button>
     <button type="button" data-btab="hist">History</button><button type="button" data-btab="stats">Stats</button>
@@ -211,7 +214,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,

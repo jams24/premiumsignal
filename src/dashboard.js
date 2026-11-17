@@ -456,7 +456,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       </div>
     </div>
     <div class="header-right">
-      <a class="btn-sm" href="/app" style="text-decoration:none;color:var(--accent)">Open ReplayDesk ↗</a>
+      <a class="btn-sm" href="/app#real" style="text-decoration:none;color:var(--accent)">Modern desk ↗</a>
+      <a class="btn-sm" href="/admin" style="text-decoration:none">Admin ↗</a>
       <a class="btn-sm" href="/learn" style="text-decoration:none">Academy ↗</a>
       <button class="btn-sm" onclick="refreshAll()">Refresh</button>
       <button class="btn-sm" onclick="resetConfig()">Logout</button>

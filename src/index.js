@@ -96,7 +96,7 @@ async function main() {
     if (!authed && site && url.pathname.startsWith('/api/')) authed = await site.isAdminRequest(req);
 
 
-    if (url.pathname === '/' || url.pathname === '/dashboard') {
+    if (url.pathname === '/' || url.pathname === '/dashboard' || url.pathname === '/dashboard/classic') {
       logger.info(`[DASHBOARD] Page loaded from ${req.headers['user-agent'] ? (req.headers['user-agent'].includes('Mobile') ? 'MOBILE' : 'DESKTOP') : 'unknown'}`);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
       return res.end(dashboardHtml);

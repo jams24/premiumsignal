@@ -68,10 +68,10 @@ const NAV = [['/#features', 'Features'], ['/#how', 'How it works'], ['/learn', '
 /** Public navbar. who: null | { admin, keyOnly } */
 function navbar(who) {
   const right = who
-    ? (who.keyOnly ? btn('/dashboard', 'Open the dashboard', 'btn-primary btn-sm') : btn('/app', 'Open the desk', 'btn-primary btn-sm'))
+    ? (who.keyOnly ? btn('/app#real', 'Open the desk', 'btn-primary btn-sm') : btn('/app', 'Open the desk', 'btn-primary btn-sm'))
     : `${btn('/signin', 'Sign in', 'btn-ghost btn-sm')}${btn('/signup', 'Start free', 'btn-primary btn-sm')}`;
   const mobile = who
-    ? (who.keyOnly ? btn('/dashboard', 'Open the dashboard', 'btn-primary span-2') : btn('/app', 'Open the desk', 'btn-primary span-2'))
+    ? (who.keyOnly ? btn('/app#real', 'Open the desk', 'btn-primary span-2') : btn('/app', 'Open the desk', 'btn-primary span-2'))
     : `${btn('/signin', 'Sign in', 'btn-secondary')}${btn('/signup', 'Start free', 'btn-primary')}`;
   return `<header class="nav" data-nav>
 <nav class="wrap nav-inner" aria-label="Main">

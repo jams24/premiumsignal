@@ -390,7 +390,8 @@
     else if (T.pvErr) h = `<p class="xbad">${ic('circle-x')} ${esc(T.pvErr)}</p>`;
     else if (T.pv && T.pvKey === JSON.stringify(body())) {
       const s = T.pv;
-      h = `<div class="rx-pvh"><span>${ic('bot')} The bot's order</span><span class="muted">${esc(String(s.exchange || '').toUpperCase())} · ${s.mode === 'live' ? 'live money' : "bot's paper"}${T.pvBusy ? ' · updating…' : ''}</span></div>${orderRows(s, false)}${notes(s)}`;
+      const exNote = s.exchange && exOf(s.exchange) !== RD.U.ex ? `<p class="rx-exn">${ic('info')} <span>The chart shows <b>${RD.U.ex === 'bybit' ? 'Bybit' : 'Binance'}</b> prices; this order goes to <b>${esc(String(s.exchange).charAt(0).toUpperCase() + String(s.exchange).slice(1))}</b> (your saved exchange). Prices can differ a little — change it under Account, exchange.</span></p>` : '';
+      h = `<div class="rx-pvh"><span>${ic('bot')} The bot's order</span><span class="muted">${esc(String(s.exchange || '').toUpperCase())} · ${s.mode === 'live' ? 'live money' : "bot's paper"}${T.pvBusy ? ' · updating…' : ''}</span></div>${orderRows(s, false)}${exNote}${notes(s)}`;
     } else h = `<div class="rx-pvh"><span>${ic('bot')} The bot's order</span><span class="muted">${T.pvBusy ? 'asking the bot…' : ''}</span></div><p class="muted rx-wait">${T.pvBusy ? '<span class="spin-s"></span> ' : ''}The bot works out the exact order — entry, stop, TPs, size and max loss — as you fill this in.</p>`;
     if (el._h !== h) { el.innerHTML = h; el._h = h; }
   }
@@ -461,6 +462,66 @@
     F('margin').value = margin; schedule(); renderT();
     RD.toast(`Margin ${money(margin)} × ${lev}× = ${money(margin * lev)}: the stop ${(dist * 100).toFixed(2)}% away loses ≈ ${money(risk)} with fees.`);
   }
+
+  // ------------------------------------------------------------------ trading on the chart: the real-money side
+  // The chart's menu (right-click, long-press, the + at the price axis) gets a Real section: this coin's real position and
+  // limit order (stop / TP / limit here, close, cancel — each through its confirm dialog), or a new real limit order planned
+  // on the chart. A ⚡ real plan and the chart's Real Buy / Sell fill this ticket and open the review: the bot's exact order,
+  // then Place. Nothing real is sent from the menu itself.
+  const openReal = () => { if (phone()) RD.openSheet('real'); else RD.sideTab('real'); };
+  const needWeb = f => () => { if (!L.web) { RD.toast(offTitle, 'down'); return; } f(); };
+  RD.ext.realActive = () => !$('[data-pane="real"]').hidden;
+  RD.ext.quickReal = q => {
+    if (RD.R.on) { RD.toast('Real trading is on the live chart: exit the replay first.', 'down'); return; }
+    if (q.keep) {   // Real Buy / Sell on the chart: the ticket as it is, at market, on that side
+      if (T.side !== q.side) { F('stop').value = ''; F('tp').value = ''; T.tp = 'plan'; }
+      T.side = q.side; T.entry = 'market'; F('limit').value = '';
+    } else {
+      T.side = q.side; T.entry = q.kind === 'market' ? 'market' : 'limit';
+      F('limit').value = q.entry ? RD.util.rt(q.entry) : ''; F('stop').value = q.sl ? q.sl : ''; F('tp').value = q.tp ? q.tp : ''; T.tp = q.tp ? 'price' : 'plan';
+    }
+    Object.assign(T, { pv: null, pvErr: null, pvOpen: null });
+    openReal(); renderT(); RD.syncLines();
+    const errs = check();
+    if (errs.length) { RD.toast(errs[0], 'down'); return; }
+    review().then(() => {   // refused before the dialog: say why where you clicked
+      if (T.pvOpen) RD.toast(`You already have a real ${T.pvOpen.direction || ''} on ${base(RD.U.sym)} — one real trade per coin. It is in the Real tab below.`, 'down');
+      else if (T.pvErr && xm.hidden) RD.toast('The bot did not accept it: ' + T.pvErr, 'down');
+    });
+  };
+  // the chart's Real Buy / Sell: a coin with a real trade or order open takes no second one
+  RD.ext.realBusy = () => { const b = base(RD.U.sym), d = L.d || {}; const p = (d.positions || []).find(q => base(q.symbol) === b), o = (d.orders || []).find(q => base(q.symbol) === b);
+    return p ? `Real ${p.direction} open on ${b}` : o ? `Real ${o.direction} limit waiting on ${b}` : ''; };
+  RD.ext.menu.push(ctx => {
+    if (ctx.replay) return '';
+    const v = ctx.price, b = base(ctx.sym), d = L.d || {}, items = [], off = L.web === false;
+    const opts = (o) => Object.assign({ dis: off }, o);
+    for (const p of (d.positions || []).filter(q => base(q.symbol) === b).slice(0, 2)) {
+      const L2 = p.direction === 'long', lv = live(p), m = lv.m;
+      items.push(`<p class="tm-h2"><i class="rdot"></i>Real ${esc(p.direction)} · ${esc(p.exchange || '')} · <span class="${(lv.pnl || 0) >= 0 ? 'up' : 'down'}">${lv.pnl == null ? '—' : sgn(lv.pnl)}</span></p>`);
+      if (m && (L2 ? v < m : v > m)) items.push(ctx.item(`Move the real stop to ${fp(v)}`, `stop now ${px(p.stop, p.symbol)}`, needWeb(() => askStop(p, v)), opts({ icon: 'shield', tone: 'warn' })));
+      else if (m) { const open = (p.tps || []).filter(t => !t.hit); if (open.length) items.push(ctx.chips(`Real TP to ${fp(v)}:`, open.map(t => [`TP${t.n}`, needWeb(() => askTp(p, t.n, v))]), opts({ icon: 'target', tone: 'up' }))); }
+      items.push(ctx.item('Close the real position at market', '', () => action('close', p.id), opts({ icon: 'circle-x', tone: 'down' })));
+    }
+    for (const o of (d.orders || []).filter(q => base(q.symbol) === b).slice(0, 2)) {
+      const L2 = o.direction === 'long', lim = +o.limitPrice;
+      items.push(`<p class="tm-h2"><i class="rdot"></i>Real ${esc(o.direction)} limit ${px(lim, o.symbol)}</p>`);
+      if (L2 ? v < ctx.px : v > ctx.px) items.push(ctx.item(`Move the real limit to ${fp(v)}`, '', needWeb(() => askOrder(o, 'limit', v)), opts({ icon: 'crosshair' })));
+      if (L2 ? v < lim : v > lim) items.push(ctx.item(`Real order stop at ${fp(v)}`, `now ${px(o.stop, o.symbol)}`, needWeb(() => askOrder(o, 'ostop', v)), opts({ icon: 'shield', tone: 'warn' })));
+      else items.push(ctx.item(`Real order TP1 at ${fp(v)}`, `now ${px(o.tp1, o.symbol)}`, needWeb(() => askOrder(o, 'otp', v)), opts({ icon: 'target', tone: 'up' })));
+      items.push(ctx.item('Cancel the real limit order', '', () => action('cancel', o.id), opts({ icon: 'circle-x', tone: 'down' })));
+    }
+    if (!items.length) {   // a new real order: the bot places limit entries — a long below the price, a short above it
+      const side = ctx.below ? 'long' : 'short';
+      items.push(ctx.item(`⚡ Real ${side} limit from ${fp(v)}`, 'then click the stop and TP1 — you review it before it is placed', () => RD.qStart(v, true), { icon: 'zap', tone: ctx.below ? 'up' : 'down' }));
+      items.push(ctx.item(`Real ticket: ${side} limit at ${fp(v)}`, 'fill the ticket, set the rest there', () => { T.side = side; T.entry = 'limit'; F('stop').value = ''; F('tp').value = ''; setF('limit', v); RD.syncLines(); openReal(); }, { icon: 'crosshair' }));
+      const e0 = refPx(), okS = e0 && (T.side === 'long' ? v < e0 : v > e0), okT = e0 && (T.side === 'long' ? v > e0 : v < e0);
+      if (okS) items.push(ctx.item(`Real ticket: stop at ${fp(v)}`, `${T.side} ticket`, () => { setF('stop', v); RD.syncLines(); openReal(); }, { icon: 'shield' }));
+      if (okT) items.push(ctx.item(`Real ticket: TP1 at ${fp(v)}`, `${T.side} ticket`, () => { setF('tp', v); RD.syncLines(); openReal(); }, { icon: 'target' }));
+    }
+    if (off) items.push('<p class="tm-note">Web trading is off — the ⚡ plan can still go to your Telegram panel. Send <code>/webtrade on</code> to act from here.</p>');
+    return ctx.sec('<i class="rdot"></i>Real money', items, 'tm-real');
+  });
 
   // ------------------------------------------------------------------ signals: recent pump signals and the bot's trades
   const G = { tab: store.get('rd-adm-sigtab', 'sig'), days: store.get('rd-adm-sigdays', 14), q: '', sigs: [], trades: [], at: 0, err: null, busy: false, show: store.get('rd-adm-sigmarks', true) };

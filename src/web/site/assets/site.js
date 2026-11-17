@@ -192,7 +192,7 @@
   if ($('[data-landing]') && !$('[data-signed-in]') && store.get('sc_key') && !store.get('rd-moved-seen')) {
     var t = document.createElement('div');
     t.className = 'toast';
-    t.innerHTML = '<span>Your trading dashboard is now at <b>/dashboard</b>.</span><a class="btn btn-primary btn-sm" href="/dashboard">Open it</a><button type="button" class="icon-btn" aria-label="Dismiss">✕</button>';
+    t.innerHTML = '<span>Your trading dashboard moved into the new desk (the classic page is still there).</span><a class="btn btn-primary btn-sm" href="/dashboard">Open it</a><button type="button" class="icon-btn" aria-label="Dismiss">✕</button>';
     document.body.appendChild(t);
     $('button', t).addEventListener('click', function () { store.set('rd-moved-seen', '1'); t.remove(); });
   }

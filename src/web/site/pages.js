@@ -177,7 +177,7 @@ function appbar(who, section) {
 <div class="umenu" data-umenu><button type="button" class="avatar" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${av}</button>
 <div class="menu" role="menu" hidden><div class="menu-who"><b>${esc(name)}</b><span>${esc(sub)}</span></div>
 <div class="menu-items">${u ? `<a role="menuitem" href="/account">${icon('settings')} Account</a>` : ''}
-${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin</a><a role="menuitem" href="/dashboard">${icon('layout-dashboard')} Live dashboard</a>` : ''}
+${who.admin ? `<a role="menuitem" href="/admin">${icon('shield')} Admin</a><a role="menuitem" href="/app#real">${icon('zap')} Live trading</a><a role="menuitem" href="/dashboard/classic">${icon('history')} Classic dashboard</a>` : ''}
 <button type="button" role="menuitem" data-signout>${icon('log-out')} Sign out</button></div></div></div>
 </div></header>`;
 }
@@ -203,15 +203,15 @@ ${u.hasPassword ? '<p class="t2" style="margin-top:20px;font-size:14px">Want a n
 <p class="muted" style="margin-top:8px;font-size:13px">More settings (name, password, delete account) are on the way.</p></main>`);
 }
 
-/** /dashboard without an admin session: sign in as admin, or use the dashboard key (a saved key signs in by itself). */
-function dashboardGate(nonce, { who, googleOn }) {
+/** /dashboard (or /dashboard/classic) without an admin session: sign in as admin, or use the dashboard key (a saved key signs in by itself). */
+function dashboardGate(nonce, { who, googleOn, next = '/dashboard' }) {
   const signedInNotAdmin = who && !who.admin;
   return authShell(nonce, {
-    title: 'Live dashboard', sub: 'Admin only. Sign in with the admin account, or use the dashboard key.',
+    title: next === '/dashboard/classic' ? 'Classic dashboard' : 'Live trading', sub: 'Admin only. Sign in with the admin account, or use the dashboard key.',
     inner: `${signedInNotAdmin ? alertSlot('pri', 'You’re signed in, but this account isn’t an admin. <a class="link" href="/app">Go to your desk</a>.') : alertSlot()}
 <p data-autokey hidden class="alert alert-pri">Signing you in with the dashboard key saved on this device…</p>
-${signedInNotAdmin ? '' : `${googleOn ? google('/dashboard', 'Continue with Google') : ''}
-<form data-form="signin" novalidate>${hidden('next', '/dashboard')}
+${signedInNotAdmin ? '' : `${googleOn ? google(next, 'Continue with Google') : ''}
+<form data-form="signin" novalidate>${hidden('next', next)}
 ${field({ label: 'Admin email', name: 'email', type: 'email', auto: 'email', placeholder: 'you@example.com' })}
 ${field({ label: 'Password', name: 'password', type: 'password', auto: 'current-password' })}
 <div class="form-actions"><button type="submit" class="btn btn-primary btn-lg btn-block">Sign in ${icon('arrow-right')}</button></div></form>

@@ -9,7 +9,8 @@ const VIEWS = [
   ['users', 'Users', 'users'],
 ];
 const TOOLS = [
-  ['/app#real', 'Live trading', 'Desk: Real ticket, bot positions, signals', 'zap'],
+  ['/app#real', 'Live trading · modern', 'The desk: trade on the chart, Real ticket, positions, signals', 'zap'],
+  ['/dashboard/classic', 'Live trading · classic', 'The old SignalCommand page, unchanged', 'history'],
   ['/app', 'Desk', 'Paper and replay desk', 'chart-candlestick'],
   ['/learn', 'Academy', 'Lessons, incl. the admin Desk notes', 'graduation-cap'],
 ];
@@ -42,7 +43,7 @@ const userTable = (rows, empty) => `<div class="adm-table"><table><thead><tr><th
 
 function overview(d) {
   const c = d.counts;
-  return `${head('Overview', 'The bot and the site at a glance. Read-only — trading stays on the Live trading page until the desk takes it over.')}
+  return `${head('Overview', 'The bot and the site at a glance. Read-only — trading is in the desk (modern) or the classic page — both work, pick either below.')}
 <section class="adm-card" data-bot-overview>
   <div class="adm-card-h"><h2>${icon('bot', 'i-4')} Bot</h2><span class="adm-live" data-bot-status><i></i>Connecting…</span><a class="adm-more" href="/admin?view=trades">Trades & P&L ${icon('arrow-right', 'i-35')}</a></div>
   <div class="adm-tiles" data-bot-tiles>${['Open trades', 'Today', '7 days', '30 days', 'All time'].map(t => `<div class="adm-tile"><span>${t}</span><b class="sk">—</b><em>&nbsp;</em></div>`).join('')}</div>
