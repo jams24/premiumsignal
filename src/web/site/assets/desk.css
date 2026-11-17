@@ -773,3 +773,12 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .ss-reset { padding: 2px 4px; background: none; color: var(--primary); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }
 .ss-leg { display: inline-flex; align-items: center; gap: 4px; }
 .ss-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; }
+
+/* Real ticket: plan-lines switch; legend buttons (bot tags Clear) */
+.rx-lines { display: flex; align-items: center; gap: 8px; margin: 10px 2px 0; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.rx-lines input { accent-color: var(--primary); } .rx-lines em { font-style: normal; font-size: 11px; color: var(--muted); }
+.dk-legend .lg-btn { pointer-events: auto; display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 99px;
+  background: color-mix(in oklab, var(--panel) 85%, transparent); color: var(--text-2); font: 500 11px var(--mono); cursor: pointer; }
+.dk-legend .lg-btn:hover { color: var(--text); border-color: var(--primary); } .dk-legend .lg-btn.m { color: var(--muted); }
+.sg-clr { margin: 4px 2px 0; font-size: 11.5px; color: var(--muted); }
+.sg-clr .lnk { padding: 0; background: none; color: var(--primary); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }

@@ -318,17 +318,21 @@
     // the ticket being filled in (dashed, draggable like the paper ticket) and the bot's preview levels
     const pv = T.pv && T.pvKey === JSON.stringify(body()) ? T.pv : null, show = paneOpen() || hasInput();
     if (show) {
-      const tl = (f, v, color, title) => { if (v > 0) W.push({ key: 'rxk' + f, price: v, color, style: LS.LargeDashed, w: 1, title, drag: { ticket: true, set: x => setF(f, x) } }); };
+      // levels you typed always show; the bot's preview (from your saved /long · /short settings) follows the
+      // "Plan lines on the chart" switch in the ticket — it is only a preview, nothing is on the exchange
+      const plan = T.lines && pv;
+      const pTip = what => () => `<b>Preview · ${what}</b><br>Where the bot would put it if you review this order now (your saved settings). Nothing is placed.<br><small>${what === 'stop' || what === 'TP1' ? 'Drag it to set your own · ' : ''}hide: Real tab → Plan lines on the chart</small>`;
+      const tl = (f, v, color, title, tip) => { if (v > 0) W.push({ key: 'rxk' + f, price: v, color, style: LS.LargeDashed, w: 1, title, tip, drag: { ticket: true, set: x => setF(f, x) } }); };
       if (T.entry === 'limit') tl('limit', val('limit'), C.warn, 'Real limit');
-      tl('stop', val('stop') || (pv && pv.stopLoss), C.down, val('stop') ? 'Real stop' : 'Saved stop');
-      tl('tp', (T.tp === 'price' && val('tp')) || (pv && pv.tps && pv.tps[0]), C.up, T.tp === 'price' ? 'Real TP1' : 'Plan TP1');
-      if (pv && pv.tps) pv.tps.slice(1).forEach((v, i) => { if (v > 0) W.push({ key: 'rxkp' + i, price: v, color: RD.util.hexA(C.up, 0.55), style: LS.Dotted, w: 1, title: 'Plan TP' + (i + 2) }); });
+      if (val('stop')) tl('stop', val('stop'), C.down, 'Real stop'); else if (plan) tl('stop', pv.stopLoss, C.down, 'Plan stop', pTip('stop'));
+      if (T.tp === 'price' && val('tp')) tl('tp', val('tp'), C.up, 'Real TP1'); else if (plan && pv.tps) tl('tp', pv.tps[0], C.up, 'Plan TP1', pTip('TP1'));
+      if (plan && pv.tps) pv.tps.slice(1).forEach((v, i) => { if (v > 0) W.push({ key: 'rxkp' + i, price: v, color: RD.util.hexA(C.up, 0.55), style: LS.Dotted, w: 1, title: 'Plan TP' + (i + 2), tip: pTip('TP' + (i + 2)) }); });
     }
     return W;
   });
 
   // ------------------------------------------------------------------ the real ticket
-  const T = { side: 'long', entry: 'market', tp: 'plan', mode: 'live', ex: '', pv: null, pvKey: '', pvAt: 0, pvErr: null, pvOpen: null, pvBusy: false, pvT: null, pvGen: 0, busy: false };
+  const T = { lines: store.get('rd-rx-lines', true) !== false, side: 'long', entry: 'market', tp: 'plan', mode: 'live', ex: '', pv: null, pvKey: '', pvAt: 0, pvErr: null, pvOpen: null, pvBusy: false, pvT: null, pvGen: 0, busy: false };
   const F = n => rx.querySelector(`[data-rf="${n}"]`);
   const val = n => num(F(n).value);
   const setF = (n, v) => { F(n).value = v == null ? '' : String(v); if (n === 'tp' && T.tp !== 'price') T.tp = 'price'; schedule(); renderT(); };
@@ -582,7 +586,9 @@
   // ------------------------------------------------------------------ signals: recent pump signals and the bot's trades
   // the bot sends signal / trade times as epoch ms (simApi iso()); older rows or other callers may send ISO text: read both
   const tms = v => (v == null || v === "" ? NaN : typeof v === "number" ? v : /^\d{9,}$/.test(String(v)) ? +v : Date.parse(v));
-  const G = { tab: store.get('rd-adm-sigtab', 'sig'), days: store.get('rd-adm-sigdays', 14), q: '', sigs: [], trades: [], at: 0, err: null, busy: false, show: store.get('rd-adm-sigmarks', true) };
+  const G = { tab: store.get('rd-adm-sigtab', 'sig'), days: store.get('rd-adm-sigdays', 14), q: '', sigs: [], trades: [], at: 0, err: null, busy: false, show: store.get('rd-adm-sigmarks', true),
+    cleared: store.get('rd-adm-sigclr', null) || {} };   // { SUIUSDT: t } bot tags up to t hidden on that coin (Clear on the chart)
+  const saveClr = () => store.set('rd-adm-sigclr', G.cleared);
   const sigBox = $('[data-sigs]');
   async function loadSigs(force) {
     if (G.busy || (!force && Date.now() - G.at < 120000)) return;
@@ -599,7 +605,7 @@
       <div class="sg-tools"><span class="fld-in"><input data-sgq placeholder="Filter coin" value="${esc(G.q)}" autocomplete="off" spellcheck="false" aria-label="Filter by coin"></span>
       <select data-sgdays aria-label="Period">${[3, 7, 14, 30, 60].map(d => `<option value="${d}"${d === G.days ? ' selected' : ''}>${d} days</option>`).join('')}</select>
       <button type="button" class="dk-ib" data-act="sg-reload" aria-label="Reload" title="Reload">${ic('refresh-cw')}</button></div>
-      <label class="sg-show"><input type="checkbox" data-sgshow${G.show ? ' checked' : ''}> Show them on the chart (never past the replay clock)</label></div>`;
+      <label class="sg-show"><input type="checkbox" data-sgshow${G.show ? ' checked' : ''}> Show them on the chart (never past the replay clock)</label>${Object.keys(G.cleared).length ? `<p class="sg-clr">Tags cleared on ${Object.keys(G.cleared).map(s => esc(base(s))).join(', ')} · <button type="button" class="lnk" data-act="sg-unclear">show them all again</button></p>` : ''}</div>`;
     let list = '';
     if (G.err) list = `<p class="xbad">${ic('circle-x')} ${esc(G.err)}</p>`;
     else if (!G.at) list = '<div class="pt-empty"><div><span class="spin-s"></span> Loading signals…</div></div>';
@@ -624,20 +630,41 @@
     sigBox.innerHTML = top + `<div class="sg-list">${list}</div>`;
     if (focusQ) { const i = sigBox.querySelector('[data-sgq]'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
   }
-  RD.ext.marks.push(() => {
-    if (!G.show) return [];
+  const kept = t => !(G.cleared[RD.U.sym] >= t);
+  function tagList(all) {   // all: ignore Clear (to count what it hides)
     const C = RD.COL, M = [];
-    for (const s of G.sigs) if (onChart(s.symbol)) M.push({ t: tms(s.t), position: 'aboveBar', color: C.warn, shape: 'arrowDown', text: 'Signal' + (s.pumpPct != null ? ' +' + Math.round(s.pumpPct) + '%' : '') });
-    for (const t of G.trades) if (onChart(t.symbol)) {
+    for (const s of G.sigs) if (onChart(s.symbol) && (all || kept(tms(s.t)))) M.push({ t: tms(s.t), position: 'aboveBar', color: C.warn, shape: 'arrowDown', text: 'Signal' + (s.pumpPct != null ? ' +' + Math.round(s.pumpPct) + '%' : '') });
+    for (const t of G.trades) if (onChart(t.symbol) && (all || kept(tms(t.t)))) {
       const sh = t.direction === 'short';
       M.push({ t: tms(t.t), position: sh ? 'aboveBar' : 'belowBar', color: C.pri, shape: sh ? 'arrowDown' : 'arrowUp', text: `Bot ${t.direction}` });
       if (t.t1) M.push({ t: tms(t.t1), position: sh ? 'belowBar' : 'aboveBar', color: (+t.pnl || 0) >= 0 ? C.up : C.down, shape: 'circle', text: 'Exit ' + (t.pnl != null ? sgn(+t.pnl) : '') });
     }
     return M;
+  }
+  RD.ext.marks.push(() => (G.show ? tagList() : []));
+  // the legend: "🤖 3 bot tags · Clear" while tags are on this chart; after a clear, a way back
+  const shownTags = () => { const now = RD.util.nowT(); return tagList().filter(m => m.t <= now).length; };
+  const hiddenTags = () => { if (!G.cleared[RD.U.sym]) return 0; const now = RD.util.nowT(); return tagList(true).filter(m => m.t <= now).length - shownTags(); };
+  if (RD.ext.legend) RD.ext.legend.push(() => {
+    if (!G.show) return '';
+    const n = shownTags(), h = hiddenTags();
+    if (n) return `<button type="button" class="lg-btn" data-lg-tags="clear" title="Hide the bot's signal and trade tags on this coin. New trades still show.">🤖 ${n} bot tag${n === 1 ? '' : 's'} · Clear</button>`;
+    if (h) return `<button type="button" class="lg-btn m" data-lg-tags="show" title="Show the bot tags you cleared on this coin">🤖 Show ${h} cleared</button>`;
+    return '';
+  });
+  function setCleared(sym, t) {
+    if (t) G.cleared[sym] = t; else delete G.cleared[sym];
+    saveClr(); markKey = ''; marksTick(); RD.legend(); if (sigVisible()) renderSigs();
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-lg-tags]'); if (!b) return;
+    e.stopPropagation();
+    if (b.dataset.lgTags === 'clear') { setCleared(RD.U.sym, Math.max(Date.now(), RD.util.nowT())); RD.toast(`Bot tags cleared on ${RD.util.coin(RD.U.sym)}. New trades still show; "Show cleared" in the legend brings these back.`); }
+    else setCleared(RD.U.sym, 0);
   });
   let markKey = '';
   function marksTick() {   // markers follow new candles and the replay clock (they never show what is still in the future)
-    const b = RD.S.bars, k = `${RD.U.sym}|${RD.U.tf}|${b.length}|${b.length ? b[0][0] : 0}|${Math.floor(RD.util.nowT() / MIN)}|${G.at}|${G.show}`;
+    const b = RD.S.bars, k = `${RD.U.sym}|${RD.U.tf}|${b.length}|${b.length ? b[0][0] : 0}|${Math.floor(RD.util.nowT() / MIN)}|${G.at}|${G.show}|${G.cleared[RD.U.sym] || 0}`;
     if (k !== markKey) { markKey = k; RD.setMarkers(); }
   }
 
@@ -692,6 +719,11 @@
   }
 
   // ------------------------------------------------------------------ events
+  const linesBox = rx.querySelector('[data-rx-lines]');
+  if (linesBox) {
+    linesBox.checked = T.lines;
+    linesBox.addEventListener('change', () => { T.lines = linesBox.checked; store.set('rd-rx-lines', T.lines); RD.syncLines(); });
+  }
   rx.addEventListener('input', e => {
     if (!e.target.matches('[data-rf]')) return;
     if (e.target.dataset.rf === 'risk') return;
@@ -713,6 +745,7 @@
       else if (k === 'rx-show') { RD.setBTab('real'); if (phone()) RD.openSheet('pos'); }
       else if (k === 'rf-reload') loadFlow(true);
       else if (k === 'sg-reload') loadSigs(true);
+      else if (k === 'sg-unclear') { G.cleared = {}; saveClr(); markKey = ''; marksTick(); RD.legend(); renderSigs(); }
       return;
     }
     if (!t.closest) return;
@@ -735,6 +768,7 @@
     const sga = t.closest('[data-sgo]');
     if (sga) {
       const [sym, ts, ex] = sga.dataset.sgo.split('|'), when = +ts, act = t.closest('[data-sgact]');
+      if (G.cleared[pair(sym)]) { delete G.cleared[pair(sym)]; saveClr(); markKey = ''; }   // opened to review: its tags come back
       if (act && act.dataset.sgact === 'replay') { if (!isFinite(when) || when <= 0) { RD.toast('This row has no readable time, so the replay cannot start.', 'down'); return; } RD.openAt(pair(sym), ex || RD.U.ex, when); if (phone()) RD.closeSheets(); }
       else { if (RD.R.on) RD.exitReplay(); RD.setSymbol(pair(sym), ex || undefined); if (phone()) RD.closeSheets(); }
       setTimeout(renderSigs, 50);

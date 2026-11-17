@@ -91,6 +91,7 @@ function realTicket() {
   <div class="rx-pv" data-rx-pv aria-live="polite"></div>
   <button type="button" class="tk2-go up" data-act="rx-review">Review order</button>
   <div class="rx-alt"><button type="button" data-act="rx-tg">${icon('send', 'i-35')} Send to Telegram</button><button type="button" data-act="rx-clear">${icon('rotate-ccw', 'i-35')} Clear</button></div>
+  <label class="rx-lines" title="The bot's stop and take-profits for this order, drawn before you place it. Levels you type always show."><input type="checkbox" data-rx-lines checked> Plan lines on the chart <em>preview only</em></label>
   <p class="rx-note">Blank fields use your saved <code>/long</code> · <code>/short</code> settings. Nothing is placed until you confirm, and the bot reports every action in Telegram.</p>
 </div>
 <section class="rx-flow" data-rx-flow aria-label="Positioning"></section>`;
