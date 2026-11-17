@@ -14,7 +14,7 @@ const TOOLS = [
   ['magnet', 'magnet', 'Magnet: snap to candle high / low / open / close'], ['clear', 'trash-2', 'Remove all drawings on this coin'],
 ];
 // icons the browser code builds rows with
-const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search'];
+const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search', 'chevron-left', 'chevron-up', 'chevron-down'];
 // the admin layer's extra icons (only sent to admins)
 const ADMIN_ICONS = ['rewind', 'refresh-cw', 'send', 'zap', 'triangle-alert', 'circle-check', 'external-link', 'chart-candlestick', 'bot', 'radio', 'users', 'activity', 'crosshair', 'info', 'trending-down'];
 
@@ -117,6 +117,7 @@ function desk(who, nonce) {
     </div>
   </div>
   <button type="button" class="dk-pill dk-smc" data-act="smc" aria-pressed="false">SMC</button>
+  <button type="button" class="dk-pill dk-coachb" data-act="coach" aria-pressed="false" title="Walk me through: the SMC coach reads this chart step by step and quizzes you">${icon('graduation-cap', 'i-35')}<span>Walk me</span></button>
   <button type="button" class="dk-pill dk-cmpb" data-act="cmp" aria-pressed="false" title="Compare: a second coin beside this chart">${icon('layers', 'i-35')}<span>Compare</span></button>
   <span class="dk-vsep"></span>
   <button type="button" class="dk-pill dk-rbtn" data-act="replay" title="Replay: trade past candles one by one">${icon('rewind', 'i-35')}<span>Replay</span></button>
@@ -214,7 +215,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,

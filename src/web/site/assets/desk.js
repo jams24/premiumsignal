@@ -42,7 +42,8 @@
   // and listens to these events: sym (coin changed), mode (live ⇄ replay), tick (prices / clock moved), pane (side tab),
   // load (a new chart is on: coin, timeframe or replay start). menu: sections for the chart's trade menu; quickReal: takes a
   // real order planned on the chart to its review dialog; realActive: true while the Real ticket is the one in use.
-  const X = { lines: [], marks: [], bottom: {}, ev: {}, menu: [], quickReal: null, realActive: null, realSize: null };
+  // draw: [(g, W, z)] painted on the chart (z 'bottom' under the candles, 'top' over them) · smcOff: the coach draws the SMC itself
+  const X = { lines: [], marks: [], bottom: {}, ev: {}, menu: [], quickReal: null, realActive: null, realSize: null, draw: [], smcOff: false };
   const emit = (n, a) => { for (const f of X.ev[n] || []) { try { f(a); } catch (e) { console.error(e); } } };
   // ⚡ plan on the chart: entry → stop → target, then confirm (paper, or the admin's real review)
   const Q = { on: false, stage: '', side: 0, entry: null, sl: null, tp: null, mkt: false, real: false, margin: null, lev: null, el: null };
@@ -869,14 +870,16 @@
     paneViews() { return VIEWS; },
   };
   const VIEWS = [
-    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smc) drawSMC(s.context, s.mediaSize.width); }) }) },
+    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smc && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, true);
       if (MEASURE) drawOne(g, MEASURE, W, false);
+      xDraw(g, W, 'top');
     }) }) },
   ];
+  function xDraw(g, W, z) { for (const f of X.draw) { g.save(); try { f(g, W, z); } catch (e) { console.error(e); } g.restore(); } }
   cs.attachPrimitive(prim);
 
   function distSeg(px, py, x0, y0, x1, y1) {
@@ -1260,6 +1263,14 @@
     qPick(); qRender(); syncLines();
     if (phone()) closeSheets();
   }
+  function qPlan(o) {
+    qEnd(); menuClose();
+    if (!S.lastPx) return;
+    const t = readT();
+    Object.assign(Q, { on: true, stage: 'ask', side: o.side, entry: o.entry, sl: o.sl, tp: o.tp, mkt: !!o.mkt, real: false, margin: t.margin > 0 ? t.margin : U.margin, lev: t.lev || U.lev });
+    qPick(); qRender(); syncLines(); qtUI();
+    if (phone()) closeSheets();
+  }
   // a real plan starts from the Real ticket's margin × leverage (blank = the saved /long · /short size)
   function qRealSize() { const rs = X.realSize ? X.realSize() : {}; Q.margin = rs.margin || null; Q.lev = rs.lev || null; }
   function qStartSide(side, real) {
@@ -1438,7 +1449,7 @@
   function setMarkers() {
     if (!markers) return;
     const first = S.bars.length ? S.bars[0][0] : 0, M = [];
-    if (SMCR && U.smc) {
+    if (SMCR && U.smc && !X.smcOff) {
       for (const s of SMCR.swings.slice(-40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
       for (const w of SMCR.sweeps.slice(-6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
     }
@@ -1491,11 +1502,13 @@
   // Re-checked whenever the bar, the replay controls or the right-hand group resize.
   const topEl = $('.dk-top');
   let fitQ = false;
+  // On a phone: p1 hides the logo, p2 the LIVE / REPLAY dot (a 390px screen with the admin's web-trading chip needs p1).
   function fitTop() {
     fitQ = false;
-    if (!topEl || phone()) { if (topEl) topEl.classList.remove('t1', 't2', 't3', 't4', 't5'); return; }
-    topEl.classList.remove('t1', 't2', 't3', 't4', 't5');
-    for (const c of ['t1', 't2', 't3', 't4', 't5']) { if (topEl.scrollWidth <= topEl.clientWidth + 1) break; topEl.classList.add(c); }
+    if (!topEl) return;
+    const ph = phone(), steps = ph ? ['p1', 'p2'] : ['t1', 't2', 't3', 't4', 't5'];
+    topEl.classList.remove('t1', 't2', 't3', 't4', 't5', 'p1', 'p2');
+    for (const c of steps) { if (topEl.scrollWidth <= topEl.clientWidth + 1) break; topEl.classList.add(c); }
   }
   const fitSoon = () => { if (!fitQ) { fitQ = true; requestAnimationFrame(fitTop); } };
   if (topEl && window.ResizeObserver) { const ro = new ResizeObserver(fitSoon); [topEl, $('.dk-right'), $('[data-rp]')].forEach(e => e && ro.observe(e)); }
@@ -1737,7 +1750,9 @@
     ext: X, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, LS: LC.LineStyle, get PREC() { return PREC; }, get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
-    menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qEnd, Q, paperSubmit, readT, store, chartEl, box,
+    menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
+    t2x, p2y, label, req: () => prim.req(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
+    pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
     util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, bucket, MIN, HOUR, DAY, WEEK_OFF, liqOf } };
   root.classList.toggle('b-min', !!U.bmin);
