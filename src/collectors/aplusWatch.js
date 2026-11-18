@@ -37,6 +37,7 @@ function clean(p, cur) {
   if (p.on !== undefined) c.on = p.on === true;
   if (p.ready !== undefined) c.ready = p.ready === true;
   if (p.ex === 'binance' || p.ex === 'bybit') c.ex = p.ex;
+  if (typeof p.site === 'string' && /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(p.site)) c.site = p.site;
   if (Array.isArray(p.coins)) c.coins = [...new Set(p.coins.slice(0, 300).map(cleanCoin).filter(Boolean))].slice(0, MAX_COINS);
   if (Array.isArray(p.tfs)) { const t = Object.keys(TFS).filter(x => p.tfs.includes(x)); if (t.length) c.tfs = t; }
   return c;
@@ -86,15 +87,16 @@ function toEvent(hit, sym, tf, ex, id, at) {
     title: `🔔 A+ ${side} almost ready · ${coin} ${tf}`, body: `Sweep done. It triggers on a 1-minute close ${short ? 'below' : 'above'} ${f(g.trig.p)}.` };
 }
 
-function chartLink(ev) {
-  const base = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+// PUBLIC_URL when it is set, otherwise the address the desk was opened on when the watch was last changed
+function chartLink(ev, site) {
+  const base = (process.env.PUBLIC_URL || site || '').replace(/\/+$/, '');
   return /^https:/.test(base) ? `${base}/app#chart=${encodeURIComponent(ev.sym)}/${ev.tf}/${ev.ex}` : '';
 }
 
-function message(events, now) {
+function message(events, now, site) {
   const list = [...events].sort((a, b) => b.stage - a.stage), shown = list.slice(0, MAX_LINES);
   return `🔔 <b>A+ Watchlist</b> · ${hm(now)} UTC\n\n` + shown.map(e => {
-    const u = chartLink(e);
+    const u = chartLink(e, site);
     return `<b>${esc(e.title)}</b>\n${esc(e.body)}${u ? `\n<a href="${esc(u)}">Open chart</a>` : ''}`;
   }).join('\n\n') + (list.length > shown.length ? `\n\n+${list.length - shown.length} more` : '') + '\n\n<i>Practice setups, not signals</i>';
 }
@@ -168,7 +170,7 @@ class AplusWatch {
   async flush() {
     if (!this.fresh.length) return;
     const list = this.fresh; this.fresh = [];
-    await this.deliver(message(list, this.now()));
+    await this.deliver(message(list, this.now(), this.cfg.site));
   }
 
   emit(hit, sym, tf, ex) {
@@ -261,7 +263,8 @@ class AplusWatch {
           req.on('end', () => { if (n > MAX_BODY) return reject(new Error('Request too large')); try { resolve(JSON.parse(Buffer.concat(parts).toString('utf8') || '{}')); } catch (e) { reject(new Error('Invalid JSON')); } });
           req.on('error', reject);
         });
-        await this.set(body && typeof body === 'object' ? body : {});
+        const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '').split(',')[0].trim();
+        await this.set({ ...(body && typeof body === 'object' ? body : {}), site: /^(localhost|127\.)/.test(host) ? '' : `https://${host}` });
       } else if (req.method !== 'GET') return json(405, { error: 'Method not allowed' });
       const since = Number(url.searchParams.get('since'));
       json(200, { cfg: this.cfg, status: this.status(), last: this.seq, events: Number.isFinite(since) && since > 0 ? this.events.filter(e => e.id > since) : [] });
