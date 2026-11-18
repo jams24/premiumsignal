@@ -115,8 +115,10 @@ function desk(who, nonce) {
       <label><input type="checkbox" data-ind="ema200"> EMA 200</label>
       <hr><label><input type="checkbox" data-ind="smc"> SMC: structure, zones, liquidity</label>
       <div class="dk-smcall" role="group" aria-label="How much of the chart SMC labels"><span>SMC labels</span><button type="button" data-act="smcall" data-v="0">Recent</button><button type="button" data-act="smcall" data-v="1">Whole chart</button></div>
+      <label title="The classic simulator's A+ setups: a structure break, the pullback into premium / discount, a sweep, then a 1-minute close past the last 1-minute swing. Practice, not signals: these exact rules lost after fees in our test."><input type="checkbox" data-ind="aplus"> A+ setups: sweep + 1m CHoCH</label>
+      <label class="dk-sub"><input type="checkbox" data-ind="aplusPause"> Pause the replay on a new A+</label>
       <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
-      <p>SMC reads closed candles only, so in a replay it never sees the future.</p>
+      <p>SMC and A+ read closed candles only, so in a replay they never see the future.</p>
     </div>
   </div>
   <button type="button" class="dk-pill dk-smc" data-act="smc" aria-pressed="false">SMC</button>
@@ -219,7 +221,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,

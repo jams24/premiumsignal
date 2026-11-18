@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false,
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, aplus: false, aplusPause: true,
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -809,7 +809,14 @@
     while (hi - lo > 1) { const m = (lo + hi) >> 1; if (B[m][0] <= t) lo = m; else hi = m; }
     return lo + (t - B[lo][0]) / (B[hi][0] - B[lo][0]);
   }
-  const t2x = t => { const l = t2l(t); return l == null ? null : chart.timeScale().logicalToCoordinate(l); };
+  // the chart library answers 0 for a position between two candles (a 1m time on a 5m chart), so interpolate between them
+  const t2x = t => {
+    const l = t2l(t); if (l == null) return null;
+    const ts = chart.timeScale(), i = Math.floor(l), x0 = ts.logicalToCoordinate(i);
+    if (x0 == null || l === i) return x0;
+    const x1 = ts.logicalToCoordinate(i + 1);
+    return x1 == null ? x0 : x0 + (x1 - x0) * (l - i);
+  };
   function x2t(x) {
     const B = S.bars, n = B.length, ms = TF[U.tf].ms;
     let l = chart.timeScale().coordinateToLogical(x); if (l == null || !n) return null;
@@ -1467,6 +1474,7 @@
   // ------------------------------------------------------------------ SMC overlay (closed candles only)
   let smcT = null;
   function smcSchedule() {
+    emit('bars');   // the candles changed (new candle, replay step, load): add-ons like the A+ layer read again
     if (!U.smc) { if (SMCR) { SMCR = null; setMarkers(); prim.req(); legend(); } return; }
     if (smcT) return;
     smcT = setTimeout(() => { smcT = null; smcRun(); }, R.playing ? 200 : 20);
@@ -1744,7 +1752,7 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else setEMAs();
+    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
