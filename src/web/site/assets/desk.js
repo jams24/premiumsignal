@@ -1685,7 +1685,10 @@
   const pad = n => String(n).padStart(2, '0');
   const toLocalInput = t => { const d = new Date(t); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
   const fromLocalInput = v => { const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN; };
-  function rModalInit() { const inp = $('[data-rdate]'); if (!inp.value) inp.value = toLocalInput(Date.now() - 7 * DAY); inp.max = toLocalInput(Date.now() - DAY); }
+  // a replay can start up to 2 candles ago (enterReplay); the box opens on today 00:00 UTC (or the latest allowed moment on 1D / 1W)
+  const rLatest = () => Math.floor((Date.now() - 2 * TF[U.tf].ms) / MIN) * MIN;
+  const rToday = () => Math.min(Math.floor(Date.now() / DAY) * DAY, rLatest());
+  function rModalInit() { const inp = $('[data-rdate]'); inp.max = toLocalInput(rLatest()); inp.value = toLocalInput(rToday()); }
   async function randomStart() {
     let t0 = Date.now() - 730 * DAY;
     try { const m = (await symList(U.ex)).find(s => s.s === U.sym); if (m && m.t0) t0 = Math.max(t0, m.t0 + 14 * DAY); } catch (e) { /* default range */ }
@@ -1763,7 +1766,7 @@
     const ed = e.target.closest('[data-edit]'); if (ed && !ed.querySelector('input')) return editCell(ed);
     const go = e.target.closest('[data-goto]'); if (go && !e.target.closest('button')) { if (go.dataset.goto !== U.sym) setSymbol(go.dataset.goto); return; }
     const wl = e.target.closest('.wl-row'); if (wl) { setSymbol(wl.dataset.s); if (phone()) closeSheets(); return; }
-    const rq = e.target.closest('[data-rq]'); if (rq) { $('[data-rdate]').value = toLocalInput(Date.now() - parseInt(rq.dataset.rq, 10) * DAY); return; }
+    const rq = e.target.closest('[data-rq]'); if (rq) { $('[data-rdate]').value = toLocalInput(rq.dataset.rq === 'today' ? rToday() : Date.now() - parseInt(rq.dataset.rq, 10) * DAY); return; }
     const sx = e.target.closest('[data-sex]'); if (sx) { sEx = sx.dataset.sex; $$('[data-sex]').forEach(b => b.classList.toggle('on', b === sx)); renderSearch(); return; }
     if (!e.target.closest('.dk-ind')) { const p = $('[data-indpop]'); if (!p.hidden) { p.hidden = true; $('[data-act="ind"]').setAttribute('aria-expanded', 'false'); } }
   });

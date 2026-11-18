@@ -214,7 +214,7 @@ function desk(who, nonce) {
       <button type="button" class="dk-bigopt" data-act="rrandom">${icon('shuffle', 'i-5')}<b>Random moment</b><span>A random day in the last two years — no peeking</span></button>
     </div>
     <label class="fld"><span>Or a date and time <em>UTC</em></span><span class="fld-in"><input type="datetime-local" data-rdate></span></label>
-    <div class="dk-rquick">${[['1d', '1 day ago'], ['7d', '1 week ago'], ['30d', '1 month ago'], ['180d', '6 months ago']].map(([v, l]) => `<button type="button" data-rq="${v}">${l}</button>`).join('')}</div>
+    <div class="dk-rquick">${[['today', 'Today 00:00'], ['1d', '1 day ago'], ['7d', '1 week ago'], ['30d', '1 month ago'], ['180d', '6 months ago']].map(([v, l]) => `<button type="button" data-rq="${v}">${l}</button>`).join('')}</div>
     <button type="button" class="btn btn-primary btn-block" data-act="rgo" style="margin-top:16px">${icon('play')} Start replay</button>
   </div>
 </div>
