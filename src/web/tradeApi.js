@@ -12,6 +12,7 @@
 // Telegram confirm (always available):
 //   POST /api/trade/panel    — fill in the /long · /short panel in Telegram; nothing is placed until ✅ there
 // Read-only:
+//   GET  /api/trade/history   — closed live trades of the last ?days= (1–90, default 30), web / Telegram / bot alike
 //   GET  /api/trade/positions — open live trades + pending live limit orders (+ whether web trading is on);
 //                              ?fresh=1 skips the cache and checks orders on the exchange book (read only)
 // Writes carry a client nonce (a double click is refused) and are spaced ≥ 2 s apart.
@@ -21,7 +22,7 @@ let bot = null;
 function attach(b) { bot = b; }
 
 const MAX_BODY = 4096, SEND_GAP_MS = 3000, WRITE_GAP_MS = 2000, NONCE_TTL_MS = 10 * 60000;
-let lastSend = 0, lastWrite = 0, lastFresh = 0, posCache = null;
+let lastSend = 0, lastWrite = 0, lastFresh = 0, posCache = null, histCache = null;
 const nonces = new Map();   // nonce → time used
 
 function readJson(req) {
@@ -115,7 +116,7 @@ async function handle(req, url, res) {
         lastWrite = now;
         logger.info(`[WEB TRADE] manage ${a.action}${a.level ? a.level : ''} #${a.id}${a.price ? ' @ ' + a.price : ''}${a.pct ? ' ' + a.pct + '%' : ''}`);
         const r = await bot.webTrade.manage(a);
-        posCache = null;
+        posCache = null; histCache = null;
         return r.ok ? send(200, r) : send(422, { ...r, error: firstError(r) });
       }
 
@@ -137,7 +138,7 @@ async function handle(req, url, res) {
         lastWrite = now;
         logger.info(`[WEB TRADE] open ${order.mode} ${order.direction} ${order.symbol}${order.limitPrice ? ' limit ' + order.limitPrice : ' market'}`);
         const r = await bot.webTrade.open(order);
-        posCache = null;
+        posCache = null; histCache = null;
         if (r.open) return send(409, { error: `You already have an open ${r.open.direction.toUpperCase()} on ${order.symbol} (${r.open.mode}).`, open: r.open });
         return r.ok ? send(200, r) : send(422, { ...r, error: firstError(r) });
       }
@@ -159,6 +160,14 @@ async function handle(req, url, res) {
       if (fresh) lastFresh = Date.now();
       if (fresh || !posCache || Date.now() - posCache.at > 5000) posCache = { at: Date.now(), data: await bot.livePositionsForWeb({ check: fresh }) };
       return send(200, { ...posCache.data, at: posCache.at, webTrading: await bot.webTrade.isOn() });
+    }
+
+    if (p === '/api/trade/history') {   // closed live trades (read only), ?days=1–90; cached 15 s per span
+      if (req.method !== 'GET') return send(405, { error: 'GET only' });
+      if (!bot.liveHistoryForWeb) return send(503, { error: 'The bot is still starting — try again in a minute.' });
+      const days = Math.max(1, Math.min(90, parseInt(url.searchParams.get('days'), 10) || 30));
+      if (!histCache || histCache.days !== days || Date.now() - histCache.at > 15000) histCache = { at: Date.now(), days, data: await bot.liveHistoryForWeb({ days }) };
+      return send(200, { ...histCache.data, at: histCache.at });
     }
 
     return send(404, { error: 'unknown trade endpoint' });

@@ -138,7 +138,72 @@
   const sideTag = dir => `<span class="sd ${dir === 'long' ? 'up' : 'down'}">${dir === 'long' ? 'LONG' : 'SHORT'}</span>`;
   const offTitle = 'Web trading is off — send /webtrade on in Telegram to manage from here';
 
-  RD.ext.bottom.real = () => {
+  // ------------------------------------------------------------------ closed live trades (Real → Closed): every live trade,
+  // placed here, in Telegram or by the bot, from the bot's own trade records (read only)
+  const H = { view: store.get('rd-rx-view', 'open') === 'closed' ? 'closed' : 'open', days: [7, 30, 90].includes(+store.get('rd-rx-days', 30)) ? +store.get('rd-rx-days', 30) : 30,
+    kind: ['all', 'manual', 'auto', 'bot'].includes(store.get('rd-rx-kind', 'all')) ? store.get('rd-rx-kind', 'all') : 'all', d: null, err: null, at: 0, busy: false };
+  async function loadHist(force) {
+    if (H.busy || (!force && H.at && H.d && H.d.days === H.days && Date.now() - H.at < 30000)) return;
+    H.busy = true;
+    try { H.d = await call('/api/trade/history?days=' + H.days); H.err = null; } catch (e) { H.err = e.message; }
+    finally { H.busy = false; H.at = Date.now(); if (RD.BTAB === 'real') RD.renderBottom(); }
+  }
+  const kGroup = t => (t.kind === 'manual' ? 'manual' : t.kind === 'auto pump' ? 'auto' : 'bot');
+  const ended = t => {
+    const r = String(t.reason || ''), tp = (t.tps || []).lastIndexOf(true) + 1;
+    const w = r === 'sl' ? (tp ? `Stop after TP${tp}` : 'Stop') : r === 'manual_close' ? 'Closed by hand' : /^tp\d$/.test(r) ? r.toUpperCase() + (r === 'tp4' ? ' · all targets' : '')
+      : r === 'max_loss' ? 'Max-loss cap' : r === 'time_exit' ? 'Time exit' : r === 'invalidated' ? '4H invalidation' : r === 'thesis_broken' ? 'Thesis broken' : /liquid/.test(r) ? 'Liquidated' : r || '—';
+    return tp && r !== 'sl' && !/^tp/.test(r) ? `${w} · TP${tp} hit` : w;
+  };
+  const held = t => { if (!t.closed || !t.opened) return '—'; const m = Math.max(0, Math.round((t.closed - t.opened) / MIN)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : Math.floor(m / 1440) + 'd ' + (Math.floor(m / 60) % 24) + 'h'; };
+  const whenC = t => { const d = new Date(t); return d.toISOString().slice(5, 10).replace('-', '/') + ' ' + d.toISOString().slice(11, 16); };
+  const tally = a => { const w = a.filter(t => t.pnl > 0), l = a.filter(t => !(t.pnl > 0)), s = v => v.reduce((x, t) => x + (t.pnl || 0), 0);
+    return { n: a.length, pnl: s(a), win: a.length ? w.length / a.length * 100 : 0, avgW: w.length ? s(w) / w.length : null, avgL: l.length ? s(l) / l.length : null, size: a.reduce((x, t) => x + (t.size || 0), 0) }; };
+  let histMemo = { k: '', h: '' };
+  function closedView() {
+    const mk = [H.at, H.days, H.kind, H.err, H.busy, Math.floor(Date.now() / 60000), RD.U.sym].join('|');
+    if (histMemo.k === mk && H.d && H.d.days === H.days) { loadHist(); return histMemo.h; }
+    const h = closedHtml(); histMemo = { k: mk, h }; return h;
+  }
+  function closedHtml() {
+    if (!H.d || H.d.days !== H.days) { loadHist(); return `<div class="pt-empty">${H.err ? `Could not read the closed trades: ${esc(H.err)}` : 'Loading your closed live trades…'}</div>`; }
+    loadHist();   // refreshes when older than 30 s
+    const all = H.d.trades || [], list = H.kind === 'all' ? all : all.filter(t => kGroup(t) === H.kind);
+    const T0 = tally(list), today = tally(list.filter(t => t.closed >= Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())));
+    const seg = (attr, v, label, on) => `<button type="button" data-act="${attr}" data-v="${v}"${on ? ' class="on"' : ''}>${label}</button>`;
+    const split = ['manual', 'auto', 'bot'].map(k => { const a = all.filter(t => kGroup(t) === k); if (!a.length) return ''; const x = tally(a);
+      return `<span class="rxh-k"><em>${k === 'manual' ? 'Manual (web + Telegram)' : k === 'auto' ? 'Auto pump' : 'Bot signals'}</em><b class="${x.pnl >= 0 ? 'up' : 'down'}">${sgn(x.pnl)}</b><span class="muted">${x.n} trade${x.n === 1 ? '' : 's'} ·${x.win.toFixed(0)}% won</span></span>`; }).join('');
+    let h = `<div class="rxb-bar rxh-bar"><span class="rxh-seg" role="group" aria-label="Period">${[7, 30, 90].map(d => seg('rx-days', d, d + ' days', H.days === d)).join('')}</span>
+      <span class="rxh-seg" role="group" aria-label="Which trades">${[['all', 'All'], ['manual', 'Manual'], ['auto', 'Auto pump'], ['bot', 'Bot']].map(([k, l]) => seg('rx-kind', k, l, H.kind === k)).join('')}</span>
+      <span class="rxb-r"><span class="muted">${H.err ? `<span class="down">${esc(H.err)}</span>` : H.at ? 'Updated ' + ago(H.at) : ''}</span>
+      <button type="button" class="rxb-btn" data-act="rx-hist" title="Read the closed trades again">${ic('refresh-cw')} Reload</button></span></div>`;
+    h += `<div class="rxb-bar"><span class="rxb-k"><em>P&amp;L · ${H.days} days</em><b class="${T0.pnl >= 0 ? 'up' : 'down'}">${sgn(T0.pnl)}</b></span>
+      <span class="rxb-k"><em>Today (UTC)</em><b class="${today.pnl >= 0 ? 'up' : 'down'}">${today.n ? sgn(today.pnl) : '—'}</b></span>
+      <span class="rxb-k"><em>Trades · won</em><b>${T0.n} · ${T0.win.toFixed(0)}%</b></span>
+      <span class="rxb-k"><em>Avg win · avg loss</em><b><span class="up">${T0.avgW != null ? sgn(T0.avgW) : '—'}</span> · <span class="down">${T0.avgL != null ? sgn(T0.avgL) : '—'}</span></b></span>
+      <span class="rxb-k" title="P&amp;L per $100 of position: the same trades at any size"><em>Per $100 traded</em><b class="${T0.pnl >= 0 ? 'up' : 'down'}">${T0.size ? sgn(T0.pnl / T0.size * 100) : '—'}</b></span>
+      ${H.kind === 'all' ? `<span class="rxh-split">${split}</span>` : ''}</div>`;
+    if (!list.length) return h + `<div class="pt-empty">No closed live trades${H.kind === 'all' ? '' : ' of this kind'} in the last ${H.days} days.</div>`;
+    const sz = t => (t.size ? money(t.size) : '—');
+    const mvP = t => (t.entry && t.exit ? mv(t.direction, t.entry, t.exit) * 100 : null);
+    h += `<table class="pt rxt rxh"><thead><tr><th>Closed (UTC)</th><th>Trade</th><th>Size</th><th>Entry → exit</th><th>P&amp;L</th><th>How it ended</th><th>Held</th></tr></thead><tbody>${list.map(t => {
+      const m = mvP(t);
+      return `<tr data-rxgo="${esc(pair(t.symbol))}|${exOf(t.exchange)}" title="#${t.id} · opened ${t.opened ? new Date(t.opened).toUTCString() : '?'}"><td class="mono">${whenC(t.closed)}</td>
+        <td>${sideTag(t.direction)}<b>${esc(base(t.symbol))}</b> <span class="muted">${t.leverage || '?'}×</span> ${kindTag(t.kind)}<div class="sub">${esc(t.exchange || '')}</div></td>
+        <td>${sz(t)}</td><td>${fmtP(t.entry)} → ${fmtP(t.exit)}<div class="sub ${m != null && m >= 0 ? 'up' : 'down'}">${m != null ? pct(m) : ''}</div></td>
+        <td class="${(t.pnl || 0) >= 0 ? 'up' : 'down'}"><b>${t.pnl == null ? '—' : sgn(t.pnl)}</b></td><td>${esc(ended(t))}</td><td>${held(t)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    h += `<div class="p-cards">${list.map(t => { const m = mvP(t);
+      return `<div class="pc rxc"><div class="pc-h" data-rxgo="${esc(pair(t.symbol))}|${exOf(t.exchange)}"><span>${sideTag(t.direction)}<b>${esc(base(t.symbol))}</b> <span class="muted">${t.leverage || '?'}×</span> ${kindTag(t.kind)}</span><b class="${(t.pnl || 0) >= 0 ? 'up' : 'down'}">${t.pnl == null ? '—' : sgn(t.pnl)}</b></div>
+        <dl><div><dt>Closed</dt><dd>${whenC(t.closed)}</dd></div><div><dt>Size</dt><dd>${sz(t)}</dd></div><div><dt>Move</dt><dd class="${m != null && m >= 0 ? 'up' : 'down'}">${m != null ? pct(m) : '—'}</dd></div>
+        <div><dt>Entry</dt><dd>${fmtP(t.entry)}</dd></div><div><dt>Exit</dt><dd>${fmtP(t.exit)}</dd></div><div><dt>Held</dt><dd>${held(t)}</dd></div></dl>
+        <div class="sub">${esc(ended(t))}</div></div>`; }).join('')}</div>`;
+    return h;
+  }
+  const viewSeg = () => { const d = L.d, n = d ? (d.positions || []).length + (d.orders || []).length : 0;
+    return `<div class="rxv-seg" role="tablist" aria-label="Open or closed real trades"><button type="button" role="tab" data-act="rx-view" data-v="open" aria-selected="${H.view === 'open'}"${H.view === 'open' ? ' class="on"' : ''}>Open${d ? ' · ' + n : ''}</button><button type="button" role="tab" data-act="rx-view" data-v="closed" aria-selected="${H.view === 'closed'}"${H.view === 'closed' ? ' class="on"' : ''}>Closed · history</button></div>`; };
+  RD.ext.bottom.real = () => viewSeg() + (H.view === 'closed' ? closedView() : openView());
+  function openView() {
     const d = L.d;
     if (!d) return `<div class="pt-empty">${L.err ? `Could not reach the bot: ${esc(L.err)}` : "Loading the bot's live positions…"}</div>`;
     const P = d.positions || [], O = d.orders || [], web = L.web;
@@ -192,7 +257,7 @@
   const ordById = id => ((L.d && L.d.orders) || []).find(o => o.id === id);
   const manage = a => write('/api/trade/manage', a, 60000).then(r => firstLines(r.text) || 'Done — Telegram has the details.');
   // after a confirmed change: reload once the poll in flight is done; a dragged line keeps its new price until then
-  const settle = key => () => { const go = () => (L.busy ? setTimeout(go, 250) : poll(true).then(() => { if (key) { delete L.pend[key]; RD.syncLines(); } })); go(); };
+  const settle = key => () => { H.at = 0; const go = () => (L.busy ? setTimeout(go, 250) : poll(true).then(() => { if (key) { delete L.pend[key]; RD.syncLines(); } })); go(); };
   const unpend = key => () => { delete L.pend[key]; RD.syncLines(); };
   const head = p => `${sideTag(p.direction)}<b>${esc(base(p.symbol))}</b> · ${esc(p.exchange || '')} · ${p.leverage}×`;
 
@@ -745,6 +810,10 @@
       } else if (k === 'rx-clear') { for (const n of ['limit', 'stop', 'tp', 'margin', 'lev', 'risk']) F(n).value = ''; Object.assign(T, { entry: 'market', tp: 'plan', pv: null, pvErr: null, pvOpen: null }); schedule(); renderT(); RD.syncLines(); }
       else if (k === 'rx-fit') fitMargin();
       else if (k === 'rx-fresh') { a.disabled = true; poll(true).finally(() => { a.disabled = false; }); }
+      else if (k === 'rx-view') { H.view = a.dataset.v === 'closed' ? 'closed' : 'open'; store.set('rd-rx-view', H.view); if (H.view === 'closed') loadHist(true); RD.renderBottom(); }
+      else if (k === 'rx-days') { H.days = +a.dataset.v; store.set('rd-rx-days', H.days); loadHist(true); RD.renderBottom(); }
+      else if (k === 'rx-kind') { H.kind = a.dataset.v; store.set('rd-rx-kind', H.kind); RD.renderBottom(); }
+      else if (k === 'rx-hist') { a.disabled = true; loadHist(true); }
       else if (k === 'rx-show') { RD.setBTab('real'); if (phone()) RD.openSheet('pos'); }
       else if (k === 'rf-reload') loadFlow(true);
       else if (k === 'sg-reload') loadSigs(true);

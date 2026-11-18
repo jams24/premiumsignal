@@ -2148,6 +2148,27 @@ class TelegramBot {
       }));
       return { positions, orders, checked: check };
     };
+    // Closed live trades for the web desk (Real → Closed): every live trade, placed from the web, Telegram or by the bot.
+    // Read only. kind as in livePositionsForWeb.
+    this.liveHistoryForWeb = async ({ days = 30 } = {}) => {
+      const d = Math.max(1, Math.min(90, Math.round(days) || 30));
+      const num = (v) => (v == null || !isFinite(parseFloat(v)) ? null : parseFloat(v));
+      const r = await db.query(
+        `SELECT id, symbol, exchange, direction, entry_price, exit_price, position_size, leverage, pnl_usd, close_reason,
+           hit_tp1, hit_tp2, hit_tp3, source, onchain_context->>'manual' AS manual, onchain_context->>'autoPump' AS auto_pump, created_at, closed_at
+         FROM trades WHERE mode = 'live' AND status = 'closed' AND closed_at >= NOW() - ($1 || ' days')::interval
+         ORDER BY closed_at DESC LIMIT 1000`, [String(d)]);
+      return {
+        days: d,
+        trades: r.rows.map((t) => ({
+          id: t.id, symbol: t.symbol, exchange: t.exchange, direction: t.direction,
+          kind: t.auto_pump === 'true' ? 'auto pump' : t.manual === 'true' ? 'manual' : t.source || 'bot',
+          entry: num(t.entry_price), exit: num(t.exit_price), size: num(t.position_size), leverage: t.leverage, pnl: num(t.pnl_usd),
+          reason: t.close_reason || '', tps: [!!t.hit_tp1, !!t.hit_tp2, !!t.hit_tp3],
+          opened: new Date(t.created_at).getTime(), closed: t.closed_at ? new Date(t.closed_at).getTime() : null,
+        })),
+      };
+    };
 
     this.bot.command('mpositions', async (ctx) => {
       if (!isAdminCtx(ctx)) return ctx.replyWithHTML('⚠️ Admin only.');

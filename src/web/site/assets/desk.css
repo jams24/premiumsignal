@@ -819,3 +819,10 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .mk-split.mk-none { opacity: .7; } .mk-split.mk-none .mk-sh { margin: 0; } .mk-sh b.m { color: var(--muted); font-weight: 500; }
 .mk-sh span .up, .mk-sh b .up { color: var(--up); } .mk-sh b .down { color: var(--down); }
 .mk-sh b { flex: none; margin-left: 8px; white-space: nowrap; } .mk-nw { white-space: nowrap; }
+.rxv-seg { position: sticky; left: 0; display: flex; gap: 2px; margin: 8px 12px 0; padding: 2px; width: max-content; border-radius: 9px; background: var(--dk-hover); }   /* Real: Open / Closed */
+.rxv-seg button, .rxh-seg button { height: 26px; padding: 0 12px; border-radius: 7px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.rxv-seg button.on, .rxh-seg button.on { background: var(--surface, var(--bg)); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.rxh-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--dk-hover); }
+.rxh-split { display: flex; flex-wrap: wrap; gap: 6px 18px; } .rxh-k { display: grid; gap: 1px; } .rxh-k em { font-style: normal; font-size: 10.5px; color: var(--muted); } .rxh-k b { font: 600 13px var(--mono); } .rxh-k .muted { font-size: 10.5px; }
+.rxh-k .up, .rxt.rxh .up, .rxc .up { color: var(--up); } .rxh-k .down, .rxt.rxh .down, .rxc .down { color: var(--down); }
+.rxt.rxh td.mono { font: 500 11.5px var(--mono); white-space: nowrap; }
