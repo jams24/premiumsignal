@@ -54,6 +54,7 @@
         if (hi ? B.h > lv.p : B.l < lv.p) {
           lv.taken = end;
           if (hi ? B.c < lv.p : B.c > lv.p) {
+            lv.swept = true;   // wick through, closed back (the desk's faded "EQL swept" line); otherwise it closed through
             const sw = { dir: hi ? -1 : 1, p: lv.p, kind: lv.kind, levelT: lv.t, t: B.t, wickT: hi ? B.hT : B.lT, wick: hi ? B.h : B.l, close: B.c, conf: end };
             if (!R.sweeps.length || R.sweeps[R.sweeps.length - 1].t !== sw.t || R.sweeps[R.sweeps.length - 1].dir !== sw.dir) R.sweeps.push(sw);
             onSweep(sw);

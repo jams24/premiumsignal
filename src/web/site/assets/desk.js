@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, aplus: false, aplusPause: true,
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, aplus: false, aplusPause: true,
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -892,7 +892,17 @@
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent');
     }
-    for (const e of (all ? r.eqs.filter(e => !e.taken) : r.eqs.filter(e => !e.taken).slice(-4))) {
+    // equal lows / highs price has already taken (Indicators → keep them): faded, from the first low to the candle that took
+    // it, "swept" = wick through and closed back, "broken" = closed through. Recent: the newest 6 · Whole chart: all
+    // two pairs at one price (lows 1+2 and 1+3) are one level: drawn once, so they don't use up the newest-N slots
+    const uniq = a => { const s = new Set(); return a.filter(e => { const k = e.kind + e.p + '|' + (e.taken || 0); if (s.has(k)) return false; s.add(k); return true; }); };
+    if (U.smcTaken) for (const e of (all ? uniq(r.eqs.filter(e => e.taken)) : uniq(r.eqs.filter(e => e.taken)).slice(-6))) {
+      const x0 = t2x(e.t1), x1 = t2x(e.taken - r.tf), y = p2y(e.p); if (x0 == null || y == null) continue;
+      const xe = x1 == null ? W : x1; if (xe < 0 || x0 > W) continue;
+      g.strokeStyle = hexA(COL.warn, 0.38); g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(xe, y); g.stroke(); g.setLineDash([]);
+      label(g, e.kind + (e.swept ? ' swept' : ' broken'), xe + 3, y + (e.side === 'H' ? -9 : 9), hexA(COL.warn, 0.6), 'left', 'transparent');
+    }
+    for (const e of (all ? uniq(r.eqs.filter(e => !e.taken)) : uniq(r.eqs.filter(e => !e.taken)).slice(-4))) {
       const x0 = t2x(e.t1), y = p2y(e.p); if (x0 == null || y == null) continue;
       g.strokeStyle = hexA(COL.warn, 0.85); g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
       label(g, e.kind, W - 4, y + (e.side === 'H' ? -9 : 9), COL.warn, 'right', 'transparent');
@@ -1761,7 +1771,7 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken') prim.req(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });

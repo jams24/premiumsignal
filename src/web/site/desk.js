@@ -115,6 +115,7 @@ function desk(who, nonce) {
       <label><input type="checkbox" data-ind="ema200"> EMA 200</label>
       <hr><label><input type="checkbox" data-ind="smc"> SMC: structure, zones, liquidity</label>
       <div class="dk-smcall" role="group" aria-label="How much of the chart SMC labels"><span>SMC labels</span><button type="button" data-act="smcall" data-v="0">Recent</button><button type="button" data-act="smcall" data-v="1">Whole chart</button></div>
+      <label class="dk-sub" title="An EQL / EQH line normally disappears once price trades through it. This keeps it, faded, up to the candle that took it: “swept” = wick through and closed back, “broken” = closed through."><input type="checkbox" data-ind="smcTaken"> Keep equal lows / highs after price takes them (faded)</label>
       <label title="The classic simulator's A+ setups: a structure break, the pullback into premium / discount, a sweep, then a 1-minute close past the last 1-minute swing. Practice, not signals: these exact rules lost after fees in our test."><input type="checkbox" data-ind="aplus"> A+ setups: sweep + 1m CHoCH</label>
       <label class="dk-sub"><input type="checkbox" data-ind="aplusPause"> Pause the replay on a new A+</label>
       <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
