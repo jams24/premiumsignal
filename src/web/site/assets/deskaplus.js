@@ -22,13 +22,54 @@
 
   // M.all: fetched 1m candles, oldest first, from M.from (a structure-candle boundary) to M.to (exclusive; in a replay it
   // may run ahead of the clock — only candles closed by the clock are ever read)
-  const M = { key: '', from: 0, to: 0, all: [], hist: [], A: null, n: -1, end: 0, busy: false, again: false, err: '', seen: null, gen: 0 };
+  const M = { key: '', from: 0, to: 0, all: [], hist: [], A: null, n: -1, end: 0, busy: false, again: false, err: '', seen: null, armed: '', armedLeg: 0, armedAt: 0, gen: 0 };
   const endNow = () => Math.floor((R.on ? R.clock : Date.now()) / MIN) * MIN;
   const stfNow = () => STF[U.tf] || null;
   const keyNow = () => [U.sym, U.ex, stfNow(), R.on ? 'r' : 'l'].join('|');
   const closedCount = end => { let lo = 0, hi = M.all.length; while (lo < hi) { const m = (lo + hi) >> 1; if (M.all[m][0] + MIN <= end) lo = m + 1; else hi = m; } return lo; };
 
-  function reset() { M.gen++; M.key = ''; M.all = []; M.hist = []; M.A = null; M.n = -1; M.err = ''; M.seen = null; M.from = M.to = 0; }
+  function reset() { M.gen++; M.key = ''; M.all = []; M.hist = []; M.A = null; M.n = -1; M.err = ''; M.seen = null; M.armed = ''; M.from = M.to = 0; }
+
+  // ---------------------------------------------------------------- alerts (Indicators → "Alert me")
+  // Stage 2: the sweep is done, one 1-minute close away. Stage 3: the setup triggered. Live chart only.
+  // Browsers only allow sound after a click on the page, so the audio starts on the first click and stays ready.
+  let actx = null;
+  const unlockAudio = () => {
+    try { const C = window.AudioContext || window.webkitAudioContext; if (!C) return; actx = actx || new C(); if (actx.state !== 'running') actx.resume().catch(() => {}); } catch (e) { /* no audio */ }
+  };
+  function chime(stage) {
+    if (!actx) return;
+    const asked = Date.now(), play = () => {
+      if (Date.now() - asked > 1500) return;   // the audio woke up long after the alert: too late to mean anything
+      const t = actx.currentTime, notes = stage === 3 ? [880, 1175, 1568] : [660, 880], vol = stage === 3 ? 0.3 : 0.2;
+      notes.forEach((f, i) => { const o = actx.createOscillator(), g = actx.createGain(), at = t + i * 0.17; o.type = 'sine'; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+        o.connect(g); g.connect(actx.destination); o.start(at); o.stop(at + 0.17); });
+    };
+    try { if (actx.state === 'running') play(); else actx.resume().then(play).catch(() => {}); } catch (e) { /* no audio */ }
+  }
+  function popup(title, body, tag) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try { const n = new Notification(title, { body, tag, icon: '/icon.svg' }); n.onclick = () => { window.focus(); n.close(); }; } catch (e) { /* phones only allow these from an installed app */ }
+  }
+  const away = () => document.hidden || !document.hasFocus();   // looking at the page: the toast and the sound are enough
+  const alertsOn = () => !!U.aplusAlert && !!U.aplus && !R.on && !X.smcOff;
+  function alertUser(stage, title, body, tag) { chime(stage); if (away()) popup(title, body, tag); }
+  document.addEventListener('click', e => {
+    if (U.aplusAlert) unlockAudio();
+    const i = e.target && e.target.matches && e.target.matches('[data-ind="aplusAlert"]') ? e.target : null;
+    if (!i || !i.checked) return;
+    unlockAudio(); U.aplus = true;   // the alert needs the setups on
+    const done = () => {
+      chime(3);
+      const perm = 'Notification' in window ? Notification.permission : 'none';
+      if (perm === 'granted') popup('A+ alerts are on', 'You will get one of these when a setup is almost ready and when it triggers.', 'rd-aplus-on');
+      RD.toast(perm === 'granted' ? '🔔 A+ alerts on for the chart you have open. Keep this page open.'
+        : perm === 'none' ? '🔔 A+ sound is on. This browser cannot show notifications.'
+          : '🔔 A+ sound is on. Notifications are blocked: allow them for this site in your browser settings.', perm === 'granted' ? 'up' : 'down');
+    };
+    if ('Notification' in window && Notification.permission === 'default') { try { const p = Notification.requestPermission(done); if (p && p.then) p.then(() => {}, () => {}); } catch (err) { done(); } } else done();
+  }, true);
 
   async function load() {
     if (!U.aplus || !stfNow()) { if (M.A || M.key) { reset(); RD.req(); RD.legend(); } return; }
@@ -39,7 +80,7 @@
     M.busy = true; const g = fresh ? ++M.gen : M.gen;
     try {
       if (fresh) {
-        M.key = key; M.A = null; M.all = []; M.hist = []; M.err = ''; M.seen = null; M.n = -1; RD.req(); RD.legend();
+        M.key = key; M.A = null; M.all = []; M.hist = []; M.err = ''; M.seen = null; M.armed = ''; M.n = -1; RD.req(); RD.legend();
         const from = Math.floor((end - DAYS * DAY) / sms) * sms, to = Math.min(Math.floor(Date.now() / MIN) * MIN, end + (R.on ? AHEAD : 0));
         const ks = await u.fetchRange(sym, '1m', from, to, ex);
         if (g !== M.gen || key !== keyNow()) return;
@@ -73,11 +114,30 @@
     try { M.A = window.SMC.analyze(M.all, n - 1, { tf: sms, hist: M.hist.length ? { k: M.hist, step: sms } : null }); M.err = ''; }
     catch (e) { M.A = null; M.err = 'the SMC engine could not read this chart'; }
     const A = M.A, l = A && A.setups.length ? A.setups[A.setups.length - 1] : null, conf = l ? l.conf : 0;
-    if (M.seen == null) M.seen = conf;   // the first read: no toast for setups already on the chart
+    const first = M.seen == null;
+    if (first) M.seen = conf;   // the first read: no toast for setups already on the chart
     else if (conf > M.seen) {
       M.seen = conf;
       if (R.on && R.playing && U.aplusPause !== false) RD.pause();
       RD.toast(`🎯 A+ ${l.side} on ${u.coin(U.sym)} at ${when(l.t, stf)} UTC · entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, l.side === 'long' ? 'up' : 'down');
+      if (alertsOn() && !result(l)) {   // already at its stop or target by the time we read it: nothing left to act on
+        const late = Math.floor((end - l.conf) / MIN);
+        alertUser(3, `🎯 A+ ${l.side} · ${u.coin(U.sym)} ${stf}`, `${late >= 2 ? late + ' min ago · ' : ''}Entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, 'rd-aplus-' + U.sym + '-' + l.t);
+      }
+    }
+    const lg = armed();
+    if (lg) {
+      const id = lg.brk.t + '|' + lg.sweep.t;
+      if (id !== M.armed) {
+        M.armed = id;
+        // a deeper sweep of the same move soon after is the same warning: stay quiet for 30 minutes
+        if (!first && alertsOn() && !(M.armedLeg === lg.brk.t && end - M.armedAt < 30 * MIN)) {
+          M.armedLeg = lg.brk.t; M.armedAt = end;
+          const side = lg.dir === -1 ? 'short' : 'long', how = `a 1-minute close ${lg.dir === -1 ? 'below' : 'above'} ${u.fp(lg.trig.p)}`;
+          RD.toast(`🔔 A+ ${side} almost ready on ${u.coin(U.sym)}: it triggers on ${how}.`, lg.dir === -1 ? 'down' : 'up');
+          alertUser(2, `A+ ${side} almost ready · ${u.coin(U.sym)} ${stf}`, `Sweep done. It triggers on ${how}.`, 'rd-aplus-' + U.sym + '-' + id);
+        }
+      }
     }
     RD.req(); RD.legend();
   }
@@ -97,6 +157,8 @@
   const shown = () => { if (!M.A || !U.aplus || X.smcOff || M.key !== keyNow()) return []; const L = U.aplusDone === false ? M.A.setups.filter(s => !result(s)) : M.A.setups; return U.smcAll ? L : L.slice(-4); };
   // the idea being built (step 1 of 4 done: a structure break whose move price hasn't closed back past), as on the classic chart
   const idea = () => (M.A && M.A.leg && !M.A.leg.dead && M.A.leg.brk ? M.A.leg : null);
+  // 3 of 4 steps done: swept, and one 1-minute close away from the trigger
+  const armed = () => { const l = idea(); return l && l.sweep && l.trig && endNow() - l.sweep.conf < 90 * MIN ? l : null; };
   // x of a time; a move that starts before the chart's first candle starts at the left edge
   const xL = t => { const x = RD.t2x(t); return x != null ? x : RD.S.bars.length && t < RD.S.bars[0][0] ? 0 : null; };
 
@@ -130,8 +192,8 @@
       const yy = [y, y - 17, y + 17].find(free); if (yy == null) return;
       placed.push({ x: x0, y: yy, w }); RD.label(g, t, x0, yy, c, 'left');
     };
-    const stf = stfNow(), leg = M.A.leg && !M.A.leg.dead ? M.A.leg : null;
-    if (leg && leg.sweep && leg.trig && endNow() - leg.sweep.conf < 90 * MIN) {   // 3 of 4 steps done: the 1m close that would trigger it
+    const stf = stfNow(), leg = armed();
+    if (leg) {   // the 1m close that would trigger it
       const x0 = xs(leg.trig.t), y = RD.p2y(leg.trig.p);
       line(x0, W, y, blue, [5, 3], 1.5);
       tag(`A+ ${leg.dir === -1 ? 'short' : 'long'} if a 1m candle closes ${leg.dir === -1 ? 'below' : 'above'}`, W - 6, y + (leg.dir === -1 ? 11 : -11), blue, 'right');
@@ -164,7 +226,7 @@
     const lg = idea(); if (!lg) return count;
     // the idea's 4 steps, as on the classic chart: break ✓ · premium / discount · sweep · 1m CHoCH (the trigger)
     const sh = lg.dir === -1, ck = (on, x) => `<span class="${on ? 'up' : 'mut'}">${on ? '✓' : '○'} ${x}</span>`;
-    const trig = lg.sweep && lg.trig && end - lg.sweep.conf < 90 * MIN;
+    const trig = !!armed();
     return `<span${t}>A+ <b class="${sh ? 'down' : 'up'}">${sh ? 'short' : 'long'} idea</b> since the ${lg.brk.kind} ${when(lg.brk.t, stf)} · ` +
       [ck(true, 'break'), ck(!!lg.prem, sh ? 'premium' : 'discount'), ck(!!lg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
       (trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${u.fp(lg.trig.p)}</b>` : '') + `</span>` + count;
@@ -176,7 +238,7 @@
   RD.on('load', () => load());
   RD.on('mode', () => { reset(); load(); });
   RD.on('bars', () => { if (U.aplus) load(); });   // a new candle, a replay step, another timeframe
-  setInterval(() => { if (U.aplus && !R.on && !document.hidden) load(); }, 20000);   // live: new 1-minute closes between chart candles
-  window.__rdAplus = M;   // for tests
+  setInterval(() => { if (U.aplus && !R.on && (!document.hidden || U.aplusAlert)) load(); }, 20000);   // live: new 1-minute closes between chart candles (alerts keep watching from a hidden tab)
+  M.analyze = analyze; window.__rdAplus = M;   // for tests
   if (U.aplus) load();
 })();
