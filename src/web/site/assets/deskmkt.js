@@ -71,7 +71,7 @@
   // ---------------------------------------------------------------- state
   const OPEN0 = { ov: true, fu: true, oi: false, ls: false, nw: true, al: true, tr: false, hr: false, pa: false, zr: false };
   const M = { open: Object.assign({}, OPEN0, store.get('rd-mk-v1', null) || {}), d: {}, err: {}, at: {}, busy: {}, key: '', nwTab: store.get('rd-mk-nwtab', 'cal'),
-    imp: store.get('rd-mk-imp', 'hm'), zrTf: store.get('rd-mk-zrtf', '15m'), zrDays: +store.get('rd-mk-zrdays', 30) || 30, zrMarks: !!store.get('rd-mk-zrmk', false), again: {}, hlCoin: !!store.get('rd-mk-hlcoin', false), warn: !!store.get('rd-mk-warn', false), warned: new Set(), news: null, newsAt: 0, newsErr: '' };
+    imp: store.get('rd-mk-imp', 'hm'), zrTf: store.get('rd-mk-zrtf', '15m'), zrDays: [1, 2, 7, 30, 90].includes(+store.get('rd-mk-zrdays', 30)) ? +store.get('rd-mk-zrdays', 30) : 30, zrMarks: !!store.get('rd-mk-zrmk', false), again: {}, hlCoin: !!store.get('rd-mk-hlcoin', false), warn: !!store.get('rd-mk-warn', false), warned: new Set(), news: null, newsAt: 0, newsErr: '' };
   const saveOpen = () => store.set('rd-mk-v1', M.open);
   const zrDays = () => (M.zrTf === '5m' ? Math.min(M.zrDays, 30) : M.zrDays);   // 5m: 30 days at most (8,640 candles)
   const nearZones = (zs, px) => { let dem = null, sup = null;
@@ -195,9 +195,10 @@
     async zr() {
       if (!window.SMC || !window.ZoneStats) throw new Error('the SMC engine did not load');
       const tf = M.zrTf, days = zrDays(), ms = u.TF[tf].ms, to = Math.floor(Date.now() / ms) * ms;
-      const K = await u.fetchRange(U.sym, tf, to - days * DAY, to, U.ex);   // closed candles only
-      if (K.length < 60) throw new Error('not enough candles yet (a new listing?)');
-      const z = window.ZoneStats.zoneStats(window.SMC, K, ms, { seed: U.ex + U.sym + tf + days });
+      // 300 candles before the period as warm-up: the engine knows the zones when the period starts; only touches inside it count
+      const from = to - days * DAY, K = await u.fetchRange(U.sym, tf, from - 300 * ms, to, U.ex);   // closed candles only
+      if (K.length < 60 || !K.some(k => k[0] >= from)) throw new Error('not enough candles yet (a new listing?)');
+      const z = window.ZoneStats.zoneStats(window.SMC, K, ms, { seed: U.ex + U.sym + tf + days, from });
       z.tf = tf; z.days = days;
       return z;
     },
@@ -492,7 +493,7 @@
     zr() {
       const d = M.d.zr, Z = window.ZoneStats, tf = M.zrTf, days = zrDays();
       const ctl = `<div class="mk-tools"><div class="mk-seg sm" aria-label="Zone timeframe">${['5m', '15m', '1H'].map(t => `<button type="button" data-mk-zrtf="${t}" class="${tf === t ? 'on' : ''}">${t}</button>`).join('')}</div>
-        <div class="mk-seg sm" aria-label="How far back">${[7, 30, 90].map(n => `<button type="button" data-mk-zrd="${n}" class="${days === n ? 'on' : ''}"${tf === '5m' && n === 90 ? ' disabled title="5m: 30 days at most"' : ''}>${n}d</button>`).join('')}</div></div>`;
+        <div class="mk-seg sm" aria-label="How far back">${[1, 2, 7, 30, 90].map(n => `<button type="button" data-mk-zrd="${n}" class="${days === n ? 'on' : ''}"${tf === '5m' && n === 90 ? ' disabled title="5m: 30 days at most"' : ''}>${n}d</button>`).join('')}</div></div>`;
       if (!d || d.tf !== tf || d.days !== days || !Z) return { html: ctl + (M.err.zr ? errBox('zr', M.err.zr) : spin) };
       const V = { demand: Z.verdict(d.demand, d.rnd.demand), supply: Z.verdict(d.supply, d.rnd.supply) };
       const say = (v) => (v.n < 20 ? ['', 'too few touches to tell'] : v.base == null ? ['', 'no random comparison'] : !v.beyond ? ['', 'same as random'] : v.diff > 0 ? ['up', 'held more often than random'] : ['down', 'went through more often than random']);
@@ -505,7 +506,8 @@
           <div class="zr-bar" title="Held ${hp.toFixed(0)}% · the same trade at random times ${v.base == null ? '—' : v.base.toFixed(0) + '%'} (the white tick)"><i class="up" style="width:${hp.toFixed(1)}%"></i><i class="down" style="width:${(100 - hp).toFixed(1)}%"></i>${v.base == null ? '' : `<s style="left:${v.base.toFixed(1)}%"></s>`}</div>
           <div class="zr-num"><span class="up" title="Target hit before the stop">Held ${S.held} · ${hp.toFixed(0)}%</span><span class="down" title="Stop hit before the target">Went through ${S.against} · ${(100 - hp).toFixed(0)}%</span></div>
           <p class="zr-v">Stop size: median <b>${stopMed(k)}</b> from entry (target the same distance the other way).</p>
-          <p class="zr-v">Same trade at random times: <b>${v.base == null ? '—' : v.base.toFixed(0) + '%'}</b> held${v.luck == null ? '' : ` · luck ±${v.luck.toFixed(0)}`} → <b class="${w[0]}" data-zr-say="${k}">${w[1]}</b></p></div>`;
+          <p class="zr-v">Same trade at random times: <b>${v.base == null ? '—' : v.base.toFixed(0) + '%'}</b> held${v.luck == null ? '' : ` · luck ±${v.luck.toFixed(0)}`} → <b class="${w[0]}" data-zr-say="${k}">${w[1]}</b></p>
+          ${d.r2 && d.r2[k].n ? `<p class="zr-v" data-zr-r2="${k}" title="How far price ran in the trade's favour before the stop (or 96 candles), before fees. 2R = twice the stop distance.">Ran <b>2R or more</b> before the stop: <b>${(d.r2[k].hit / d.r2[k].n * 100).toFixed(0)}%</b> (${d.r2[k].hit} of ${d.r2[k].n})${d.rnd2 && d.rnd2[k].n ? ` · random ${(d.rnd2[k].hit / d.rnd2[k].n * 100).toFixed(0)}%` : ''}</p>` : ''}</div>`;
       };
       const px = live() && S.lastPx ? S.lastPx : d.price;
       const { dem, sup } = nearZones(d.active, px);
@@ -520,10 +522,14 @@
       const lag = ms => { const q = Math.round(ms / MIN); return q <= 0 ? 'the touch candle itself' : q < 60 ? q + 'm after the touch' : q < 1440 ? Math.floor(q / 60) + 'h ' + String(q % 60).padStart(2, '0') + 'm after the touch' : Math.floor(q / 1440) + 'd ' + Math.floor((q % 1440) / 60) + 'h after the touch'; };
       const tip = t => {
         const L = t.type === 'demand', head = `${L ? 'Demand' : 'Supply'} ${fp(t.bot)}–${fp(t.top)} · touched ${day(t.t)} ${hhmm(t.t)} UTC`;
-        if (t.target == null) return head + `\n${L ? 'Long' : 'Short'}: the candle opened past the stop ${fp(t.stop)}, so it counts as went through`;
+        if (t.target == null) return head + `\n${L ? 'Long' : 'Short'}: the candle opened past the stop ${fp(t.stop)}, so it counts as went through (a loss of more than 1R)`;
         const plan = `${L ? 'Long' : 'Short'} ${fp(t.entry)} · stop ${fp(t.stop)} (${sp(t.entry, t.stop)}) · target ${fp(t.target)} (${sp(t.entry, t.target)})`;
-        const end = t.res === 1 ? `✓ Target hit first · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : t.res === 0 ? `✗ Stop hit first · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : '· Neither hit yet (or not within 96 candles)';
-        return head + '\n' + plan + '\n' + end;
+        const end = t.res === 1 ? `✓ Target hit first: +1R · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : t.res === 0 ? `✗ Stop hit first: −1R · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : '· Neither hit yet (or not within 96 candles)';
+        const b = t.best != null ? t.best : null, bR = b == null ? '' : '+' + b.toFixed(1) + 'R';
+        const run = b == null ? '' : t.res === 0 ? (b >= 0.1 ? `Best run before the stop: ${bR} (${fp(t.entry + (L ? 1 : -1) * b * Math.abs(t.entry - t.stop))})` : 'It never moved in your favour before the stop')
+          : t.res === 1 ? `Best run before the stop (or 96 candles): ${bR} · ${b >= 3 ? 'a 3R target would have hit' : b >= 2 ? 'a 2R target would have hit' : 'a 2R target would have missed'}`
+          : `Best run so far: ${bR}`;
+        return head + '\n' + plan + '\n' + end + (run ? '\n' + run : '');
       };
       const dots = last.map(t => `<i class="${t.res === 1 ? 'up' : t.res === 0 ? 'down' : 'op'}" data-tip="${esc(tip(t))}">${t.type === 'demand' ? '▲' : '▼'}</i>`).join('');
       const any = ['demand', 'supply'].some(k => V[k].n >= 20 && V[k].beyond);
@@ -533,7 +539,7 @@
           `<div class="zr-now" data-zr-now>${now}</div>
           ${dots ? `<p class="mk-day">Last ${last.length} touches · oldest → newest</p><div class="zr-dots" data-mk-tips="zr">${dots}</div><div class="mk-read zr-read" data-mk-read="zr" data-def="▲ demand · ▼ supply · green: target hit first, red: stop hit first. Hover or tap one for its entry, stop and target.">▲ demand · ▼ supply · green: target hit first, red: stop hit first. Hover or tap one for its entry, stop and target.</div>` : ''}
           <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-zrmk${M.zrMarks ? ' checked' : ''}><span></span>Mark the touches on the chart <em class="m">(squares)</em></label></div>
-          <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} days, fetched live from ${esc(u.api(U.ex).name)}. Each zone's first touch: entry at its edge, stop 0.1% past the far edge, target the same distance (1R). Random = the same stop and target from 20 random candles of this coin per touch. In our tests (207 coins, 3 months) a coin's score did not carry into the next month and zones overall held about as often as random, so read this as how ${esc(coin())} behaved, not a forecast.</p>`,
+          <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} day${days === 1 ? '' : 's'}${days <= 2 ? ' (+300 earlier candles so the zones are known from the start; only touches inside the period count — a day or two has few touches, so read it as what happened, not a pattern)' : ''}, fetched live from ${esc(u.api(U.ex).name)}. Each zone's first touch: entry at its edge, stop 0.1% past the far edge, target the same distance (1R). Random = the same stop and target from 20 random candles of this coin per touch. In our tests (207 coins, 3 months) a coin's score did not carry into the next month and zones overall held about as often as random, so read this as how ${esc(coin())} behaved, not a forecast.</p>`,
         after: b => tips(b, 'zr'),
       };
     },

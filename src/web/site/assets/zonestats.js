@@ -9,7 +9,12 @@
      - held = target before stop, against = stop first. On the touch candle only the stop counts (its high / low may have
        printed before the touch); afterwards a candle that reaches both counts as a stop. Undecided after opt.hor candles = open.
    Random: for every decided zone, opt.draws random candles of the same coin and period, entry at their close, the same
-   side and the same stop / target distance in %, the same rules. Seeded, so a refresh shows the same numbers. */
+   side and the same stop / target distance in %, the same rules. Seeded, so a refresh shows the same numbers.
+   opt.from (ms): count only touches (and random entries) from this time on; the candles before it are warm-up, so the
+   engine already knows the zones when the period starts (a 1-day period on 1H has only 24 candles of its own).
+   best = the furthest price ran in the trade's favour, in R, from the candle after the touch until the stop or opt.hor
+   candles (a candle that hits the stop does not count its other side); r2 = how many decided touches ran 2R or more
+   before the stop, next to the same count for the random entries. */
 (function (root) {
   'use strict';
   const BUF = 0.001;
@@ -23,9 +28,12 @@
   function zoneStats(SMC, K, tfMs, opt) {
     opt = opt || {};
     const HOR = opt.hor || 96, DRAWS = opt.draws || 20, n = K.length;
+    const first = t => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (K[m][0] < t) lo = m + 1; else hi = m; } return lo; };
+    const i0 = opt.from != null ? first(opt.from) : 0;   // the first candle of the period (before it: warm-up)
     const out = { demand: { held: 0, against: 0, open: 0 }, supply: { held: 0, against: 0, open: 0 }, rnd: { demand: { held: 0, n: 0 }, supply: { held: 0, n: 0 } },
-      touches: [], zones: 0, from: n ? K[0][0] : null, to: n ? K[n - 1][0] + tfMs : null, candles: n };
-    if (n < 60) return out;
+      r2: { demand: { hit: 0, n: 0 }, supply: { hit: 0, n: 0 } }, rnd2: { demand: { hit: 0, n: 0 }, supply: { hit: 0, n: 0 } },
+      touches: [], zones: 0, from: n ? K[Math.min(i0, n - 1)][0] : null, to: n ? K[n - 1][0] + tfMs : null, candles: n - i0 };
+    if (n < 60 || n - i0 < 2) return out;
     // a flat candle after the last one closes it, so the engine reads every candle given (as the desk's Trend section does)
     const c = K[n - 1][4], base = K.concat([[K[n - 1][0] + tfMs, c, c, c, c, 0]]);
     const A = SMC.analyze(base, base.length - 1, { tf: tfMs });
@@ -40,13 +48,17 @@
       }
       return [null, -1];
     }
-    const first = t => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (K[m][0] < t) lo = m + 1; else hi = m; } return lo; };
+    function bestR(i1, dir, entry, r, stop) {
+      let b = 0;
+      for (let i = i1; i < Math.min(n, i1 + HOR); i++) { const k = K[i]; if (dir === 1 ? k[3] <= stop : k[2] >= stop) break; b = Math.max(b, ((dir === 1 ? k[2] : k[3]) - entry) * dir / r); }
+      return b;
+    }
     const decided = [];
     for (const z of A.zones) {
       const dir = z.type === 'demand' ? 1 : -1;
       let j = -1;
       for (let i = first(z.conf); i < n; i++) { const k = K[i]; if (dir === 1 ? k[3] <= z.top : k[2] >= z.bot) { j = i; break; } }
-      if (j < 0) continue;   // not touched yet
+      if (j < 0 || j < i0) continue;   // not touched yet, or first touched before the period
       const k = K[j];
       const entry = dir === 1 ? Math.min(z.top, k[1]) : Math.max(z.bot, k[1]);
       const stop = dir === 1 ? z.bot * (1 - BUF) : z.top * (1 + BUF);
@@ -57,7 +69,9 @@
       else [res, at] = walk(j + 1, dir, stop, entry + dir * r);
       const S = out[z.type];
       if (res === 1) S.held++; else if (res === 0) S.against++; else S.open++;
-      out.touches.push({ type: z.type, top: z.top, bot: z.bot, t: k[0], res, entry, stop, target: r > 0 ? entry + dir * r : null, hitT: res == null ? null : K[at][0] });   // hitT: the candle the stop / target was hit in
+      const best = r > 0 && !(dir === 1 ? k[3] <= stop : k[2] >= stop) ? bestR(j + 1, dir, entry, r, stop) : 0;
+      out.touches.push({ type: z.type, top: z.top, bot: z.bot, t: k[0], res, entry, stop, target: r > 0 ? entry + dir * r : null, hitT: res == null ? null : K[at][0], best });   // hitT: the candle the stop / target was hit in
+      if (res != null) { out.r2[z.type].n++; if (best >= 2) out.r2[z.type].hit++; }
       if (res != null && r > 0) decided.push({ type: z.type, dir, pct: r / entry });
     }
 
@@ -67,13 +81,13 @@
 
     // the luck check: the same trades from random candles of this coin and period
     const rand = rng(seedOf(opt.seed || 'zones') ^ n);
-    const warm = Math.min(30, Math.floor(n / 4)), span = n - 1 - warm;
+    const warm = Math.max(i0, Math.min(30, Math.floor(n / 4))), span = n - 1 - warm;
     if (span > 10) for (const d of decided) {
-      const R = out.rnd[d.type];
+      const R = out.rnd[d.type], R2 = out.rnd2[d.type];
       for (let q = 0; q < DRAWS; q++) {
-        const i = warm + Math.floor(rand() * span), e = K[i][4];
-        const [res] = walk(i + 1, d.dir, e * (1 - d.dir * d.pct), e * (1 + d.dir * d.pct));
-        if (res != null) { R.n++; R.held += res; }
+        const i = warm + Math.floor(rand() * span), e = K[i][4], st = e * (1 - d.dir * d.pct);
+        const [res] = walk(i + 1, d.dir, st, e * (1 + d.dir * d.pct));
+        if (res != null) { R.n++; R.held += res; R2.n++; if (bestR(i + 1, d.dir, e, e * d.pct, st) >= 2) R2.hit++; }
       }
     }
     return out;
