@@ -216,7 +216,7 @@
     const tot = rows.reduce((s, r) => s + (r.pnl || 0), 0), bank = P.reduce((s, p) => s + (+p.realized || 0), 0);
     const dis = web ? '' : ` disabled title="${offTitle}"`;
     let h = `<div class="rxb-bar"><span class="rxb-k"><em>Open P&amp;L</em><b class="${tot >= 0 ? 'up' : 'down'}">${sgn(tot)}</b></span>
-      <span class="rxb-k"><em>Banked on open trades</em><b>${sgn(bank)}</b></span><span class="rxb-k"><em>Positions</em><b>${P.length}</b></span><span class="rxb-k"><em>Limit orders</em><b>${O.length}</b></span>
+      <span class="rxb-k"><em>Banked on open trades</em><b>${sgn(bank)}</b></span><span class="rxb-k"><em>Positions</em><b>${P.length}</b></span><span class="rxb-k"><em>${O.length ? ordName(O) : 'Limit orders'}</em><b>${O.length}</b></span>
       <span class="rxb-wt ${web ? 'on' : ''}"><i></i><span>${web ? 'Web trading on' : 'View only — send <code>/webtrade on</code> in Telegram to manage from here'}</span></span>
       <span class="rxb-r"><span class="muted" title="${L.at ? new Date(L.at).toUTCString() : ''}">${L.err ? `<span class="down">${esc(L.err)}</span>` : L.at ? 'Updated ' + ago(L.at) : ''}</span>
       <button type="button" class="rxb-btn" data-act="rx-fresh" title="Reload, and ask the exchange about orders on its book">${ic('refresh-cw')} Check exchange</button></span></div>`;
@@ -235,14 +235,14 @@
       }).join('')}</tbody></table>`;
     }
     if (O.length) {
-      h += `<div class="rxt-h">Limit orders</div><table class="pt rxt"><thead><tr><th>Order</th><th>Limit</th><th>Price now</th><th>Size</th><th>Stop</th><th>TP1</th><th>Where</th><th></th></tr></thead><tbody>${O.map(o => {
+      h += `<div class="rxt-h">${ordName(O)}</div><table class="pt rxt"><thead><tr><th>Order</th><th>${O.every(o => o.stopEntry) ? 'Entry' : 'Limit'}</th><th>Price now</th><th>Size</th><th>Stop</th><th>TP1</th><th>Where</th><th></th></tr></thead><tbody>${O.map(o => {
         const S = o.symbol, away = o.price ? Math.abs(o.limitPrice / o.price - 1) * 100 : null, ex = o.onExchange;
         return `<tr data-rxgo="${esc(pair(S))}|${exOf(o.exchange)}"><td>${sideTag(o.direction)}<b>${esc(base(S))}</b> <span class="muted">${o.leverage}×</span><div class="sub">${esc(o.exchange || '')}${o.expiresAt ? ' · expires ' + tshort(o.expiresAt) : ''}</div></td>
           <td><button type="button" class="rx-ed" data-rxe="limit" data-id="${o.id}"${dis}>${px(o.limitPrice, S)}</button></td><td>${px(o.price, S)}<div class="sub">${away != null ? away.toFixed(2) + '% away' : ''}</div></td>
           <td>${money((+o.margin || 0) * (+o.leverage || 0))}<div class="sub">margin ${money(+o.margin)}</div></td>
           <td><button type="button" class="rx-ed down" data-rxe="ostop" data-id="${o.id}"${dis}>${o.stop ? px(o.stop, S) : 'add'}</button></td>
           <td><button type="button" class="rx-ed up" data-rxe="otp" data-id="${o.id}"${dis}>${o.tp1 ? px(o.tp1, S) : 'add'}</button></td>
-          <td>${o.onBook ? 'On the order book' : 'Bot watches the price'}${ex ? `<div class="sub">${ex.error ? 'exchange: ' + esc(ex.error) : 'exchange: ' + esc(ex.status || '?') + (ex.filled ? ` · filled ${ex.filled}/${ex.amount}` : '')}</div>` : ''}</td>
+          <td>${o.stopEntry ? 'Stop entry on the exchange' : o.onBook ? 'On the order book' : 'Bot watches the price'}${ex ? `<div class="sub">${ex.error ? 'exchange: ' + esc(ex.error) : 'exchange: ' + esc(ex.status || '?') + (ex.filled ? ` · filled ${ex.filled}/${ex.amount}` : '')}</div>` : ''}</td>
           <td><span class="acts"><button type="button" class="x" data-rxa="cancel" data-id="${o.id}"${dis}>Cancel</button></span></td></tr>`;
       }).join('')}</tbody></table>`;
     }
@@ -251,7 +251,7 @@
         <div><dt>Stop</dt><dd><button type="button" class="rx-ed down" data-rxe="stop" data-id="${p.id}"${dis}>${p.stop ? px(p.stop, p.symbol) : 'add'}</button></dd></div><div><dt>Size</dt><dd>${money(+p.size)}</dd></div><div><dt>Open</dt><dd>${age(p.opened)}</dd></div></dl>
         <div class="tps">${(p.tps || []).map(t => t.hit ? `<span class="tpc hit">TP${t.n} ✓</span>` : `<button type="button" class="tpc" data-rxe="tp${t.n}" data-id="${p.id}"${dis}>TP${t.n} ${px(t.price, p.symbol)}</button>`).join('')}</div>
         <div class="acts"><button type="button" data-rxa="be" data-id="${p.id}"${dis}>Breakeven</button><button type="button" data-rxa="take" data-id="${p.id}"${dis}>Take…</button><button type="button" class="x" data-rxa="close" data-id="${p.id}"${dis}>Close</button></div></div>`).join('')}
-      ${O.length ? '<div class="rxt-h">Limit orders</div>' : ''}${O.map(o => `<div class="pc rxc"><div class="pc-h" data-rxgo="${esc(pair(o.symbol))}|${exOf(o.exchange)}"><span>${sideTag(o.direction)}<b>${esc(base(o.symbol))}</b> limit</span><b class="mono">${px(o.limitPrice, o.symbol)}</b></div>
+      ${O.length ? `<div class="rxt-h">${ordName(O)}</div>` : ''}${O.map(o => `<div class="pc rxc"><div class="pc-h" data-rxgo="${esc(pair(o.symbol))}|${exOf(o.exchange)}"><span>${sideTag(o.direction)}<b>${esc(base(o.symbol))}</b> ${o.stopEntry ? 'stop entry' : 'limit'}</span><b class="mono">${px(o.limitPrice, o.symbol)}</b></div>
         <dl><div><dt>Now</dt><dd>${px(o.price, o.symbol)}</dd></div><div><dt>Stop</dt><dd><button type="button" class="rx-ed down" data-rxe="ostop" data-id="${o.id}"${dis}>${o.stop ? px(o.stop, o.symbol) : 'add'}</button></dd></div><div><dt>TP1</dt><dd><button type="button" class="rx-ed up" data-rxe="otp" data-id="${o.id}"${dis}>${o.tp1 ? px(o.tp1, o.symbol) : 'add'}</button></dd></div></dl>
         <div class="acts"><button type="button" data-rxe="limit" data-id="${o.id}"${dis}>Move limit</button><button type="button" class="x" data-rxa="cancel" data-id="${o.id}"${dis}>Cancel</button></div></div>`).join('')}</div>`;
     return h;
@@ -281,13 +281,14 @@
     ask({ title: `Move TP${n}`, tone: 'up', ok: `Move TP${n}`, html: `<p class="xlead">${head(p)}</p>${kv([[`TP${n} now`, old ? px(old.price, p.symbol) : '—'], [`New TP${n}`, `<b>${px(v, p.symbol)}</b> · ${fromE(v, p.entry)} from entry`], ['Price now', px(m, p.symbol)]])}
       <p class="xnote">The TP orders on the exchange are re-placed; the stop stays where it is.</p>`, run: () => manage({ action: 'tp', id: p.id, level: n, price: v }), after: settle(key), cancel: key && unpend(key) });
   }
+  function ordName(O) { return O.every(o => o.stopEntry) ? 'Stop entries' : O.some(o => o.stopEntry) ? 'Waiting orders' : 'Limit orders'; }
   function askOrder(o, kind, v, key) {
-    const what = { limit: 'Move the limit', ostop: 'Change the stop', otp: 'Change TP1' }[kind];
+    const what = { limit: o.stopEntry ? 'Move the stop entry' : 'Move the limit', ostop: 'Change the stop', otp: 'Change TP1' }[kind];
     const action = { limit: 'move_limit', ostop: 'order_stop', otp: 'order_tp' }[kind];
     const note = { limit: 'The bot checks the new order, cancels the old one and places the new one. Stops and TPs you typed stay put; the others keep their distance.',
       ostop: 'Nothing changes on the exchange now: the bot places this stop when the order fills.', otp: 'TP2–TP4 follow as for a typed TP1. Placed when the order fills.' }[kind];
     const now = { limit: o.limitPrice, ostop: o.stop, otp: o.tp1 }[kind];
-    ask({ title: what, tone: 'warn', ok: what.replace(/^Change/, 'Set'), html: `<p class="xlead">${sideTag(o.direction)}<b>${esc(base(o.symbol))}</b> limit · ${esc(o.exchange || '')}</p>
+    ask({ title: what, tone: 'warn', ok: what.replace(/^Change/, 'Set'), html: `<p class="xlead">${sideTag(o.direction)}<b>${esc(base(o.symbol))}</b> ${o.stopEntry ? 'stop entry' : 'limit'} · ${esc(o.exchange || '')}</p>
       ${kv([['Now', px(now, o.symbol)], ['New', `<b>${px(v, o.symbol)}</b>`], ['Price now', px(o.price, o.symbol)]])}<p class="xnote">${note}</p>`,
       run: () => manage({ action, id: o.id, price: v }), after: settle(key), cancel: key && unpend(key) });
   }
@@ -295,7 +296,7 @@
     if (!L.web) { RD.toast(offTitle, 'down'); return; }
     if (kind === 'cancel') {
       const o = ordById(id); if (!o) return;
-      ask({ title: 'Cancel the limit order', tone: 'down', ok: 'Cancel order', html: `<p class="xlead">${sideTag(o.direction)}<b>${esc(base(o.symbol))}</b> limit at ${px(o.limitPrice, o.symbol)}</p>${kv([['Size', money((+o.margin || 0) * (+o.leverage || 0))], ['Where', o.onBook ? 'On the exchange order book' : 'The bot watches the price']])}`,
+      ask({ title: o.stopEntry ? 'Cancel the stop entry' : 'Cancel the limit order', tone: 'down', ok: 'Cancel order', html: `<p class="xlead">${sideTag(o.direction)}<b>${esc(base(o.symbol))}</b> ${o.stopEntry ? 'stop entry' : 'limit'} at ${px(o.limitPrice, o.symbol)}</p>${kv([['Size', money((+o.margin || 0) * (+o.leverage || 0))], ['Where', o.stopEntry ? 'Waiting on the exchange' : o.onBook ? 'On the exchange order book' : 'The bot watches the price']])}`,
         run: () => manage({ action: 'cancel', id }), after: settle() });
       return;
     }
@@ -372,10 +373,10 @@
       for (const o of d.orders || []) {
         if (!onChart(o.symbol)) continue;
         const S = o.symbol, size = (+o.margin || 0) * (+o.leverage || 0), E = +o.limitPrice;
-        const hd = `<b>REAL ${esc(o.direction)} limit ${esc(base(S))}</b> · ${money(size)} when it fills`;
+        const oName = o.stopEntry ? 'stop entry' : 'limit', hd = `<b>REAL ${esc(o.direction)} ${oName} ${esc(base(S))}</b> · ${money(size)} when it fills`;
         const kL = 'rxo' + o.id, kS = 'rxos' + o.id, kT = 'rxot' + o.id;
-        W.push({ key: kL, price: at(kL, E), color: C.warn, style: LS.Dashed, w: 2, title: `REAL ${o.direction === 'long' ? 'BUY' : 'SELL'} LIMIT`, dragTitle: v => `REAL LIMIT ${fp(v)}`,
-          tip: () => `${hd}<br>Limit ${px(E, S)} · ${o.onBook ? 'on the exchange order book' : 'the bot enters when price touches it'}${dragHint}`,
+        W.push({ key: kL, price: at(kL, E), color: C.warn, style: LS.Dashed, w: 2, title: `REAL ${o.direction === 'long' ? 'BUY' : 'SELL'} ${o.stopEntry ? 'STOP ENTRY' : 'LIMIT'}`, dragTitle: v => `REAL ${o.stopEntry ? 'STOP ENTRY' : 'LIMIT'} ${fp(v)}`,
+          tip: () => `${hd}<br>${o.stopEntry ? `Stop entry ${px(E, S)} · the exchange enters at market when price reaches it` : `Limit ${px(E, S)} · ${o.onBook ? 'on the exchange order book' : 'the bot enters when price touches it'}`}${dragHint}`,
           drag: L.web ? { commit: v => { L.pend[kL] = v; RD.syncLines(); askOrder(o, 'limit', v, kL); } } : undefined });
         if (o.stop) W.push({ key: kS, price: at(kS, o.stop), color: C.down, style: LS.Dashed, w: 1, title: `LIMIT SL ${sgn(size * mv(o.direction, E, o.stop))}`, dragTitle: v => `LIMIT SL ${fp(v)}`,
           tip: () => `${hd}<br><b>Stop ${px(o.stop, S)}</b> · ${fromE(o.stop, E)} from the limit<br>If it fills at the limit and stops: ${sgn(size * mv(o.direction, E, o.stop))}${dragHint}`,
@@ -393,7 +394,7 @@
       const plan = T.lines && pv;
       const pTip = what => () => `<b>Preview · ${what}</b><br>Where the bot would put it if you review this order now (your saved settings). Nothing is placed.<br><small>${what === 'stop' || what === 'TP1' ? 'Drag it to set your own · ' : ''}hide: Real tab → Plan lines on the chart</small>`;
       const tl = (f, v, color, title, tip) => { if (v > 0) W.push({ key: 'rxk' + f, price: v, color, style: LS.LargeDashed, w: 1, title, tip, drag: { ticket: true, set: x => setF(f, x) } }); };
-      if (T.entry === 'limit') tl('limit', val('limit'), C.warn, 'Real limit');
+      if (T.entry !== 'market') tl('limit', val('limit'), C.warn, T.entry === 'stop' ? 'Real stop entry' : 'Real limit');
       if (val('stop')) tl('stop', val('stop'), C.down, 'Real stop'); else if (plan) tl('stop', pv.stopLoss, C.down, 'Plan stop', pTip('stop'));
       if (T.tp === 'price' && val('tp')) tl('tp', val('tp'), C.up, 'Real TP1'); else if (plan && pv.tps) tl('tp', pv.tps[0], C.up, 'Plan TP1', pTip('TP1'));
       if (plan && pv.tps) pv.tps.slice(1).forEach((v, i) => { if (v > 0) W.push({ key: 'rxkp' + i, price: v, color: RD.util.hexA(C.up, 0.55), style: LS.Dotted, w: 1, title: 'Plan TP' + (i + 2), tip: pTip('TP' + (i + 2)) }); });
@@ -408,11 +409,18 @@
   const setF = (n, v) => { F(n).value = v == null ? '' : String(v); if (n === 'tp' && T.tp !== 'price') T.tp = 'price'; schedule(); renderT(); };
   const hasInput = () => ['limit', 'stop', 'tp'].some(n => F(n).value.trim() !== '');
   const paneOpen = () => !$('[data-pane="real"]').hidden && (!phone() || $('.dk-side').classList.contains('open'));
-  const refPx = () => (T.entry === 'limit' ? val('limit') : RD.S.lastPx);
+  const refPx = () => (T.entry !== 'market' ? val('limit') : RD.S.lastPx);
   function check() {
-    const e = refPx(), errs = [], short = T.side === 'short', where = T.entry === 'limit' ? 'limit' : 'price now';
+    const e = refPx(), errs = [], short = T.side === 'short', where = T.entry === 'stop' ? 'stop entry' : T.entry === 'limit' ? 'limit' : 'price now';
     const lim = val('limit'), stop = val('stop'), tp = val('tp'), m = val('margin'), lev = val('lev');
     if (T.entry === 'limit' && !(lim > 0)) errs.push('Set the limit price — type it or pick it on the chart.');
+    if (T.entry === 'stop') {
+      const now = RD.S.lastPx;
+      if (T.mode !== 'live') errs.push('Stop entries are for live orders only.');
+      else if (L.web === false) errs.push('Stop entries need web trading on — send /webtrade on in Telegram.');
+      else if (!(lim > 0)) errs.push('Set the stop entry price — type it or pick it on the chart.');
+      else if (now && (short ? lim >= now : lim <= now)) errs.push(short ? 'A sell stop goes below the price now. Above it, use Limit.' : 'A buy stop goes above the price now. Below it, use Limit.');
+    }
     if (Number.isNaN(stop)) errs.push('The stop is not a price.');
     else if (e && stop && (short ? stop <= e : stop >= e)) errs.push(`A ${T.side}'s stop has to be ${short ? 'above' : 'below'} the ${where}.`);
     if (T.tp === 'price') { if (!(tp > 0)) errs.push("Set the TP1 price, or use the bot's TP plan."); else if (e && (short ? tp >= e : tp <= e)) errs.push(`TP1 has to be ${short ? 'below' : 'above'} the ${where}.`); }
@@ -423,7 +431,8 @@
   function body() {
     const b = { symbol: base(RD.U.sym), direction: T.side, mode: T.mode, chartExchange: RD.U.ex };
     if (T.ex) b.exchange = T.ex;
-    if (T.entry === 'limit' && val('limit') > 0) b.limitPrice = val('limit');
+    if (T.entry !== 'market' && val('limit') > 0) b.limitPrice = val('limit');
+    if (T.entry === 'stop') b.entryKind = 'stop';
     if (val('stop') > 0) b.slPrice = val('stop');
     if (T.tp === 'price' && val('tp') > 0) b.tp1Price = val('tp');
     if (val('margin') > 0) b.margin = val('margin');
@@ -451,7 +460,7 @@
     const sh = s.closeShares || [], size = +s.posSize || 0, E = +s.entry || +s.market;
     const tpTxt = tps.map((v, i) => `<span class="tpl">TP${i + 1} ${P(v)}${sh[i] ? ` <em>${Math.round(sh[i] * 100)}%</em>` : ''}${full && E ? ` <em class="up">${sgn(size * (sh[i] || 0) * mv(s.direction, E, v))}</em>` : ''}</span>`).join('');
     return kv([
-      ['Entry', s.entryType === 'limit' ? `limit <b>${P(s.entry)}</b> <em>${s.onBook ? 'on the order book' : 'bot enters at the touch'}</em>` : `market ≈ <b>${P(s.market)}</b>`],
+      ['Entry', s.stopEntry ? `stop entry <b>${P(s.entry)}</b> <em>market order when price reaches it</em>` : s.entryType === 'limit' ? `limit <b>${P(s.entry)}</b> <em>${s.onBook ? 'on the order book' : 'bot enters at the touch'}</em>` : `market ≈ <b>${P(s.market)}</b>`],
       ['Stop', `${P(s.stopLoss)} <em>${s.slPct != null ? (long ? '−' : '+') + (+s.slPct).toFixed(2) + '%' : ''}</em>`, 'down'],
       ['Take profits', `<span class="tpls">${tpTxt || '—'}</span>`],
       ['Position', `${money(size)} <em>= ${money(+s.margin)} × ${s.leverage}×${s.exLeverage > s.leverage ? ` · margin saver runs ${s.exLeverage}×` : ''}</em>`],
@@ -480,13 +489,14 @@
     $$('[data-rside]', rx).forEach(b => b.classList.toggle('on', b.dataset.rside === T.side));
     $$('[data-rentry]', rx).forEach(b => b.classList.toggle('on', b.dataset.rentry === T.entry));
     for (const [a, v] of [['rtp', T.tp], ['rmode', T.mode], ['rex', T.ex]]) $$(`[data-${a}]`, rx).forEach(b => { const on = b.dataset[a] === v; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
-    $('[data-rx-limrow]', rx).hidden = T.entry !== 'limit';
+    $('[data-rx-limrow]', rx).hidden = T.entry === 'market';
+    $('[data-rx-limname]', rx).textContent = T.entry === 'stop' ? 'Stop entry price' : 'Limit price';
     $('[data-rx-tprow]', rx).hidden = T.tp !== 'price';
     $('[data-rx-replay]', rx).hidden = !rp;
     $('[data-rx-form]', rx).disabled = rp;
     const e = refPx(), note = (n, v) => { const el = rx.querySelector(`[data-rn="${n}"]`); el.textContent = v; };
     const st = val('stop'), tp = val('tp'), lim = val('limit');
-    note('stop', e && st > 0 ? fromE(st, e) + (T.entry === 'limit' ? ' from limit' : ' from price') : '');
+    note('stop', e && st > 0 ? fromE(st, e) + (T.entry === 'stop' ? ' from entry' : T.entry === 'limit' ? ' from limit' : ' from price') : '');
     note('tp', e && tp > 0 ? fromE(tp, e) : '');
     note('limit', RD.S.lastPx && lim > 0 ? fromE(lim, RD.S.lastPx) + ' from price' : '');
     for (const n of ['limit', 'stop', 'tp', 'margin', 'lev']) { const v = val(n); F(n).classList.toggle('bad', Number.isNaN(v)); }
@@ -494,7 +504,7 @@
     go.className = 'tk2-go ' + (short ? 'down' : 'up');
     go.disabled = rp || !RD.S.lastPx || !!errs.length || T.busy || !!T.pvOpen;
     go.innerHTML = T.busy ? '<span class="spin-s"></span> Asking the bot…' : `Review ${T.mode === 'live' ? 'LIVE' : 'bot-paper'} ${short ? 'short' : 'long'} ${esc(c)}`;
-    $('[data-act="rx-tg"]', rx).disabled = rp || !!errs.length;
+    $('[data-act="rx-tg"]', rx).disabled = rp || !!errs.length || T.entry === 'stop';   // the Telegram panel has market and limit only
     const wt = $('[data-rx-wt]', rx);
     wt.className = 'rx-wt' + (web ? ' on' : web === false ? ' off' : '');
     wt.textContent = web == null ? 'Checking the bot…' : web ? 'Web trading on' : 'Web trading off — Telegram ✅ only';
@@ -517,7 +527,8 @@
     const cur = { b, s, gen: 0, stale: false };
     const placeLbl = x => `Place ${x.mode === 'live' ? 'LIVE' : 'paper'} ${long ? 'long' : 'short'} · max loss ${money(+x.maxLoss)}`;
     const okLbl = x => ((x.errors || []).length ? 'Fix the problems above first' : !L.web ? `${ic('send')} Send to Telegram` : placeLbl(x));
-    const tail = x => notes(x) + ((x.errors || []).length ? '<p class="xnote">Change the size above, or fix it in the ticket and review again.</p>'
+    const stopNote = x => (x.stopEntry && !(x.errors || []).length ? '<p class="xnote">The exchange enters at market when price reaches your level, so a fast move can fill past it and lose more than the max loss shown. The bot adds your stop and TPs within seconds of the fill.</p>' : '');
+    const tail = x => notes(x) + stopNote(x) + ((x.errors || []).length ? '<p class="xnote">Change the size above, or fix it in the ticket and review again.</p>'
       : !L.web ? `<p class="xnote">Web trading is off, so this desk can't place it. Send it to your Telegram /${x.direction} panel and tap ✅ there — or send <code>/webtrade on</code> first.</p>` : '');
     const levs = [2, 3, 5, 10, 20];
     const sizeRow = x => `<div class="xsize" data-xsize><label>Margin<span class="xin"><i>$</i><input inputmode="decimal" autocomplete="off" data-xs="margin" value="${+x.margin || ''}" aria-label="Margin in dollars"></span></label>` +
@@ -532,7 +543,8 @@
         if ((x.errors || []).length) throw new Error((x.errors || [])[0]);
         if (!L.web) return sendPanel(body);
         const res = await write('/api/trade/open', body, 60000);
-        return res.kind === 'limit' ? `Limit order #${res.id} placed${res.onBook ? ' on the exchange order book' : ''}. The bot sets the stop and TPs when it fills.`
+        return res.stopEntry ? `Stop entry #${res.id} placed on ${String(x.exchange || 'the exchange').toUpperCase()}. The bot sets the stop and TPs right after it fills.`
+          : res.kind === 'limit' ? `Limit order #${res.id} placed${res.onBook ? ' on the exchange order book' : ''}. The bot sets the stop and TPs when it fills.`
           : `${long ? 'Long' : 'Short'} ${x.symbol} opened at ${fmtP(res.entry)} with its stop and TPs.`;
       },
       after: () => { if (!L.web) return; for (const n of ['limit', 'stop', 'tp']) F(n).value = ''; T.entry = 'market'; T.tp = 'plan'; T.pv = null; renderT(); RD.syncLines(); poll(true); RD.setBTab('real'); },
@@ -581,7 +593,7 @@
   function fitMargin() {
     const risk = val('risk'), e = refPx(), stop = val('stop') || (T.pv && T.pv.stopLoss), lev = val('lev') || (T.pv && T.pv.leverage);
     if (!(risk > 0)) return RD.toast('Type how many dollars you accept to lose at the stop.', 'down');
-    if (!e) return RD.toast(T.entry === 'limit' ? 'Set the limit price first.' : 'Wait for the price.', 'down');
+    if (!e) return RD.toast(T.entry === 'stop' ? 'Set the stop entry price first.' : T.entry === 'limit' ? 'Set the limit price first.' : 'Wait for the price.', 'down');
     if (!(stop > 0)) return RD.toast('Set a stop first (or let the bot preview its saved stop).', 'down');
     if (!(lev > 0)) return RD.toast('Set the leverage first.', 'down');
     const dist = Math.abs(e - stop) / e; if (!(dist > 0)) return RD.toast('The stop is at the entry.', 'down');
@@ -608,7 +620,7 @@
       if (T.side !== q.side) { F('stop').value = ''; F('tp').value = ''; T.tp = 'plan'; }
       T.side = q.side; T.entry = 'market'; F('limit').value = '';
     } else {
-      T.side = q.side; T.entry = q.kind === 'market' ? 'market' : 'limit';
+      T.side = q.side; T.entry = q.kind === 'market' ? 'market' : q.kind === 'stop' ? 'stop' : 'limit';
       F('limit').value = q.entry ? RD.util.rt(q.entry) : ''; F('stop').value = q.sl ? q.sl : ''; F('tp').value = q.tp ? q.tp : ''; T.tp = q.tp ? 'price' : 'plan';
       if ('margin' in q) F('margin').value = q.margin > 0 ? String(q.margin) : '';   // the plan bar's size (blank = saved)
       if ('lev' in q) F('lev').value = q.lev > 0 ? String(q.lev) : '';
@@ -624,7 +636,7 @@
   };
   // the chart's Real Buy / Sell: a coin with a real trade or order open takes no second one
   RD.ext.realBusy = () => { const b = base(RD.U.sym), d = L.d || {}; const p = (d.positions || []).find(q => base(q.symbol) === b), o = (d.orders || []).find(q => base(q.symbol) === b);
-    return p ? `Real ${p.direction} open on ${b}` : o ? `Real ${o.direction} limit waiting on ${b}` : ''; };
+    return p ? `Real ${p.direction} open on ${b}` : o ? `Real ${o.direction} ${o.stopEntry ? 'stop entry' : 'limit'} waiting on ${b}` : ''; };
   RD.ext.menu.push(ctx => {
     if (ctx.replay) return '';
     const v = ctx.price, b = base(ctx.sym), d = L.d || {}, items = [], off = L.web === false;
@@ -637,17 +649,19 @@
       items.push(ctx.item('Close the real position at market', '', () => action('close', p.id), opts({ icon: 'circle-x', tone: 'down' })));
     }
     for (const o of (d.orders || []).filter(q => base(q.symbol) === b).slice(0, 2)) {
-      const L2 = o.direction === 'long', lim = +o.limitPrice;
-      items.push(`<p class="tm-h2"><i class="rdot"></i>Real ${esc(o.direction)} limit ${px(lim, o.symbol)}</p>`);
-      if (L2 ? v < ctx.px : v > ctx.px) items.push(ctx.item(`Move the real limit to ${fp(v)}`, '', needWeb(() => askOrder(o, 'limit', v)), opts({ icon: 'crosshair' })));
+      const L2 = o.direction === 'long', lim = +o.limitPrice, oName = o.stopEntry ? 'stop entry' : 'limit', canMove = o.stopEntry ? (L2 ? v > ctx.px : v < ctx.px) : (L2 ? v < ctx.px : v > ctx.px);
+      items.push(`<p class="tm-h2"><i class="rdot"></i>Real ${esc(o.direction)} ${oName} ${px(lim, o.symbol)}</p>`);
+      if (canMove) items.push(ctx.item(`Move the real ${oName} to ${fp(v)}`, '', needWeb(() => askOrder(o, 'limit', v)), opts({ icon: 'crosshair' })));
       if (L2 ? v < lim : v > lim) items.push(ctx.item(`Real order stop at ${fp(v)}`, `now ${px(o.stop, o.symbol)}`, needWeb(() => askOrder(o, 'ostop', v)), opts({ icon: 'shield', tone: 'warn' })));
       else items.push(ctx.item(`Real order TP1 at ${fp(v)}`, `now ${px(o.tp1, o.symbol)}`, needWeb(() => askOrder(o, 'otp', v)), opts({ icon: 'target', tone: 'up' })));
-      items.push(ctx.item('Cancel the real limit order', '', () => action('cancel', o.id), opts({ icon: 'circle-x', tone: 'down' })));
+      items.push(ctx.item(`Cancel the real ${oName}${o.stopEntry ? '' : ' order'}`, '', () => action('cancel', o.id), opts({ icon: 'circle-x', tone: 'down' })));
     }
-    if (!items.length) {   // a new real order: the bot places limit entries — a long below the price, a short above it
+    if (!items.length) {   // a new real order: a limit waits for price to come back, a stop entry goes with the move
       const side = ctx.below ? 'long' : 'short';
       if (!ctx.realFirst) items.push(ctx.item(`⚡ Real ${side} limit from ${fp(v)}`, 'then click the stop and TP1 — you review it before it is placed', () => RD.qStart(v, true), { icon: 'zap', tone: ctx.below ? 'up' : 'down' }));
       items.push(ctx.item(`Real ticket: ${side} limit at ${fp(v)}`, 'fill the ticket, set the rest there', () => { T.side = side; T.entry = 'limit'; F('stop').value = ''; F('tp').value = ''; setF('limit', v); RD.syncLines(); openReal(); }, { icon: 'crosshair' }));
+      const stopSide = ctx.below ? 'short' : 'long';
+      items.push(ctx.item(`Real ticket: ${ctx.below ? 'sell' : 'buy'} stop at ${fp(v)}`, `${stopSide} when price ${ctx.below ? 'falls' : 'rises'} to here`, () => { T.side = stopSide; T.entry = 'stop'; F('stop').value = ''; F('tp').value = ''; setF('limit', v); RD.syncLines(); openReal(); }, { icon: ctx.below ? 'arrow-down-right' : 'arrow-up-right', tone: ctx.below ? 'down' : 'up' }));
       const e0 = refPx(), okS = e0 && (T.side === 'long' ? v < e0 : v > e0), okT = e0 && (T.side === 'long' ? v > e0 : v < e0);
       if (okS) items.push(ctx.item(`Real ticket: stop at ${fp(v)}`, `${T.side} ticket`, () => { setF('stop', v); RD.syncLines(); openReal(); }, { icon: 'shield' }));
       if (okT) items.push(ctx.item(`Real ticket: TP1 at ${fp(v)}`, `${T.side} ticket`, () => { setF('tp', v); RD.syncLines(); openReal(); }, { icon: 'target' }));

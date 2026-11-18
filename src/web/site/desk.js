@@ -67,8 +67,8 @@ function realTicket() {
     <button type="button" class="btn btn-secondary btn-sm" data-act="rexit">Exit replay</button></div></div>
   <fieldset class="rx-form" data-rx-form>
   <div class="tk2-side" role="radiogroup" aria-label="Side"><button type="button" class="on" data-rside="long">Long</button><button type="button" data-rside="short">Short</button></div>
-  <div class="tk2-type" role="tablist" aria-label="Entry"><button type="button" class="on" data-rentry="market">Market</button><button type="button" data-rentry="limit">Limit</button></div>
-  <label class="fld" data-rx-limrow hidden><span>Limit price <em data-rn="limit"></em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="limit" placeholder="0.00">${pickBtn('limit', 'limit price')}</span></label>
+  <div class="tk2-type" role="tablist" aria-label="Entry"><button type="button" class="on" data-rentry="market">Market</button><button type="button" data-rentry="limit">Limit</button><button type="button" data-rentry="stop" title="Enter at market when price reaches your level: a short below the price now, a long above it">Stop</button></div>
+  <label class="fld" data-rx-limrow hidden><span><span data-rx-limname>Limit price</span> <em data-rn="limit"></em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="limit" placeholder="0.00">${pickBtn('limit', 'limit price')}</span></label>
   <div class="rx-two">
     <label class="fld"><span>Margin <em>USDT</em></span><span class="fld-in"><input inputmode="decimal" autocomplete="off" data-rf="margin" placeholder="saved"></span></label>
     <label class="fld"><span>Leverage <em>×</em></span><span class="fld-in"><input inputmode="numeric" autocomplete="off" data-rf="lev" placeholder="saved"></span></label>

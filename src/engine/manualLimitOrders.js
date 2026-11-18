@@ -9,8 +9,14 @@
 // and places the TP limits, all moved with the real fill price. Breakout entries (long above / short below market)
 // can't rest as a plain limit and keep the old trigger → market path in telegramBot.
 //
+// A stop entry (asked for on the dashboard) is that breakout held by the exchange instead: a conditional market order
+// that fires when the last price reaches the level. It runs through the same checks as a resting limit (o.real), with
+// o.stopEntry set; only placing, reading and cancelling it on the exchange differ. It never turns into another order type.
+//
 // Only the manual panel calls this module. It doesn't change tradeExecutor or any auto-trade path; it only uses the
 // executor's existing helpers (leverage, liquidation guard, stop order, TP limits).
+const crypto = require('crypto');
+const ccxt = require('ccxt');
 const db = require('../db/database');
 const logger = require('../utils/logger');
 const { escapeHtml } = require('../utils/formatting');
@@ -19,6 +25,9 @@ const { marginSaverLeverage, safeLeverage } = require('../utils/marginSaver');
 const REAL_LIMIT_EXCHANGES = ['binance', 'bybit'];
 const pairOf = (symbol) => `${symbol}/USDT:USDT`;
 const fmtP = (v) => (v == null || !isFinite(v) ? '—' : Number(v).toPrecision(6));
+const orderWord = (o) => (o.stopEntry ? 'Stop entry' : 'Limit order');
+const STOP_MIN_GAP = 0.0002;   // closer than 0.02% to the price it would fire at once
+const STOP_MISSES = 12;        // about a minute of unreadable checks before the owner is told
 
 // A plain limit rests on the book until price comes to it: buy below market, sell above market
 function restsOnBook(direction, limitPrice, market) {
@@ -30,13 +39,25 @@ function wantsRealLimit(cfg, market) {
     && cfg.limitPrice > 0 && market > 0 && restsOnBook(cfg.direction, cfg.limitPrice, market);
 }
 
+// Why this stop entry can't be placed at this market price, or null when it can
+function stopEntryProblem(cfg, market) {
+  if (cfg.mode !== 'live') return 'Stop entries are for live orders only.';
+  if (!REAL_LIMIT_EXCHANGES.includes(cfg.exchangeId)) return `Stop entries work on Binance and Bybit, not ${cfg.exchangeId}.`;
+  if (!(cfg.limitPrice > 0)) return 'Set the stop entry price.';
+  if (!(market > 0)) return 'No live price right now, so the stop entry was not placed.';
+  const long = cfg.direction === 'long';
+  if (long ? cfg.limitPrice <= market : cfg.limitPrice >= market) return `A ${long ? 'buy' : 'sell'} stop goes ${long ? 'above' : 'below'} the price now ($${fmtP(market)}).`;
+  if (Math.abs(cfg.limitPrice / market - 1) < STOP_MIN_GAP) return `$${fmtP(cfg.limitPrice)} is too close to the price now ($${fmtP(market)}): it would fire at once.`;
+  return null;
+}
+
 async function openLiveTradesOn(symbol, exchangeId) {
   return (await db.getOpenTrades()).filter(t => t.symbol === symbol && t.exchange === exchangeId && t.mode === 'live');
 }
 
-// Set leverage (margin saver + liquidation guard, as for a manual market order) and place the limit on the exchange.
-// Throws with a readable reason when the order can't be placed. Returns the fields to keep with the order.
-async function placeEntryLimit(te, cfg) {
+// Set leverage (margin saver + liquidation guard, as for a manual market order) and work out the order's size.
+// Throws with a readable reason when the order can't be placed.
+async function prepareEntry(te, cfg) {
   const ex = te.exchanges[cfg.exchangeId];
   const pair = pairOf(cfg.symbol);
   if (!ex?.apiKey || !ex?.secret) throw new Error(`No API keys for ${cfg.exchangeId}`);
@@ -92,7 +113,12 @@ async function placeEntryLimit(te, cfg) {
   if (!check.ok) throw new Error(`$${check.currentNotional.toFixed(2)} is below the ${cfg.exchangeId} minimum order ($${check.minNotional})`);
   const amount = ex.amountToPrecision(pair, qty);
   const price = ex.priceToPrecision(pair, cfg.limitPrice);
-  const side = cfg.direction === 'long' ? 'buy' : 'sell';
+  return { ex, pair, side: cfg.direction === 'long' ? 'buy' : 'sell', amount, price, leverage, liqGuard };
+}
+
+// Place the limit on the exchange. Returns the fields to keep with the order.
+async function placeEntryLimit(te, cfg) {
+  const { ex, pair, side, amount, price, leverage, liqGuard } = await prepareEntry(te, cfg);
   const order = await ex.createOrder(pair, 'limit', side, amount, price);
   if (!order?.id) throw new Error('The exchange returned no order id');
   logger.info(`Manual limit on ${cfg.exchangeId}: ${side} ${amount} ${pair} @ ${price} (order ${order.id}, ${leverage}x)`);
@@ -102,15 +128,94 @@ async function placeEntryLimit(te, cfg) {
   };
 }
 
+// Send the conditional market order. Our own id (clientOrderId) finds it again, even if the answer never arrives.
+async function sendStopEntry(te, ex, pair, side, amount, price, clientOrderId, exchangeId) {
+  if (exchangeId === 'binance') {
+    const r = await te._binanceAlgoOrder('POST', ex, {
+      algoType: 'CONDITIONAL', symbol: ex.market(pair).id, side: side.toUpperCase(), type: 'STOP_MARKET',
+      triggerPrice: price, quantity: amount, workingType: 'CONTRACT_PRICE', clientAlgoId: clientOrderId,
+    });
+    if (!r?.algoId) throw new Error(r?.msg || 'Binance refused the stop entry');
+    return String(r.algoId);
+  }
+  const r = await ex.privatePostV5OrderCreate({
+    category: 'linear', symbol: ex.market(pair).id, side: side === 'buy' ? 'Buy' : 'Sell', orderType: 'Market', qty: amount,
+    triggerPrice: price, triggerDirection: side === 'buy' ? 1 : 2, triggerBy: 'LastPrice', orderLinkId: clientOrderId,
+  });
+  if (!r?.result?.orderId) throw new Error(r?.retMsg || 'Bybit refused the stop entry');
+  return String(r.result.orderId);
+}
+
+// After a failed send: take off anything that did get through. False = the exchange gave no answer, so it may still be there.
+async function clearFailedStop(te, ex, pair, clientOrderId, exchangeId) {
+  try {
+    if (exchangeId === 'binance') await te._binanceAlgoOrder('DELETE', ex, { clientAlgoId: clientOrderId });
+    else await ex.privatePostV5OrderCancel({ category: 'linear', symbol: ex.market(pair).id, orderLinkId: clientOrderId });
+    return true;
+  } catch (e) {
+    return exchangeId === 'bybit' && !(e instanceof ccxt.NetworkError);   // Bybit "no such order" is the good answer
+  }
+}
+
+// Place a stop entry on the exchange. Returns the fields to keep with the order.
+async function placeEntryStop(te, cfg) {
+  const { ex, pair, side, amount, price, leverage, liqGuard } = await prepareEntry(te, cfg);
+  // Setting the leverage takes a moment: read the price again, so a level already crossed can't enter at once
+  let last;
+  try { last = Number((await ex.fetchTicker(pair)).last); } catch (e) { throw new Error(`Couldn't read the ${cfg.symbol} price on ${cfg.exchangeId}: ${e.message}`); }
+  const problem = stopEntryProblem({ ...cfg, limitPrice: parseFloat(price) }, last);
+  if (problem) throw new Error(problem);
+
+  const clientOrderId = `rdse-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+  let orderId;
+  try {
+    orderId = await sendStopEntry(te, ex, pair, side, amount, price, clientOrderId, cfg.exchangeId);
+  } catch (e) {
+    const cleared = await clearFailedStop(te, ex, pair, clientOrderId, cfg.exchangeId);
+    throw new Error(cleared ? e.message : `${e.message} — the exchange did not answer, so check your open orders on ${cfg.exchangeId}`);
+  }
+  logger.info(`Manual stop entry on ${cfg.exchangeId}: ${side} ${amount} ${pair} at ${price} (order ${orderId}, ${leverage}x)`);
+  return {
+    stopEntry: true, clientOrderId, orderId, orderAmount: parseFloat(amount), exLeverage: leverage, liqGuard,
+    positionSize: parseFloat(amount) * parseFloat(price),
+  };
+}
+
+// A Binance stop entry: the conditional order until it fires, then the real order it became. Null while it can't be told.
+async function binanceStopStatus(te, o) {
+  const ex = te.exchanges[o.exchangeId];
+  const a = await te._binanceAlgoOrder('GET', ex, { clientAlgoId: o.clientOrderId });
+  if (a?.algoStatus == null) throw new Error(a?.msg || 'Binance gave no status');
+  const amount = Number(a.quantity || o.orderAmount || 0);
+  const realId = a.actualOrderId != null && !['', '0'].includes(String(a.actualOrderId)) ? String(a.actualOrderId) : null;
+  if (realId) {
+    const ord = await ex.fetchOrder(realId, pairOf(o.symbol));
+    const filled = Number(ord.filled || 0);
+    const average = ord.average > 0 ? ord.average : (ord.cost > 0 && filled > 0 ? ord.cost / filled : null);
+    return { status: ord.status, filled, average, amount: Number(ord.amount || amount), realOrderId: realId };
+  }
+  const s = String(a.algoStatus).toUpperCase();
+  if (s === 'NEW') return { status: 'open', filled: 0, average: null, amount };
+  if (s === 'CANCELED' || s === 'CANCELLED') return { status: 'canceled', filled: 0, average: null, amount };
+  if (s === 'EXPIRED') return { status: 'expired', filled: 0, average: null, amount };
+  if (s === 'REJECTED') return { status: 'rejected', filled: 0, average: null, amount };
+  return null;   // firing right now: the real order is not readable yet
+}
+
 // { status: open | closed | canceled | expired | rejected, filled, average, amount } or null when unknown
 async function entryOrderStatus(te, o) {
   const ex = te.exchanges[o.exchangeId];
   const pair = pairOf(o.symbol);
+  if (o.stopEntry && o.exchangeId === 'binance') return binanceStopStatus(te, o);
   if (o.exchangeId === 'bybit') {
     // ccxt's bybit.fetchOrder refuses unified accounts — use the v5 endpoints (realtime, then history)
     const req = { category: 'linear', symbol: ex.market(pair).id, orderId: o.orderId };
     let row = (await ex.privateGetV5OrderRealtime(req))?.result?.list?.[0];
     if (!row) row = (await ex.privateGetV5OrderHistory(req))?.result?.list?.[0];
+    if (!row && o.stopEntry && o.clientOrderId) {
+      const byLink = { category: 'linear', symbol: req.symbol, orderLinkId: o.clientOrderId };
+      row = (await ex.privateGetV5OrderRealtime(byLink))?.result?.list?.[0] || (await ex.privateGetV5OrderHistory(byLink))?.result?.list?.[0];
+    }
     if (!row) return null;
     const s = row.orderStatus;
     const status = s === 'Filled' ? 'closed'
@@ -129,7 +234,10 @@ async function cancelEntryOrder(te, o) {
   const ex = te.exchanges[o.exchangeId];
   const pair = pairOf(o.symbol);
   try {
-    if (o.exchangeId === 'bybit') await ex.privatePostV5OrderCancel({ category: 'linear', symbol: ex.market(pair).id, orderId: o.orderId });
+    if (o.stopEntry && o.exchangeId === 'binance') {
+      const r = await te._binanceAlgoOrder('DELETE', ex, { clientAlgoId: o.clientOrderId });
+      if (r?.code != null && String(r.code) !== '200') logger.info(`${pair}: cancel of stop entry ${o.orderId}: ${String(r.msg).slice(0, 150)}`);
+    } else if (o.exchangeId === 'bybit') await ex.privatePostV5OrderCancel({ category: 'linear', symbol: ex.market(pair).id, orderId: o.orderId });
     else await ex.cancelOrder(o.orderId, pair);
   } catch (e) {
     logger.info(`${pair}: cancel of entry limit ${o.orderId}: ${e.message.slice(0, 150)}`);
@@ -197,11 +305,11 @@ async function adoptFill(te, o, st) {
     tp1: levels.tp1, tp2: levels.tp2, tp3: levels.tp3, tp4: levels.tp4,
     stopLoss: levels.stopLoss, originalStopLoss: levels.stopLoss, invalidation: levels.stopLoss, atr: o.atr || null,
     dcaQty2: 0, dcaQty3: 0, dcaPrice2: null, dcaPrice3: null, dcaStage: 3,
-    orderId: o.orderId, status: 'open', source: te.settingsKey,
+    orderId: st.realOrderId || o.orderId, status: 'open', source: te.settingsKey,
     onchainContext: {
       margin: o.margin, limitOrderId: o.id, limitPrice: o.limitPrice, exitStyle: o.exitStyle || 'tight',
       manual: true, chosenLeverage: o.leverage, marginSaver: o.marginSaver !== false,
-      realLimit: true, entryOrderId: o.orderId, ...(o.liqGuard ? { liqGuard: o.liqGuard } : {}),
+      realLimit: true, entryOrderId: o.orderId, ...(o.stopEntry ? { stopEntry: true } : {}), ...(o.liqGuard ? { liqGuard: o.liqGuard } : {}),
     },
   };
   try {
@@ -221,9 +329,9 @@ function fillMessage(o, r, label) {
   const ex = o.exchangeId.toUpperCase();
   if (r.trade) {
     const t = r.trade;
-    return `📍✅ <b>LIMIT ORDER FILLED</b> — ${escapeHtml(o.symbol)} (#${o.id})\n\n` +
+    return `📍✅ <b>${o.stopEntry ? 'STOP ENTRY' : 'LIMIT ORDER'} FILLED</b> — ${escapeHtml(o.symbol)} (#${o.id})\n\n` +
       `${o.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} · 💰 LIVE · ${ex}\n` +
-      `💰 Entry: <b>$${fmtP(t.entryPrice)}</b> (limit $${fmtP(o.limitPrice)})\n` +
+      `💰 Entry: <b>$${fmtP(t.entryPrice)}</b> (${o.stopEntry ? 'stop' : 'limit'} $${fmtP(o.limitPrice)})\n` +
       (r.partial ? `✂️ Partly filled — the rest was cancelled so the filled part got its stop at once\n` : '') +
       `💵 $${t.positionSize.toFixed(2)} at ${t.leverage}x\n` +
       `🎯 TP1 $${fmtP(t.tp1)} · TP2 $${fmtP(t.tp2)} · TP3 $${fmtP(t.tp3)} · TP4 $${fmtP(t.tp4)}\n` +
@@ -231,18 +339,18 @@ function fillMessage(o, r, label) {
   }
   if (r.other) {
     return r.undone
-      ? `⚠️ Limit order ${label} filled while trade #${r.other.id} was open on ${escapeHtml(o.symbol)} — the exchange merged them.\nThe bot traded your filled part straight back, so trade #${r.other.id} is as it was.`
-      : `🚨 <b>CHECK ${escapeHtml(o.symbol)} ON ${ex} NOW</b>\n\nLimit order ${label} filled while trade #${r.other.id} was open — the exchange merged them and the bot could NOT trade your part back (${escapeHtml(r.closeError || '')}).`;
+      ? `⚠️ ${orderWord(o)} ${label} filled while trade #${r.other.id} was open on ${escapeHtml(o.symbol)} — the exchange merged them.\nThe bot traded your filled part straight back, so trade #${r.other.id} is as it was.`
+      : `🚨 <b>CHECK ${escapeHtml(o.symbol)} ON ${ex} NOW</b>\n\n${orderWord(o)} ${label} filled while trade #${r.other.id} was open — the exchange merged them and the bot could NOT trade your part back (${escapeHtml(r.closeError || '')}).`;
   }
   const why = r.tooSmall ? `only $${(r.qty * r.fill).toFixed(2)} filled — below the exchange minimum, so it can't carry a stop`
     : r.pastStop ? `it filled at $${fmtP(r.fill)}, already past your stop $${fmtP(r.levels?.stopLoss)}`
     : r.stopFailed ? `the stop order failed (${escapeHtml(r.stopFailed)})`
     : r.saveFailed ? null : `setup failed (${escapeHtml(r.error || 'unknown')})`;
   if (r.saveFailed) {
-    return `🚨 <b>${escapeHtml(o.symbol)} filled on ${ex}</b> (limit ${label}) and the stop is placed, but the bot couldn't save the trade (${escapeHtml(r.saveFailed)}). It won't manage TPs — handle it on the exchange.`;
+    return `🚨 <b>${escapeHtml(o.symbol)} filled on ${ex}</b> (${o.stopEntry ? 'stop entry' : 'limit'} ${label}) and the stop is placed, but the bot couldn't save the trade (${escapeHtml(r.saveFailed)}). It won't manage TPs — handle it on the exchange.`;
   }
-  if (r.closed) return `⚠️ Limit order ${label} filled, but ${why} — the bot closed that part at market.`;
-  return `🚨 <b>CHECK ${escapeHtml(o.symbol)} ON ${ex} NOW</b>\n\nLimit order ${label} filled, but ${why}, and the bot could not close it${r.closeError ? ` (${escapeHtml(r.closeError)})` : ''}. The position may have NO stop.`;
+  if (r.closed) return `⚠️ ${orderWord(o)} ${label} filled, but ${why} — the bot closed that part at market.`;
+  return `🚨 <b>CHECK ${escapeHtml(o.symbol)} ON ${ex} NOW</b>\n\n${orderWord(o)} ${label} filled, but ${why}, and the bot could not close it${r.closeError ? ` (${escapeHtml(r.closeError)})` : ''}. The position may have NO stop.`;
 }
 
 // One check of a resting exchange limit. finish(o, status) claims the order in the DB (false = someone else did);
@@ -254,7 +362,12 @@ async function checkRealOrder(te, o, { finish, notify }) {
     const ex = o.exchangeId.toUpperCase();
     const label = `${o.direction.toUpperCase()} ${escapeHtml(o.symbol)} @ $${fmtP(o.limitPrice)} (#${o.id})`;
     let st = await entryOrderStatus(te, o).catch(e => { logger.warn(`Limit #${o.id} ${o.symbol} status: ${e.message}`); return null; });
+    if (st) o._misses = 0;
     if (!st) {
+      // A stop entry that may have fired has no stop yet, so the owner hears about it instead of a silent wait
+      if (o.stopEntry && (o._misses = (o._misses || 0) + 1) === STOP_MISSES) {
+        await notify(`🚨 <b>Can't read stop entry ${label} on ${ex}</b>\n\nIf it has fired, the position has no stop yet. Check ${ex} now.`);
+      }
       // Can't read it: past expiry, still try to take it off the book (the status check decides on the next pass)
       if (Date.now() > o.expiresAt) await cancelEntryOrder(te, o);
       return 'unknown';
@@ -262,7 +375,7 @@ async function checkRealOrder(te, o, { finish, notify }) {
 
     if (!(st.filled > 0)) {
       if (['canceled', 'expired', 'rejected'].includes(st.status)) {
-        if (await finish(o, 'cancelled')) await notify(`⚠️ Limit order ${label} was ${st.status} on ${ex} — nothing filled.`);
+        if (await finish(o, 'cancelled')) await notify(`⚠️ ${orderWord(o)} ${label} was ${st.status} on ${ex} — nothing filled.`);
         return 'gone';
       }
       if (st.status !== 'open') return 'unknown';
@@ -274,8 +387,8 @@ async function checkRealOrder(te, o, { finish, notify }) {
       if (!(st.filled > 0)) {
         if (await finish(o, expired && !conflict ? 'expired' : 'cancelled')) {
           await notify(expired && !conflict
-            ? `⏰ Limit order expired and was removed from ${ex}: ${label}`
-            : `⚠️ Limit order cancelled on ${ex}: ${label}\nTrade #${conflict.id} opened on ${escapeHtml(o.symbol)}, and one coin holds one position.`);
+            ? `⏰ ${orderWord(o)} expired and was removed from ${ex}: ${label}`
+            : `⚠️ ${orderWord(o)} cancelled on ${ex}: ${label}\nTrade #${conflict.id} opened on ${escapeHtml(o.symbol)}, and one coin holds one position.`);
         }
         return expired && !conflict ? 'expired' : 'conflict';
       }
@@ -313,6 +426,6 @@ async function cancelByUser(te, o, { finish }) {
 }
 
 module.exports = {
-  REAL_LIMIT_EXCHANGES, restsOnBook, wantsRealLimit, placeEntryLimit, entryOrderStatus, cancelEntryOrder,
+  REAL_LIMIT_EXCHANGES, restsOnBook, wantsRealLimit, stopEntryProblem, placeEntryLimit, placeEntryStop, entryOrderStatus, cancelEntryOrder,
   adoptFill, checkRealOrder, cancelByUser, fillMessage,
 };

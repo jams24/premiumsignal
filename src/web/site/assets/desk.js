@@ -1117,9 +1117,9 @@
     const px = S.lastPx, f = PICK.field, from = (a, b) => pct((a / b - 1) * 100);
     let lab, tone = '', bad = '';
     if (f === 'q-entry') {
-      const s = Q.side, k = Q.real ? 'limit' : s === 1 ? (v < px ? 'limit' : 'stop') : (v > px ? 'limit' : 'stop');
+      const s = Q.side, k = s === 1 ? (v < px ? 'limit' : 'stop') : (v > px ? 'limit' : 'stop');
       lab = `${s === 1 ? 'BUY' : 'SELL'} ${k.toUpperCase()} ${fp(v)} · ${from(v, px)}`; tone = s === 1 ? 'up' : 'down';
-      bad = qEntryBad(v) ? (Q.real ? `must be ${s === 1 ? 'below' : 'above'} the price` : 'at the price') : '';
+      bad = qEntryBad(v) ? 'at the price' : '';
     } else if (f === 'q-sl') {
       const e = qEntry(), s = Q.side || (v < e ? 1 : -1);
       lab = `STOP ${fp(v)} · ${from(v, e)}${Q.side ? '' : s === 1 ? ' · long' : ' · short'}`; tone = 'down';
@@ -1402,9 +1402,8 @@
     qPick(); qRender(); syncLines(); qtUI();
     if (phone()) closeSheets();
   }
-  // where a limit entry for this side may go: a real one only on the limit side (the bot places limit entries only)
-  const qEntryBad = v => { const px = S.lastPx; if (!px || !Q.side) return ''; if (Math.abs(v / px - 1) < 2e-4) return 'That is the price now — click away from it, or use Market now.';
-    if (Q.real && (Q.side === 1 ? v >= px : v <= px)) return `A real ${Q.side === 1 ? 'buy' : 'sell'} limit goes ${Q.side === 1 ? 'below' : 'above'} the price now (${fp(px)}) — the bot places limit entries only. Or use Market now.`; return ''; };
+  // an entry has to be away from the price now: on the far side it is a limit, on the near side a stop entry (paper and real)
+  const qEntryBad = v => { const px = S.lastPx; if (!px || !Q.side) return ''; if (Math.abs(v / px - 1) < 2e-4) return 'That is the price now — click away from it, or use Market now.'; return ''; };
   function qPick() {
     if (Q.stage === 'entry') startPick('field', 'q-entry', w => qSet('entry', w), 'entry', true);
     else if (Q.stage === 'sl') startPick('field', 'q-sl', w => qSet('sl', w), 'stop', true);
@@ -1446,7 +1445,7 @@
       Q.el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.qf) { e.preventDefault(); const b = Q.el.querySelector('[data-q="go"]'); if (b && !b.disabled) b.click(); } });
     }
     const s = Q.side || (Q.sl != null ? qSide() : 0), hasE = Q.mkt || Q.entry != null;
-    const kind = Q.mkt ? 'market' : s && hasE ? qKind() : Q.side ? (Q.real ? 'limit' : 'order') : '';
+    const kind = Q.mkt ? 'market' : s && hasE ? qKind() : Q.side ? 'order' : '';
     const kName = s ? `${s === 1 ? 'Buy' : 'Sell'} ${kind === 'market' ? 'at market' : kind}` : (Q.mkt ? 'Market' : 'Entry');
     const step = (n, lab, val, now) => `<span class="${val != null ? 'done' : now ? 'cur' : ''}">${n} ${lab}${val != null ? ' <b class="mono">' + fp(val) + '</b>' : ''}</span>`;
     const canReal = !!X.quickReal && !R.on;
@@ -1455,7 +1454,7 @@
       (canReal ? `<span class="qb-mode" role="radiogroup"><button type="button" data-q="paper" aria-checked="${!Q.real}"${!Q.real ? ' class="on"' : ''}>Paper</button><button type="button" data-q="real" class="${Q.real ? 'on real' : 'real'}" aria-checked="${Q.real}">Real</button></span>` : '<span class="qb-tag">Paper</span>') +
       `<button type="button" class="qb-x" data-q="x" aria-label="Cancel the plan">${ic('x')}</button></div>` +
       `<div class="qb-steps">${step('①', Q.mkt ? 'Market' : 'Entry', Q.mkt ? null : Q.entry, Q.stage === 'entry')}${step('②', 'Stop', Q.sl, Q.stage === 'sl')}${step('③', 'Target', Q.tp, Q.stage === 'tp')}</div>`;
-    if (Q.stage === 'entry') h += `<p class="qb-say">Click your <b>${B} price</b> on the chart — ${Q.real ? `${below} the price now (a limit; the bot places limit entries only)` : `${below} the price for a ${B} limit, ${above} it for a ${B} stop`}.</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="mktnow">Market now instead</button></div>`;
+    if (Q.stage === 'entry') h += `<p class="qb-say">Click your <b>${B} price</b> on the chart — ${below} the price for a ${B} limit, ${above} it for a ${B} stop.</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="mktnow">Market now instead</button></div>`;
     else if (Q.stage === 'sl') h += `<p class="qb-say">Click your <b>stop</b> on the chart — ${Q.side ? `${below} the entry` : 'below the entry for a long, above it for a short'}.</p>`;
     else if (Q.stage === 'tp') h += `<p class="qb-say">Click your <b>target</b> on the chart (${s === 1 ? 'above' : 'below'} the entry).</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="skip">${Q.real ? "Use the bot's TP plan" : 'No target'}</button></div>`;
     else {
@@ -1471,7 +1470,7 @@
   function qErr() {
     if (Q.stage !== 'ask') return '';
     const o = qOrder();
-    if (Q.real) { if (o.kind === 'stop') return `The bot places limit entries only: a ${o.side === 1 ? 'long' : 'short'} entry has to be ${o.side === 1 ? 'below' : 'above'} the price now — or use Market now.`; return ''; }
+    if (Q.real) return '';   // the bot checks the real order again in the review, against the price at that moment
     return paperCheck(o);
   }
   function qRead() {

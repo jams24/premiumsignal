@@ -971,6 +971,11 @@ async function main() {
     bot.checkRealLimitOrders?.().catch(err => logger.error(`Real limit check error: ${err.message}`));
   }, 15000);
 
+  // Stop entries that fired have no stop until the bot sees the fill: look at those every 5 s (no calls when there are none)
+  setInterval(() => {
+    bot.checkRealLimitOrders?.({ stopsOnly: true }).catch(err => logger.error(`Stop entry check error: ${err.message}`));
+  }, 5000);
+
   cron.schedule('*/15 * * * *', async () => {
     try {
       const tokens = await socialScanner.scanTrending();

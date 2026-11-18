@@ -1624,6 +1624,41 @@ class TelegramBot {
             slFixed: st.customSl > 0, tpFixed: !(st.tpPcts?.length) && st.customTp1 > 0,
             placedAt: Date.now(), expiresAt: Date.now() + MT_ORDER_TTL_MS,
           };
+          // A stop entry from the dashboard: held by the exchange, or not placed at all. Never another kind of order.
+          if (st.stopEntry) {
+            let real;
+            try {
+              const problem = manualLimits.stopEntryProblem(cfg, s.market);
+              if (problem) throw new Error(problem);
+              real = await manualLimits.placeEntryStop(te, cfg);
+            } catch (e) {
+              logger.warn(`Manual stop entry ${st.symbol} not placed: ${e.message}`);
+              return ctx.editMessageText(`⚠️ <b>Stop entry NOT placed</b> — ${escapeHtml(st.symbol)}\n\n${escapeHtml(e.message)}`, { parse_mode: 'HTML' });
+            }
+            Object.assign(cfg, { real: true, ...real });
+            let id;
+            try {
+              id = await db.saveManualOrder(ctx.chat.id, st.symbol, cfg);
+            } catch (e) {
+              // Not tracked → don't leave it on the exchange
+              const left = await manualLimits.cancelEntryOrder(te, cfg).catch(() => null);
+              if (!left || left.status === 'open') await ctx.replyWithHTML(`🚨 <b>CHECK ${escapeHtml(st.symbol)} ON ${st.exchangeId.toUpperCase()} NOW</b>\n\nA stop entry is on the exchange but the bot could not save it. Cancel it there.`).catch(() => {});
+              throw e;
+            }
+            this.pendingLimitOrders.set(id, { id, chatId: ctx.chat.id, ...cfg });
+            delete this.manualTradeState[ctx.from.id];
+            const scaled = cfg.positionSize < s.posSize * 0.99 ? ` (scaled to your free margin)` : '';
+            return ctx.editMessageText(
+              `⚡ <b>STOP ENTRY #${id} ON ${st.exchangeId.toUpperCase()}</b> — ${escapeHtml(st.symbol)}\n\n` +
+              `${dirLabel} · ${modeLabel} · ${st.exchangeId.toUpperCase()}\n` +
+              `⚡ Enters at market when price ${isLong ? 'rises' : 'falls'} to <b>$${fmtP(st.limitPrice)}</b> (market $${fmtP(s.market)})\n` +
+              `💵 $${cfg.positionSize.toFixed(2)} at ${cfg.exLeverage}x${scaled}\n` +
+              `🎯 TP1 $${fmtP(s.tp1)} · TP2 $${fmtP(s.tp2)} · TP3 $${fmtP(s.tp3)} · TP4 $${fmtP(s.tp4)}\n` +
+              `🛑 SL $${fmtP(s.stopLoss)} (-$${s.maxLoss.toFixed(2)})\n\n` +
+              `⏳ <i>A fast move can fill past your price · the bot places the stop and TPs within seconds of the fill · expires in 24h</i>`,
+              { parse_mode: 'HTML', reply_markup: orderKb(id) }
+            );
+          }
           // Live long below / short above market on Binance or Bybit: a real limit order on the exchange book
           if (manualLimits.wantsRealLimit(cfg, s.market)) {
             let real;
@@ -1822,7 +1857,8 @@ class TelegramBot {
     };
 
     // Exchange-resting limits are checked every ~15 s (index.js) so a fill gets its stop quickly
-    this.checkRealLimitOrders = async () => {
+    // stopsOnly: the quicker pass for stop entries, which have no stop on the exchange until the bot sees the fill
+    this.checkRealLimitOrders = async ({ stopsOnly = false } = {}) => {
       if (this._realLimitRunning) return;
       this._realLimitRunning = true;
       try {
@@ -1830,7 +1866,7 @@ class TelegramBot {
         const te = mtExec();
         if (!te) return;
         for (const o of [...this.pendingLimitOrders.values()]) {
-          if (!o.real) continue;
+          if (!o.real || (stopsOnly && !o.stopEntry)) continue;
           try { await manualLimits.checkRealOrder(te, o, realLimitHooks(o)); } catch (e) { logger.error(`Limit order #${o.id} ${o.symbol}: ${e.message}`); }
         }
       } finally {
@@ -1868,7 +1904,7 @@ class TelegramBot {
       let text = `📍 <b>PENDING LIMIT ORDERS</b> (${orders.length})\n\n`;
       for (const o of orders) {
         const hoursLeft = Math.max(0, (o.expiresAt - Date.now()) / 3600000).toFixed(1);
-        text += `#${o.id} ${o.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(o.symbol)}</b> @ $${fmtP(o.limitPrice)} · $${o.margin} × ${o.leverage}x · ${o.mode}${o.real ? ` · 📗 on ${o.exchangeId} book` : ''} · ${hoursLeft}h left\n`;
+        text += `#${o.id} ${o.direction === 'long' ? '🟢' : '🔴'} <b>${escapeHtml(o.symbol)}</b> @ $${fmtP(o.limitPrice)} · $${o.margin} × ${o.leverage}x · ${o.mode}${o.stopEntry ? ` · ⚡ stop entry on ${o.exchangeId}` : o.real ? ` · 📗 on ${o.exchangeId} book` : ''} · ${hoursLeft}h left\n`;
       }
       const buttons = orders.map(o => [Markup.button.callback(`❌ Cancel #${o.id} ${o.symbol}`, `mt_cancelorder_${o.id}`)]);
       return { text, keyboard: Markup.inlineKeyboard(buttons) };
@@ -2140,7 +2176,7 @@ class TelegramBot {
         }
         return {
           id: o.id, symbol: o.symbol, exchange: o.exchangeId, direction: o.direction, limitPrice: o.limitPrice,
-          stop: o.stopLoss, tp1: o.tp1, tps: [o.tp1, o.tp2, o.tp3, o.tp4], margin: o.margin, leverage: o.leverage, onBook: !!o.real, expiresAt: o.expiresAt,
+          stop: o.stopLoss, tp1: o.tp1, tps: [o.tp1, o.tp2, o.tp3, o.tp4], margin: o.margin, leverage: o.leverage, onBook: !!o.real, stopEntry: !!o.stopEntry, expiresAt: o.expiresAt,
           slFixed: !!o.slFixed,   // a typed stop stays put when the dashboard moves the limit
           closeFr: closeFr(te),
           price: prices.get(`${o.exchangeId}:${o.symbol}`) || null, ...(exchange ? { onExchange: exchange } : {}),
@@ -2230,15 +2266,16 @@ class TelegramBot {
         const s = await Promise.race([manualLimits.entryOrderStatus(te, o).catch(e => ({ err: e.message })), new Promise(r => setTimeout(() => r({ err: 'no answer in 6 s' }), 6000))]);
         exLine = s?.err ? `⚠️ Could not check ${o.exchangeId}: ${escapeHtml(s.err)}`
           : !s ? `⚠️ ${o.exchangeId} doesn't know this order`
+          : s.status === 'open' && o.stopEntry ? `⚡ Waiting on ${o.exchangeId.toUpperCase()} · not fired yet`
           : s.status === 'open' ? `📗 On the ${o.exchangeId.toUpperCase()} book${s.filled > 0 ? ` · ${s.filled} of ${s.amount} filled` : ' · nothing filled yet'}`
           : s.status === 'closed' ? `✅ ${o.exchangeId.toUpperCase()}: filled — the bot sets its stop and TPs within ~15 s`
           : `⚠️ ${o.exchangeId.toUpperCase()}: ${escapeHtml(s.status)}${s.filled > 0 ? ` (${s.filled} filled)` : ''} — the bot clears it within ~15 s`;
       }
       const d = price ? (o.limitPrice - price) / price * 100 : null;
       const hoursLeft = Math.max(0, (o.expiresAt - Date.now()) / 3600000).toFixed(1);
-      const text = `📍 <b>Limit order #${o.id}</b> — ${o.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} ${escapeHtml(o.symbol)}\n\n` +
-        `${o.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${o.exchangeId.toUpperCase()} · ${o.real ? 'resting on the order book' : 'watched by the bot (enters at market on the touch)'}\n` +
-        `📍 Limit <b>$${fmtP(o.limitPrice)}</b>${price ? ` · now $${fmtP(price)} · needs a ${d < 0 ? 'drop' : 'rise'} of ${Math.abs(d).toFixed(2)}%` : ' · no live price right now'}\n` +
+      const text = `📍 <b>${o.stopEntry ? 'Stop entry' : 'Limit order'} #${o.id}</b> — ${o.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'} ${escapeHtml(o.symbol)}\n\n` +
+        `${o.mode === 'live' ? '💰 LIVE' : '📝 PAPER'} · ${o.exchangeId.toUpperCase()} · ${o.stopEntry ? 'held by the exchange (enters at market when price reaches it)' : o.real ? 'resting on the order book' : 'watched by the bot (enters at market on the touch)'}\n` +
+        `📍 ${o.stopEntry ? 'Stop entry' : 'Limit'} <b>$${fmtP(o.limitPrice)}</b>${price ? ` · now $${fmtP(price)} · needs a ${d < 0 ? 'drop' : 'rise'} of ${Math.abs(d).toFixed(2)}%` : ' · no live price right now'}\n` +
         `🛑 SL $${fmtP(o.stopLoss)} · 🎯 TP1 $${fmtP(o.tp1)} · $${o.margin} × ${o.leverage}x · ${hoursLeft}h left\n` +
         (exLine ? `${exLine}\n` : '') + `\n<i>Checked ${utcClock()} UTC</i>`;
       return { text, keyboard: Markup.inlineKeyboard([
@@ -2875,6 +2912,11 @@ class TelegramBot {
       await refreshMarket(st, true);
       const s = computeSetup(st);
       const { errors, warnings } = validateSetup(st, s);
+      st.stopEntry = o.entryKind === 'stop';
+      if (st.stopEntry) {
+        const why = manualLimits.stopEntryProblem({ mode: st.mode, exchangeId: st.exchangeId, direction: st.direction, limitPrice: st.limitPrice }, s.market);
+        if (why) errors.push(why);
+      }
       return {
         uid, st, s, errors,
         setup: {
@@ -2883,7 +2925,8 @@ class TelegramBot {
           entryType: st.entryType, entry: s.entry, market: s.market, stopLoss: s.stopLoss, tps: [s.tp1, s.tp2, s.tp3, s.tp4],
           slPct: s.slPct, maxLoss: s.maxLoss, posSize: s.posSize, fees: s.fees, liqPrice: s.liqPrice, exitStyle: st.exitStyle,
           closeShares: tpCloseShares(mtExec()),
-          onBook: st.entryType === 'limit' && manualLimits.wantsRealLimit({ mode: st.mode, exchangeId: st.exchangeId, direction: st.direction, limitPrice: st.limitPrice }, s.market),
+          stopEntry: st.stopEntry,
+          onBook: !st.stopEntry && st.entryType === 'limit' && manualLimits.wantsRealLimit({ mode: st.mode, exchangeId: st.exchangeId, direction: st.direction, limitPrice: st.limitPrice }, s.market),
           freeBalance: st.liveBalance, errors, warnings: warnings.filter(w => !/^LIVE mode/.test(w)),
         },
       };
@@ -2907,11 +2950,11 @@ class TelegramBot {
           from: { id: `web:${uid}` }, chat: { id: uid }, state: { user: { role: 'admin' } },
           editMessageText: (html, extra) => say(html, extra), replyWithHTML: (html, extra) => say(html, extra), answerCbQuery: async () => true,
         };
-        logger.info(`[WEB TRADE] direct ${st.mode} ${st.direction} ${st.symbol} on ${st.exchangeId}${st.entryType === 'limit' ? ` limit ${st.limitPrice}` : ' market'}`);
+        logger.info(`[WEB TRADE] direct ${st.mode} ${st.direction} ${st.symbol} on ${st.exchangeId}${st.entryType === 'limit' ? ` ${st.stopEntry ? 'stop entry' : 'limit'} ${st.limitPrice}` : ' market'}`);
         await executeManual(ctx, st);
         const text = plainText(msgs[msgs.length - 1]);
         const order = [...this.pendingLimitOrders.values()].find(x => !before.has(x.id) && x.symbol === st.symbol);
-        if (order) return { ok: true, kind: 'limit', id: order.id, onBook: !!order.real, text, setup: w.setup };
+        if (order) return { ok: true, kind: 'limit', id: order.id, onBook: !!order.real, stopEntry: !!order.stopEntry, text, setup: w.setup };
         const trade = (await db.getOpenTrades(mtExec().settingsKey)).find(t => t.symbol === st.symbol);
         if (trade) return { ok: true, kind: 'trade', id: trade.id, entry: parseFloat(trade.entry_price), text, setup: w.setup };
         return { error: text || 'Not placed — see Telegram for the reason.' };
@@ -3006,7 +3049,7 @@ class TelegramBot {
         // Levels the user typed stay where they are; the others keep their distance from the limit (like a fill).
         const spec = {
           symbol: o.symbol, direction: o.direction, mode: o.mode, margin: o.margin, leverage: o.leverage, exchange: o.exchangeId,
-          exitStyle: o.exitStyle, marginSaver: o.marginSaver !== false, limitPrice: a.price,
+          exitStyle: o.exitStyle, marginSaver: o.marginSaver !== false, limitPrice: a.price, ...(o.stopEntry ? { entryKind: 'stop' } : {}),
           ...(o.slFixed ? { slPrice: o.stopLoss } : { slPct: Math.abs(o.stopLoss / o.limitPrice - 1) * 100 }),
           ...(o.tpFixed ? { tp1Price: o.tp1 } : { tpPcts: [o.tp1, o.tp2, o.tp3, o.tp4].map(v => Math.abs(v / o.limitPrice - 1) * 100) }),
         };

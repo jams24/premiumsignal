@@ -53,6 +53,10 @@ function cleanOrder(b) {
   if (!pos('leverage', 125)) return { error: 'Leverage must be 1–125' };
   if (out.leverage != null) { out.leverage = Math.round(out.leverage); if (out.leverage < 1) return { error: 'Leverage must be 1–125' }; }
   for (const k of ['slPrice', 'tp1Price', 'limitPrice']) if (!pos(k, 1e9)) return { error: `${k} must be a positive price` };
+  if (b.entryKind === 'stop') {
+    if (!(out.limitPrice > 0)) return { error: 'Set the stop entry price' };
+    out.entryKind = 'stop';
+  }
   if (['binance', 'bybit'].includes(b.chartExchange)) out.chartExchange = b.chartExchange;
   if (['binance', 'bybit'].includes(b.exchange)) out.exchange = b.exchange;   // blank = the saved /short · /long exchange
   return { order: out };
@@ -136,14 +140,15 @@ async function handle(req, url, res) {
         if (now - lastWrite < WRITE_GAP_MS) return send(429, { error: 'One action every 2 seconds — try again.' });
         const nerr = useNonce(body.nonce); if (nerr) return send(409, { error: nerr });
         lastWrite = now;
-        logger.info(`[WEB TRADE] open ${order.mode} ${order.direction} ${order.symbol}${order.limitPrice ? ' limit ' + order.limitPrice : ' market'}`);
+        logger.info(`[WEB TRADE] open ${order.mode} ${order.direction} ${order.symbol}${order.limitPrice ? (order.entryKind === 'stop' ? ' stop entry ' : ' limit ') + order.limitPrice : ' market'}`);
         const r = await bot.webTrade.open(order);
         posCache = null; histCache = null;
         if (r.open) return send(409, { error: `You already have an open ${r.open.direction.toUpperCase()} on ${order.symbol} (${r.open.mode}).`, open: r.open });
         return r.ok ? send(200, r) : send(422, { ...r, error: firstError(r) });
       }
 
-      // /api/trade/panel — Telegram confirm path
+      // /api/trade/panel — Telegram confirm path (its panel has limits and market only, so a stop entry can't be sent there)
+      if (order.entryKind === 'stop') return send(400, { error: 'Stop entries need web trading on — send /webtrade on in Telegram.' });
       const now = Date.now();
       if (now - lastSend < SEND_GAP_MS) return send(429, { error: 'One panel every 3 seconds — check Telegram.' });
       lastSend = now;
