@@ -264,3 +264,44 @@
 .wx-meter2 i { display: block; height: 100%; width: 0; background: var(--muted); transition: width .3s, background .3s; } .wx-meter2 i.mid { background: var(--warn); } .wx-meter2 i.ok { background: var(--up); }
 .wx-prem { fill: color-mix(in oklab, var(--down) 12%, transparent); } .wx-disc { fill: color-mix(in oklab, var(--up) 12%, transparent); }
 @media (prefers-reduced-motion: reduce) { .lcard, .lx-bar i, .wx-meter i, .wx-scale i { transition: none; } }
+
+/* ---------------------------------------------------------------- candlestick patterns */
+.figure svg .z-pat { fill: color-mix(in oklab, var(--primary) 11%, transparent); stroke: color-mix(in oklab, var(--primary) 70%, transparent); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.wx .figure { box-shadow: none; padding: 10px; background: var(--bg-soft); }
+.cp-fig { align-content: start; }
+.cp-note { font: 400 11.5px var(--mono); color: var(--muted); }
+.cp-lab { min-width: 5.5em; font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.wx-out dl.cp-dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.wx-out dl.cp-dl dt { margin-top: 6px; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.wx-out dl.cp-dl dd { font: inherit; font-size: 14px; color: var(--text-2); }
+.cp-ev { font-size: 13.5px; padding-top: 8px; border-top: 1px solid var(--line); }
+.cp-ev b { color: var(--text); } .cp-ev b.up { color: var(--up); } .cp-ev b.down { color: var(--down); }
+.cpt-bar { justify-content: space-between; }
+.cpt-sel { display: inline-flex; align-items: center; gap: 8px; font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.cpt-sel select, .cpt-sel input { min-width: 0; max-width: 13em; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-soft);
+  font: 400 14px var(--sans); letter-spacing: 0; text-transform: none; color: var(--text); }
+.cpt-sel input { width: 9em; text-transform: uppercase; font-family: var(--mono); }
+.cpt-fig .caption { min-height: 0; font-size: 14px; }
+.cpt-step { display: grid; gap: 12px; }
+.cpt-q { display: flex; align-items: baseline; gap: 10px; font-weight: 500; color: var(--text); }
+.cpt-q span { flex: none; padding: 2px 8px; border-radius: 99px; background: var(--panel-3); font: 500 11.5px var(--mono); color: var(--text-2); }
+.cpt-opts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 520px) { .cpt-opts { grid-template-columns: minmax(0, 1fr); } }
+.cpt-trade { display: grid; gap: 10px; padding-top: 4px; }
+.cpt-go .btn { min-width: 6.5em; justify-content: center; }
+.cpt-long { background: var(--up); border-color: var(--up); color: #fff; } .cpt-short { background: var(--down); border-color: var(--down); color: #fff; }
+.cpt-go .btn:disabled { opacity: .45; cursor: default; } .cpt-go .btn.on { opacity: 1; box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--text-2); }
+.cpt-res { min-height: 0; }
+.cpt-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.cpt-stats div { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-soft); }
+.cpt-stats dt { font: 500 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.cpt-stats dd { font: 600 13.5px var(--mono); color: var(--text); } .cpt-stats dd.up { color: var(--up); } .cpt-stats dd.down { color: var(--down); }
+@media (max-width: 760px) { .cpt-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cpt-stats div:last-child { grid-column: 1 / -1; } }
+.cpt-foot { margin-top: 8px; font-size: 13px; }
+.cpt-reset { padding: 0; border: 0; background: none; font-size: 13px; color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.cpc-out { display: grid; gap: 10px; font-size: 14px; }
+.cpc-out .tbl table { min-width: 620px; font-size: 13.5px; }
+.cpc-out .tbl td, .cpc-out .tbl th { padding: 8px 12px; }
+.cpc-head b { color: var(--text); }
+.cpc-out p.down { color: var(--down); }
+.r.pos { padding: 0; border: 0; border-radius: 0; background: none; }   /* site.css has a .pos card style */

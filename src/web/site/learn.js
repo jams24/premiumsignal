@@ -12,9 +12,13 @@ const callout = (tone, title, html) => `<div class="callout ${tone}"><b>${title}
 const table = (head, rows, cls = '') => `<div class="tbl"><table class="${cls}"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 const cards = list => `<div class="cards2">${list.map(([tag, t, b, tone]) => `<div class="card2"><span class="tag2 ${tone || ''}">${tag}</span><h3>${t}</h3>${b}</div>`).join('')}</div>`;
 const R = (v, cls) => `<span class="r ${cls}">${v}</span>`;
+// candlestick patterns: names and our real-chart test numbers come from the same file the browser runs
+const CPat = require('./assets/cpat.js');
+const CP_ROWS = Object.entries(CPat.TEST).sort((a, b) => b[1][0] - a[1][0]).map(([k, v]) => [CPat.BY[k].name, v[0].toLocaleString('en-US'), `${v[1]}% (${v[2]}%)`, `${v[3]}% (${v[4]}%)`, R((v[6] > 0 ? '+' : v[6] < 0 ? '−' : '') + Math.abs(v[6]).toFixed(2) + 'R', v[6] > 0 ? 'pos' : 'neg')]);
 
 const TRACKS = [
   { key: 'basics', title: 'Chart basics', icon: 'chart-candlestick', blurb: 'Candles, trends and the one rule that keeps you in the game: size every trade from its stop.' },
+  { key: 'candles', title: 'Candlestick patterns', icon: 'layers', blurb: 'Hammers, engulfings, stars and soldiers: what each one says, how to enter, a trainer on real charts — and how 63,000 real trades from them did against random entries.' },
   { key: 'smc', title: 'Smart money concepts', icon: 'crosshair', blurb: 'Liquidity, sweeps, order blocks, premium and discount — watched candle by candle, then drilled. Ends with what our backtests found.' },
   { key: 'derivs', title: 'Derivatives & on-chain', icon: 'activity', blurb: 'Open interest, funding, squeezes, long/short ratios and whale wallet flows: the data behind a move.' },
   { key: 'desk', title: 'Desk notes', icon: 'shield', admin: true, blurb: 'Our bot’s own trades and test results. Visible to admins only.' },
@@ -92,6 +96,148 @@ ${callout('warn', 'Leverage is not risk — but liquidation is', '<p>Higher leve
       { q: 'You raise the leverage from 5× to 20× and keep the same size and stop. What changes?', o: ['The money at risk', 'Only the margin, and liquidation moves closer', 'Nothing'], a: 1, why: 'Same size and stop = same risk. Leverage only shrinks the margin — and moves liquidation nearer.' },
     ],
     practice: 'On the desk ticket, enter your stop first. The ticket shows the loss in dollars and as a % of your balance before you place it.' },
+
+  // ---------------------------------------------------------------------------------------------------- candlestick patterns
+  { slug: 'candle-patterns', track: 'candles', title: 'How candle patterns work', mins: 5, tags: ['Interactive', 'Quiz'],
+    sum: 'A pattern is one to three candles that show who won a fight. Where it appears matters as much as its shape.',
+    body: `<p>A candlestick pattern is a short story told in one to three candles: one side was winning, then the other side hit back.
+Traders gave the common stories names — hammer, engulfing, morning star — so they can spot them fast.</p>
+<p>Three things decide whether a pattern means anything:</p>
+<ul><li><b>The move before it.</b> A reversal pattern needs something to reverse. A hammer is only a hammer after a drop; the same candle after a rise is a hanging man.</li>
+<li><b>Where it forms.</b> At a level where price turned before — a swing low, a zone, the edge of a range — it says “this level held again”. In the middle of nowhere it says little.</li>
+<li><b>What comes next.</b> The candle after the pattern either keeps going its way or cancels it.</li></ul>
+${widget('cpctx', 'Pick a shape and the move before it. The same candle gets a different name, or none, depending on what came first.')}
+<h2>Bullish, bearish, or no side</h2>
+<p><b class="up">Bullish</b> patterns come after a drop and hint at a turn up. <b class="down">Bearish</b> ones come after a rise and hint at a turn down.
+A few — the doji, the spinning top, the inside bar — have no side: they only say the market paused.</p>
+${callout('warn', 'Before you learn 25 patterns', '<p>We coded every pattern in this track and traded 63,000 of them on 40 real coins. None beat a random entry by enough to pay the fees. Learn them as a way to read who is winning, and test any rule on replay before you put money on it. <a href="/learn/patterns-tested">The last lesson</a> has the numbers.</p>')}`,
+    keys: ['A pattern is a short story of who won: one side pushed, the other pushed back harder.', 'The move before decides the name: the same shape is a hammer after a drop and a hanging man after a rise.', 'A pattern at a level means more than one in the middle of nowhere.'],
+    quiz: [
+      { q: 'A small-bodied candle with a long lower wick appears after a strong rise. What is it called?', o: ['A hammer — bullish', 'A hanging man — a bearish warning', 'A doji'], a: 1, why: 'Same shape as a hammer, but after a rise it is a hanging man: sellers managed a deep dip near the top.' },
+      { q: 'Which of these has no side of its own?', o: ['Bullish engulfing', 'Inside bar', 'Shooting star'], a: 1, why: 'An inside bar is a pause inside the candle before it. Traders wait for it to break up or down.' },
+      { q: 'Where does a bullish pattern mean the most?', o: ['In the middle of a range', 'After a drop, at a level where price turned up before', 'After a long rise'], a: 1, why: 'A bullish pattern says buyers came back. At a level that held before, it says the level held again.' },
+    ],
+    practice: 'On the desk, open any coin on 1H and find five hammers. For each one: was there a drop before it, and was it at a level?' },
+
+  { slug: 'single-candle-patterns', track: 'candles', title: 'Hammers, stars and dojis', mins: 6, tags: ['Interactive', 'Quiz'],
+    sum: 'The one-candle patterns and the inside bar: what each one says, how to spot it and how it is traded.',
+    body: `<p>Single-candle patterns are all about the wicks. A long wick is a push that failed: price went there and was thrown back.</p>
+${table(['Pattern', 'Comes after', 'Shape', 'Says'], [
+  ['Hammer', 'a drop', 'small body on top, long lower wick', R('bullish', 'pos')],
+  ['Inverted hammer', 'a drop', 'small body at the bottom, long upper wick', R('bullish', 'pos')],
+  ['Dragonfly doji', 'a drop', 'open = close at the top, long lower wick', R('bullish', 'pos')],
+  ['Hanging man', 'a rise', 'the hammer’s shape', R('bearish', 'neg')],
+  ['Shooting star', 'a rise', 'small body at the bottom, long upper wick', R('bearish', 'neg')],
+  ['Gravestone doji', 'a rise', 'open = close at the bottom, long upper wick', R('bearish', 'neg')],
+  ['Marubozu', 'anywhere', 'tall body, almost no wicks', 'its colour is in control'],
+  ['Doji, spinning top, inside bar', 'anywhere', 'tiny body, or a candle inside the last one', R('no side', 'mix')]])}
+${widget('cpsingle', 'Pick a pattern. The chart is a textbook example with invented candles; the panel gives the rule, the standard trade and what that trade did on real charts.')}
+${callout('info', 'Watch the stop size', '<p>A hanging man’s stop goes just above its high, often only a few tenths of a percent away. On real charts its typical stop was 0.24%, so fees alone cost about 0.4R a trade. A tight stop looks cheap and is not.</p>')}`,
+    keys: ['A long wick is a push that failed.', 'Hammer, inverted hammer, dragonfly: after a drop. Hanging man, shooting star, gravestone: after a rise.', 'Dojis, spinning tops and inside bars have no side: wait for the break.'],
+    quiz: [
+      { q: 'After a rise, a candle shoots up and then closes near its low, leaving a long upper wick. What is it?', o: ['Shooting star', 'Hammer', 'Marubozu'], a: 0, why: 'Buyers pushed far up and sellers slammed it back. After a rise that is a shooting star.' },
+      { q: 'A doji forms after a drop. What do you do?', o: ['Go long: a doji is bullish', 'Wait: a doji has no side, the next candles decide', 'Go short'], a: 1, why: 'A doji is indecision. A close above its high or below its low tells you which side won.' },
+      { q: 'Why did hanging-man trades lose about 0.6R each on real charts?', o: ['The pattern always fails', 'Its stop is tiny, so fees take a big part of every R', 'It was only tested on BTC'], a: 1, why: 'The stop sits just above a candle with almost no upper wick. 0.1% of fees on a 0.24% stop is 0.4R before anything else happens.' },
+    ],
+    practice: 'On a 15m chart, find three shooting stars after a rise. Mark where the stop would go and how far away it is in %.' },
+
+  { slug: 'bullish-patterns', track: 'candles', title: 'Bullish reversal patterns', mins: 7, tags: ['Replay', 'Interactive', 'Quiz'],
+    sum: 'Engulfing, piercing line, harami, tweezer bottom, morning star, three white soldiers: buyers taking over after a drop.',
+    body: `<p>The two- and three-candle bullish patterns all tell one story: sellers were in charge, then buyers took over.
+The more of the sellers’ candle the buyers take back, the stronger the message.</p>
+<ul><li><b>Bullish engulfing</b> — the green body swallows the whole red body. Buyers took back everything and more.</li>
+<li><b>Piercing line</b> — the green candle closes past the middle of the red one. More than half taken back.</li>
+<li><b>Bullish harami</b> — a small green body sits inside the big red one. The selling stopped; nothing more yet.</li>
+<li><b>Tweezer bottom</b> — a red and a green candle with the same low. The level held twice.</li>
+<li><b>Morning star</b> — big red, a small pause candle, then big green. The turn, spread over three candles.</li>
+<li><b>Three white soldiers</b> — three strong green candles in a row: buyers in control.</li>
+<li><b>Three inside up</b> — a bullish harami, then a green candle that closes above the big red candle’s open.</li></ul>
+<p>Press <b>Replay</b> to watch a bullish engulfing form and the standard trade play out.</p>
+${replay('cp-bullengulf')}
+${widget('cpbull', 'Every bullish pattern with its rule, its trade and its real-chart result.')}`,
+    keys: ['Bullish patterns need a drop before them.', 'The more of the red candle the green one takes back, the stronger the message: harami, then piercing line, then engulfing.', 'The standard trade: long at the next open, stop just under the pattern’s low.'],
+    quiz: [
+      { q: 'After a drop, a small green body forms inside a big red body. Which pattern is it?', o: ['Bullish engulfing', 'Bullish harami', 'Piercing line'], a: 1, why: 'Inside = harami. An engulfing body is bigger than the red one, not inside it.' },
+      { q: 'Where does the stop go on a bullish engulfing long?', o: ['Just under the lowest low of the two candles', 'Under the green candle’s open', '1% under the entry'], a: 0, why: 'The pattern is wrong if price goes below its low, so the stop goes just under it.' },
+      { q: 'A green candle closes above the middle of a big red one, but not above its open. What is it?', o: ['Piercing line', 'Bullish engulfing', 'Morning star'], a: 0, why: 'Past the middle but not the whole body: a piercing line.' },
+    ],
+    practice: 'Start a replay on any coin on 1H. Each time a bullish engulfing appears after a drop, note whether the next five candles went your way.' },
+
+  { slug: 'bearish-patterns', track: 'candles', title: 'Bearish reversal patterns', mins: 7, tags: ['Replay', 'Interactive', 'Quiz'],
+    sum: 'Engulfing, dark cloud cover, harami, tweezer top, evening star, three black crows: sellers taking over after a rise.',
+    body: `<p>The bearish patterns are the bullish ones turned upside down: buyers were in charge, then sellers took over.</p>
+<ul><li><b>Bearish engulfing</b> — the red body swallows the whole green body.</li>
+<li><b>Dark cloud cover</b> — the red candle closes below the middle of the green one.</li>
+<li><b>Bearish harami</b> — a small red body inside the big green one. The buying stopped.</li>
+<li><b>Tweezer top</b> — a green and a red candle with the same high. The level held twice.</li>
+<li><b>Evening star</b> — big green, a small pause candle, then big red.</li>
+<li><b>Three black crows</b> — three strong red candles in a row: sellers in control.</li>
+<li><b>Three inside down</b> — a bearish harami, then a red candle that closes below the big green candle’s open.</li></ul>
+${replay('cp-evening')}
+${callout('info', 'Crypto has no gaps', '<p>Stock-market books say a star’s middle candle must gap away, and that a dark cloud opens above the previous high. Crypto trades all day, every day, so each candle opens where the last one closed. Here, as on most crypto charts, the patterns are read without gaps.</p>')}
+${widget('cpbear', 'Every bearish pattern with its rule, its trade and its real-chart result.')}`,
+    keys: ['Bearish patterns need a rise before them.', 'Evening star: big green, small, then big red closing deep into the green.', 'The standard trade: short at the next open, stop just above the pattern’s high.'],
+    quiz: [
+      { q: 'After a rise: a big green candle, a tiny candle, then a red candle closing below the middle of the green one. Which pattern?', o: ['Evening star', 'Three black crows', 'Bearish harami'], a: 0, why: 'Big green, a pause, then big red: the evening star.' },
+      { q: 'After a rise, a green candle and then a red one have exactly the same high. What is it?', o: ['Tweezer top', 'Dark cloud cover', 'Inside bar'], a: 0, why: 'Two candles, same high, green then red: buyers failed at that price twice.' },
+      { q: 'Why are stars and dark clouds read without gaps on crypto charts?', o: ['Crypto trades non-stop, so each candle opens where the last one closed', 'Exchanges forbid gaps', 'They are different patterns on crypto'], a: 0, why: 'Gaps come from markets that close overnight. A 24/7 market rarely has them.' },
+    ],
+    practice: 'On the desk, find three evening stars on 4H charts. How many formed at a level where price had turned down before?' },
+
+  { slug: 'pattern-entries', track: 'candles', title: 'Entry, stop and target', mins: 6, tags: ['Interactive', 'Quiz'],
+    sum: 'Three ways into the same pattern — at the next open, on the break, on a pullback — and where the stop and the target go.',
+    body: `<p>Spotting the pattern is half the job. The other half is the trade: where you get in, where you are wrong and where you take profit.</p>
+<h2>Three entries</h2>
+${table(['Entry', 'How', 'Good', 'Bad'], [
+  ['Next open', 'Market order as soon as the pattern closes', 'Always fills', 'No proof the pattern worked'],
+  ['Break of the pattern', 'Stop order just past its high (long) or low (short)', 'Price has to move your way first', 'Worse price, bigger stop, smaller position'],
+  ['Pullback', 'Limit order at the middle of the pattern', 'Best price, smallest stop', 'Strong moves never come back: you miss them']])}
+<h2>The stop</h2>
+<p>The pattern is wrong if price goes past its far end, so the stop goes just past it: under the lowest low for a long, above the highest high for a short.
+Never move it closer to make the trade “fit”. Size the position from the stop instead (see <a href="/learn/position-size">Position size and R</a>).</p>
+<h2>The target</h2>
+<p>Measure it in R, the distance from entry to stop. 1R is hit more often; 2R pays twice as much when it is. The next level in the way — a swing high, a zone — is a natural target. If it is closer than 1R, the trade isn’t worth taking.</p>
+${widget('cpentry', 'Pick a pattern, an entry and a target. The chart shows the orders; the panel shows the position for your risk and what fees cost in R.')}
+${callout('warn', 'Fees are measured against the stop', '<p>Opening and closing a futures position costs about 0.1% of its size in taker fees. With a 1% stop that is 0.1R a trade; with a 0.25% stop it is 0.4R. The tighter the stop, the more of every win the fees take.</p>')}`,
+    keys: ['Next open always fills; a break entry waits for proof; a pullback gets the best price but misses strong moves.', 'The stop goes just past the pattern’s far end. Size the position from it.', 'Fees in R = 0.1% ÷ the stop in %. Tight stops pay more fees per R.'],
+    quiz: [
+      { q: 'You trade a bullish engulfing with a buy-stop above its high. Price never breaks the high. What happens?', o: ['You are filled at the close anyway', 'No trade: the order never fills', 'Your stop is hit'], a: 1, why: 'A stop order only fills when price reaches it. No break, no trade — that is the point of waiting for one.' },
+      { q: 'Your stop is 0.5% away and fees are 0.1% in and out. What do fees cost a trade, in R?', o: ['0.05R', '0.2R', '0.5R'], a: 1, why: '0.1% ÷ 0.5% = 0.2R. A 2R winner nets 1.8R and a loser costs 1.2R.' },
+      { q: 'The next resistance is only 0.6R above your long entry. What do you do?', o: ['Take it with a 2R target', 'Skip it: there is less than 1R of room', 'Move the stop closer'], a: 1, why: 'The level in the way will likely stop price before your target. Moving the stop closer just makes it easier to hit.' },
+    ],
+    practice: 'On the desk, place a practice trade on a pattern: stop just past it, target 2R. Note the position size the ticket gives for your risk.' },
+
+  { slug: 'pattern-trainer', track: 'candles', title: 'Pattern trainer', mins: 10, tags: ['Simulator'],
+    sum: 'Real Binance charts stop on a pattern. Name it, trade it or skip it, and watch what really happened, scored against random entries.',
+    body: `<p>Every round loads a real chart of a random coin and stops on the candle that completed a pattern. Two steps:</p>
+<ol class="steps"><li><b>Name it.</b> Pick the pattern in the box.</li>
+<li><b>Trade it, or don’t.</b> Choose long or short, the entry and the target; the stop goes just past the pattern. Or skip it — skipping a bad spot is a skill too.</li></ol>
+<p>Then the chart plays on, candle by candle, until the target, the stop or 30 candles. Your result is in R after fees, next to the same trade placed at random candles of the same chart.
+If you beat random over many trades, your reading adds something. If you don’t, the pattern alone isn’t doing the work.</p>
+${widget('cptrain', '')}
+<p class="muted">Candles load straight from Binance into your browser. Play 10 rounds and this lesson completes. Your score stays in this browser.</p>`,
+    keys: ['Name it, then decide: long, short or skip.', 'Judge yourself against random entries with the same stop and target, not against zero.', 'Under about 100 trades, any gap from random is mostly luck.'],
+    quiz: [], practice: 'Pick one pattern in the trainer and play 20 rounds of only that one. Did reading the context — the move before, the level — beat random?' },
+
+  { slug: 'patterns-tested', track: 'candles', title: 'Do candle patterns work?', mins: 6, tags: ['Evidence', 'Interactive'],
+    sum: 'We coded 22 directional patterns and traded 63,000 of them on 40 coins. How they did against random entries — and a tool to check any coin yourself.',
+    body: `<p>Every lesson in this track shows a textbook picture where the pattern works. The fair question is whether, on real charts, trading a pattern beats entering at a random moment with the same stop and target.</p>
+<h2>How we tested</h2>
+<ul><li><b>Data:</b> 40 Binance perpetual futures in two separate sets of 20 (BTC, ETH, SOL… and LTC, DOT, AAVE…). 15m candles for 60 days, 1H for 180 days, 4H for two years, up to 18 Nov 2026.</li>
+<li><b>Trade:</b> the standard one. Entry at the next open, stop just past the pattern, target 1R or 2R, at most 48 candles.</li>
+<li><b>Random:</b> the same side, stop size and target, from 20 random candles of the same chart for every pattern trade.</li>
+<li><b>Pass rule, written before the run:</b> a pattern beats random only if its 2R win rate is higher than random’s by more than luck allows, in the full test <i>and</i> in both halves of the data.</li></ul>
+${table(['Pattern', 'Trades', '1R first (random)', '2R first (random)', 'After fees, 2R'], CP_ROWS)}
+<h2>What it says</h2>
+<ul><li><b>No pattern passed.</b> Bearish engulfing passed on the first 20 coins (37.4% against 34.4%) and then failed on the 20 unseen ones (34.7% against 34.5%).</li>
+<li><b>A small tilt at 1R, found afterwards.</b> Tweezer bottom, piercing line and bearish harami reached 1R first 3–4 points more often than random on both sets of coins. We noticed it after the run, so it is a lead, not a rule — and it is smaller than the fees: they still lost 0.07–0.18R a trade.</li>
+<li><b>Fees decide a lot.</b> With a 1% stop, fees cost 0.1R a trade. The hanging man and the inverted hammer, with stops around 0.2%, lost over 0.6R a trade, mostly to fees.</li></ul>
+${callout('info', 'So why learn them?', '<p>Because they describe who is winning, candle by candle, and they turn up inside every other method — a sweep that closes back as a hammer, an engulfing at a zone. What the test says is that the shape alone is not an edge. Context might be, and that is what the trainer lets you test.</p>')}
+<h2>Check any coin yourself</h2>
+${widget('cpcheck', 'The same test on one coin and timeframe, run in your browser against random entries, with a 1R target.')}
+<p class="muted">R is the amount risked. Results include 0.05% taker fees in and out; no slippage or funding.</p>`,
+    keys: ['No candle pattern beat random entries after fees across 63,000 real trades.', 'A few tilt slightly at 1R — by less than the fees.', 'Tight stops make fees the biggest cost. Compare with random, not with zero.'],
+    quiz: [], practice: 'Run the check on the coin you trade most, on two timeframes. Does any pattern look better than random on both?' },
 
   // ---------------------------------------------------------------------------------------------------- smart money
   { slug: 'liquidity-sweeps', track: 'smc', title: 'Liquidity and the sweep', mins: 6, tags: ['Replay', 'Quiz'],
@@ -407,14 +553,15 @@ ${callout('info', 'Rule', '<p>If price makes higher lows and has broken the last
 const BY = Object.fromEntries(LESSONS.map(l => [l.slug, l]));
 const visible = who => LESSONS.filter(l => !TRACKS.find(t => t.key === l.track).admin || (who && who.admin));
 const trackOf = k => TRACKS.find(t => t.key === k);
-const tagIcon = { Replay: 'rotate-ccw', Interactive: 'mouse-pointer-click', Quiz: 'circle-check', Drills: 'crosshair', Evidence: 'chart-column', Reference: 'book-open', Bot: 'shield' };
+const tagIcon = { Replay: 'rotate-ccw', Interactive: 'mouse-pointer-click', Quiz: 'circle-check', Drills: 'crosshair', Evidence: 'chart-column', Reference: 'book-open', Bot: 'shield', Simulator: 'target' };
 const tagHtml = tags => tags.map(t => `<span class="ltag">${icon(tagIcon[t] || 'circle', 'i-3')}${t}</span>`).join('');
 const head = `<link rel="stylesheet" href="${asset('learn.css')}">`;
 const script = `<script src="${asset('learn.js')}" defer></script>`;
+const cpScript = `<script src="${asset('cpat.js')}" defer></script>`;   // the pattern engine, before learn.js, on candle-pattern lessons
 
 function learnIndex(who, nonce) {
   const list = visible(who), tracks = TRACKS.filter(t => !t.admin || (who && who.admin));
-  const nInteractive = list.filter(l => l.tags.some(t => t === 'Interactive' || t === 'Replay' || t === 'Drills')).length;
+  const nInteractive = list.filter(l => l.tags.some(t => t === 'Interactive' || t === 'Replay' || t === 'Drills' || t === 'Simulator')).length;
   const order = list.map(l => l.slug).join(',');
   let n = 0;
   const body = `${navbar(who)}
@@ -422,9 +569,9 @@ function learnIndex(who, nonce) {
 <section class="lx-hero wrap">
   <p class="announce">${icon('graduation-cap', 'i-35')} ReplayDesk Academy · free</p>
   <h1 class="display">Learn to read the chart.<br><span class="text-brand">Then prove it on replay.</span></h1>
-  <p class="lx-intro">${list.length} short lessons on candles, structure, smart money concepts and the derivatives data behind every move. Watch each setup form candle by candle, play with the numbers, answer a quick check — then practise it on real charts.</p>
+  <p class="lx-intro">${list.length} short lessons on candles, candlestick patterns, structure, smart money concepts and the derivatives data behind every move. Watch each setup form candle by candle, play with the numbers, answer a quick check — then practise it on real charts.</p>
   <div class="lx-cta">${btn('/learn/' + list[0].slug, `${icon('play')} <span>Start the course</span>`, 'btn-primary btn-lg btn-pill glow-btn').replace('<a ', `<a data-continue="${order}" `)}${btn(who ? '/app' : '/signup', `${icon('chart-candlestick')} ${who ? 'Open the desk' : 'Practise free'}`, 'btn-glass btn-lg btn-pill')}</div>
-  <dl class="lx-stats"><div><dt>Lessons</dt><dd data-all-prog="${order}">${list.length} lessons</dd></div><div><dt>Interactive</dt><dd>${nInteractive} with replays or tools</dd></div><div><dt>Drills</dt><dd>8 decision charts</dd></div><div><dt>Price</dt><dd>Free</dd></div></dl>
+  <dl class="lx-stats"><div><dt>Lessons</dt><dd data-all-prog="${order}">${list.length} lessons</dd></div><div><dt>Interactive</dt><dd>${nInteractive} with replays or tools</dd></div><div><dt>Practice</dt><dd>8 drills · pattern trainer</dd></div><div><dt>Price</dt><dd>Free</dd></div></dl>
 </section>
 ${tracks.map((t, ti) => { const ls = list.filter(l => l.track === t.key); return `
 <section class="lx-track wrap" id="${t.key}">
@@ -469,7 +616,7 @@ function learnLesson(who, nonce, slug) {
     <p class="lx-legal muted">Education only — not financial advice.</p>
   </article>
 </div></main>${footer()}`;
-  return page({ title: l.title, description: l.sum, body, nonce, head, scripts: [script], bodyClass: 'lx-body', bodyData: { 'lx-slug': l.slug }, noindex: !!t.admin });
+  return page({ title: l.title, description: l.sum, body, nonce, head, scripts: l.track === 'candles' ? [cpScript, script] : [script], bodyClass: 'lx-body', bodyData: { 'lx-slug': l.slug }, noindex: !!t.admin });
 }
 
 const canSee = (who, slug) => { const l = BY[slug]; return !!l && (!trackOf(l.track).admin || !!(who && who.admin)); };

@@ -29,8 +29,8 @@
     const W = Math.max(300, Math.floor(host.clientWidth || 640)), H = Math.round(Math.min(420, Math.max(W < 560 ? 340 : 280, W * 0.5)));
     const padL = 8, padR = W < 480 ? 50 : 60, padT = 22, padB = 24;
     let lo = Infinity, hi = -Infinity;
-    C.forEach(k => { lo = Math.min(lo, k[2]); hi = Math.max(hi, k[1]); });
-    (S.ann || []).forEach(a => { for (const v of [a.y, a.y0, a.y1, a.stop, a.tp, a.tp2]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+    (S.fit ? C.slice(0, n) : C).forEach(k => { lo = Math.min(lo, k[2]); hi = Math.max(hi, k[1]); });
+    (S.ann || []).filter(a => !S.fit || ((a.at ?? 0) <= n - 1 && (!a.post || post))).forEach(a => { for (const v of [a.y, a.y0, a.y1, a.stop, a.tp, a.tp2]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
     const pad = (hi - lo) * 0.07; lo -= pad; hi += pad;
     const slot = (W - padL - padR) / N, X = i => padL + slot * (i + 0.5), Y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
     const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': S.aria || '' });
@@ -70,7 +70,7 @@
       mk('rect', { x: X(i) - bw / 2, y: y1, width: bw, height: Math.max(1.2, y2 - y1), class: up ? 'cu' : 'cd' }, svg);
     }
     for (const a of anns.filter(a => a.type === 'box')) {
-      const [x1, x2] = a._x, f = v => v.toFixed(d), R = v => Math.abs(a.entry - v) / Math.abs(a.stop - a.entry);
+      const [x1, x2] = a._x, f = v => (a.bare ? '' : v.toFixed(d)), R = v => Math.abs(a.entry - v) / Math.abs(a.stop - a.entry);
       mk('line', { x1, x2, y1: Y(a.stop), y2: Y(a.stop), class: 'l-stop' }, svg);
       mk('line', { x1, x2, y1: Y(a.entry), y2: Y(a.entry), class: 'l-entry' }, svg);
       mk('line', { x1, x2, y1: Y(a.tp), y2: Y(a.tp), class: 'l-tp' }, svg);
@@ -491,6 +491,48 @@
     fig.querySelector('[data-a=next]').onclick = () => { stop(); n = Math.min(N, n + 1); render(); };
     range.oninput = () => { stop(); n = +range.value; render(); };
     observe(host, render); render();
+  }
+  // ---------- candlestick patterns: two replays built from the pattern file's textbook examples ----------
+  const CP = window.CPat, CP_AFTER = [1.3, 1.1, -0.4, 1.4, 1.2, 0.9, 1.0, -0.6, 1.3, 1.1, 0.8, 1.2, 0.7, 1.0];
+  // a textbook example as a lesson chart: candles, the pattern box, and (directional ones) the standard trade
+  // lead = candles kept before the pattern (all when left out): a long run-in squashes the pattern into a corner
+  function cpExample(key, after, lead) {
+    const p = CP.BY[key], ex = CP.example(key, after), s0 = lead != null ? Math.max(0, ex.i0 - lead) : 0, H = 3600e3;
+    const K = ex.K.slice(s0).map((k, j) => [j * H].concat(k.slice(1))), e = { i0: ex.i0 - s0, i: ex.i - s0, K };
+    let hi = -Infinity, lo = Infinity; for (let k = e.i0; k <= e.i; k++) { hi = Math.max(hi, K[k][2]); lo = Math.min(lo, K[k][3]); }
+    const S = { candles: K.map(k => k.slice(1, 5)), digits: 1, xEvery: 5, aria: p.name + ': a textbook example with invented candles',
+      ann: [{ type: 'zone', cls: 'pat', i0: e.i0, i1: e.i, y0: lo, y1: hi, label: p.name, lp: p.side === -1 ? 'below-left' : 'above-left', at: e.i }], e, p };
+    if (p.side) {
+      // the trade on the whole example (its stop buffer needs 14 candles of ATR), then moved to the trimmed chart
+      const t = CP.trade(ex.K, { key, i0: ex.i0, i: ex.i, side: p.side }, { hor: 40 });
+      S.t = t; S.at1 = t.at1 != null ? Math.round(t.at1 / H) - s0 : null; S.at2 = t.at2 != null ? Math.round(t.at2 / H) - s0 : null;
+      S.ann.push({ type: 'box', i0: e.i + 1, entry: t.entry, stop: t.stop, tp: t.t1, tp2: t.t2, entryLabel: p.side === 1 ? 'Long' : 'Short', tpLabel: '1R', tp2Label: '2R', noR: true, at: e.i + 1 });
+    } else {
+      S.ann.push({ type: 'line', cls: 'tp', y: hi, i0: e.i, i1: K.length - 1, label: 'Break up → long', lp: 'end', at: e.i },
+        { type: 'line', cls: 'stop', y: lo, i0: e.i, i1: K.length - 1, label: 'Break down → short', lp: 'end', ly: 'below', at: e.i });
+    }
+    return S;
+  }
+  if (CP) {
+    const S1 = cpExample('bullengulf', CP_AFTER), e1 = S1.e;
+    L['cp-bullengulf'] = Object.assign(S1, { notes: [
+      { at: 3, t: 'A steady drop: lower highs and lower lows. A reversal pattern needs a move to reverse, so this comes first.' },
+      { at: e1.i0, t: 'A red candle. Sellers are still in charge.' },
+      { at: e1.i, t: 'The next candle opens at the red close, then buyers take it all back and close above the red open: the green body swallows the red one. That is the bullish engulfing.' },
+      { at: e1.i + 1, t: 'The standard trade: long at the next open, stop just under the pattern’s lowest low, targets at 1R and 2R (R = the distance to the stop).' },
+      { at: S1.at1, t: '1R reached: price moved as far up as the stop was down.' },
+      { at: S1.at2, t: '2R reached. This is a textbook picture with invented candles. On real charts the same trade hits 2R about 3 times in 10 — about as often as a random entry (see the last lesson).' },
+    ].filter(x => x.at != null) });
+    const S2 = cpExample('evening', CP_AFTER), e2 = S2.e;
+    L['cp-evening'] = Object.assign(S2, { notes: [
+      { at: 3, t: 'A steady rise: higher highs and higher lows.' },
+      { at: e2.i0, t: 'A big green candle: buyers still pushing hard.' },
+      { at: e2.i0 + 1, t: 'A small candle: the push stalls. Neither side wins it.' },
+      { at: e2.i, t: 'A red candle closes deep into the big green body: sellers took over. Big green, small, big red = evening star.' },
+      { at: e2.i + 1, t: 'The standard trade: short at the next open, stop just above the pattern’s highest high, targets at 1R and 2R.' },
+      { at: S2.at1, t: '1R reached.' },
+      { at: S2.at2, t: '2R reached. Again a textbook picture; real evening stars hit 2R about 38 times in 100, random entries about 34.' },
+    ].filter(x => x.at != null) });
   }
   document.querySelectorAll('[data-lesson]').forEach(el => lesson(el.dataset.lesson));
 
@@ -988,6 +1030,337 @@
         ${liqPct <= sp ? `<p class="down"><b>Liquidation comes before your stop.</b> Lower the leverage until it sits beyond ${sp}%.</p>` : '<p class="muted">Leverage only changes the margin, not the risk. The stop sets the risk.</p>'}`;
     }
     rs.forEach(r => r.addEventListener('input', upd)); upd();
+  };
+
+  // =====================================================================================================================
+  // Candlestick patterns (/assets/cpat.js): gallery, context, entry lab, trainer on real charts, live check vs random
+  // =====================================================================================================================
+  const CP_EV = (CP && CP.TEST) || {};   // our real-chart test numbers, kept in cpat.js
+  const sideName = s => s === 1 ? 'Bullish' : s === -1 ? 'Bearish' : 'No side';
+  const sideCls = s => s === 1 ? 'up' : s === -1 ? 'down' : 'warn';
+  const signR = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2) + 'R';
+  const tradeHow = p => p.side === 1 ? 'Long at the next candle’s open, or a buy-stop just above the pattern’s high. Stop just under the pattern’s lowest low. Target 1R–2R, or the next level above.'
+    : p.side === -1 ? 'Short at the next candle’s open, or a sell-stop just under the pattern’s low. Stop just above the pattern’s highest high. Target 1R–2R, or the next level below.'
+    : 'It has no side. Mark its high and low and wait: a close above the high says long, a close below the low says short. The stop goes at the other end.';
+  function evLine(key) {
+    const v = CP_EV[key];
+    if (!v) return '<p class="muted">Not in our test: it has no direction to trade.</p>';
+    return `<p class="cp-ev"><b>Real charts:</b> ${v[0].toLocaleString('en-US')} trades on 40 coins. 1R before the stop <b>${v[1]}%</b> (random entries ${v[2]}%), 2R <b>${v[3]}%</b> (random ${v[4]}%). Typical stop ${v[5]}%. Aiming for 2R, after fees: <b class="${v[6] > 0 ? 'up' : 'down'}">${signR(v[6])}</b> a trade.</p>`;
+  }
+
+  // the standard trade with a choice of entry. mode: open = next candle's open · break = stop order at the pattern's
+  // high (long) / low (short), 5 candles to fill · pull = limit at the middle of the pattern, 5 candles to fill.
+  // Stop 0.05 ATR past the pattern's extreme. On a stop / limit fill candle only the stop counts (its high / low may have
+  // come before the fill); a candle reaching stop and target counts as the stop. hor candles, then out at the close.
+  function cpPlan(K, h, side, mode, tR, hor, A) {
+    let hi = -Infinity, lo = Infinity;
+    for (let k = h.i0; k <= h.i; k++) { hi = Math.max(hi, K[k][2]); lo = Math.min(lo, K[k][3]); }
+    const buf = 0.05 * (A[h.i] || 0), stop = side === 1 ? lo - buf : hi + buf;
+    const lvl = mode === 'break' ? (side === 1 ? hi : lo) : mode === 'pull' ? (hi + lo) / 2 : null;
+    const P = { side, mode, tR, lvl, stop, hi, lo, fill: -1, res: 'nofill' };
+    if (mode === 'open') { if (h.i + 1 < K.length) { P.fill = h.i + 1; P.entry = K[h.i + 1][1]; } }
+    else for (let k = h.i + 1; k < Math.min(K.length, h.i + 6); k++) {
+      const o = K[k][1], hh = K[k][2], ll = K[k][3];
+      const hit = mode === 'break' ? (side === 1 ? hh > lvl : ll < lvl) : (side === 1 ? ll <= lvl : hh >= lvl);
+      if (!hit) continue;
+      P.fill = k; P.entry = mode === 'break' ? (side === 1 ? Math.max(lvl, o) : Math.min(lvl, o)) : (side === 1 ? Math.min(lvl, o) : Math.max(lvl, o));
+      break;
+    }
+    if (P.fill < 0) return P;
+    const r = (P.entry - stop) * side;
+    if (!(r > 0)) { P.fill = -1; P.why = 'past'; return P; }   // filled beyond the stop: no trade
+    P.r = r; P.pct = r / P.entry; P.tgt = P.entry + side * tR * r; P.feeR = 0.001 / P.pct;   // 0.05% taker in and out
+    for (let k = P.fill; k < Math.min(K.length, P.fill + hor); k++) {
+      const hh = K[k][2], ll = K[k][3];
+      P.exit = k;
+      if (side === 1 ? ll <= stop : hh >= stop) { P.res = 'stop'; P.R = -1; P.exitPx = stop; break; }
+      if ((k > P.fill || mode === 'open') && (side === 1 ? hh >= P.tgt : ll <= P.tgt)) { P.res = 'target'; P.R = tR; P.exitPx = P.tgt; break; }
+      P.res = 'time'; P.exitPx = K[k][4]; P.R = (K[k][4] - P.entry) * side / r;
+    }
+    P.net = P.R - P.feeR;
+    return P;
+  }
+  // the same side, stop size and target from random candles of the same chart (entry at their open): average R after fees
+  function cpRandom(K, side, pct, tR, hor, rnd) {
+    let sum = 0, n = 0;
+    for (let q = 0; q < 40; q++) {
+      const j = 20 + Math.floor(rnd() * Math.max(1, K.length - hor - 22)), e = K[j][1], st = e * (1 - side * pct), tg = e * (1 + side * tR * pct);
+      let R = null;
+      for (let k = j; k < Math.min(K.length, j + hor); k++) {
+        if (side === 1 ? K[k][3] <= st : K[k][2] >= st) { R = -1; break; }
+        if (side === 1 ? K[k][2] >= tg : K[k][3] <= tg) { R = tR; break; }
+        R = (K[k][4] - e) * side / (e * pct);
+      }
+      if (R != null) { sum += R - 0.001 / pct; n++; }
+    }
+    return n ? sum / n : 0;
+  }
+
+  // gallery: pick a pattern, see a textbook example with its trade, the rules and the real-chart numbers
+  function cpGallery(root, keys) {
+    if (!CP) throw new Error('pattern file missing');
+    root.innerHTML = `<div class="wx-chips" role="group" aria-label="Pick a pattern">${keys.map(k => `<button type="button" data-k="${k}" aria-pressed="false">${esc(CP.BY[k].name)}</button>`).join('')}</div>
+      <div class="wx-grid"><div class="figure cp-fig"><div class="chart"></div><p class="cp-note">Textbook example, invented candles</p></div><div class="wx-out" aria-live="polite"></div></div>`;
+    const host = $('.chart', root), out = $('.wx-out', root); let S = null;
+    const render = () => { if (S) draw(host, S, S.candles.length, true); };
+    function pick(k) {
+      $$('[data-k]', root).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.k === k)));
+      const p = CP.BY[k]; S = cpExample(k, CP_AFTER, 8); S.ann[0].label = '';   // the panel names it; on the chart it sits on a candle
+      out.innerHTML = `<b class="${sideCls(p.side)}">${esc(p.name)} · ${sideName(p.side)}</b><p>${esc(p.says)}</p>
+        <dl class="cp-dl"><dt>Spot it</dt><dd>${esc(p.how)}</dd><dt>Trade it</dt><dd>${esc(tradeHow(p))}</dd></dl>${evLine(k)}`;
+      render();
+    }
+    $$('[data-k]', root).forEach(b => b.onclick = () => pick(b.dataset.k));
+    observe(host, render); pick(keys[0]);
+  }
+  W.cpsingle = root => cpGallery(root, CP.PATTERNS.filter(p => p.group === 'single').map(p => p.key).concat('inside'));
+  W.cpbull = root => cpGallery(root, CP.PATTERNS.filter(p => p.side === 1 && p.n > 1).map(p => p.key));
+  W.cpbear = root => cpGallery(root, CP.PATTERNS.filter(p => p.side === -1 && p.n > 1).map(p => p.key));
+
+  // context: the same shape after a drop, after a rise or sideways — the detector names it (or doesn't)
+  W.cpctx = root => {
+    if (!CP) throw new Error('pattern file missing');
+    const SH = { hammer: ['Hammer shape', [[0, 0.8, -4.5, 0.6]]], inv: ['Upside-down hammer', [[0, 4.5, -0.2, 0.5]]], doji: ['Doji', [[0, 1.5, -1.5, 0.05]]],
+      geng: ['Green swallows red', [[0, 0.2, -1.5, -1.3], [-1.3, 0.8, -1.5, 0.6]]], reng: ['Red swallows green', [[0, 1.5, -0.2, 1.3], [1.3, 1.5, -0.8, -0.6]]] };
+    root.innerHTML = `<div class="wx-row"><span class="cp-lab">Shape</span><div class="wx-chips" role="group" aria-label="Shape">${Object.entries(SH).map(([k, [l]], i) => `<button type="button" data-s="${k}" aria-pressed="${i === 0}">${l}</button>`).join('')}</div></div>
+      <div class="wx-row"><span class="cp-lab">Before it</span>${seg('ctx', [['drop', 'A drop'], ['rise', 'A rise'], ['flat', 'Sideways']], 'drop')}</div>
+      <div class="wx-grid"><div class="figure cp-fig"><div class="chart"></div></div><div class="wx-out" aria-live="polite"></div></div>`;
+    const host = $('.chart', root), out = $('.wx-out', root); let S = null;
+    const render = () => { if (S) draw(host, S, S.candles.length, true); };
+    function upd() {
+      const sk = $('[data-s][aria-pressed="true"]', root).dataset.s, ctx = segVal(root, 'ctx'), shape = SH[sk][1];
+      const d = ctx === 'drop' ? Array(18).fill(-1.4) : ctx === 'rise' ? Array(18).fill(1.4) : Array.from({ length: 18 }, (_, k) => (k % 2 ? -0.6 : 0.6));
+      let c = 100 - d.reduce((a, b) => a + b, 0); const K = [];
+      for (const x of d) { const o = c; c = o + x; K.push([0, o, Math.max(o, c) + 0.3, Math.min(o, c) - 0.3, c, 1]); }
+      const P = c; for (const [o, h, l, cl] of shape) K.push([0, P + o, P + h, P + l, P + cl, 1]);
+      K.forEach((k, i) => { k[0] = i * 3600e3; });
+      const last = K.length - 1, first = last - shape.length + 1, names = CP.detect(K).filter(h => h.i === last && h.i0 === first);
+      let hi = -Infinity, lo = Infinity; for (let k = first; k <= last; k++) { hi = Math.max(hi, K[k][2]); lo = Math.min(lo, K[k][3]); }
+      // the detector reads all 18 candles before the shape; the chart shows the last 10 so the shape isn't tiny (the panel names it)
+      const s0 = 8;
+      S = { candles: K.slice(s0).map(k => k.slice(1, 5)), digits: 1, xEvery: 5, aria: 'The chosen shape after ' + (ctx === 'flat' ? 'a sideways stretch' : 'a ' + ctx),
+        ann: [{ type: 'zone', cls: 'pat', i0: first - s0, i1: last - s0, y0: lo, y1: hi }] };
+      const why = {
+        hammer: 'After a drop this shape is a <b>hammer</b> (bullish). After a rise the very same candle is a <b>hanging man</b> (bearish). Sideways it is just a candle.',
+        inv: 'After a drop this shape is an <b>inverted hammer</b> (bullish). After a rise the same candle is a <b>shooting star</b> (bearish). Sideways it is just a candle.',
+        doji: 'A doji means indecision wherever it appears; it has no side of its own. What comes next decides.',
+        geng: 'After a drop a green body swallowing a red one is a <b>bullish engulfing</b>. After a rise it is just more buying — the bearish version needs the colours the other way round.',
+        reng: 'After a rise a red body swallowing a green one is a <b>bearish engulfing</b>. After a drop it is just more selling.' }[sk];
+      out.innerHTML = names.length
+        ? names.map(h => { const p = CP.BY[h.key]; return `<b class="${sideCls(p.side)}">${esc(p.name)} · ${sideName(p.side)}</b><p>${esc(p.says)}</p>`; }).join('') + `<p class="muted">${why}</p>`
+        : `<b>No pattern here</b><p>${why}</p><p class="muted">A reversal pattern needs a move to reverse: a drop before a bullish one, a rise before a bearish one.</p>`;
+      render();
+    }
+    $$('[data-s]', root).forEach(b => b.onclick = () => { $$('[data-s]', root).forEach(x => x.setAttribute('aria-pressed', String(x === b))); upd(); });
+    segWire(root, upd); observe(host, render); upd();
+  };
+
+  // entry lab: the same pattern, three ways in; where the stop and target land, the size for a fixed risk, and fees in R
+  W.cpentry = root => {
+    if (!CP) throw new Error('pattern file missing');
+    const keys = ['bullengulf', 'hammer', 'morning', 'bearengulf', 'star', 'evening'], AFT = [0.4, -1.6, 1.2, 1.4, 1.0, 1.3, -0.5, 1.2, 1.1, 0.9, 1.0, 0.8, 1.1, 0.7];
+    root.innerHTML = `<div class="wx-chips" role="group" aria-label="Pattern">${keys.map((k, i) => `<button type="button" data-k="${k}" aria-pressed="${i === 0}">${esc(CP.BY[k].name)}</button>`).join('')}</div>
+      <div class="wx-row">${seg('mode', [['open', 'Next open'], ['break', 'Break of the pattern'], ['pull', 'Pullback to its middle']], 'open')}${seg('tgt', [['1', '1R'], ['2', '2R'], ['3', '3R']], '2')}</div>
+      <div class="wx-grid"><div class="figure cp-fig"><div class="chart"></div><p class="cp-note">Textbook example, invented candles</p></div><div class="wx-side">${range('Risk per trade', 10, 500, 10, 50, '$')}<div class="wx-out" aria-live="polite"></div></div></div>`;
+    const host = $('.chart', root), out = $('.wx-out', root), rr = $('input[type=range]', root); let S = null;
+    const render = () => { if (S) draw(host, S, S.candles.length, true); };
+    const why = { open: 'Always fills, as soon as the pattern closes. No extra proof that it worked.',
+      break: 'Fills only if price breaks the pattern first: a little proof, but a worse price, so the stop is further away and the position smaller for the same risk.',
+      pull: 'The best price and the smallest stop, so a bigger position for the same risk. It fills only if price comes back, and strong moves leave without you.' };
+    function upd() {
+      const k = $('[data-k][aria-pressed="true"]', root).dataset.k, p = CP.BY[k], mode = segVal(root, 'mode'), tR = +segVal(root, 'tgt'), risk = +rr.value;
+      $('.wx-r [data-v]', root).textContent = ' ' + risk;   // the slider's read-out (the seg buttons carry data-v too)
+      const e = CP.example(k, AFT), K = e.K, A = CP.atrOf(K), h = { i0: e.i0, i: e.i }, P = cpPlan(K, h, p.side, mode, tR, 40, A);
+      const s0 = e.i0 - 8, x = i => i - s0;   // traded on the whole example, drawn from 8 candles before the pattern
+      const ann = [{ type: 'zone', cls: 'pat', i0: x(e.i0), i1: x(e.i), y0: P.lo, y1: P.hi }];
+      const ordLab = mode === 'break' ? (p.side === 1 ? 'Buy-stop' : 'Sell-stop') : (p.side === 1 ? 'Buy limit' : 'Sell limit');
+      if (mode !== 'open') ann.push({ type: 'line', cls: 'entry', y: P.lvl, i0: x(e.i + 1), i1: x(e.i + 5), label: ordLab, lp: 'end', ly: p.side === 1 && mode === 'pull' ? 'below' : undefined });
+      if (P.fill >= 0) ann.push({ type: 'box', i0: x(P.fill), entry: P.entry, stop: P.stop, tp: P.tgt, entryLabel: p.side === 1 ? 'Long' : 'Short', tpLabel: tR + 'R', noR: true });
+      S = { candles: K.slice(s0).map(c => c.slice(1, 5)), digits: 1, xEvery: 5, ann, aria: p.name + ' with a ' + mode + ' entry' };
+      const f = v => v.toFixed(2);
+      if (P.fill < 0) {
+        out.innerHTML = `<b class="warn">No fill</b><p>${mode === 'pull' ? 'Price never came back to the middle of the pattern within 5 candles, so the limit order expired. The move went without you.' : 'Price never broke the pattern within 5 candles, so the stop order expired.'}</p><p class="muted">${why[mode]}</p>`;
+      } else {
+        const size = risk / P.pct, fee = size * 0.001;
+        out.innerHTML = `<b>${p.side === 1 ? 'Long' : 'Short'} at ${f(P.entry)}</b>
+          <dl><dt>Stop</dt><dd>${f(P.stop)} · ${(P.pct * 100).toFixed(2)}% away</dd><dt>Target ${tR}R</dt><dd>${f(P.tgt)}</dd><dt>Position</dt><dd>$${fmt(size, 0)} for $${risk} risk</dd><dt>Fees in + out</dt><dd>$${fmt(fee)} = ${(fee / risk).toFixed(2)}R</dd></dl>
+          <p class="muted">${why[mode]}</p>`;
+      }
+      render();
+    }
+    $$('[data-k]', root).forEach(b => b.onclick = () => { $$('[data-k]', root).forEach(x => x.setAttribute('aria-pressed', String(x === b))); upd(); });
+    segWire(root, upd); rr.addEventListener('input', upd); observe(host, render); upd();
+  };
+
+  // real candles straight from Binance in the browser (public data; nothing goes through our server)
+  const CP_COINS = ['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'SUI', 'AVAX', 'LINK', 'ADA', 'LTC', 'DOT', 'NEAR', 'APT', 'ARB', 'OP', 'INJ', 'TIA', 'WIF', '1000PEPE', 'AAVE', 'UNI', 'ENA', 'ONDO', 'HBAR', 'TRX', 'FIL', 'ATOM', 'SEI', 'ORDI'];
+  const CP_TF = { '15m': 15 * 60e3, '1h': 3600e3, '4h': 4 * 3600e3 }, CP_TFL = { '15m': '15m', '1h': '1H', '4h': '4H' };
+  async function cpKlines(sym, iv, pages) {
+    let end = null, out = [];
+    for (let p = 0; p < (pages || 1); p++) {
+      const r = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(sym)}&interval=${iv}&limit=1500${end ? '&endTime=' + end : ''}`);
+      if (!r.ok) throw new Error(r.status === 400 ? 'no such coin on Binance futures' : 'Binance answered ' + r.status);
+      const d = await r.json(); if (!Array.isArray(d) || !d.length) break;
+      out = d.map(k => [+k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]).concat(out);
+      end = +d[0][0] - 1; if (d.length < 1500) break;
+    }
+    if (out.length && out[out.length - 1][0] + CP_TF[iv] > Date.now()) out.pop();   // the candle still forming
+    return out;
+  }
+  const cpDigits = p => p >= 1000 ? 1 : p >= 100 ? 2 : p >= 10 ? 3 : p >= 1 ? 4 : p >= 0.1 ? 5 : 6;
+  const cpDate = t => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) + ', ' + new Date(t).toISOString().slice(11, 16) + ' UTC';
+
+  // the trainer: a real chart stops on a pattern. Name it, place a trade (or skip), watch it play out; score vs random
+  W.cptrain = root => {
+    if (!CP) throw new Error('pattern file missing');
+    const KEYS = CP.PATTERNS.filter(p => p.side).map(p => p.key), HOR = 30, SK = 'rd-cptrain-v1', rnd = Math.random;
+    const blank = () => ({ rounds: 0, named: 0, trades: 0, wins: 0, stops: 0, times: 0, nofill: 0, skips: 0, sumR: 0, sumRand: 0 });
+    const load = () => { try { const o = JSON.parse(localStorage.getItem(SK) || 'null'); return o && typeof o.rounds === 'number' ? Object.assign(blank(), o) : blank(); } catch (e) { return blank(); } };
+    const save = () => { try { localStorage.setItem(SK, JSON.stringify(SC)); } catch (e) { /* private mode: the score isn't kept */ } };
+    let SC = load(), R = null, timer = null, token = 0;
+    const seen = new Set();
+    root.innerHTML = `<div class="wx-row cpt-bar">${seg('tf', [['any', 'Any'], ['15m', '15m'], ['1h', '1H'], ['4h', '4H']], 'any')}
+        <label class="cpt-sel"><span>Pattern</span><select aria-label="Pattern to practise"><option value="any">Any pattern</option>${KEYS.map(k => `<option value="${k}">${esc(CP.BY[k].name)}</option>`).join('')}</select></label>
+        <button type="button" class="btn btn-secondary btn-sm cpt-new">New chart</button></div>
+      <div class="figure cp-fig cpt-fig"><div class="chart"></div><p class="caption cpt-cap" aria-live="polite">Loading a real chart…</p></div>
+      <div class="cpt-step"></div>
+      <div class="cpt-score" aria-live="polite"></div>`;
+    const host = $('.chart', root), cap = $('.cpt-cap', root), step = $('.cpt-step', root), scoreEl = $('.cpt-score', root), sel = $('select', root);
+    const render = () => { if (R) draw(host, R.S, R.n, true); };
+    const stopTimer = () => { if (timer) { clearInterval(timer); timer = null; } };
+    function paintScore() {
+      const tr = SC.trades, avg = tr ? SC.sumR / tr : 0, ravg = tr ? SC.sumRand / tr : 0;
+      scoreEl.innerHTML = `<dl class="cpt-stats"><div><dt>Rounds</dt><dd>${SC.rounds}</dd></div><div><dt>Names right</dt><dd>${SC.named} of ${SC.rounds}</dd></div>
+        <div><dt>Trades</dt><dd>${tr ? `${tr} · ${SC.wins} target, ${SC.stops} stop${SC.times ? `, ${SC.times} time` : ''}` : '0'}</dd></div>
+        <div><dt>You, after fees</dt><dd class="${SC.sumR > 0 ? 'up' : SC.sumR < 0 ? 'down' : ''}">${tr ? signR(SC.sumR) + ` · ${signR(avg)} a trade` : '–'}</dd></div>
+        <div><dt>Random, same trades</dt><dd>${tr ? signR(SC.sumRand) + ` · ${signR(ravg)} a trade` : '–'}</dd></div></dl>
+        <p class="muted cpt-foot">${tr >= 10 ? `Over ${tr} trades you made ${signR(avg)} a trade; the same stops and targets from random candles made ${signR(ravg)}. ${tr < 100 ? 'Under about 100 trades that gap is mostly luck.' : 'Keep going: the gap only means something if it holds.'}` : 'Random = the same side, stop size and target placed at random candles of the same chart. The score stays in this browser.'}
+        ${SC.rounds ? ' <button type="button" class="cpt-reset">Reset score</button>' : ''}</p>`;
+      const rb = $('.cpt-reset', scoreEl); if (rb) rb.onclick = () => { SC = blank(); save(); paintScore(); };
+    }
+    async function newRound() {
+      stopTimer(); const my = ++token;
+      R = null; host.replaceChildren(); step.innerHTML = ''; cap.textContent = 'Loading a real chart…';
+      const tfSel = segVal(root, 'tf'), pat = sel.value, before = (host.clientWidth || 600) < 520 ? 30 : 46;
+      let err = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const iv = tfSel === 'any' ? ['15m', '1h', '4h'][Math.floor(rnd() * 3)] : tfSel, coin = CP_COINS[Math.floor(rnd() * CP_COINS.length)], sym = coin + 'USDT';
+        let K; try { K = await cpKlines(sym, iv, pat === 'any' ? 1 : 2); } catch (e) { err = e; continue; }
+        if (my !== token) return;
+        const hits = CP.detect(K).filter(h => h.side && h.i - before >= 20 && h.i + HOR + 2 < K.length && (pat === 'any' || h.key === pat) && !seen.has(sym + iv + K[h.i][0]));
+        if (!hits.length) continue;
+        const keys = [...new Set(hits.map(h => h.key))], key = keys[Math.floor(rnd() * keys.length)], pool = hits.filter(h => h.key === key);   // every pattern equally likely
+        const h = pool[Math.floor(rnd() * pool.length)]; seen.add(sym + iv + K[h.i][0]);
+        const s0 = h.i - before + 1, A = CP.atrOf(K), alsoKeys = CP.detect(K.slice(0, h.i + 1)).filter(x => x.i === h.i).map(x => x.key);
+        let hi = -Infinity, lo = Infinity; for (let k = h.i0; k <= h.i; k++) { hi = Math.max(hi, K[k][2]); lo = Math.min(lo, K[k][3]); }
+        const S = { candles: K.slice(s0, h.i + 1 + HOR).map(k => k.slice(1, 5)), digits: cpDigits(K[h.i][4]), fit: true, xEvery: 1e9, times: Array(before + HOR).fill(''),
+          aria: 'A real chart stopped on a candle pattern', ann: [{ type: 'zone', cls: 'pat', i0: h.i0 - s0, i1: h.i - s0, y0: lo, y1: hi, label: '?', lp: 'above-left' }] };
+        R = { K, A, h, s0, S, n: before, sym, iv, also: new Set(alsoKeys), p: CP.BY[h.key], narrow: before === 30 };
+        cap.textContent = 'A real chart, stopped on the candle that completed a pattern (boxed). The coin and date show at the end.';
+        render(); askName(); return;
+      }
+      cap.textContent = `Couldn’t load a chart${err ? ' (' + err.message + ')' : ''}${pat !== 'any' ? ' with a recent ' + CP.BY[pat].name.toLowerCase() : ''}. Press New chart to try again.`;
+    }
+    function askName() {
+      const p = R.p, same = KEYS.filter(k => !R.also.has(k) && CP.BY[k].n === p.n), other = KEYS.filter(k => !R.also.has(k) && CP.BY[k].n !== p.n);
+      const pick = (arr, m) => arr.slice().sort(() => rnd() - 0.5).slice(0, m);
+      const wrong = pick(same, 2).concat(pick(other, 3)).slice(0, 3), opts = wrong.concat(p.key).sort(() => rnd() - 0.5);
+      step.innerHTML = `<p class="cpt-q"><span>1 of 2</span>Which pattern is in the box?</p><div class="qz-opts cpt-opts">${opts.map(k => `<button type="button" class="qz-o" data-k="${k}">${esc(CP.BY[k].name)}</button>`).join('')}</div><p class="qz-why" hidden></p>`;
+      $$('[data-k]', step).forEach(b => b.onclick = () => {
+        const ok = R.also.has(b.dataset.k); R.named = ok;
+        $$('[data-k]', step).forEach(x => { x.disabled = true; if (R.also.has(x.dataset.k)) x.classList.add('ok'); });
+        if (!ok) b.classList.add('bad');
+        const why = $('.qz-why', step); why.hidden = false; why.className = 'qz-why ' + (ok ? 'ok' : 'bad');
+        why.innerHTML = `<b>${ok ? 'Right.' : 'Not quite.'}</b> ${esc(p.name)}: ${esc(p.how)}`;
+        R.S.ann[0].label = ''; render(); askTrade();   // the name is in the answer; on the chart it would sit on the trade's labels
+      });
+    }
+    function askTrade() {
+      const box = el('div', 'cpt-trade');
+      box.innerHTML = `<p class="cpt-q"><span>2 of 2</span>Your trade. The stop goes just past the far end of the pattern; you choose the entry and the target.</p>
+        <div class="wx-row">${seg('mode', [['open', 'Next open'], ['break', 'Break of the pattern'], ['pull', 'Pullback to its middle']], 'open')}${seg('tgt', [['1', '1R'], ['2', '2R'], ['3', '3R']], '2')}</div>
+        <div class="wx-row cpt-go"><button type="button" class="btn btn-sm cpt-long" data-side="1">Long</button><button type="button" class="btn btn-sm cpt-short" data-side="-1">Short</button><button type="button" class="btn btn-secondary btn-sm" data-side="0">Skip this one</button></div>`;
+      step.appendChild(box); segWire(box, () => {});
+      $$('[data-side]', box).forEach(b => b.onclick = () => {
+        $$('button', box).forEach(x => { x.disabled = true; }); b.classList.add('on');
+        play(+b.dataset.side, segVal(box, 'mode'), +segVal(box, 'tgt'));
+      });
+    }
+    function play(side, mode, tR) {
+      const { K, A, h, s0, S } = R, loc = i => i - s0, tside = R.p.side;
+      const P = side ? cpPlan(K, h, side, mode, tR, HOR, A) : null, T = cpPlan(K, h, tside, 'open', 2, HOR, A);   // T = the textbook trade
+      if (P && mode !== 'open' && P.lvl != null) S.ann.push({ type: 'line', cls: 'entry', y: P.lvl, i0: loc(h.i + 1), i1: loc(h.i + 5), label: mode === 'break' ? (side === 1 ? 'Buy-stop' : 'Sell-stop') : (side === 1 ? 'Buy limit' : 'Sell limit'), lp: 'end', ly: 'below', at: loc(h.i + 1) });
+      let endAt = S.candles.length;
+      if (P && P.fill >= 0) {
+        const wide = R.narrow ? 14 : 10;   // a minimum width (candles), so the labels don't pile up
+        S.ann.push({ type: 'box', i0: loc(P.fill), i1: Math.max(loc(P.exit), loc(P.fill) + wide), bare: R.narrow,
+           entry: P.entry, stop: P.stop, tp: P.tgt, entryLabel: side === 1 ? 'Long' : 'Short', tpLabel: tR + 'R', noR: true, at: loc(P.fill) });
+        S.ann.push({ type: 'mark', i: loc(P.exit), y: P.exitPx, cls: P.res === 'target' ? 'tp' : P.res === 'stop' ? 'stop' : 'bot', label: P.res === 'time' ? 'Time' : signR(P.R).replace('.00', ''), pos: (P.res === 'target') === (side === 1) ? 'above' : 'below', at: loc(P.exit) });
+        endAt = Math.min(S.candles.length, Math.max(loc(P.exit) + 4, loc(P.fill) + wide + 1));
+      }
+      const finish = () => { R.n = endAt; render(); result(side, mode, tR, P, T); };
+      if (reduce) return finish();
+      timer = setInterval(() => { if (R.n >= endAt) { stopTimer(); return finish(); } R.n++; render(); }, 150);
+    }
+    function result(side, mode, tR, P, T) {
+      const { K, h, sym, iv } = R, desc = x => x.res === 'target' ? `hit its ${x.tR}R target` : x.res === 'stop' ? 'hit the stop' : x.res === 'time' ? `was ${signR(x.R)} after ${HOR} candles` : 'did not fill';
+      SC.rounds++; if (R.named) SC.named++;
+      let head, body = '';
+      if (!side) { SC.skips++; head = `<b>Skipped</b>`; }
+      else if (P.fill < 0) { SC.nofill++; head = `<b class="warn">No fill</b>`; body = `<p>${mode === 'pull' ? 'Price never came back to the middle of the pattern within 5 candles.' : 'Price never broke the pattern within 5 candles.'} No trade, no score.</p>`; }
+      else {
+        const rr = cpRandom(K, side, P.pct, tR, HOR, Math.random);
+        SC.trades++; SC.sumR += P.net; SC.sumRand += rr;
+        if (P.res === 'target') SC.wins++; else if (P.res === 'stop') SC.stops++; else SC.times++;
+        head = `<b class="${P.net > 0 ? 'up' : 'down'}">${P.res === 'target' ? 'Target hit' : P.res === 'stop' ? 'Stopped out' : 'Time’s up'} · ${signR(P.R)}</b>`;
+        const dg = R.S.digits;
+        body = `<p>${side === 1 ? 'Long' : 'Short'} ${P.entry.toFixed(dg)} · stop ${P.stop.toFixed(dg)} · target ${P.tgt.toFixed(dg)}.</p><p>Stop ${(P.pct * 100).toFixed(2)}% away, so fees cost ${P.feeR.toFixed(2)}R: <b>${signR(P.net)}</b> after fees. The same trade from 40 random candles of this chart averaged ${signR(rr)}.</p>`;
+      }
+      const tbook = !side || side !== R.p.side || mode !== 'open' || tR !== 2;
+      if (tbook && T.fill >= 0) body += `<p class="muted">The textbook trade (${R.p.side === 1 ? 'long' : 'short'} at the next open, 2R target) ${desc(T)}.</p>`;
+      save(); paintScore();
+      if (slug && SC.rounds >= 10) markDone(slug);
+      if (!side) { R.n = R.S.candles.length; render(); }
+      const res = el('div', 'wx-out cpt-res');
+      res.innerHTML = `${head}${body}<p class="muted">${sym.replace(/USDT$/, '')} ${CP_TFL[iv]} · the pattern closed ${cpDate(K[h.i][0] + CP_TF[iv])}.</p><div><button type="button" class="btn btn-primary btn-sm cpt-next">Next chart</button></div>`;
+      step.appendChild(res); $('.cpt-next', res).onclick = newRound;
+    }
+    $('.cpt-new', root).onclick = newRound; sel.onchange = newRound; segWire($('.cpt-bar', root), newRound);
+    observe(host, render); paintScore(); newRound();
+  };
+
+  // live check: every pattern on one coin and timeframe vs the same trade from random candles (1R target)
+  W.cpcheck = root => {
+    if (!CP) throw new Error('pattern file missing');
+    root.innerHTML = `<div class="wx-row"><label class="cpt-sel"><span>Coin</span><input type="text" list="cpc-coins" value="BTC" maxlength="20" autocapitalize="characters" autocomplete="off" spellcheck="false" aria-label="Coin"></label>
+        <datalist id="cpc-coins">${CP_COINS.map(c => `<option value="${c}">`).join('')}</datalist>
+        ${seg('tf', [['15m', '15m'], ['1h', '1H'], ['4h', '4H']], '1h')}<button type="button" class="btn btn-primary btn-sm cpc-go">Check</button></div>
+      <div class="cpc-out" aria-live="polite"><p class="muted">Pick a coin and a timeframe, then press Check. Up to 4,500 candles load straight from Binance in your browser.</p></div>`;
+    const inp = $('input', root), out = $('.cpc-out', root); let busy = false;
+    async function run() {
+      if (busy) return;
+      const coin = inp.value.trim().toUpperCase().replace(/USDT$/, ''), iv = segVal(root, 'tf');
+      if (!/^[A-Z0-9]{2,20}$/.test(coin)) { out.innerHTML = '<p class="down">Type a coin like BTC, SOL or 1000PEPE.</p>'; return; }
+      busy = true; out.innerHTML = `<p class="muted">Loading ${esc(coin)} ${CP_TFL[iv]}…</p>`;
+      try {
+        const K = await cpKlines(coin + 'USDT', iv, 3);
+        if (K.length < 300) { out.innerHTML = `<p class="down">Only ${K.length} candles of history: too little to check.</p>`; return; }
+        await new Promise(r => setTimeout(r, 20));
+        const S = CP.stats(K, { hor: 48, draws: 20, seed: K.length + coin.length * 31 });
+        const rows = Object.entries(S).filter(([, s]) => s.d1).sort((a, b) => b[1].n - a[1].n).map(([k, s]) => {
+          const p = s.w1 / s.d1, b = s.rn1 ? s.rw1 / s.rn1 : null, luck = b == null ? 0 : 1.96 * Math.sqrt(Math.max(b * (1 - b), 0.01) / s.d1);
+          const med = s.pct.slice().sort((x, y) => x - y)[Math.floor(s.pct.length / 2)], ev = 2 * p - 1 - 0.001 / med;
+          const v = s.d1 < 25 ? ['Too few to tell', 'mix'] : b == null ? ['–', ''] : p - b > luck ? ['Better than random — could be luck', 'pos'] : b - p > luck ? ['Worse than random', 'neg'] : ['Same as random', ''];
+          return `<tr><td>${esc(CP.BY[k].name)}</td><td class="mono">${s.n}</td><td class="mono">${(p * 100).toFixed(0)}%</td><td class="mono">${b == null ? '–' : (b * 100).toFixed(0) + '%'}</td><td><span class="r ${ev > 0 ? 'pos' : 'neg'}">${signR(ev)}</span></td><td><span class="r ${v[1]}">${v[0]}</span></td></tr>`;
+        });
+        const better = rows.filter(r => r.includes('r pos')).length;
+        out.innerHTML = `<p class="cpc-head"><b>${esc(coin)}USDT ${CP_TFL[iv]}</b> · ${K.length.toLocaleString('en-US')} candles, ${cpDate(K[0][0]).split(',')[0]} – ${cpDate(K[K.length - 1][0]).split(',')[0]}</p>
+          ${rows.length ? `<div class="tbl"><table><thead><tr><th>Pattern</th><th>Trades</th><th>1R first</th><th>Random</th><th>After fees</th><th>Verdict</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '<p class="muted">No directional patterns found.</p>'}
+          <p class="muted">Trade: entry at the next open, stop just past the pattern, target 1R, 48 candles at most. Random: the same side and stop size from 20 random candles each. “After fees” = average R with 0.05% taker fees in and out. ${rows.length ? `With ${rows.length} patterns checked, one or two will look better or worse than random by luck alone${better ? ' — check a “better” one on another coin and timeframe before you believe it' : ''}.` : ''}</p>`;
+      } catch (e) { out.innerHTML = `<p class="down">Couldn’t load ${esc(coin)}: ${esc(e.message)}.</p>`; }
+      finally { busy = false; }
+    }
+    segWire(root, () => {}); $('.cpc-go', root).onclick = run; inp.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
   };
 
   // pointer spotlight on cards (the landing's .spot effect)
