@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false,
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false,
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -1778,7 +1778,7 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone') prim.req(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone') prim.req(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });

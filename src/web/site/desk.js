@@ -120,6 +120,7 @@ function desk(who, nonce) {
       <label class="dk-sub"><input type="checkbox" data-ind="aplusPause"> Pause the replay on a new A+</label>
       <label class="dk-sub" title="Off: setups that already hit their stop or target leave the chart; open ones and the idea being built stay. The A+ count in the top-left line still counts them."><input type="checkbox" data-ind="aplusDone"> Show finished A+ setups (target / stop hit)</label>
       <label class="dk-sub" title="A sound and a browser notification when the sweep is done (almost ready) and again when the setup triggers. Watches the coin and timeframe on this chart while this page is open. Not during a replay."><input type="checkbox" data-ind="aplusAlert"> Alert me: sound + browser notification</label>
+      <label class="dk-sub" title="The alert sound repeats until you press Stop alarm, press Esc or click the notification."><input type="checkbox" data-ind="aplusRing"> Keep ringing until I stop it</label>
       <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
       <p>SMC and A+ read closed candles only, so in a replay they never see the future.</p>
     </div>

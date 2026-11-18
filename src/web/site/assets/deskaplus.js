@@ -34,9 +34,40 @@
   // Stage 2: the sweep is done, one 1-minute close away. Stage 3: the setup triggered. Live chart only.
   // Browsers only allow sound after a click on the page, so the audio starts on the first click and stays ready.
   let actx = null;
+  const RG = { on: false, stage: 0, src: null, el: null };   // the alarm that rings until it is stopped
   const unlockAudio = () => {
-    try { const C = window.AudioContext || window.webkitAudioContext; if (!C) return; actx = actx || new C(); if (actx.state !== 'running') actx.resume().catch(() => {}); } catch (e) { /* no audio */ }
+    try {
+      const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+      if (!actx) { actx = new C(); actx.onstatechange = () => RD.legend(); }
+      if (actx.state !== 'running') actx.resume().catch(() => {});
+      if (RG.on && !RG.src) ringSound();   // it went off before the first click on the page
+    } catch (e) { /* no audio */ }
   };
+  const soundReady = () => !!actx && actx.state === 'running';
+  // one looping sound played by the audio system, so the slowed-down timers of a hidden tab cannot break it up
+  function ringBuffer(stage) {
+    const sr = actx.sampleRate, notes = stage === 3 ? [880, 1175, 1568] : [660, 880], n = Math.round(sr * 0.17), b = actx.createBuffer(1, n * notes.length + Math.round(sr * 0.7), sr), d = b.getChannelData(0);
+    notes.forEach((f, i) => { for (let j = 0; j < n; j++) d[i * n + j] = 0.4 * Math.min(1, j / (sr * 0.01)) * Math.min(1, (n - j) / (sr * 0.06)) * Math.sin(2 * Math.PI * f * j / sr); });
+    return b;
+  }
+  function stopSound() { if (!RG.src) return; try { RG.src.stop(); RG.src.disconnect(); } catch (e) { /* already stopped */ } RG.src = null; }
+  function ringSound() {
+    stopSound(); if (!actx) return;
+    try { const s = actx.createBufferSource(); s.buffer = ringBuffer(RG.stage); s.loop = true; s.connect(actx.destination); s.start(); RG.src = s; if (actx.state !== 'running') actx.resume().catch(() => {}); } catch (e) { RG.src = null; }
+  }
+  function stopRing() { RG.on = false; RG.stage = 0; stopSound(); if (RG.el) RG.el.hidden = true; }
+  function ring(stage, title, body, tone) {
+    if (RG.on && RG.stage > stage) return;   // a triggered setup keeps the alarm over a new "almost ready"
+    const again = RG.on && RG.stage === stage && RG.src;
+    RG.on = true; RG.stage = stage; if (!again) ringSound();
+    if (!RG.el) {
+      const el = document.createElement('div'); el.setAttribute('role', 'alert');
+      el.innerHTML = '<span class="dk-alarm-bell" aria-hidden="true">🔔</span><div class="dk-alarm-txt"><b></b><span></span></div><button type="button" class="dk-alarm-stop">Stop alarm</button>';
+      el.querySelector('button').addEventListener('click', stopRing); document.body.appendChild(el); RG.el = el;
+    }
+    RG.el.className = 'dk-alarm ' + tone; RG.el.querySelector('b').textContent = title; RG.el.querySelector('.dk-alarm-txt span').textContent = hm(Date.now()) + ' UTC · ' + body; RG.el.hidden = false;
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && RG.on) { e.preventDefault(); e.stopPropagation(); stopRing(); } }, true);
   function chime(stage) {
     if (!actx) return;
     const asked = Date.now(), play = () => {
@@ -50,13 +81,20 @@
   }
   function popup(title, body, tag) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    try { const n = new Notification(title, { body, tag, icon: '/icon.svg' }); n.onclick = () => { window.focus(); n.close(); }; } catch (e) { /* phones only allow these from an installed app */ }
+    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!U.aplusRing }); n.onclick = () => { window.focus(); stopRing(); n.close(); }; } catch (e) { /* phones only allow these from an installed app */ }
   }
   const away = () => document.hidden || !document.hasFocus();   // looking at the page: the toast and the sound are enough
   const alertsOn = () => !!U.aplusAlert && !!U.aplus && !R.on && !X.smcOff;
-  function alertUser(stage, title, body, tag) { chime(stage); if (away()) popup(title, body, tag); }
+  function alertUser(stage, title, body, tag, tone) { if (U.aplusRing) ring(stage, title, body, tone); else chime(stage); if (away()) popup(title, body, tag); }
   document.addEventListener('click', e => {
     if (U.aplusAlert) unlockAudio();
+    if (e.target && e.target.matches && e.target.matches('[data-ind="aplusRing"]') && e.target.checked) {
+      U.aplusRing = true; unlockAudio();
+      const box = document.querySelector('[data-ind="aplusAlert"]');
+      if (box && !box.checked) box.click();   // ringing needs the alert on
+      else { chime(3); RD.toast('🔔 The alarm will ring until you press Stop alarm.', 'up'); }
+      return;
+    }
     const i = e.target && e.target.matches && e.target.matches('[data-ind="aplusAlert"]') ? e.target : null;
     if (!i || !i.checked) return;
     unlockAudio(); U.aplus = true;   // the alert needs the setups on
@@ -122,7 +160,7 @@
       RD.toast(`🎯 A+ ${l.side} on ${u.coin(U.sym)} at ${when(l.t, stf)} UTC · entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, l.side === 'long' ? 'up' : 'down');
       if (alertsOn() && !result(l)) {   // already at its stop or target by the time we read it: nothing left to act on
         const late = Math.floor((end - l.conf) / MIN);
-        alertUser(3, `🎯 A+ ${l.side} · ${u.coin(U.sym)} ${stf}`, `${late >= 2 ? late + ' min ago · ' : ''}Entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, 'rd-aplus-' + U.sym + '-' + l.t);
+        alertUser(3, `🎯 A+ ${l.side} · ${u.coin(U.sym)} ${stf}`, `${late >= 2 ? late + ' min ago · ' : ''}Entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, 'rd-aplus-' + U.sym + '-' + l.t, l.side === 'long' ? 'up' : 'down');
       }
     }
     const lg = armed();
@@ -135,7 +173,7 @@
           M.armedLeg = lg.brk.t; M.armedAt = end;
           const side = lg.dir === -1 ? 'short' : 'long', how = `a 1-minute close ${lg.dir === -1 ? 'below' : 'above'} ${u.fp(lg.trig.p)}`;
           RD.toast(`🔔 A+ ${side} almost ready on ${u.coin(U.sym)}: it triggers on ${how}.`, lg.dir === -1 ? 'down' : 'up');
-          alertUser(2, `A+ ${side} almost ready · ${u.coin(U.sym)} ${stf}`, `Sweep done. It triggers on ${how}.`, 'rd-aplus-' + U.sym + '-' + id);
+          alertUser(2, `A+ ${side} almost ready · ${u.coin(U.sym)} ${stf}`, `Sweep done. It triggers on ${how}.`, 'rd-aplus-' + U.sym + '-' + id, lg.dir === -1 ? 'down' : 'up');
         }
       }
     }
@@ -213,7 +251,7 @@
   });
 
   // ---------------------------------------------------------------- legend: the newest setup, or what it is waiting for
-  X.legend.push(() => {
+  const aplusLine = () => {
     if (!U.aplus) return '';
     const t = ` title="${u.esc(TESTED)}"`;
     if (!stfNow()) return `<span${t}>A+ setups: 4H and lower</span>`;
@@ -230,10 +268,12 @@
     return `<span${t}>A+ <b class="${sh ? 'down' : 'up'}">${sh ? 'short' : 'long'} idea</b> since the ${lg.brk.kind} ${when(lg.brk.t, stf)} · ` +
       [ck(true, 'break'), ck(!!lg.prem, sh ? 'premium' : 'discount'), ck(!!lg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
       (trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${u.fp(lg.trig.p)}</b>` : '') + `</span>` + count;
-  });
+  };
+  // browsers keep a page silent until its first click: say so, or the alarm could stay quiet after a reload
+  X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && !soundReady() ? '<span class="down">🔇 Click the page once so the alert can sound</span>' + s : s; });
 
   // ---------------------------------------------------------------- when to read again
-  RD.on('aplus', () => { if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
+  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
   RD.on('sym', () => { reset(); load(); });
   RD.on('load', () => load());
   RD.on('mode', () => { reset(); load(); });
