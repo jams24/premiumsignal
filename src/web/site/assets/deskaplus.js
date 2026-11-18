@@ -79,15 +79,27 @@
     };
     try { if (actx.state === 'running') play(); else actx.resume().then(play).catch(() => {}); } catch (e) { /* no audio */ }
   }
-  function popup(title, body, tag) {
+  function popup(title, body, tag, sticky) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!U.aplusRing }); n.onclick = () => { window.focus(); stopRing(); n.close(); }; } catch (e) { /* phones only allow these from an installed app */ }
+    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!sticky }); n.onclick = () => { window.focus(); stopRing(); n.close(); }; } catch (e) { /* phones only allow these from an installed app */ }
   }
   const away = () => document.hidden || !document.hasFocus();   // looking at the page: the toast and the sound are enough
   const alertsOn = () => !!U.aplusAlert && !!U.aplus && !R.on && !X.smcOff;
-  function alertUser(stage, title, body, tag, tone) { if (U.aplusRing) ring(stage, title, body, tone); else chime(stage); if (away()) popup(title, body, tag); }
+  function alertUser(stage, title, body, tag, tone) {
+    const rings = U.aplusRing && !(stage === 2 && U.aplusRingTrig);   // "only when a setup triggers": almost ready plays the short sound once
+    if (rings) ring(stage, title, body, tone); else if (!RG.on) chime(stage);
+    if (away()) popup(title, body, tag, rings);
+  }
   document.addEventListener('click', e => {
     if (U.aplusAlert) unlockAudio();
+    if (e.target && e.target.matches && e.target.matches('[data-ind="aplusRingTrig"]') && e.target.checked) {
+      U.aplusRingTrig = true; unlockAudio();
+      const box = document.querySelector('[data-ind="aplusRing"]');
+      if (box && !box.checked) box.click(); else chime(2);   // the option needs the alarm on
+      RD.toast('🔔 The alarm rings when a setup triggers. Almost ready plays one short sound.', 'up');
+      return;
+    }
+    if (e.target && e.target.matches && e.target.matches('[data-ind="aplusRing"]') && !e.target.checked) U.aplusRingTrig = false;
     if (e.target && e.target.matches && e.target.matches('[data-ind="aplusRing"]') && e.target.checked) {
       U.aplusRing = true; unlockAudio();
       const box = document.querySelector('[data-ind="aplusAlert"]');
@@ -273,7 +285,7 @@
   X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && !soundReady() ? '<span class="down">🔇 Click the page once so the alert can sound</span>' + s : s; });
 
   // ---------------------------------------------------------------- when to read again
-  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
+  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing || (U.aplusRingTrig && RG.stage === 2)) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
   RD.on('sym', () => { reset(); load(); });
   RD.on('load', () => load());
   RD.on('mode', () => { reset(); load(); });
