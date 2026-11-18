@@ -5,7 +5,9 @@
    Structure timeframe = the chart's (5m / 15m / 1H / 4H; a 1m chart reads 5m). Data: the last 3 days of 1-minute
    candles plus 300 older structure candles in front, straight from Binance / Bybit in this browser. Closed candles up
    to the clock only, so in a replay it never sees the future: a setup shows once its trigger candle has closed, and its
-   result (target / stop) once price got there. Each box runs from the trigger to the stop or target.
+   result (target / stop) once price got there. Each box runs from the trigger to the stop or target. A setup still running is
+   drawn bold with its prices at the right edge, finished ones are faded. One close from the trigger (3 of 4), the same box is
+   drawn dashed as the plan: where the entry, stop and target will be if that close comes.
    While a move is live (step 1 of 4: a structure break), its premium / discount range and 50% line are drawn and the
    top-left line ticks off break · premium / discount · sweep · 1m CHoCH, as on the classic chart.
    Practice, not a signal: our test of these exact rules lost after fees (see TESTED). */
@@ -227,7 +229,9 @@
     const COL = RD.COL, red = COL.down, green = COL.up, gold = '#f5b301', blue = '#60a5fa';
     const ok = (...v) => v.every(q => q != null && isFinite(q));
     const xs = t => { const x = RD.t2x(t); return x == null ? null : Math.max(-40, Math.min(W + 40, x)); };
-    const boxes = list.map(s => { const r = result(s), x0 = xs(s.t), x1 = r ? xs(r.t) : W; return { s, r, x0, x1: x0 == null ? null : Math.min(W, Math.max(x0 + 24, x1 == null ? W : x1)), ye: RD.p2y(s.entry), ys: RD.p2y(s.stop), yt: RD.p2y(s.target) }; });
+    const H = RD.box.clientHeight - RD.chart.timeScale().height(), inY = y => Math.max(11, Math.min(H - 11, y));
+    const lv = armed(), pl = lv && lv.plan, planX = pl ? xL(lv.sweep.wickT) : null, pe = pl ? RD.p2y(pl.entry) : null, ps = pl ? RD.p2y(pl.stop) : null, pt = pl ? RD.p2y(pl.target) : null, planOk = !!pl && ok(planX, pe, ps, pt) && planX < W;
+    const boxes = list.map(s => { const r = result(s), x0 = r ? xs(s.t) : xL(s.t), x1 = r ? xs(r.t) : W; return { s, r, x0, x1: x0 == null ? null : Math.min(W, Math.max(x0 + 24, x1 == null ? W : x1)), ye: RD.p2y(s.entry), ys: RD.p2y(s.stop), yt: RD.p2y(s.target) }; });
     const lg = idea(), lx = lg ? xL(lg.dir === -1 ? lg.hiT : lg.loT) : null, yH = lg ? RD.p2y(lg.hi) : null, yL = lg ? RD.p2y(lg.lo) : null, yE = lg ? RD.p2y((lg.hi + lg.lo) / 2) : null;
     const range = lg && ok(lx, yH, yE, yL) && lx < W;
     if (z === 'bottom') {
@@ -235,10 +239,14 @@
         g.fillStyle = u.hexA(red, 0.07); g.fillRect(lx, yH, W - lx, yE - yH);
         g.fillStyle = u.hexA(green, 0.07); g.fillRect(lx, yE, W - lx, yL - yE);
       }
+      if (planOk) {   // not triggered yet: the box it would be
+        g.fillStyle = u.hexA(red, 0.2); g.fillRect(planX, Math.min(pe, ps), W - planX, Math.abs(ps - pe));
+        g.fillStyle = u.hexA(green, 0.18); g.fillRect(planX, Math.min(pe, pt), W - planX, Math.abs(pt - pe));
+      }
       for (const b of boxes) {
         if (!ok(b.x0, b.x1, b.ye, b.ys, b.yt) || b.x1 < 0 || b.x0 > W) continue;
-        g.fillStyle = u.hexA(red, 0.15); g.fillRect(b.x0, Math.min(b.ye, b.ys), b.x1 - b.x0, Math.abs(b.ys - b.ye));
-        g.fillStyle = u.hexA(green, 0.13); g.fillRect(b.x0, Math.min(b.ye, b.yt), b.x1 - b.x0, Math.abs(b.yt - b.ye));
+        g.fillStyle = u.hexA(red, b.r ? 0.08 : 0.28); g.fillRect(b.x0, Math.min(b.ye, b.ys), b.x1 - b.x0, Math.abs(b.ys - b.ye));
+        g.fillStyle = u.hexA(green, b.r ? 0.07 : 0.26); g.fillRect(b.x0, Math.min(b.ye, b.yt), b.x1 - b.x0, Math.abs(b.yt - b.ye));
       }
       return;
     }
@@ -251,21 +259,24 @@
       const yy = [y, y - 17, y + 17].find(free); if (yy == null) return;
       placed.push({ x: x0, y: yy, w }); RD.label(g, t, x0, yy, c, 'left');
     };
-    const stf = stfNow(), leg = armed();
-    if (leg) {   // the 1m close that would trigger it
-      const x0 = xs(leg.trig.t), y = RD.p2y(leg.trig.p);
-      line(x0, W, y, blue, [5, 3], 1.5);
-      tag(`A+ ${leg.dir === -1 ? 'short' : 'long'} if a 1m candle closes ${leg.dir === -1 ? 'below' : 'above'}`, W - 6, y + (leg.dir === -1 ? 11 : -11), blue, 'right');
+    const stf = stfNow(), edge = (t, y, c) => tag(t, W - 6, inY(y), c, 'right');
+    if (range) line(lx, W, yE, u.hexA(COL.text, 0.55), [6, 4], 1);   // under the labels
+    if (planOk) {   // the 1m close that would trigger it, and the stop and target it would have
+      const sh = lv.dir === -1, away = sh ? 11 : -11;
+      line(planX, W, ps, red, [6, 3], 2); line(planX, W, pe, blue, [5, 3], 2); line(planX, W, pt, green, [6, 3], 2);
+      edge(`A+ ${sh ? 'short' : 'long'} if a 1m candle closes ${sh ? 'below' : 'above'} ${u.fp(pl.entry)}`, pe + away, blue);
+      edge(`Plan stop ${u.fp(pl.stop)}`, ps - away, red);
+      edge(`Plan target ${u.fp(pl.target)} · ${pl.R.toFixed(1)}R`, pt + away, green);
     }
     if (range) {
-      line(lx, W, yE, u.hexA(COL.text, 0.55), [6, 4], 1);
       tag('50% · EQ', W - 6, yE - 10, COL.text, 'right');
       tag('Premium', W - 6, yH + 10, red, 'right'); tag('Discount', W - 6, yL - 10, green, 'right');
     }
-    for (const b of boxes.slice().reverse()) {
+    for (const b of boxes.slice().reverse().sort((p, q) => (p.r ? 1 : 0) - (q.r ? 1 : 0))) {   // running setups first: their labels get the room
       if (!ok(b.x0, b.x1, b.ye, b.ys, b.yt) || b.x1 < 0 || b.x0 > W) continue;
-      line(b.x0, b.x1, b.ys, red, [], 1.5); line(b.x0, b.x1, b.ye, COL.text, [], 1); line(b.x0, b.x1, b.yt, green, [], 1.5);
-      const s = b.s, r = b.r;
+      const s = b.s, r = b.r, away = s.dir === -1 ? 11 : -11;
+      line(b.x0, b.x1, b.ys, r ? u.hexA(red, 0.45) : red, [], r ? 1 : 2.5); line(b.x0, b.x1, b.ye, r ? u.hexA(COL.text, 0.4) : COL.text, [], r ? 1 : 1.5); line(b.x0, b.x1, b.yt, r ? u.hexA(green, 0.45) : green, [], r ? 1 : 2.5);
+      if (!r) { edge(`A+ stop ${u.fp(s.stop)}`, b.ys - away, red); edge(`A+ entry ${u.fp(s.entry)}`, b.ye + away, COL.text); edge(`A+ target ${u.fp(s.target)} · ${s.R.toFixed(1)}R`, b.yt + away, green); }
       tag(`A+ ${s.side} · ${s.R.toFixed(1)}R${!r ? ' · open' : r.kind === 'stop' ? ' · ✗ stopped ' + when(r.t, stf) : ' · ✓ target ' + when(r.t, stf)}`,
         Math.max(2, b.x0), s.dir === -1 ? b.ys - 11 : b.ys + 11, !r ? gold : r.kind === 'stop' ? red : green);
     }
@@ -279,16 +290,19 @@
     if (M.err) return `<span${t}>A+: ${u.esc(M.err)}</span>`;
     if (!M.A || M.key !== keyNow()) return `<span${t}>A+ loading…</span>`;
     const A = M.A, l = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, end = endNow(), stf = stfNow();
-    if (l && end - l.conf < FRESH) { const r = result(l); return `<span${t}>🎯 <b class="${l.side === 'long' ? 'up' : 'down'}">A+ ${l.side}</b> ${when(l.t, stf)} · ${l.R.toFixed(1)}R${r ? (r.kind === 'stop' ? ' · stopped' : ' · target hit') : ''}</span>`; }
+    const lr = l ? result(l) : null;
+    const newest = l ? `<span${t}>🎯 <b class="${l.side === 'long' ? 'up' : 'down'}">A+ ${l.side}</b> ${when(l.t, stf)} · ${l.R.toFixed(1)}R${lr ? (lr.kind === 'stop' ? ' · stopped' : ' · target hit') : ` · <b>running</b> · entry ${u.fp(l.entry)} · stop ${u.fp(l.stop)} · target ${u.fp(l.target)}`}</span>` : '';
+    if (l && end - l.conf < FRESH) return newest;
+    const run = l && !lr ? newest : '';   // an older setup still running stays in view next to the next idea
     const n = A.setups.length, done = A.setups.map(result), w = done.filter(r => r && r.kind === 'target').length, s = done.filter(r => r && r.kind === 'stop').length;
     const count = `<span${t}>A+ ${DAYS}d: <b>${n}</b>${n ? ` · ${w} target, ${s} stop${n - w - s ? `, ${n - w - s} open` : ''}` : ''}</span>`;
-    const lg = idea(); if (!lg) return count;
+    const lg = idea(); if (!lg) return run + count;
     // the idea's 4 steps, as on the classic chart: break ✓ · premium / discount · sweep · 1m CHoCH (the trigger)
     const sh = lg.dir === -1, ck = (on, x) => `<span class="${on ? 'up' : 'mut'}">${on ? '✓' : '○'} ${x}</span>`;
     const trig = !!armed();
-    return `<span${t}>A+ <b class="${sh ? 'down' : 'up'}">${sh ? 'short' : 'long'} idea</b> since the ${lg.brk.kind} ${when(lg.brk.t, stf)} · ` +
+    return run + `<span${t}>A+ <b class="${sh ? 'down' : 'up'}">${sh ? 'short' : 'long'} idea</b> since the ${lg.brk.kind} ${when(lg.brk.t, stf)} · ` +
       [ck(true, 'break'), ck(!!lg.prem, sh ? 'premium' : 'discount'), ck(!!lg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
-      (trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${u.fp(lg.trig.p)}</b>` : '') + `</span>` + count;
+      (trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${u.fp(lg.trig.p)}</b>${lg.plan ? ` · plan stop ${u.fp(lg.plan.stop)} · target ${u.fp(lg.plan.target)} · ${lg.plan.R.toFixed(1)}R` : ''}` : '') + `</span>` + count;
   };
   // browsers keep a page silent until its first click: say so, or the alarm could stay quiet after a reload
   X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && !soundReady() ? '<span class="down">🔇 Click the page once so the alert can sound</span>' + s : s; });

@@ -12,7 +12,8 @@
      eqs     [{side, kind:'EQH'|'EQL', p, t1, t, conf, taken}]                  equal highs / lows (resting stops)
      sweeps  [{dir, p, kind, levelT, t, wickT, wick, close, conf}]            wick through a level, close back
      setups  [{side, dir, t, conf, entry, stop, target, tgtKind, R, brk, zone, hi, lo, eq, sweep, trig}]
-     leg     the move that made the last break: {dir, hi, hiT, lo, loT, brk, zone, prem, inZone, sweep, trig, last, dead}
+     leg     the move that made the last break: {dir, hi, hiT, lo, loT, brk, zone, prem, inZone, sweep, trig, plan, last, dead}
+             plan: {entry, stop, target, tgtKind, R} while one 1-minute close from the trigger (entry = the trigger level), else null
      liq     untaken swing highs / lows,  ltf  1-minute swing points,  trend 1|-1|0,  now, price, atr */
 (function (root) {
   'use strict';
@@ -37,6 +38,13 @@
     const trs = [];
     let cur = null, top = null, btm = null, prevH = null, prevL = null, leg = null, atr = null;
     const eqOf = g => (g.hi + g.lo) / 2;
+    // stop just past the sweep wick, target the end of the move (2R when that is too close)
+    function planFor(g, sw, entry) {
+      const d = g.dir, stop = sw.wick * (1 - d * BUF), risk = Math.abs(stop - entry);
+      let target = d === -1 ? g.lo : g.hi, tgtKind = 'leg';
+      if (d === -1 ? target > entry - risk : target < entry + risk) { target = entry + d * 2 * risk; tgtKind = '2R'; }
+      return { entry, stop, target, tgtKind, R: Math.abs(target - entry) / risk };
+    }
 
     function closeBar() { const j = T.push(cur) - 1; cur = null; tfStep(j); }
 
@@ -179,10 +187,7 @@
       if (!tg || sw.wickT - tg.t > 180 * MIN) return;
       leg.trig = tg;
       if (d === -1 ? k[4] < tg.p : k[4] > tg.p) {
-        const entry = k[4], stop = sw.wick * (1 - d * BUF), risk = Math.abs(stop - entry);
-        let target = d === -1 ? leg.lo : leg.hi, tgtKind = 'leg';
-        if (d === -1 ? target > entry - risk : target < entry + risk) { target = entry + d * 2 * risk; tgtKind = '2R'; }
-        const s = { side: d === -1 ? 'short' : 'long', dir: d, t: k[0], conf: tEnd, entry, stop, target, tgtKind, R: Math.abs(target - entry) / risk,
+        const s = { side: d === -1 ? 'short' : 'long', dir: d, t: k[0], conf: tEnd, ...planFor(leg, sw, k[4]),
           brk: leg.brk, zone: leg.zone, hi: leg.hi, lo: leg.lo, eq, sweep: sw, trig: tg, inZone: !!leg.inZone };
         R.setups.push(s); leg.last = s; leg.sweep = null; leg.trig = null;
       }
@@ -208,6 +213,7 @@
       ltfStep(i);
       if (own) add(k, b, MIN);
     }
+    if (leg) leg.plan = leg.sweep && leg.trig ? planFor(leg, leg.sweep, leg.trig.p) : null;
     R.forming = cur; R.atr = atr; R.leg = leg; R.bars = T.length;
     R.liq = liq.filter(l => !l.taken).slice(-40);
     return R;
