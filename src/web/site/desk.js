@@ -118,6 +118,7 @@ function desk(who, nonce) {
       <label class="dk-sub" title="An EQL / EQH line normally disappears once price trades through it. This keeps it, faded, up to the candle that took it: “swept” = wick through and closed back, “broken” = closed through."><input type="checkbox" data-ind="smcTaken"> Keep equal lows / highs after price takes them (faded)</label>
       <label title="The classic simulator's A+ setups: a structure break, the pullback into premium / discount, a sweep, then a 1-minute close past the last 1-minute swing. Practice, not signals: these exact rules lost after fees in our test."><input type="checkbox" data-ind="aplus"> A+ setups: sweep + 1m CHoCH</label>
       <label class="dk-sub"><input type="checkbox" data-ind="aplusPause"> Pause the replay on a new A+</label>
+      <label class="dk-sub" title="Off: setups that already hit their stop or target leave the chart; open ones and the idea being built stay. The A+ count in the top-left line still counts them."><input type="checkbox" data-ind="aplusDone"> Show finished A+ setups (target / stop hit)</label>
       <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
       <p>SMC and A+ read closed candles only, so in a replay they never see the future.</p>
     </div>

@@ -6,6 +6,8 @@
    candles plus 300 older structure candles in front, straight from Binance / Bybit in this browser. Closed candles up
    to the clock only, so in a replay it never sees the future: a setup shows once its trigger candle has closed, and its
    result (target / stop) once price got there. Each box runs from the trigger to the stop or target.
+   While a move is live (step 1 of 4: a structure break), its premium / discount range and 50% line are drawn and the
+   top-left line ticks off break · premium / discount · sweep · 1m CHoCH, as on the classic chart.
    Practice, not a signal: our test of these exact rules lost after fees (see TESTED). */
 (function () {
   'use strict';
@@ -91,7 +93,12 @@
     }
     return null;
   }
-  const shown = () => (M.A && U.aplus && !X.smcOff && M.key === keyNow() ? (U.smcAll ? M.A.setups : M.A.setups.slice(-4)) : []);
+  // Show finished A+ setups off: only the ones still open (no stop / target yet) stay on the chart
+  const shown = () => { if (!M.A || !U.aplus || X.smcOff || M.key !== keyNow()) return []; const L = U.aplusDone === false ? M.A.setups.filter(s => !result(s)) : M.A.setups; return U.smcAll ? L : L.slice(-4); };
+  // the idea being built (step 1 of 4 done: a structure break whose move price hasn't closed back past), as on the classic chart
+  const idea = () => (M.A && M.A.leg && !M.A.leg.dead && M.A.leg.brk ? M.A.leg : null);
+  // x of a time; a move that starts before the chart's first candle starts at the left edge
+  const xL = t => { const x = RD.t2x(t); return x != null ? x : RD.S.bars.length && t < RD.S.bars[0][0] ? 0 : null; };
 
   // ---------------------------------------------------------------- on the chart
   X.draw.push((g, W, z) => {
@@ -100,7 +107,13 @@
     const ok = (...v) => v.every(q => q != null && isFinite(q));
     const xs = t => { const x = RD.t2x(t); return x == null ? null : Math.max(-40, Math.min(W + 40, x)); };
     const boxes = list.map(s => { const r = result(s), x0 = xs(s.t), x1 = r ? xs(r.t) : W; return { s, r, x0, x1: x0 == null ? null : Math.min(W, Math.max(x0 + 24, x1 == null ? W : x1)), ye: RD.p2y(s.entry), ys: RD.p2y(s.stop), yt: RD.p2y(s.target) }; });
+    const lg = idea(), lx = lg ? xL(lg.dir === -1 ? lg.hiT : lg.loT) : null, yH = lg ? RD.p2y(lg.hi) : null, yL = lg ? RD.p2y(lg.lo) : null, yE = lg ? RD.p2y((lg.hi + lg.lo) / 2) : null;
+    const range = lg && ok(lx, yH, yE, yL) && lx < W;
     if (z === 'bottom') {
+      if (range) {   // the move's top half = premium (shorts sell here), bottom half = discount (longs buy here)
+        g.fillStyle = u.hexA(red, 0.07); g.fillRect(lx, yH, W - lx, yE - yH);
+        g.fillStyle = u.hexA(green, 0.07); g.fillRect(lx, yE, W - lx, yL - yE);
+      }
       for (const b of boxes) {
         if (!ok(b.x0, b.x1, b.ye, b.ys, b.yt) || b.x1 < 0 || b.x0 > W) continue;
         g.fillStyle = u.hexA(red, 0.15); g.fillRect(b.x0, Math.min(b.ye, b.ys), b.x1 - b.x0, Math.abs(b.ys - b.ye));
@@ -123,6 +136,11 @@
       line(x0, W, y, blue, [5, 3], 1.5);
       tag(`A+ ${leg.dir === -1 ? 'short' : 'long'} if a 1m candle closes ${leg.dir === -1 ? 'below' : 'above'}`, W - 6, y + (leg.dir === -1 ? 11 : -11), blue, 'right');
     }
+    if (range) {
+      line(lx, W, yE, u.hexA(COL.text, 0.55), [6, 4], 1);
+      tag('50% · EQ', W - 6, yE - 10, COL.text, 'right');
+      tag('Premium', W - 6, yH + 10, red, 'right'); tag('Discount', W - 6, yL - 10, green, 'right');
+    }
     for (const b of boxes.slice().reverse()) {
       if (!ok(b.x0, b.x1, b.ye, b.ys, b.yt) || b.x1 < 0 || b.x0 > W) continue;
       line(b.x0, b.x1, b.ys, red, [], 1.5); line(b.x0, b.x1, b.ye, COL.text, [], 1); line(b.x0, b.x1, b.yt, green, [], 1.5);
@@ -141,9 +159,15 @@
     if (!M.A || M.key !== keyNow()) return `<span${t}>A+ loading…</span>`;
     const A = M.A, l = A.setups[A.setups.length - 1], leg = A.leg && !A.leg.dead ? A.leg : null, end = endNow(), stf = stfNow();
     if (l && end - l.conf < FRESH) { const r = result(l); return `<span${t}>🎯 <b class="${l.side === 'long' ? 'up' : 'down'}">A+ ${l.side}</b> ${when(l.t, stf)} · ${l.R.toFixed(1)}R${r ? (r.kind === 'stop' ? ' · stopped' : ' · target hit') : ''}</span>`; }
-    if (leg && leg.sweep && leg.trig && end - leg.sweep.conf < 90 * MIN) return `<span${t}>A+ 3/4: 1m close ${leg.dir === -1 ? 'below' : 'above'} <b>${u.fp(leg.trig.p)}</b></span>`;
     const n = A.setups.length, done = A.setups.map(result), w = done.filter(r => r && r.kind === 'target').length, s = done.filter(r => r && r.kind === 'stop').length;
-    return `<span${t}>A+ ${DAYS}d: <b>${n}</b>${n ? ` · ${w} target, ${s} stop${n - w - s ? `, ${n - w - s} open` : ''}` : ''}</span>`;
+    const count = `<span${t}>A+ ${DAYS}d: <b>${n}</b>${n ? ` · ${w} target, ${s} stop${n - w - s ? `, ${n - w - s} open` : ''}` : ''}</span>`;
+    const lg = idea(); if (!lg) return count;
+    // the idea's 4 steps, as on the classic chart: break ✓ · premium / discount · sweep · 1m CHoCH (the trigger)
+    const sh = lg.dir === -1, ck = (on, x) => `<span class="${on ? 'up' : 'mut'}">${on ? '✓' : '○'} ${x}</span>`;
+    const trig = lg.sweep && lg.trig && end - lg.sweep.conf < 90 * MIN;
+    return `<span${t}>A+ <b class="${sh ? 'down' : 'up'}">${sh ? 'short' : 'long'} idea</b> since the ${lg.brk.kind} ${when(lg.brk.t, stf)} · ` +
+      [ck(true, 'break'), ck(!!lg.prem, sh ? 'premium' : 'discount'), ck(!!lg.sweep, 'sweep'), ck(false, '1m CHoCH')].join(' ') +
+      (trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${u.fp(lg.trig.p)}</b>` : '') + `</span>` + count;
   });
 
   // ---------------------------------------------------------------- when to read again
