@@ -1662,9 +1662,9 @@
   // ------------------------------------------------------------------ watchlist & coin search
   let WL = store.get('rd-wl-v1', null) || ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'SUIUSDT', 'LINKUSDT', 'AVAXUSDT', '1000PEPEUSDT'];
   const WLD = {};
-  const saveWL = () => store.set('rd-wl-v1', WL);
+  const saveWL = () => { store.set('rd-wl-v1', WL); emit('watchlist', WL); };
   function renderWatch() {
-    $('[data-watch]').innerHTML = WL.map(s => { const d = WLD[s]; return `<div class="wl-row${s === U.sym ? ' on' : ''}" data-s="${esc(s)}"><b>${esc(coin(s))}</b><span class="mono">${d ? fp(d.px, d.px >= 100 ? 2 : d.px >= 1 ? 4 : 6) : '…'}</span><span class="chg ${d && d.chg < 0 ? 'down' : 'up'}">${d ? pct(d.chg) : ''}</span></div>`; }).join('') || '<p class="wl-note">Your watchlist is empty.</p>';
+    $('[data-watch]').innerHTML = WL.map(s => { const d = WLD[s]; return `<div class="wl-row${s === U.sym ? ' on' : ''}" data-s="${esc(s)}"><b>${esc(coin(s))}${X.wlMark ? X.wlMark(s) : ''}</b><span class="mono">${d ? fp(d.px, d.px >= 100 ? 2 : d.px >= 1 ? 4 : 6) : '…'}</span><span class="chg ${d && d.chg < 0 ? 'down' : 'up'}">${d ? pct(d.chg) : ''}</span></div>`; }).join('') || '<p class="wl-note">Your watchlist is empty.</p>';
   }
   const watchVisible = () => !$('[data-pane="watch"]').hidden && (!phone() || $('.dk-side').classList.contains('open'));
   async function pollWatch(force) {
@@ -1891,7 +1891,7 @@
   // ------------------------------------------------------------------ start
   window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
-    ext: X, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
+    ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,

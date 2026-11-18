@@ -80,6 +80,7 @@ async function main() {
   let site = null;
   try { site = require('./web/site'); site.init(); } catch (e) { logger.error(`[web] site not loaded: ${e.message}`); site = null; }
   const { SmcAlerts } = require('./collectors/smcAlerts');
+  let aplusWatch = null;   // the desk's A+ Watchlist alerts (src/collectors/aplusWatch.js), set once the bot is up
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const key = (url.searchParams.get('key') || '').trim();
@@ -472,6 +473,13 @@ async function main() {
       return tradeApi.handle(req, url, res);
     }
 
+    // ReplayDesk "Watch my Watchlist": settings and new A+ alerts for the open desk
+    if (url.pathname.startsWith('/api/aplus/') && authed) {
+      if (aplusWatch) return aplusWatch.handle(req, url, res);
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Starting up, try again in a minute' }));
+    }
+
     if (url.pathname === '/api/chart' && authed) {
       try {
         let symbol = url.searchParams.get('symbol');
@@ -682,6 +690,15 @@ async function main() {
   await smcAlerts.load();
   bot.smcAlerts = smcAlerts;
   smcAlerts.start();
+  // A+ on the desk's Watchlist, in the owner's DM with the desk closed. Loaded defensively: a failure here never stops the bot.
+  try {
+    const { AplusWatch } = require('./collectors/aplusWatch');
+    const watch = new AplusWatch({
+      send: (html) => bot.bot.telegram.sendMessage(Number(pumpAutoTrader.config?.ownerId) || config.telegram.adminIds[0], html, { parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+    aplusWatch = watch;
+    watch.load().catch(e => logger.warn(`[A+ WATCH] settings load failed: ${e.message}`)).finally(() => watch.start());
+  } catch (e) { logger.error(`[A+ WATCH] not loaded: ${e.message}`); }
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
   // Channel trade updates: TP / stop / back-to-entry / 48h replies under every posted entry (exhaust short ✅ ENTER
   // replies, and switch longs / shorts when their 📣 channel posts are on), from the levels the channel showed

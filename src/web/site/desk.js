@@ -123,6 +123,13 @@ function desk(who, nonce) {
       <label class="dk-sub" title="A sound and a browser notification when the sweep is done (almost ready) and again when the setup triggers. Watches the coin and timeframe on this chart while this page is open. Not during a replay."><input type="checkbox" data-ind="aplusAlert"> Alert me: sound + browser notification</label>
       <label class="dk-sub" title="The alert sound repeats until you press Stop alarm, press Esc or click the notification."><input type="checkbox" data-ind="aplusRing"> Keep ringing until I stop it</label>
       <label class="dk-sub" title="A triggered setup rings until you stop it. Almost ready plays the short sound once and does not ring."><input type="checkbox" data-ind="aplusRingTrig"> Only ring when a setup triggers (almost ready plays one short sound)</label>
+      ${A ? `<div class="dk-awbox" data-awbox>
+        <label title="The server checks every coin in your Watchlist each minute with the same A+ rules as the chart. Alerts go to your Telegram even with this page closed, and ring here on any chart. Practice setups, not signals: these rules lost after fees in our test."><input type="checkbox" data-aw="on"> Watch my Watchlist for A+ (Telegram + this page)</label>
+        <div class="dk-smcall" role="group" aria-label="Timeframes to watch"><span>Timeframes</span>${['5m', '15m', '1H', '4H'].map(t => `<button type="button" data-awpick="${t}">${t}</button>`).join('')}</div>
+        <label class="dk-sub"><input type="checkbox" data-aw="ready" checked> Also alert when almost ready</label>
+        <div class="dk-awstat" data-awstat aria-live="polite"></div>
+        <button type="button" class="dk-awsync" data-awsync hidden>Watch this device's Watchlist</button>
+      </div>` : ''}
       <label><input type="checkbox" data-ind="qt" checked> Buy / Sell buttons on the chart</label>
       <p>SMC and A+ read closed candles only, so in a replay they never see the future.</p>
     </div>
@@ -228,7 +235,7 @@ ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" 
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
   const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`];
-  if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`);
+  if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`, `<script src="${asset('deskwatch.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,
     head: `<link rel="stylesheet" href="${asset('desk.css')}">`, scripts,

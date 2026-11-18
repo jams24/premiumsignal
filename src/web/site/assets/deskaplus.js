@@ -34,7 +34,7 @@
   // Stage 2: the sweep is done, one 1-minute close away. Stage 3: the setup triggered. Live chart only.
   // Browsers only allow sound after a click on the page, so the audio starts on the first click and stays ready.
   let actx = null;
-  const RG = { on: false, stage: 0, src: null, el: null };   // the alarm that rings until it is stopped
+  const RG = { on: false, stage: 0, src: null, el: null, open: null, hide: 0 };   // the alarm that rings until it is stopped
   const unlockAudio = () => {
     try {
       const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -55,17 +55,26 @@
     stopSound(); if (!actx) return;
     try { const s = actx.createBufferSource(); s.buffer = ringBuffer(RG.stage); s.loop = true; s.connect(actx.destination); s.start(); RG.src = s; if (actx.state !== 'running') actx.resume().catch(() => {}); } catch (e) { RG.src = null; }
   }
-  function stopRing() { RG.on = false; RG.stage = 0; stopSound(); if (RG.el) RG.el.hidden = true; }
-  function ring(stage, title, body, tone) {
+  function stopRing() { RG.on = false; RG.stage = 0; RG.open = null; clearTimeout(RG.hide); stopSound(); if (RG.el) RG.el.hidden = true; }
+  // the card under the toolbar: an alarm that rings, or a quiet notice for a coin that is not on this chart
+  function card(title, body, tone, open, ringing) {
+    if (!RG.el) {
+      const el = document.createElement('div'); el.setAttribute('role', 'alert');
+      el.innerHTML = '<span class="dk-alarm-bell" aria-hidden="true">🔔</span><div class="dk-alarm-txt"><b></b><span></span></div><button type="button" class="dk-alarm-open" hidden>Open chart</button><button type="button" class="dk-alarm-stop">Stop alarm</button>';
+      el.querySelector('.dk-alarm-stop').addEventListener('click', stopRing);
+      el.querySelector('.dk-alarm-open').addEventListener('click', () => { const f = RG.open; stopRing(); if (f) f(); });
+      document.body.appendChild(el); RG.el = el;
+    }
+    clearTimeout(RG.hide); RG.open = open || null;
+    RG.el.className = 'dk-alarm ' + tone + (ringing ? '' : ' quiet'); RG.el.querySelector('b').textContent = title; RG.el.querySelector('.dk-alarm-txt span').textContent = hm(Date.now()) + ' UTC · ' + body;
+    RG.el.querySelector('.dk-alarm-open').hidden = !open; RG.el.querySelector('.dk-alarm-stop').textContent = ringing ? 'Stop alarm' : 'Dismiss'; RG.el.hidden = false;
+    if (!ringing) RG.hide = setTimeout(stopRing, 120000);
+  }
+  function ring(stage, title, body, tone, open) {
     if (RG.on && RG.stage > stage) return;   // a triggered setup keeps the alarm over a new "almost ready"
     const again = RG.on && RG.stage === stage && RG.src;
     RG.on = true; RG.stage = stage; if (!again) ringSound();
-    if (!RG.el) {
-      const el = document.createElement('div'); el.setAttribute('role', 'alert');
-      el.innerHTML = '<span class="dk-alarm-bell" aria-hidden="true">🔔</span><div class="dk-alarm-txt"><b></b><span></span></div><button type="button" class="dk-alarm-stop">Stop alarm</button>';
-      el.querySelector('button').addEventListener('click', stopRing); document.body.appendChild(el); RG.el = el;
-    }
-    RG.el.className = 'dk-alarm ' + tone; RG.el.querySelector('b').textContent = title; RG.el.querySelector('.dk-alarm-txt span').textContent = hm(Date.now()) + ' UTC · ' + body; RG.el.hidden = false;
+    card(title, body, tone, open, true);
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && RG.on) { e.preventDefault(); e.stopPropagation(); stopRing(); } }, true);
   function chime(stage) {
@@ -79,16 +88,16 @@
     };
     try { if (actx.state === 'running') play(); else actx.resume().then(play).catch(() => {}); } catch (e) { /* no audio */ }
   }
-  function popup(title, body, tag, sticky) {
+  function popup(title, body, tag, sticky, open) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!sticky }); n.onclick = () => { window.focus(); stopRing(); n.close(); }; } catch (e) { /* phones only allow these from an installed app */ }
+    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!sticky }); n.onclick = () => { window.focus(); stopRing(); n.close(); if (open) open(); }; } catch (e) { /* phones only allow these from an installed app */ }
   }
   const away = () => document.hidden || !document.hasFocus();   // looking at the page: the toast and the sound are enough
   const alertsOn = () => !!U.aplusAlert && !!U.aplus && !R.on && !X.smcOff;
-  function alertUser(stage, title, body, tag, tone) {
+  function alertUser(stage, title, body, tag, tone, open) {
     const rings = U.aplusRing && !(stage === 2 && U.aplusRingTrig);   // "only when a setup triggers": almost ready plays the short sound once
-    if (rings) ring(stage, title, body, tone); else if (!RG.on) chime(stage);
-    if (away()) popup(title, body, tag, rings);
+    if (rings) ring(stage, title, body, tone, open); else if (!RG.on) { chime(stage); if (open) card(title, body, tone, open, false); }
+    if (away()) popup(title, body, tag, rings, open);
   }
   document.addEventListener('click', e => {
     if (U.aplusAlert) unlockAudio();
@@ -291,6 +300,7 @@
   RD.on('mode', () => { reset(); load(); });
   RD.on('bars', () => { if (U.aplus) load(); });   // a new candle, a replay step, another timeframe
   setInterval(() => { if (U.aplus && !R.on && (!document.hidden || U.aplusAlert)) load(); }, 20000);   // live: new 1-minute closes between chart candles (alerts keep watching from a hidden tab)
-  M.analyze = analyze; window.__rdAplus = M;   // for tests
+  // the Watchlist alerts (deskwatch.js) ring through the same sound, card and notification
+  Object.assign(M, { analyze, alertUser, stopRing, unlock: unlockAudio, soundReady, stfNow }); window.__rdAplus = M;
   if (U.aplus) load();
 })();
