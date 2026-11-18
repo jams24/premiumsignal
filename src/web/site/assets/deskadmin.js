@@ -529,6 +529,9 @@
   const needWeb = f => () => { if (!L.web) { RD.toast(offTitle, 'down'); return; } f(); };
   RD.ext.realActive = () => !$('[data-pane="real"]').hidden;
   RD.ext.realSize = () => ({ margin: val('margin') > 0 ? val('margin') : null, lev: val('lev') > 0 ? Math.round(val('lev')) : null });
+  // your saved size (/long · /short settings), as the bot's last preview read it while the ticket's own fields were blank —
+  // the chart's plan bar uses it to show the $ at the stop / target when its size is left blank
+  RD.ext.realSaved = side => { const s = T.pv; if (!s || s.direction !== (side === 1 ? 'long' : 'short')) return null; const m = !(val('margin') > 0) ? +s.margin : null, l = !(val('lev') > 0) ? +s.leverage : null; return m > 0 || l > 0 ? { margin: m > 0 ? m : null, lev: l > 0 ? l : null } : null; };
   RD.ext.quickReal = q => {
     if (RD.R.on) { RD.toast('Real trading is on the live chart: exit the replay first.', 'down'); return; }
     if (q.keep) {   // Real Buy / Sell on the chart: the ticket as it is, at market, on that side

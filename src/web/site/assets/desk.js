@@ -1401,14 +1401,23 @@
     if (!Q.el || Q.stage !== 'ask') return;
     const r = Q.el.querySelector('[data-qread]'), go = Q.el.querySelector('[data-q="go"]'); if (!r || !go) return;
     const o = qOrder(), e = o.price, dist = Math.abs(e - o.sl), err = qErr();
-    const qty = Q.real ? 0 : (o.margin || 0) * o.lev / e, fee = (o.margin || 0) * o.lev * (o.kind === 'limit' ? FEE_M : FEE_T);
-    const loss = Q.real ? null : dist * qty + fee * 2, gain = Q.real || o.tp == null ? null : Math.abs(o.tp - e) * qty - fee * 2;
-    const rr = o.tp != null ? Math.abs(o.tp - e) / dist : null;
-    r.innerHTML = `<span class="down">Stop ${pct((o.sl / e - 1) * 100)}${loss != null ? ' · −' + money(loss).replace('−', '') : ''}</span>` +
-      (o.tp != null ? `<span class="up">Target ${pct((o.tp / e - 1) * 100)}${gain != null ? ' · +' + money(gain).replace('+', '') : ''}</span><span><b>${rr.toFixed(2)}R</b></span>` : `<span class="muted">${Q.real ? "TPs: the bot's plan" : 'no target'}</span>`) +
-      (loss != null && A.bal > 0 ? `<span class="muted">${(loss / A.bal * 100).toFixed(2)}% of balance</span>` : '') +
-      (!Q.real && o.margin > 0 ? `<span class="muted">liq. ${fp(liqOf(o.side, e, o.lev))}</span>` : '') +
-      (Q.real ? `<span class="muted">Next: the bot's exact order (size, max loss) to check, then Place.</span>` : '') +
+    // $ at the stop / target as you type the margin and leverage (fees in). Paper: the paper engine's fees (the entry's rate
+    // both ways). Real: an estimate before the review — the entry's fee + a market exit; the review shows the bot's exact order.
+    // a real plan's blank margin / leverage = your saved size: the bot's last preview of it (Real tab), when there is one
+    const sv = Q.real && !(o.margin > 0 && o.lev > 0) && X.realSaved ? X.realSaved(o.side) : null;
+    if (sv) { if (!(o.margin > 0) && sv.margin) o.margin = sv.margin; if (!(o.lev > 0) && sv.lev) o.lev = sv.lev; }
+    const sized = o.margin > 0 && o.lev > 0, notional = sized ? o.margin * o.lev : 0, qty = notional / e, fIn = o.kind === 'limit' ? FEE_M : FEE_T;
+    const fees = Q.real ? notional * (fIn + FEE_T) : notional * fIn * 2;
+    const loss = sized ? dist * qty + fees : null, gain = sized && o.tp != null ? Math.abs(o.tp - e) * qty - fees : null;
+    const rr = o.tp != null ? Math.abs(o.tp - e) / dist : null, liq = sized ? liqOf(o.side, e, o.lev) : null;
+    const liqFirst = liq != null && (o.side === 1 ? o.sl <= liq : o.sl >= liq);
+    const pre = Q.real ? '≈ ' : '';
+    r.innerHTML = `<span class="down">Stop ${pct((o.sl / e - 1) * 100)}${loss != null ? ` · ${pre}−${money(loss).replace('−', '')}` : ''}</span>` +
+      (o.tp != null ? `<span class="up">Target ${pct((o.tp / e - 1) * 100)}${gain != null ? ` · ${pre}${money(gain, true)}` : ''}</span><span><b>${rr.toFixed(2)}R</b></span>` : `<span class="muted">${Q.real ? "TPs: the bot's plan" : 'no target'}</span>`) +
+      (!Q.real && loss != null && A.bal > 0 ? `<span class="muted">${(loss / A.bal * 100).toFixed(2)}% of balance</span>` : '') +
+      (sized ? `<span class="muted">${money(notional)} position${sv && (!(Q.margin > 0) || !(Q.lev > 0)) ? ` (saved size ${money(o.margin)} × ${o.lev}×)` : ''} · liq. ≈ ${fp(liq)}</span>` : '') +
+      (liqFirst && Q.real ? `<p class="xbad">At ${o.lev}× the liquidation (≈ ${fp(liq)}) comes before your stop — lower the leverage.</p>` : '') +
+      (Q.real ? `<span class="muted">${sized ? 'Fees in, estimated. Next: the bot\'s exact order to check, then Place.' : 'Type a margin and leverage to see the $ at the stop and target (blank = your saved size, shown in the review).'}</span>` : '') +
       (err ? `<p class="xbad">${esc(err)}</p>` : '');
     go.disabled = !!err;
     go.className = 'tk2-go ' + (o.side === 1 ? 'up' : 'down');
