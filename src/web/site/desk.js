@@ -136,6 +136,7 @@ function desk(who, nonce) {
   </div>
   <button type="button" class="dk-pill dk-smc" data-act="smc" aria-pressed="false">SMC</button>
   <button type="button" class="dk-pill dk-coachb" data-act="coach" aria-pressed="false" title="Walk me through: the SMC coach reads this chart step by step and quizzes you">${icon('graduation-cap', 'i-35')}<span>Walk me</span></button>
+  <button type="button" class="dk-pill dk-findb" data-act="find" aria-pressed="false" title="Find setups: check a list of coins for A+ setups, with filters">${icon('search', 'i-35')}<span>Find setups</span></button>
   <button type="button" class="dk-pill dk-cmpb" data-act="cmp" aria-pressed="false" title="Compare: a second coin beside this chart">${icon('layers', 'i-35')}<span>Compare</span></button>
   <span class="dk-vsep"></span>
   <button type="button" class="dk-pill dk-rbtn" data-act="replay" title="Replay: trade past candles one by one">${icon('rewind', 'i-35')}<span>Replay</span></button>
@@ -182,6 +183,7 @@ function desk(who, nonce) {
   <section class="dk-pane" data-pane="trade">${ticket()}</section>
   ${A ? `<section class="dk-pane" data-pane="real" hidden>${realTicket()}</section><section class="dk-pane dk-sigpane" data-pane="sig" hidden><div class="sg-wrap" data-sigs></div></section>` : ''}
   <section class="dk-pane dk-mkpane" data-pane="mkt" hidden><div data-mkt></div></section>
+  <section class="dk-pane" data-pane="find" hidden><div data-find></div></section>
   <section class="dk-pane" data-pane="watch" hidden><div class="wl" data-watch></div><p class="wl-note">Tap ☆ in the coin search to add coins.</p></section>
 </aside>
 
@@ -234,7 +236,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`, `<script src="${asset('deskfind.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`, `<script src="${asset('deskwatch.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,
