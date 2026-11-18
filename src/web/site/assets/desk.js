@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false,
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -253,6 +253,14 @@
   const COL = {};
   const readCol = () => Object.assign(COL, { up: css('--up'), down: css('--down'), pri: css('--primary'), warn: css('--warn'), acc: css('--accent'), text: css('--text'), muted: css('--muted'), bg: css('--dk-bg'), panel: css('--panel') });
   readCol();
+  // candle style (Indicators → Candles). Black / white: light bodies up, dark bodies down, with one ink for wicks and outlines
+  const isLight = () => document.documentElement.dataset.theme === 'light';
+  const candleOpts = () => {
+    if (U.candles !== 'mono') return { upColor: COL.up, downColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down, borderVisible: false, priceLineColor: '' };
+    const ink = isLight() ? '#131722' : '#d7dbe3';
+    return { upColor: isLight() ? '#d9dce1' : '#eef0f4', downColor: isLight() ? '#131722' : '#2a2f3a', wickUpColor: ink, wickDownColor: ink, borderVisible: true, borderUpColor: ink, borderDownColor: ink, priceLineColor: ink };
+  };
+  const volColor = up => (U.candles === 'mono' ? (isLight() ? (up ? 'rgba(19,23,34,.2)' : 'rgba(19,23,34,.42)') : (up ? 'rgba(238,240,244,.32)' : 'rgba(238,240,244,.14)')) : hexA(up ? COL.up : COL.down, 0.35));
   const box = $('[data-chart]');
   const chart = LC.createChart(box, {
     autoSize: true,
@@ -262,7 +270,7 @@
     rightPriceScale: { borderColor: css('--dk-line'), scaleMargins: { top: 0.08, bottom: 0.18 } },
     timeScale: { borderColor: css('--dk-line'), timeVisible: true, secondsVisible: false, rightOffset: 12, barSpacing: 8, minBarSpacing: 1 },
   });
-  const cs = chart.addSeries(LC.CandlestickSeries, { upColor: COL.up, downColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down, borderVisible: false, priceLineStyle: LC.LineStyle.Dashed });
+  const cs = chart.addSeries(LC.CandlestickSeries, Object.assign(candleOpts(), { priceLineStyle: LC.LineStyle.Dashed }));
   const vs = chart.addSeries(LC.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
   const EMAS = { ema20: [20, '#f5a524'], ema50: [50, '#4f7cff'], ema200: [200, '#c084fc'] };
@@ -279,7 +287,7 @@
       crosshair: { vertLine: { labelBackgroundColor: css('--panel-3') }, horzLine: { labelBackgroundColor: css('--panel-3') } },
       rightPriceScale: { borderColor: css('--dk-line') }, timeScale: { borderColor: css('--dk-line') },
     });
-    cs.applyOptions({ upColor: COL.up, downColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down });
+    cs.applyOptions(candleOpts());
     if (S.bars.length) vs.setData(U.vol ? S.bars.map(toV) : []);
     setMarkers(); syncLines(); prim.req(); emit('theme');
   }
@@ -299,7 +307,7 @@
   const S = { bars: [], gen: 0, lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
   const R = { on: false, clock: 0, buf: [], bufEnd: 0, res: '1m', playing: false, timer: null, busy: false, end: false, step: 'bar', speed: 800, gen: 0, fetching: null };
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
-  const toV = b => ({ time: b[0] / 1000, value: b[5], color: hexA(b[4] >= b[1] ? COL.up : COL.down, 0.35) });
+  const toV = b => ({ time: b[0] / 1000, value: b[5], color: volColor(b[4] >= b[1]) });
   const lastBar = () => S.bars[S.bars.length - 1];
   const nowT = () => R.on ? R.clock : Date.now();
 
@@ -800,6 +808,8 @@
   const saveDraw = () => store.set('rd-draw-v1', DRAW);
   let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null;
   const ONE = new Set(['hline', 'ray']), TWO = new Set(['trend', 'rect', 'fib', 'measure']);
+  const drawTool = t => ONE.has(t) || TWO.has(t) || t === 'pen';
+  let PENS = [];   // strokes of this pencil session, newest last (Undo)
   const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
   function t2l(t) {
@@ -825,6 +835,17 @@
     if (l <= 0) return B[0][0] + l * ms;
     if (l >= n - 1) return B[n - 1][0] + (l - n + 1) * ms;
     return B[l][0];
+  }
+  // the exact time under x, between candles too (x2t snaps to a candle): the pencil has to follow the hand
+  function x2tExact(x) {
+    const B = S.bars, n = B.length, ms = TF[U.tf].ms, ts = chart.timeScale(), near = ts.coordinateToLogical(x);
+    if (near == null || !n) return null;
+    const i = Math.round(near), a = ts.logicalToCoordinate(i), b = ts.logicalToCoordinate(i + 1);
+    if (a == null || b == null || a === b) return null;
+    const l = i + (x - a) / (b - a);
+    if (l <= 0) return B[0][0] + l * ms;
+    if (l >= n - 1) return B[n - 1][0] + (l - n + 1) * ms;
+    const k = Math.floor(l); return B[k][0] + (B[k + 1][0] - B[k][0]) * (l - k);
   }
   const p2y = p => cs.priceToCoordinate(p), y2p = y => cs.coordinateToPrice(y);
   function tp(x, y) {
@@ -853,6 +874,11 @@
     const [x0, y0] = P[0];
     if (d.type === 'hline') { g.beginPath(); g.moveTo(0, y0); g.lineTo(W, y0); g.stroke(); label(g, fp(d.pts[0].p), W - 4, y0 - 10, c, 'right'); }
     else if (d.type === 'ray') { g.beginPath(); g.moveTo(x0, y0); g.lineTo(W, y0); g.stroke(); label(g, fp(d.pts[0].p), W - 4, y0 - 10, c, 'right'); }
+    else if (d.type === 'pen') {   // smooth through the middle of each pair of points
+      g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = sel ? 3 : 2; g.beginPath(); g.moveTo(x0, y0);
+      for (let i = 1; i < P.length - 1; i++) g.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
+      g.lineTo(P[P.length - 1][0], P[P.length - 1][1]); g.stroke(); g.lineCap = 'butt'; g.lineJoin = 'miter';
+    }
     else {
       const [x1, y1] = P[1];
       if (d.type === 'trend') { g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); }
@@ -872,7 +898,7 @@
         label(g, `${pct(ch)} · ${fp(d.pts[1].p - d.pts[0].p)} · ${Math.abs(bars)} bars · ${dur(Math.abs(d.pts[1].t - d.pts[0].t))}`, (x0 + x1) / 2, Math.min(y0, y1) - 12, c, 'center', COL.panel);
       }
     }
-    if (sel) for (const [x, y] of (d.type === 'hline' ? [] : P)) { g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fillStyle = COL.bg; g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.pri; g.stroke(); }
+    if (sel) for (const [x, y] of (d.type === 'hline' ? [] : d.type === 'pen' ? [P[0], P[P.length - 1]] : P)) { g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fillStyle = COL.bg; g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.pri; g.stroke(); }
   }
   function drawSMC(g, W) {
     const r = SMCR; if (!r) return;
@@ -927,7 +953,7 @@
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
-      if (DRAFT) drawOne(g, DRAFT, W, true);
+      if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
       xDraw(g, W, 'top');
     }) }) },
@@ -945,12 +971,13 @@
     for (let i = list.length - 1; i >= 0; i--) {
       const d = list[i], P = d.pts.map(q => [t2x(q.t), p2y(q.p)]);
       if (P.some(q => q[0] == null || q[1] == null)) continue;
-      if (d.type !== 'hline') for (let h = 0; h < P.length; h++) if (Math.hypot(P[h][0] - x, P[h][1] - y) < 10) return { d, h };
+      if (d.type !== 'hline' && d.type !== 'pen') for (let h = 0; h < P.length; h++) if (Math.hypot(P[h][0] - x, P[h][1] - y) < 10) return { d, h };
       const [x0, y0] = P[0], x1 = P[1] ? P[1][0] : 0, y1 = P[1] ? P[1][1] : 0;
       let hit = false;
       if (d.type === 'hline') hit = Math.abs(y - y0) < 6;
       else if (d.type === 'ray') hit = Math.abs(y - y0) < 6 && x > x0 - 6;
       else if (d.type === 'trend') hit = distSeg(x, y, x0, y0, x1, y1) < 6;
+      else if (d.type === 'pen') { for (let s = 1; s < P.length && !hit; s++) hit = distSeg(x, y, P[s - 1][0], P[s - 1][1], P[s][0], P[s][1]) < 7; }
       else if (d.type === 'rect') hit = x >= Math.min(x0, x1) - 4 && x <= Math.max(x0, x1) + 4 && y >= Math.min(y0, y1) - 4 && y <= Math.max(y0, y1) + 4;
       else if (d.type === 'fib') hit = x >= Math.min(x0, x1) && x <= Math.max(x0, x1) && FIBS.some(k => { const yy = p2y(d.pts[1].p + (d.pts[0].p - d.pts[1].p) * k); return yy != null && Math.abs(y - yy) < 6; });
       if (hit) return { d, h: -1 };
@@ -979,6 +1006,11 @@
     const hadMeasure = !!MEASURE && TOOL !== 'measure';
     if (hadMeasure) { MEASURE = null; prim.req(); }
     if (PICK) { PD = { kind: 'pick', x, y }; return; }
+    if (TOOL === 'pen') {
+      e.stopPropagation(); e.preventDefault();
+      const q = penPt(x, y); if (q) { DRAFT = { type: 'pen', pts: [q] }; PD = { kind: 'pen' }; prim.req(); }
+      return;
+    }
     if (TWO.has(TOOL) || ONE.has(TOOL)) {
       e.stopPropagation(); e.preventDefault();
       const pt = tp(x, y); if (pt.t == null || pt.p == null) return;
@@ -1004,6 +1036,16 @@
   }, true);
   window.addEventListener('pointermove', e => {
     const { x, y } = loc(e);
+    if (DRAFT && DRAFT.type === 'pen') {
+      if (e.pointerType === 'mouse' && !e.buttons) { penEnd(); return; }   // released outside the window
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      for (const c of evs.length ? evs : [e]) {
+        const m = loc(c), L = DRAFT.pts[DRAFT.pts.length - 1];
+        if (!inPane(m.x, m.y) || DRAFT.pts.length >= 4000 || Math.hypot(m.x - L.x, m.y - L.y) < 2) continue;
+        const q = penPt(m.x, m.y); if (q) DRAFT.pts.push(q);
+      }
+      prim.req(); return;
+    }
     if (DRAFT) { const pt = tp(x, y); if (pt.t != null && pt.p != null) { DRAFT.pts[1] = pt; prim.req(); } return; }
     if (!PD) { hover(x, y); return; }
     if (PD.kind === 'line' && DRAG) {
@@ -1021,8 +1063,10 @@
       prim.req();
     }
   });
+  window.addEventListener('pointercancel', () => { if (DRAFT && DRAFT.type === 'pen') penEnd(); });
   window.addEventListener('pointerup', e => {
     const { x, y } = loc(e);
+    if (DRAFT && DRAFT.type === 'pen') { penEnd(); return; }
     // press-drag-release draws in one go; a plain click leaves the draft open for a second click
     if (DRAFT && PD && PD.kind === 'draft') { const d0 = PD; PD = null; if (Math.hypot(x - d0.x, y - d0.y) > 8) finishDraft(); return; }
     if (!PD) return;
@@ -1033,7 +1077,7 @@
       return;
     }
     if (pd.kind === 'line' && DRAG) {
-      lock(TWO.has(TOOL) || ONE.has(TOOL));
+      lock(drawTool(TOOL));
       const w = DRAG.e.w, v = DRAG.price; DRAG = null;
       if (w.drag.ticket) { w.drag.set(v); renderTicket(); }
       else if (w.drag.commit) w.drag.commit(v);   // the admin layer asks before it changes a real order
@@ -1095,7 +1139,7 @@
     lineTip(x, y); plusAt(x, y); ghostAt(x, y);
     let c = '';
     if (PICK) c = 'c-pick';
-    else if (TWO.has(TOOL) || ONE.has(TOOL)) c = 'c-draw';
+    else if (drawTool(TOOL)) c = 'c-draw';
     else if (inPane(x, y) && hitLine(y)) c = 'c-ns';
     else if (inPane(x, y) && hitDrawing(x, y)) c = 'c-move';
     else if (TOOL === 'cross') c = 'c-cross';
@@ -1107,21 +1151,43 @@
     addDrawing(d); setTool('cursor');
   }
   function addDrawing(d) {
-    (DRAW[U.sym] = DRAW[U.sym] || []).push({ id: Date.now() + Math.random(), type: d.type, pts: d.pts.map(q => ({ t: q.t, p: q.p })) });
+    const o = { id: Date.now() + Math.random(), type: d.type, pts: d.pts.map(q => ({ t: q.t, p: q.p })) };
+    (DRAW[U.sym] = DRAW[U.sym] || []).push(o);
     if (DRAW[U.sym].length > 200) DRAW[U.sym].shift();
     saveDraw(); prim.req();
+    return o;
   }
+  // ---- pencil: one stroke per press. Stored as time + price, so it stays on its candles when the chart moves
+  function penPt(x, y) { const t = x2tExact(x), p = y2p(y); return t == null || p == null ? null : { t: Math.round(t), p: +p.toPrecision(8), x, y }; }
+  function penThin(P, eps) {   // keeps the points that shape the line (Ramer–Douglas–Peucker, in screen pixels)
+    const keep = new Uint8Array(P.length), todo = [[0, P.length - 1]]; keep[0] = keep[P.length - 1] = 1;
+    while (todo.length) {
+      const [a, b] = todo.pop(); let m = -1, far = eps;
+      for (let i = a + 1; i < b; i++) { const d = distSeg(P[i].x, P[i].y, P[a].x, P[a].y, P[b].x, P[b].y); if (d > far) { far = d; m = i; } }
+      if (m >= 0) { keep[m] = 1; todo.push([a, m], [m, b]); }
+    }
+    return P.filter((q, i) => keep[i]);
+  }
+  function penEnd() {
+    const d = DRAFT; DRAFT = null; PD = null;
+    if (d && d.pts.length >= 2) { let eps = 0.6, pts = penThin(d.pts, eps); while (pts.length > 240) { eps *= 1.5; pts = penThin(d.pts, eps); } PENS.push(addDrawing({ type: 'pen', pts }).id); }
+    prim.req();
+  }
+  function penUndo() { const id = PENS.pop(); if (id == null) return; DRAW[U.sym] = (DRAW[U.sym] || []).filter(d => d.id !== id); saveDraw(); prim.req(); }
   function removeSel() { if (!SEL) return; DRAW[U.sym] = (DRAW[U.sym] || []).filter(d => d !== SEL); SEL = null; saveDraw(); selUI(); prim.req(); }
   function setTool(t) {
     if (t === 'magnet') { U.magnet = !U.magnet; saveUI(); toolUI(); toast(U.magnet ? 'Magnet on: points snap to candle open / high / low / close' : 'Magnet off'); return; }
     if (t === 'clear') { hint(`Remove all ${(DRAW[U.sym] || []).length} drawings on ${esc(U.sym)}?`, [['Remove', () => { DRAW[U.sym] = []; SEL = null; saveDraw(); prim.req(); hint(); }], ['Cancel', () => hint()]]); return; }
-    TOOL = t; DRAFT = null; lock(TWO.has(t) || ONE.has(t)); toolUI();
-    if (t !== 'cursor' && t !== 'cross') { hint(`${{ trend: 'Trend line', hline: 'Horizontal line', ray: 'Horizontal ray', rect: 'Rectangle', fib: 'Fibonacci', measure: 'Measure' }[t]}: ${ONE.has(t) ? 'tap the chart at the price' : 'drag across the chart, or tap two points'}`, [['Cancel', () => setTool('cursor')]]); }
+    TOOL = t; DRAFT = null; PENS = []; lock(drawTool(t)); toolUI();
+    if (t === 'pen') hint('Pencil: drag on the chart to draw', [['Undo', penUndo], ['Done', () => setTool('cursor')]]);
+    else if (t !== 'cursor' && t !== 'cross') { hint(`${{ trend: 'Trend line', hline: 'Horizontal line', ray: 'Horizontal ray', rect: 'Rectangle', fib: 'Fibonacci', measure: 'Measure' }[t]}: ${ONE.has(t) ? 'tap the chart at the price' : 'drag across the chart, or tap two points'}`, [['Cancel', () => setTool('cursor')]]); }
     else hint();
     if (phone()) root.classList.toggle('tools-open', false);
     prim.req();
   }
-  function toolUI() { $$('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === TOOL || (b.dataset.tool === 'magnet' && U.magnet))); }
+  // phones: otherwise the browser takes a finger drag for scrolling and cancels the stroke after a few points
+  const touchUI = () => { box.style.touchAction = drawTool(TOOL) || SEL ? 'none' : ''; };
+  function toolUI() { $$('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === TOOL || (b.dataset.tool === 'magnet' && U.magnet))); touchUI(); }
   const hintEl = $('[data-hint]');
   function hint(text, btns) {
     if (!text) { hintEl.hidden = true; hintEl.innerHTML = ''; return; }
@@ -1129,7 +1195,7 @@
     hintEl.hidden = false; hintEl._b = btns || [];
   }
   hintEl.addEventListener('click', e => { const b = e.target.closest('[data-h]'); if (b && hintEl._b[+b.dataset.h]) hintEl._b[+b.dataset.h][1](); });
-  function selUI() { if (SEL) hint('Drawing selected', [['Delete', removeSel], ['Done', () => { SEL = null; prim.req(); hint(); }]]); else if (!PICK && TOOL === 'cursor') hint(); }
+  function selUI() { touchUI(); if (SEL) hint('Drawing selected', [['Delete', removeSel], ['Done', () => { SEL = null; touchUI(); prim.req(); hint(); }]]); else if (!PICK && TOOL === 'cursor') hint(); }
 
   // pick a price for the ticket, or a candle to start the replay from
   // cb (admin layer): the picked price goes to cb instead of the paper ticket; field names the button that lights up
@@ -1552,6 +1618,7 @@
     $('[data-act="smc"]').setAttribute('aria-pressed', String(!!U.smc));
     $$('[data-act="smcall"]').forEach(b => { if (!b.closest('[data-legend]')) b.classList.toggle('on', (b.dataset.v === '1') === !!U.smcAll); });
     $$('[data-ind]').forEach(i => { i.checked = !!U[i.dataset.ind]; });
+    $$('[data-act="candles"]').forEach(b => { const on = b.dataset.v === (U.candles === 'mono' ? 'mono' : 'color'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
     document.title = `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`;
     $$('.wl-row').forEach(r => r.classList.toggle('on', r.dataset.s === U.sym));
   }
@@ -1731,6 +1798,7 @@
       if (act === 'search') openSearch();
       else if (act === 'retry') { hideMsg(); if (S.retry) S.retry(); }
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
+      else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
       else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc) U.smc = true; saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'smc') { U.smc = !U.smc; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
@@ -1790,13 +1858,14 @@
   document.addEventListener('keydown', e => {
     if (anyModal()) { if (e.key === 'Escape') closeModals(); return; }
     if (e.target.closest && e.target.closest('input, select, textarea')) { if (e.key === 'Escape') e.target.blur(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && TOOL === 'pen') { e.preventDefault(); penUndo(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === 'Escape') { if (Q.on) qEnd(); menuClose(); if (DRAFT || TOOL !== 'cursor') setTool('cursor'); if (PICK) clearPick(); if (MEASURE) { MEASURE = null; prim.req(); } if (SEL) { SEL = null; selUI(); prim.req(); } closeSheets(); }
     else if (k === ' ' && R.on) { e.preventDefault(); if (R.playing) pausePlay(); else play(); }
     else if (k === 'ArrowRight' && R.on) { e.preventDefault(); pausePlay(); step(); }
     else if ((k === 'Delete' || k === 'Backspace') && SEL) { e.preventDefault(); removeSel(); }
-    else { const map = { t: 'trend', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
+    else { const map = { p: 'pen', t: 'trend', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
   });
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) root.classList.remove('full'); });
   // drag the top edge of the positions panel to make it taller or shorter (remembered)
@@ -1823,7 +1892,7 @@
   window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,

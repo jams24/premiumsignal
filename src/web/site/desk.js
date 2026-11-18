@@ -9,7 +9,7 @@ const LWC = '<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/
 const TFS = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'];
 const TOOLS = [
   ['cursor', 'mouse-pointer-2', 'Cursor (Esc)'], ['cross', 'crosshair', 'Crosshair'], null,
-  ['trend', 'move-diagonal', 'Trend line (T)'], ['hline', 'minus', 'Horizontal line (H)'], ['ray', 'move-horizontal', 'Horizontal ray (R)'],
+  ['pen', 'pencil', 'Pencil: draw freehand (P)'], ['trend', 'move-diagonal', 'Trend line (T)'], ['hline', 'minus', 'Horizontal line (H)'], ['ray', 'move-horizontal', 'Horizontal ray (R)'],
   ['rect', 'rectangle-horizontal', 'Rectangle / zone (B)'], ['fib', 'list', 'Fibonacci retracement (F)'], ['measure', 'ruler', 'Measure (M)'], null,
   ['magnet', 'magnet', 'Magnet: snap to candle high / low / open / close'], ['clear', 'trash-2', 'Remove all drawings on this coin'],
 ];
@@ -109,6 +109,7 @@ function desk(who, nonce) {
   <div class="dk-ind">
     <button type="button" class="dk-pill" data-act="ind" aria-expanded="false" title="Indicators">${icon('activity', 'i-35')}<span>Indicators</span></button>
     <div class="dk-pop" data-indpop hidden>
+      <div class="dk-smcall dk-cstyle" role="group" aria-label="Candle colours"><span>Candles</span><button type="button" data-act="candles" data-v="color">Green / red</button><button type="button" data-act="candles" data-v="mono">Black / white</button></div>
       <label><input type="checkbox" data-ind="vol" checked> Volume</label>
       <label><input type="checkbox" data-ind="ema20"> EMA 20</label>
       <label><input type="checkbox" data-ind="ema50"> EMA 50</label>

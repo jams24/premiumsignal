@@ -53,7 +53,7 @@
       rightPriceScale: { borderColor: css('--dk-line'), scaleMargins: { top: 0.12, bottom: 0.18 } },
       timeScale: { borderColor: css('--dk-line'), timeVisible: true, secondsVisible: false, rightOffset: 12, barSpacing: 8, minBarSpacing: 1 },
     });
-    cs = ch.addSeries(LC.CandlestickSeries, { upColor: COL.up, downColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down, borderVisible: false, priceLineStyle: LC.LineStyle.Dashed });
+    cs = ch.addSeries(LC.CandlestickSeries, Object.assign(RD.candleOpts(), { priceLineStyle: LC.LineStyle.Dashed }));
     vs = ch.addSeries(LC.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
     ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     mk = typeof LC.createSeriesMarkers === 'function' ? LC.createSeriesMarkers(cs, []) : null;
@@ -80,12 +80,12 @@
   }
   const at = (B, t) => { let lo = 0, hi = B.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (B[m][0] <= t) lo = m; else hi = m - 1; } return B[lo] && B[lo][0] === t ? B[lo] : null; };
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
-  const toV = b => ({ time: b[0] / 1000, value: b[5], color: hexA(b[4] >= b[1] ? COL.up : COL.down, 0.35) });
+  const toV = b => ({ time: b[0] / 1000, value: b[5], color: RD.volColor(b[4] >= b[1]) });
   function theme() {
     if (!ch) return;
     ch.applyOptions({ layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted }, grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
       crosshair: { vertLine: { labelBackgroundColor: css('--panel-3') }, horzLine: { labelBackgroundColor: css('--panel-3') } }, rightPriceScale: { borderColor: css('--dk-line') }, timeScale: { borderColor: css('--dk-line') } });
-    cs.applyOptions({ upColor: COL.up, downColor: COL.down, wickUpColor: COL.up, wickDownColor: COL.down });
+    cs.applyOptions(RD.candleOpts());
     if (C.bars.length) vs.setData(C.bars.map(toV));
     marks(); prim.req();
   }
