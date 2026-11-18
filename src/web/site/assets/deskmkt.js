@@ -69,11 +69,28 @@
   }
 
   // ---------------------------------------------------------------- state
-  const OPEN0 = { ov: true, fu: true, oi: false, ls: false, nw: true, al: true, tr: false, hr: false, pa: false, zr: false };
+  const OPEN0 = { ov: true, fu: true, oi: false, ls: false, nw: true, al: true, tr: false, hr: false, pa: false, zr: false, eq: false };
   const M = { open: Object.assign({}, OPEN0, store.get('rd-mk-v1', null) || {}), d: {}, err: {}, at: {}, busy: {}, key: '', nwTab: store.get('rd-mk-nwtab', 'cal'),
     imp: store.get('rd-mk-imp', 'hm'), zrTf: store.get('rd-mk-zrtf', '15m'), zrDays: [1, 2, 7, 30, 90].includes(+store.get('rd-mk-zrdays', 30)) ? +store.get('rd-mk-zrdays', 30) : 30, zrMarks: !!store.get('rd-mk-zrmk', false), again: {}, hlCoin: !!store.get('rd-mk-hlcoin', false), warn: !!store.get('rd-mk-warn', false), warned: new Set(), news: null, newsAt: 0, newsErr: '' };
   const saveOpen = () => store.set('rd-mk-v1', M.open);
   const zrDays = () => (M.zrTf === '5m' ? Math.min(M.zrDays, 30) : M.zrDays);   // 5m: 30 days at most (8,640 candles)
+  // Equal lows / highs section: its own timeframe and period (1m: 7 days at most, 5m: 30)
+  M.eqTf = ['1m', '5m', '15m', '1H'].includes(store.get('rd-mk-eqtf', '5m')) ? store.get('rd-mk-eqtf', '5m') : '5m';
+  M.eqDays = [1, 2, 7, 30, 90].includes(+store.get('rd-mk-eqdays', 7)) ? +store.get('rd-mk-eqdays', 7) : 7;
+  M.eqMarks = !!store.get('rd-mk-eqmk', false);
+  const eqCap = tf => (tf === '1m' ? 7 : tf === '5m' ? 30 : 90);
+  const eqDays = () => Math.min(M.eqDays, eqCap(M.eqTf));
+  // closed candles for the zone and equal-level sections: one download when both ask for the same timeframe and period
+  const KC = new Map();
+  function candles(tf, from, to) {
+    const k = [keyNow(), tf, from, to].join('|');
+    if (!KC.has(k)) {
+      const p = u.fetchRange(U.sym, tf, from, to, U.ex);
+      KC.set(k, p); p.catch(() => KC.delete(k));
+      while (KC.size > 4) KC.delete(KC.keys().next().value);
+    }
+    return KC.get(k);
+  }
   const nearZones = (zs, px) => { let dem = null, sup = null;
     for (const z of zs) { if (z.type === 'demand' && z.bot <= px && (!dem || z.top > dem.top)) dem = z; if (z.type === 'supply' && z.top >= px && (!sup || z.bot < sup.bot)) sup = z; }
     return { dem, sup }; };
@@ -196,9 +213,18 @@
       if (!window.SMC || !window.ZoneStats) throw new Error('the SMC engine did not load');
       const tf = M.zrTf, days = zrDays(), ms = u.TF[tf].ms, to = Math.floor(Date.now() / ms) * ms;
       // 300 candles before the period as warm-up: the engine knows the zones when the period starts; only touches inside it count
-      const from = to - days * DAY, K = await u.fetchRange(U.sym, tf, from - 300 * ms, to, U.ex);   // closed candles only
+      const from = to - days * DAY, K = await candles(tf, from - 300 * ms, to);   // closed candles only
       if (K.length < 60 || !K.some(k => k[0] >= from)) throw new Error('not enough candles yet (a new listing?)');
       const z = window.ZoneStats.zoneStats(window.SMC, K, ms, { seed: U.ex + U.sym + tf + days, from });
+      z.tf = tf; z.days = days;
+      return z;
+    },
+    async eq() {
+      if (!window.SMC || !window.ZoneStats || !window.ZoneStats.eqStats) throw new Error('the SMC engine did not load');
+      const tf = M.eqTf, days = eqDays(), ms = u.TF[tf].ms, to = Math.floor(Date.now() / ms) * ms;
+      const from = to - days * DAY, K = await candles(tf, from - 300 * ms, to);   // the same warm-up as the zones
+      if (K.length < 60 || !K.some(k => k[0] >= from)) throw new Error('not enough candles yet (a new listing?)');
+      const z = window.ZoneStats.eqStats(window.SMC, K, ms, { seed: U.ex + U.sym + tf + days, from });
       z.tf = tf; z.days = days;
       return z;
     },
@@ -219,7 +245,8 @@
     return d;
   }
   // how often each section refreshes while the panel is open (ms)
-  const EVERY = { ov: 15e3, fu: 15e3, oi: 60e3, ls: 60e3, tr: 120e3, hr: 30 * 60e3, pa: 60e3, zr: 5 * 60e3 };
+  const EVERY = { ov: 15e3, fu: 15e3, oi: 60e3, ls: 60e3, tr: 120e3, hr: 30 * 60e3, pa: 60e3, zr: 5 * 60e3,
+    get eq() { return M.eqTf === '1m' ? 60e3 : M.eqTf === '5m' ? 2 * 60e3 : 5 * 60e3; } };
 
   async function loadSec(k, force) {
     if (M.busy[k]) { if (force) M.again[k] = true; return; }
@@ -228,7 +255,7 @@
     try { const d = await L[k](); if (key !== keyNow()) return; d.key = key; M.d[k] = d; M.err[k] = ''; M.at[k] = Date.now(); }
     catch (e) { if (key !== keyNow()) return; M.err[k] = e.message || String(e); M.at[k] = Date.now(); }
     finally { M.busy[k] = false; if (M.again[k]) { M.again[k] = false; setTimeout(() => loadSec(k, true), 0); } }
-    if (key === keyNow()) { paintSec(k); if (k === 'ov') { paintSec('fu'); legendSoon(); } if (k === 'zr' && M.zrMarks && RD.setMarkers) RD.setMarkers(); }
+    if (key === keyNow()) { paintSec(k); if (k === 'ov') { paintSec('fu'); legendSoon(); } if (((k === 'zr' && M.zrMarks) || (k === 'eq' && M.eqMarks)) && RD.setMarkers) RD.setMarkers(); }
   }
   async function loadNews(force) {
     if (M.newsBusy || (!force && Date.now() - M.newsAt < 5 * 60e3)) return;
@@ -242,6 +269,7 @@
     if (!visible()) return;
     for (const k of Object.keys(L)) if (M.open[k] || (k === 'ov' && (M.open.fu || M.open.oi))) loadSec(k, force);
     if (M.zrMarks && !M.open.zr) loadSec('zr', force);
+    if (M.eqMarks && !M.open.eq) loadSec('eq', force);
     if (M.open.nw) loadNews(force);
   }
 
@@ -250,6 +278,7 @@
     ['ov', 'Overview', 'activity'], ['fu', 'Funding', 'percent'], ['oi', 'Open interest', 'layers'], ['ls', 'Long / short', 'users'],
     ['nw', 'News', 'newspaper'], ['al', 'Alerts', 'bell'], ['tr', 'Trend · 4H 1H 15m', 'trending-up'], ['hr', 'When the coin moves', 'clock'],
     ['pa', 'Price action · 24h / 48h', 'activity'], ['zr', 'SMC zones · how this coin reacts', 'target'],
+    ['eq', 'EQL / EQH · how this coin reacts', 'minus'],
   ];
   pane.innerHTML = `<div class="mk-note" data-mk-rp hidden>${u.ic('info')}<span>Replay: this panel shows the market <b>now</b>, not at the replay time.</span></div>` +
     SECS.map(([k, t, i]) => `<section class="mk-sec" data-mk="${k}">
@@ -276,6 +305,19 @@
   }
   function paintAll() { for (const [k] of SECS) paintSec(k); }
 
+  // a first-touch trade in words (SMC zones and equal levels): the plan, how it ended in R, the best run before the stop
+  const sp = (a, b) => { const v = (b / a - 1) * 100; return (v < 0 ? '−' : '+') + Math.abs(v).toFixed(2) + '%'; };
+  const when = (x, t0) => (day(x) === day(t0) ? '' : day(x) + ' ') + hhmm(x) + ' UTC';
+  const lag = ms => { const q = Math.round(ms / MIN); return q <= 0 ? 'the touch candle itself' : q < 60 ? q + 'm after the touch' : q < 1440 ? Math.floor(q / 60) + 'h ' + String(q % 60).padStart(2, '0') + 'm after the touch' : Math.floor(q / 1440) + 'd ' + Math.floor((q % 1440) / 60) + 'h after the touch'; };
+  function rLines(t, L) {
+    const plan = `${L ? 'Long' : 'Short'} ${fp(t.entry)} · stop ${fp(t.stop)} (${sp(t.entry, t.stop)}) · target ${fp(t.target)} (${sp(t.entry, t.target)})`;
+    const end = t.res === 1 ? `✓ Target hit first: +1R · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : t.res === 0 ? `✗ Stop hit first: −1R · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : '· Neither hit yet (or not within 96 candles)';
+    const b = t.best != null ? t.best : null, bR = b == null ? '' : '+' + b.toFixed(1) + 'R';
+    const run = b == null ? '' : t.res === 0 ? (b >= 0.1 ? `Best run before the stop: ${bR} (${fp(t.entry + (L ? 1 : -1) * b * Math.abs(t.entry - t.stop))})` : 'It never moved in your favour before the stop')
+      : t.res === 1 ? `Best run before the stop (or 96 candles): ${bR} · ${b >= 3 ? 'a 3R target would have hit' : b >= 2 ? 'a 2R target would have hit' : 'a 2R target would have missed'}`
+      : `Best run so far: ${bR}`;
+    return plan + '\n' + end + (run ? '\n' + run : '');
+  }
   const P = {
     ov() {
       const d = M.d.ov;
@@ -517,19 +559,10 @@
         : sup && px >= sup.bot ? `Price is <b>in a supply zone</b> ${fp(sup.bot)}–${fp(sup.top)}: a short here is the trade above, held <b>${pc(V.supply)}</b> on ${esc(coin())} vs ${bs(V.supply)} at random.${first(sup)}`
         : `Not in a zone. ${dem ? `Demand ${fp(dem.bot)}–${fp(dem.top)} is ${pc1((dem.top / px - 1) * 100)} away` : 'No unbroken demand below'}; ${sup ? `supply ${fp(sup.bot)}–${fp(sup.top)} is ${pc1((sup.bot / px - 1) * 100)} away` : 'no unbroken supply above'}.`;
       const last = d.touches.slice(-30);
-      const sp = (a, b) => { const v = (b / a - 1) * 100; return (v < 0 ? '−' : '+') + Math.abs(v).toFixed(2) + '%'; };
-      const when = (x, t0) => (day(x) === day(t0) ? '' : day(x) + ' ') + hhmm(x) + ' UTC';
-      const lag = ms => { const q = Math.round(ms / MIN); return q <= 0 ? 'the touch candle itself' : q < 60 ? q + 'm after the touch' : q < 1440 ? Math.floor(q / 60) + 'h ' + String(q % 60).padStart(2, '0') + 'm after the touch' : Math.floor(q / 1440) + 'd ' + Math.floor((q % 1440) / 60) + 'h after the touch'; };
       const tip = t => {
         const L = t.type === 'demand', head = `${L ? 'Demand' : 'Supply'} ${fp(t.bot)}–${fp(t.top)} · touched ${day(t.t)} ${hhmm(t.t)} UTC`;
         if (t.target == null) return head + `\n${L ? 'Long' : 'Short'}: the candle opened past the stop ${fp(t.stop)}, so it counts as went through (a loss of more than 1R)`;
-        const plan = `${L ? 'Long' : 'Short'} ${fp(t.entry)} · stop ${fp(t.stop)} (${sp(t.entry, t.stop)}) · target ${fp(t.target)} (${sp(t.entry, t.target)})`;
-        const end = t.res === 1 ? `✓ Target hit first: +1R · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : t.res === 0 ? `✗ Stop hit first: −1R · ${when(t.hitT, t.t)} candle, ${lag(t.hitT - t.t)}` : '· Neither hit yet (or not within 96 candles)';
-        const b = t.best != null ? t.best : null, bR = b == null ? '' : '+' + b.toFixed(1) + 'R';
-        const run = b == null ? '' : t.res === 0 ? (b >= 0.1 ? `Best run before the stop: ${bR} (${fp(t.entry + (L ? 1 : -1) * b * Math.abs(t.entry - t.stop))})` : 'It never moved in your favour before the stop')
-          : t.res === 1 ? `Best run before the stop (or 96 candles): ${bR} · ${b >= 3 ? 'a 3R target would have hit' : b >= 2 ? 'a 2R target would have hit' : 'a 2R target would have missed'}`
-          : `Best run so far: ${bR}`;
-        return head + '\n' + plan + '\n' + end + (run ? '\n' + run : '');
+        return head + '\n' + rLines(t, L);
       };
       const dots = last.map(t => `<i class="${t.res === 1 ? 'up' : t.res === 0 ? 'down' : 'op'}" data-tip="${esc(tip(t))}">${t.type === 'demand' ? '▲' : '▼'}</i>`).join('');
       const any = ['demand', 'supply'].some(k => V[k].n >= 20 && V[k].beyond);
@@ -541,6 +574,61 @@
           <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-zrmk${M.zrMarks ? ' checked' : ''}><span></span>Mark the touches on the chart <em class="m">(squares)</em></label></div>
           <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} day${days === 1 ? '' : 's'}${days <= 2 ? ' (+300 earlier candles so the zones are known from the start; only touches inside the period count — a day or two has few touches, so read it as what happened, not a pattern)' : ''}, fetched live from ${esc(u.api(U.ex).name)}. Each zone's first touch: entry at its edge, stop 0.1% past the far edge, target the same distance (1R). Random = the same stop and target from 20 random candles of this coin per touch. In our tests (207 coins, 3 months) a coin's score did not carry into the next month and zones overall held about as often as random, so read this as how ${esc(coin())} behaved, not a forecast.</p>`,
         after: b => tips(b, 'zr'),
+      };
+    },
+    eq() {
+      const d = M.d.eq, Z = window.ZoneStats, tf = M.eqTf, days = eqDays();
+      const capT = n => (n > eqCap(tf) ? `${tf}: ${eqCap(tf)} days at most` : '');
+      const ctl = `<div class="mk-tools"><div class="mk-seg sm" aria-label="Timeframe">${['1m', '5m', '15m', '1H'].map(t => `<button type="button" data-mk-eqtf="${t}" class="${tf === t ? 'on' : ''}">${t}</button>`).join('')}</div>
+        <div class="mk-seg sm" aria-label="How far back">${[1, 2, 7, 30, 90].map(n => `<button type="button" data-mk-eqd="${n}" class="${days === n ? 'on' : ''}"${capT(n) ? ` disabled title="${capT(n)}"` : ''}>${n}d</button>`).join('')}</div></div>`;
+      if (!d || d.tf !== tf || d.days !== days || !Z) return { html: ctl + (M.err.eq ? errBox('eq', M.err.eq) : spin) };
+      const V = { L: Z.verdict(d.L, d.L.rnd), H: Z.verdict(d.H, d.H.rnd) };
+      const say = (v) => (v.n < 20 ? ['', 'too few touches to tell'] : v.base == null ? ['', 'no random comparison'] : !v.beyond ? ['', 'same as random'] : v.diff > 0 ? ['up', 'held more often than random'] : ['down', 'went through more often than random']);
+      const pp = (a, b) => (b ? (a / b * 100).toFixed(0) + '%' : '—');
+      const stopMed = k => { const v = d.touches.filter(t => t.side === k && t.res != null).map(t => Math.abs(t.stop / t.entry - 1) * 100).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)].toFixed(2) + '%' : '—'; };
+      const side = k => {
+        const S = d[k], v = V[k], n = S.held + S.against, Lo = k === 'L', name = Lo ? '▲ Equal lows · longs' : '▼ Equal highs · shorts';
+        if (!n) return `<div class="zr-side"><div class="zr-h"><b>${name}</b><em>no finished first touches${S.open ? ` · ${S.open} still open` : ''}</em></div></div>`;
+        const hp = S.held / n * 100, w = say(v), fR = S.feeR / n, net = (2 * S.held - n) / n - fR;
+        return `<div class="zr-side" data-eq-side="${k}"><div class="zr-h"><b>${name}</b><em>${n} first touches${S.open ? ` · ${S.open} still open` : ''}</em></div>
+          <div class="zr-bar" title="Held ${hp.toFixed(0)}% · the same trade at random levels ${v.base == null ? '—' : v.base.toFixed(0) + '%'} (the white tick)"><i class="up" style="width:${hp.toFixed(1)}%"></i><i class="down" style="width:${(100 - hp).toFixed(1)}%"></i>${v.base == null ? '' : `<s style="left:${v.base.toFixed(1)}%"></s>`}</div>
+          <div class="zr-num"><span class="up" title="Target hit before the stop">Held ${S.held} · ${hp.toFixed(0)}%</span><span class="down" title="Stop hit before the target">Went through ${S.against} · ${(100 - hp).toFixed(0)}%</span></div>
+          <p class="zr-v">Stop 1 ATR: median <b>${stopMed(k)}</b> from entry (target the same distance the other way).</p>
+          <p class="zr-v">Same trade at random levels: <b>${v.base == null ? '—' : v.base.toFixed(0) + '%'}</b> held${v.luck == null ? '' : ` · luck ±${v.luck.toFixed(0)}`} → <b class="${w[0]}" data-eq-say="${k}">${w[1]}</b></p>
+          <p class="zr-v" data-eq-zone="${k}">At a ${Lo ? 'demand' : 'supply'} zone: <b>${pp(S.zone.held, S.zone.n)}</b> held (${S.zone.n} touches) · random ${pp(S.rndZone.held, S.rndZone.n)}</p>
+          <p class="zr-v" data-eq-old="${k}" title="The same trade at single swing ${Lo ? 'lows' : 'highs'} that are not part of an equal pair: is “equal” any better than an ordinary old ${Lo ? 'low' : 'high'}?">Any single old ${Lo ? 'low' : 'high'}: <b>${pp(S.old.held, S.old.n)}</b> held (${S.old.n})</p>
+          <p class="zr-v" title="The touch candle's own close: ${Lo ? 'back above' : 'back below'} the level (a wick through, or just a tap) vs closed through it">Touch candle closed back ${Lo ? 'above' : 'below'} the level: <b>${pp(S.back, n)}</b> · random ${pp(S.rnd.back, S.rnd.all)}</p>
+          <p class="zr-v" title="How far price ran in the trade's favour before the stop (or 96 candles), before fees">Ran <b>2R or more</b> before the stop: <b>${pp(S.r2, S.n2)}</b> · random ${pp(S.rnd.r2, S.rnd.n2)}</p>
+          <p class="zr-v" data-eq-fee="${k}" title="+1R at the target, −1R at the stop, minus 0.07% fees a trade (limit in, market out) as a share of the stop">After fees: <b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : '−'}${Math.abs(net).toFixed(2)}R</b> a trade · break-even needs ${(50 + fR * 50).toFixed(0)}% held</p></div>`;
+      };
+      const px = live() && S.lastPx ? S.lastPx : d.price;
+      const act = d.active || [];
+      const eql = act.filter(e => e.side === 'L' && e.p < px).sort((a, b) => b.p - a.p)[0], eqh = act.filter(e => e.side === 'H' && e.p > px).sort((a, b) => a.p - b.p)[0];
+      const pc = v => (v.pct == null ? '—' : v.pct.toFixed(0) + '%'), bs = v => (v.base == null ? '—' : v.base.toFixed(0) + '%');
+      const now = (eql ? `Equal lows <b>${fp(eql.p)}</b> (${pc1((eql.p / px - 1) * 100)})${eql.zone ? ' at a demand zone' : ''}: a long on the first touch is the trade above, held <b>${pc(V.L)}</b> on ${esc(coin())} vs ${bs(V.L)} at random.`
+        : `No equal lows below that price has not traded through.`) + '<br>' +
+        (eqh ? `Equal highs <b>${fp(eqh.p)}</b> (${pc1((eqh.p / px - 1) * 100)})${eqh.zone ? ' at a supply zone' : ''}: a short on the first touch held <b>${pc(V.H)}</b> vs ${bs(V.H)} at random.`
+        : `No equal highs above that price has not traded through.`);
+      const last = d.touches.slice(-30);
+      const tip = t => {
+        const L = t.side === 'L', pair = `${when(t.first, t.t)} and ${when(t.second, t.t)}`;
+        const head = `Equal ${L ? 'lows' : 'highs'} ${fp(t.p)} (the ${L ? 'lows' : 'highs'} of the ${pair} candles)${t.zone ? ` · at a ${L ? 'demand' : 'supply'} zone` : ''}\nTouched ${day(t.t)} ${hhmm(t.t)} UTC · ${t.back ? (L ? 'that candle closed back above' : 'that candle closed back below') : 'that candle closed through it'}`;
+        return head + '\n' + rLines(t, L);
+      };
+      const dots = last.map(t => `<i class="${t.res === 1 ? 'up' : t.res === 0 ? 'down' : 'op'}" data-tip="${esc(tip(t))}">${t.side === 'L' ? '▲' : '▼'}</i>`).join('');
+      const any = ['L', 'H'].some(k => V[k].n >= 20 && V[k].beyond);
+      const def = '▲ equal lows (long) · ▼ equal highs (short) · green: target hit first, red: stop hit first. Hover or tap one for the level, entry, stop and target.';
+      return {
+        sum: `L ${pc(V.L)} · H ${pc(V.H)}${any ? '' : ' <em>≈ random</em>'}`,
+        html: ctl + side('L') + side('H') +
+          `<div class="zr-now" data-eq-now>${now}</div>
+          ${dots ? `<p class="mk-day">Last ${last.length} touches · oldest → newest</p><div class="zr-dots" data-mk-tips="eq">${dots}</div><div class="mk-read zr-read" data-mk-read="eq" data-def="${def}">${def}</div>` : ''}
+          <div class="mk-tools" style="margin-top:8px"><label class="mk-sw"><input type="checkbox" data-mk-eqmk${M.eqMarks ? ' checked' : ''}><span></span>Mark the touches on the chart <em class="m">(arrows)</em></label></div>
+          <p class="mk-p m">${d.candles.toLocaleString('en')} closed ${tf} candles, ${days} day${days === 1 ? '' : 's'} (+300 earlier candles so the levels are known from the start; only touches inside the period count${days <= 2 ? ' — a day or two has few touches, so read it as what happened, not a pattern' : ''}), fetched live from ${esc(u.api(U.ex).name)}.
+          Equal lows = two swing lows within 0.1% (or 0.2 ATR), at most 48 candles apart; the lower one is the level (equal highs the same way up). First touch after the second low (high) is confirmed: entry at the level, stop 1 ATR past it, target 1 ATR the other way (1R), 96 candles at most. Random = a level the same distance from price at 20 random candles of this coin and period, same stop and target.
+          With SMC on, the chart draws only the equal lows / highs price has not traded through yet, so the lines you see are the ones that held so far.
+          Our test (18 Nov, 65 coins): they hold 2–9 points more often than random levels on 1m / 5m, not on 1h / 4h, about as often as any old swing low on big coins, and lose after fees — a reaction, not an edge.</p>`,
+        after: b => tips(b, 'eq'),
       };
     },
   };
@@ -671,6 +759,15 @@
       color: t.res === 1 ? C.up || '#22c55e' : t.res === 0 ? C.down || '#ef4444' : '#8b93a1',
       text: (t.type === 'demand' ? 'D' : 'S') + (t.res === 1 ? ' ✓' : t.res === 0 ? ' ✗' : ' ·') }));
   });
+  // equal-level touches on the chart (Equal lows / highs → "Mark the touches"): arrows EQL / EQH, the same ✓ ✗ ·
+  if (X.marks) X.marks.push(() => {
+    const d = M.d.eq;
+    if (!M.eqMarks || !d || d.key !== keyNow() || R.on) return [];
+    const C = RD.COL || {};
+    return d.touches.map(t => ({ t: t.t, position: t.side === 'L' ? 'belowBar' : 'aboveBar', shape: t.side === 'L' ? 'arrowUp' : 'arrowDown',
+      color: t.res === 1 ? C.up || '#22c55e' : t.res === 0 ? C.down || '#ef4444' : '#8b93a1',
+      text: (t.side === 'L' ? 'EQL' : 'EQH') + (t.res === 1 ? ' ✓' : t.res === 0 ? ' ✗' : ' ·') }));
+  });
 
   // ---------------------------------------------------------------- events
   pane.addEventListener('click', e => {
@@ -680,6 +777,8 @@
     const nt = e.target.closest('[data-mk-nt]'); if (nt) { M.nwTab = nt.dataset.mkNt; store.set('rd-mk-nwtab', M.nwTab); paintSec('nw'); return; }
     const zt = e.target.closest('[data-mk-zrtf]'); if (zt) { M.zrTf = zt.dataset.mkZrtf; store.set('rd-mk-zrtf', M.zrTf); M.err.zr = ''; paintSec('zr'); loadSec('zr', true); return; }
     const zd = e.target.closest('[data-mk-zrd]'); if (zd && !zd.disabled) { M.zrDays = +zd.dataset.mkZrd; store.set('rd-mk-zrdays', M.zrDays); M.err.zr = ''; paintSec('zr'); loadSec('zr', true); return; }
+    const et = e.target.closest('[data-mk-eqtf]'); if (et) { M.eqTf = et.dataset.mkEqtf; store.set('rd-mk-eqtf', M.eqTf); M.err.eq = ''; paintSec('eq'); loadSec('eq', true); return; }
+    const ed = e.target.closest('[data-mk-eqd]'); if (ed && !ed.disabled) { M.eqDays = +ed.dataset.mkEqd; store.set('rd-mk-eqdays', M.eqDays); M.err.eq = ''; paintSec('eq'); loadSec('eq', true); return; }
     const im = e.target.closest('[data-mk-imp]'); if (im) { M.imp = im.dataset.mkImp; store.set('rd-mk-imp', M.imp); paintSec('nw'); return; }
     const del = e.target.closest('[data-mk-aldel]'); if (del) { AL.list = AL.list.filter(a => a.id !== del.dataset.mkAldel); saveAl(); RD.syncLines(); paintSec('al'); return; }
     const go = e.target.closest('[data-mk-algo]'); if (go) { const a = AL.list.find(x => x.id === go.dataset.mkAlgo); if (a) RD.setSymbol(a.sym, a.ex); return; }
@@ -690,6 +789,7 @@
     if (t.matches('[data-mk-warn]')) { M.warn = t.checked; store.set('rd-mk-warn', M.warn); if (M.warn) { beep('news'); askNotify(); RD.toast('You will get a warning 15 minutes before each red news event while this page is open.'); } }
     else if (t.matches('[data-mk-hlcoin]')) { M.hlCoin = t.checked; store.set('rd-mk-hlcoin', M.hlCoin); paintSec('nw'); }
     else if (t.matches('[data-mk-zrmk]')) { M.zrMarks = t.checked; store.set('rd-mk-zrmk', M.zrMarks); if (M.zrMarks && !M.d.zr) loadSec('zr', true); if (RD.setMarkers) RD.setMarkers(); }
+    else if (t.matches('[data-mk-eqmk]')) { M.eqMarks = t.checked; store.set('rd-mk-eqmk', M.eqMarks); if (M.eqMarks && !M.d.eq) loadSec('eq', true); if (RD.setMarkers) RD.setMarkers(); }
     else if (t.matches('[data-mk-snd]')) { AL.sound = t.checked; store.set('rd-al-sound', AL.sound); if (AL.sound) beep('alert'); }
     else if (t.matches('[data-mk-ntf]')) { AL.notify = t.checked; store.set('rd-al-notify', AL.notify); if (AL.notify) { const ok = await askNotify(); if (!ok) { AL.notify = false; store.set('rd-al-notify', false); t.checked = false; RD.toast('The browser blocked notifications for this site. Allow them in the site settings to use this.', 'down'); } } }
   });
@@ -713,6 +813,7 @@
     for (const [k] of SECS) { const b = body(k); if (b) delete b.dataset.html; }
     openUI(); paintAll(); refresh(true);
     if (M.zrMarks && !visible()) loadSec('zr', true);   // the chart marks need the zone data even with the panel closed
+    if (M.eqMarks && !visible()) loadSec('eq', true);
   }
   RD.on('sym', () => { reset(); RD.syncLines(); });
   RD.on('load', () => { if (M.key !== keyNow()) reset(); openUI(); });
@@ -735,6 +836,7 @@
   setInterval(() => { if (M.warn || (X.legend && !visible())) loadNews(false); }, 60000);
   M.key = keyNow(); openUI(); paintAll(); setTimeout(glance, 1500);
   if (M.zrMarks) setTimeout(() => loadSec('zr'), 2000);
+  if (M.eqMarks) setTimeout(() => loadSec('eq'), 2500);
   if (M.warn) loadNews(false); else setTimeout(() => loadNews(false), 4000);   // the legend's red-news glance
   window.__rdMkt = { M, AL, refresh, loadSec, loadNews, addAlert, checkAt, pollAlerts, P };   // for tests
 })();

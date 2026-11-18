@@ -103,7 +103,78 @@
     return { n, pct, base, luck, diff, beyond: Math.abs(diff) > luck };
   }
 
-  const api = { zoneStats, verdict };
+  /* Equal lows / highs: eqStats(SMC, K, tfMs, opt), same candles and opt.from as zoneStats. The engine's EQL = two swing lows
+     within max(0.1%, 0.2 ATR), ≤ 48 candles apart, the older one not traded through yet; the level is the lower one (EQH mirrored).
+     Trade on the first touch after the second low is confirmed (within opt.wait candles, default 200): entry AT the level
+     (a candle that opens past it fills at its open), stop 1 ATR(14) past the entry, target 1 ATR the other way (1R), 96 candles.
+     Random: for every decided touch, opt.draws random candles of the same coin and period, a level the same % from the close as the
+     EQL was from price when it was confirmed, its first touch, the same stop / target %. Old = single swing lows / highs (not part
+     of an equal pair), same rules, no random. zone = the level sits in an unbroken demand (supply) zone or ≤ 0.5 ATR past it. */
+  function eqStats(SMC, K, tfMs, opt) {
+    opt = opt || {};
+    const HOR = opt.hor || 96, DRAWS = opt.draws || 20, WAIT = opt.wait || 200, n = K.length, FEE = opt.fee == null ? 0.0007 : opt.fee;
+    const first = t => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (K[m][0] < t) lo = m + 1; else hi = m; } return lo; };
+    const i0 = opt.from != null ? first(opt.from) : 0;
+    const side0 = () => ({ held: 0, against: 0, open: 0, untouched: 0, r2: 0, n2: 0, back: 0, feeR: 0, zone: { held: 0, n: 0 }, rnd: { held: 0, n: 0, r2: 0, n2: 0, back: 0, all: 0 }, rndZone: { held: 0, n: 0 }, old: { held: 0, n: 0 } });
+    const out = { L: side0(), H: side0(), touches: [], active: [], candles: n - i0, from: n ? K[Math.min(i0, n - 1)][0] : null, to: n ? K[n - 1][0] + tfMs : null, price: n ? K[n - 1][4] : null };
+    if (n < 60 || n - i0 < 2) return out;
+    const c = K[n - 1][4], base = K.concat([[K[n - 1][0] + tfMs, c, c, c, c, 0]]);
+    const A = SMC.analyze(base, base.length - 1, { tf: tfMs });
+    const atr = new Array(n).fill(null);
+    { let sum = 0; const tr = []; for (let i = 0; i < n; i++) { const k = K[i], pc = i ? K[i - 1][4] : k[1]; const x = Math.max(k[2] - k[3], Math.abs(k[2] - pc), Math.abs(k[3] - pc)); tr.push(x); sum += x; if (tr.length > 14) sum -= tr.shift(); if (tr.length === 14) atr[i] = sum / 14; } }
+    const touch = (i, dir, p) => { for (let q = i; q < Math.min(n, i + WAIT); q++) if (dir === 1 ? K[q][3] <= p : K[q][2] >= p) return q; return -1; };
+    function walk(j, dir, stop, target) { for (let i = j; i < Math.min(n, j + HOR); i++) { const k = K[i]; if (dir === 1 ? k[3] <= stop : k[2] >= stop) return [0, i]; if (dir === 1 ? k[2] >= target : k[3] <= target) return [1, i]; } return [null, -1]; }
+    function bestR(j, dir, e, r, stop) { let b = 0; for (let i = j; i < Math.min(n, j + HOR); i++) { const k = K[i]; if (dir === 1 ? k[3] <= stop : k[2] >= stop) break; b = Math.max(b, ((dir === 1 ? k[2] : k[3]) - e) * dir / r); } return b; }
+    function trade(j, dir, p, dPct) {
+      const k = K[j], e = dir === 1 ? Math.min(p, k[1]) : Math.max(p, k[1]), d = e * dPct, stop = e - dir * d, target = e + dir * d;
+      const back = dir === 1 ? k[4] >= p : k[4] <= p;   // the touch candle closed back on the level's side
+      if (dir === 1 ? k[3] <= stop : k[2] >= stop) return { res: 0, at: j, r2: 0, best: 0, back, entry: e, stop, target };
+      const [res, at] = walk(j + 1, dir, stop, target), [r2] = walk(j + 1, dir, stop, e + 2 * dir * d);
+      return { res, at, r2, best: bestR(j + 1, dir, e, d, stop), back, entry: e, stop, target };
+    }
+    const rand = rng(seedOf(opt.seed || 'eqs') ^ n), lo = Math.max(i0, 20), span = n - 2 - lo;
+    const pairT = new Set(A.eqs.flatMap(e => [e.side + e.t, e.side + e.t1]));
+    const inst = A.eqs.map(e => ({ eq: true, side: e.side, p: e.p, conf: e.conf, t1: e.t1, t: e.t }))
+      .concat(A.swings.filter(s => !pairT.has(s.side + s.t)).map(s => ({ eq: false, side: s.side, p: s.p, conf: s.conf })));
+    const seen = new Set();
+    for (const e of inst) {
+      const dir = e.side === 'L' ? 1 : -1, S = out[e.side], ic = first(e.conf);
+      if (ic < 20 || ic >= n - 1 || !atr[ic - 1]) continue;
+      const j = touch(ic, dir, e.p);
+      if (j < 0) { if (e.eq && ic >= i0) S.untouched++; continue; }
+      if (j < i0) continue;   // touched before the period
+      const a = atr[ic - 1], dPct = a / e.p, q = e.p / K[ic - 1][4];
+      const key = (e.eq ? 'e' : 'o') + e.side + j + ':' + Math.round(e.p / (a * 0.25)); if (seen.has(key)) continue; seen.add(key);   // two pairs at one level, one touch
+      const T = trade(j, dir, e.p, dPct);
+      if (!e.eq) { if (T.res != null) { S.old.n++; S.old.held += T.res; } continue; }
+      const zt = dir === 1 ? 'demand' : 'supply';
+      const zone = A.zones.some(z => z.type === zt && z.conf <= K[j][0] && !(z.broken && z.broken <= K[j][0]) &&
+        (dir === 1 ? e.p <= z.top && e.p >= z.bot - 0.5 * a : e.p >= z.bot && e.p <= z.top + 0.5 * a));
+      if (T.res === 1) S.held++; else if (T.res === 0) S.against++; else S.open++;
+      if (T.res != null) { S.feeR += FEE / dPct; if (T.back) S.back++; if (zone) { S.zone.n++; S.zone.held += T.res; } }
+      if (T.r2 != null) { S.n2++; S.r2 += T.r2; }
+      out.touches.push({ side: e.side, p: e.p, t: K[j][0], first: e.t1, second: e.t, zone, res: T.res, entry: T.entry, stop: T.stop, target: T.target,
+        hitT: T.res == null ? null : K[T.at][0], best: T.best, back: T.back, wait: j - ic });
+      if (T.res != null && span > 10) for (let z = 0; z < DRAWS; z++) {
+        const j0 = lo + Math.floor(rand() * span), p2 = K[j0][4] * q, jt = touch(j0 + 1, dir, p2); if (jt < 0) continue;
+        const X = trade(jt, dir, p2, dPct); S.rnd.all++; if (X.back) S.rnd.back++;
+        if (X.res != null) { S.rnd.n++; S.rnd.held += X.res; if (zone) { S.rndZone.n++; S.rndZone.held += X.res; } }
+        if (X.r2 != null) { S.rnd.n2++; S.rnd.r2 += X.r2; }
+      }
+    }
+    out.touches.sort((x, y) => x.t - y.t);
+    // right now: equal lows / highs price has not traded through yet
+    const px = K[n - 1][4], aNow = atr[n - 1] || 0;
+    out.active = A.eqs.filter(e => !e.taken && (e.side === 'L' ? e.p < px : e.p > px)).map(e => {
+      const zt = e.side === 'L' ? 'demand' : 'supply';
+      const zone = A.zones.some(z => z.type === zt && !z.broken && (e.side === 'L' ? e.p <= z.top && e.p >= z.bot - 0.5 * aNow : e.p >= z.bot && e.p <= z.top + 0.5 * aNow));
+      return { side: e.side, p: e.p, t: e.t, first: e.t1, zone };
+    });
+    out.atrPct = aNow && px ? aNow / px * 100 : null;
+    return out;
+  }
+
+  const api = { zoneStats, eqStats, verdict };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.ZoneStats = api;
 })(typeof window !== 'undefined' ? window : this);
