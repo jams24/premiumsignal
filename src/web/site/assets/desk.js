@@ -399,9 +399,10 @@
   let saveRT = 0;
   const saveRSoon = () => { if (Date.now() - saveRT > 2000) { saveRT = Date.now(); saveR(); } };
 
+  // the latest replay start: 2 candles of the replay feed ago (1D plays 15m candles into the forming day, so today works)
+  const rpMin = () => 2 * TF[RES[U.tf]].ms;
   async function enterReplay(t) {
-    const tfms = TF[U.tf].ms;
-    if (!isFinite(t) || t > Date.now() - 2 * tfms) { toast('Pick a moment in the past.'); return; }
+    if (!isFinite(t) || t > Date.now() - rpMin()) { toast('Pick a moment in the past.'); return; }
     closeModals(); pausePlay(); clearPick();
     if (R.on) P.closeMode('replay', 'Replay restarted');
     R.on = true; R.clock = bucket(t, U.tf);
@@ -1648,7 +1649,7 @@
   }
   // open a coin at a past moment (admin signal list): straight into a replay there, or the live chart if it is too recent
   function openAt(sym, ex, t) {
-    if (!isFinite(t) || t > Date.now() - 2 * TF[U.tf].ms) { setSymbol(sym, ex); return; }
+    if (!isFinite(t) || t > Date.now() - rpMin()) { setSymbol(sym, ex); return; }
     if (sym !== U.sym || (ex && ex !== U.ex)) {
       U.sym = sym; if (ex) U.ex = ex; saveUI();
       SEL = null; DRAFT = null; MEASURE = null; hoverBar = null; S.lastPx = null; hint();
@@ -1685,8 +1686,8 @@
   const pad = n => String(n).padStart(2, '0');
   const toLocalInput = t => { const d = new Date(t); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
   const fromLocalInput = v => { const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v || ''); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : NaN; };
-  // a replay can start up to 2 candles ago (enterReplay); the box opens on today 00:00 UTC (or the latest allowed moment on 1D / 1W)
-  const rLatest = () => Math.floor((Date.now() - 2 * TF[U.tf].ms) / MIN) * MIN;
+  // a replay can start up to 2 feed candles ago (enterReplay); the box opens on today 00:00 UTC
+  const rLatest = () => Math.floor((Date.now() - rpMin()) / MIN) * MIN;
   const rToday = () => Math.min(Math.floor(Date.now() / DAY) * DAY, rLatest());
   function rModalInit() { const inp = $('[data-rdate]'); inp.max = toLocalInput(rLatest()); inp.value = toLocalInput(rToday()); }
   async function randomStart() {
