@@ -151,7 +151,9 @@
   const kGroup = t => (t.kind === 'manual' ? 'manual' : t.kind === 'auto pump' ? 'auto' : 'bot');
   const ended = t => {
     const r = String(t.reason || ''), tp = (t.tps || []).lastIndexOf(true) + 1;
-    const w = r === 'sl' ? (tp ? `Stop after TP${tp}` : 'Stop') : r === 'manual_close' ? 'Closed by hand' : /^tp\d$/.test(r) ? r.toUpperCase() + (r === 'tp4' ? ' · all targets' : '')
+    // where the stop sat when it filled: at entry (moved to break-even) or past it in profit (moved / trailed)
+    const at = t.entry && t.exit ? mv(t.direction, t.entry, t.exit) : null, st = at == null ? '' : Math.abs(at) < 0.0006 ? 'Break-even stop' : at > 0 ? 'Stop in profit' : 'Stop';
+    const w = r === 'sl' ? (tp ? `${st || 'Stop'} after TP${tp}` : st || 'Stop') : r === 'manual_close' ? 'Closed by hand' : /^tp\d$/.test(r) ? r.toUpperCase() + (r === 'tp4' ? ' · all targets' : '')
       : r === 'max_loss' ? 'Max-loss cap' : r === 'time_exit' ? 'Time exit' : r === 'invalidated' ? '4H invalidation' : r === 'thesis_broken' ? 'Thesis broken' : /liquid/.test(r) ? 'Liquidated' : r || '—';
     return tp && r !== 'sl' && !/^tp/.test(r) ? `${w} · TP${tp} hit` : w;
   };
@@ -185,19 +187,22 @@
       ${H.kind === 'all' ? `<span class="rxh-split">${split}</span>` : ''}</div>`;
     if (!list.length) return h + `<div class="pt-empty">No closed live trades${H.kind === 'all' ? '' : ' of this kind'} in the last ${H.days} days.</div>`;
     const sz = t => (t.size ? money(t.size) : '—');
+    // TP partial closes: the total is TPs + the rest; the exit / move columns are for the part closed last
+    const parts = t => (t.partPnl ? `<div class="sub" title="Profit from the TP partial closes + the part that closed last">TPs ${sgn(t.partPnl)} · rest ${t.lastPnl == null ? '—' : sgn(t.lastPnl)}</div>` : '');
+    const restNote = t => (t.rest != null && t.size && t.rest < t.size * 0.98 ? `<div class="sub" title="What was still open when it closed">${money(t.rest)} left</div>` : '');
     const mvP = t => (t.entry && t.exit ? mv(t.direction, t.entry, t.exit) * 100 : null);
     h += `<table class="pt rxt rxh"><thead><tr><th>Closed (UTC)</th><th>Trade</th><th>Size</th><th>Entry → exit</th><th>P&amp;L</th><th>How it ended</th><th>Held</th></tr></thead><tbody>${list.map(t => {
       const m = mvP(t);
       return `<tr data-rxgo="${esc(pair(t.symbol))}|${exOf(t.exchange)}" title="#${t.id} · opened ${t.opened ? new Date(t.opened).toUTCString() : '?'}"><td class="mono">${whenC(t.closed)}</td>
         <td>${sideTag(t.direction)}<b>${esc(base(t.symbol))}</b> <span class="muted">${t.leverage || '?'}×</span> ${kindTag(t.kind)}<div class="sub">${esc(t.exchange || '')}</div></td>
-        <td>${sz(t)}</td><td>${fmtP(t.entry)} → ${fmtP(t.exit)}<div class="sub ${m != null && m >= 0 ? 'up' : 'down'}">${m != null ? pct(m) : ''}</div></td>
-        <td class="${(t.pnl || 0) >= 0 ? 'up' : 'down'}"><b>${t.pnl == null ? '—' : sgn(t.pnl)}</b></td><td>${esc(ended(t))}</td><td>${held(t)}</td></tr>`;
+        <td>${sz(t)}${restNote(t)}</td><td>${fmtP(t.entry)} → ${fmtP(t.exit)}<div class="sub ${m != null && m >= 0 ? 'up' : 'down'}">${m != null ? (t.partPnl ? 'rest ' : '') + pct(m) : ''}</div></td>
+        <td class="${(t.pnl || 0) >= 0 ? 'up' : 'down'}"><b>${t.pnl == null ? '—' : sgn(t.pnl)}</b>${parts(t)}</td><td>${esc(ended(t))}</td><td>${held(t)}</td></tr>`;
     }).join('')}</tbody></table>`;
     h += `<div class="p-cards">${list.map(t => { const m = mvP(t);
       return `<div class="pc rxc"><div class="pc-h" data-rxgo="${esc(pair(t.symbol))}|${exOf(t.exchange)}"><span>${sideTag(t.direction)}<b>${esc(base(t.symbol))}</b> <span class="muted">${t.leverage || '?'}×</span> ${kindTag(t.kind)}</span><b class="${(t.pnl || 0) >= 0 ? 'up' : 'down'}">${t.pnl == null ? '—' : sgn(t.pnl)}</b></div>
-        <dl><div><dt>Closed</dt><dd>${whenC(t.closed)}</dd></div><div><dt>Size</dt><dd>${sz(t)}</dd></div><div><dt>Move</dt><dd class="${m != null && m >= 0 ? 'up' : 'down'}">${m != null ? pct(m) : '—'}</dd></div>
+        <dl><div><dt>Closed</dt><dd>${whenC(t.closed)}</dd></div><div><dt>Size</dt><dd>${sz(t)}${restNote(t)}</dd></div><div><dt>Move</dt><dd class="${m != null && m >= 0 ? 'up' : 'down'}">${m != null ? (t.partPnl ? 'rest ' : '') + pct(m) : '—'}</dd></div>
         <div><dt>Entry</dt><dd>${fmtP(t.entry)}</dd></div><div><dt>Exit</dt><dd>${fmtP(t.exit)}</dd></div><div><dt>Held</dt><dd>${held(t)}</dd></div></dl>
-        <div class="sub">${esc(ended(t))}</div></div>`; }).join('')}</div>`;
+        <div class="sub">${esc(ended(t))}</div>${parts(t)}</div>`; }).join('')}</div>`;
     return h;
   }
   const viewSeg = () => { const d = L.d, n = d ? (d.positions || []).length + (d.orders || []).length : 0;

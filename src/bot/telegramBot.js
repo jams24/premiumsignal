@@ -2154,19 +2154,28 @@ class TelegramBot {
       const d = Math.max(1, Math.min(90, Math.round(days) || 30));
       const num = (v) => (v == null || !isFinite(parseFloat(v)) ? null : parseFloat(v));
       const r = await db.query(
-        `SELECT id, symbol, exchange, direction, entry_price, exit_price, position_size, leverage, pnl_usd, close_reason,
-           hit_tp1, hit_tp2, hit_tp3, source, onchain_context->>'manual' AS manual, onchain_context->>'autoPump' AS auto_pump, created_at, closed_at
+        `SELECT id, symbol, exchange, direction, entry_price, exit_price, stop_loss, original_stop_loss, position_size, leverage, pnl_usd, realized_pnl, close_reason,
+           hit_tp1, hit_tp2, hit_tp3, source, onchain_context->>'manual' AS manual, onchain_context->>'autoPump' AS auto_pump,
+           onchain_context->>'margin' AS margin, onchain_context->>'chosenLeverage' AS chosen_lev, created_at, closed_at
          FROM trades WHERE mode = 'live' AND status = 'closed' AND closed_at >= NOW() - ($1 || ' days')::interval
          ORDER BY closed_at DESC LIMIT 1000`, [String(d)]);
+      // pnl_usd is only the part closed last; TP1 / TP2 / TP3 partial closes are in realized_pnl (the bot's own stats add
+      // both). position_size shrinks with each partial close, so the full size is margin × chosen leverage when known.
       return {
         days: d,
-        trades: r.rows.map((t) => ({
+        trades: r.rows.map((t) => {
+          const last = num(t.pnl_usd), part = num(t.realized_pnl) || 0, rest = num(t.position_size), m = num(t.margin), cl = num(t.chosen_lev);
+          const partial = !!(t.hit_tp1 || t.hit_tp2 || t.hit_tp3 || part);
+          const full = m > 0 && cl > 0 ? m * cl : null;
+          return {
           id: t.id, symbol: t.symbol, exchange: t.exchange, direction: t.direction,
           kind: t.auto_pump === 'true' ? 'auto pump' : t.manual === 'true' ? 'manual' : t.source || 'bot',
-          entry: num(t.entry_price), exit: num(t.exit_price), size: num(t.position_size), leverage: t.leverage, pnl: num(t.pnl_usd),
+          entry: num(t.entry_price), exit: num(t.exit_price), stop: num(t.stop_loss), stop0: num(t.original_stop_loss),
+          size: partial && full ? full : rest, rest: partial ? rest : null, leverage: cl || t.leverage, exLeverage: t.leverage,
+          pnl: last == null && !part ? null : (last || 0) + part, partPnl: part || 0, lastPnl: last,
           reason: t.close_reason || '', tps: [!!t.hit_tp1, !!t.hit_tp2, !!t.hit_tp3],
           opened: new Date(t.created_at).getTime(), closed: t.closed_at ? new Date(t.closed_at).getTime() : null,
-        })),
+        }; }),
       };
     };
 

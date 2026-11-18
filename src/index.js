@@ -320,7 +320,8 @@ async function main() {
         const sourceFilter = validSources.includes(source) ? `AND source = '${source}'` : '';
         const result = await db.query(`
           SELECT symbol, direction, entry_price, exit_price, position_size, source,
-            ROUND(pnl_pct::numeric, 2) as pnl_pct, ROUND(pnl_usd::numeric, 2) as pnl_usd,
+            ROUND(pnl_pct::numeric, 2) as pnl_pct, ROUND((pnl_usd + COALESCE(realized_pnl, 0))::numeric, 2) as pnl_usd,   -- + TP partial closes (as the stats)
+            ROUND(COALESCE(realized_pnl, 0)::numeric, 2) as realized_pnl,
             leverage, close_reason, mode, hit_tp1, hit_tp2, hit_tp3,
             (onchain_context->>'score')::int as score,
             onchain_context->>'fundingBias' as funding,

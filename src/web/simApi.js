@@ -313,7 +313,7 @@ async function handle(url, res) {
     if (url.pathname === '/api/sim/trades') {
       const days = Math.min(60, Math.max(1, parseInt(url.searchParams.get('days'), 10) || 14));
       const r = await db.query(
-        `SELECT id, symbol, exchange, direction, entry_price, exit_price, original_stop_loss, pnl_usd, close_reason, status, created_at, closed_at
+        `SELECT id, symbol, exchange, direction, entry_price, exit_price, original_stop_loss, pnl_usd + COALESCE(realized_pnl, 0) AS pnl_usd, close_reason, status, created_at, closed_at   -- TP partial closes are in realized_pnl
            FROM trades WHERE mode = 'live' AND created_at > NOW() - INTERVAL '1 day' * $1 ORDER BY id DESC LIMIT 200`, [days]);
       return send(200, {
         trades: r.rows.map(t => ({ id: t.id, symbol: t.symbol, exchange: t.exchange, direction: t.direction, entry: t.entry_price,
