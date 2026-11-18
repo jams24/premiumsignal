@@ -3,7 +3,9 @@
      Overview   24h change, where price sits in the 24h range, volume vs its 7-day average, mark / index
      Funding    rate now, who pays, countdown, yearly rate, the last 12 rates, what it costs your size
      Open int.  value and 1h / 4h / 24h change, the last 24 hours
-     Long/short everyone's accounts, top traders' positions (Binance), takers' buy vs sell in the last hour (Binance)
+     Long/short whales vs retail as the classic's 🐋 line: Binance top traders by position and by accounts, every account on
+                Binance and on Bybit (now, 1 h and 4 h before), takers' buy / sell in the last hour, funding, OI and price over the
+                last hour, and the plain readings ("No strong split between whales and retail", squeeze-up / flush-down risk, crowded)
      News       this week's economic calendar (a warning 15 min before red news) and the newest crypto headlines
      Alerts     price alerts: a line on the chart, a toast + sound + browser notification when price gets there
      Trend      4H / 1H / 15m structure (SMC on closed candles)
@@ -45,6 +47,26 @@
   const day = t => new Date(t).toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
   const coin = () => u.coin(U.sym);
   const live = () => !R.on;
+  // the same plain readings as the bot's /flow and the classic's 🐋 line (src/collectors/coinFlow.js), not a signal.
+  // w = whales' long / short ratio (Binance top traders by position), r = retail's (Binance accounts, else Bybit)
+  function flowReading(w, r) {
+    if (w == null || r == null) return null;
+    if (w >= 1.2 && r <= 0.9) return { text: '🐋 long vs 👥 short — squeeze-up risk for shorts', warn: true };
+    if (w <= 0.83 && r >= 1.1) return { text: '🐋 short vs 👥 long — flush-down risk for longs', warn: true };
+    if (w >= 1.4 && r >= 1.4) return { text: 'Everyone long — crowded long ⚠️ (October: shorts here lost)', warn: true };
+    if (w >= 1.2 && r >= 1.2) return { text: 'Everyone long — crowded long', warn: true };
+    if (w <= 0.83 && r <= 0.83) return { text: 'Everyone short — crowded short', warn: true };
+    return { text: 'No strong split between whales and retail', warn: false };
+  }
+  function flowOiReading(oiCh, priceCh) {   // last hour, in %
+    if (oiCh == null || priceCh == null) return null;
+    const up = priceCh > 0.5, down = priceCh < -0.5, oiUp = oiCh > 2, oiDown = oiCh < -2;
+    if (up && oiUp) return 'price up + OI up → new positions piling in on the move';
+    if (up && oiDown) return 'price up + OI down → shorts closing (short squeeze / covering)';
+    if (down && oiUp) return 'price down + OI up → new shorts opening';
+    if (down && oiDown) return 'price down + OI down → longs closing / liquidations';
+    return 'OI and price flat-ish';
+  }
 
   // ---------------------------------------------------------------- state
   const OPEN0 = { ov: true, fu: true, oi: false, ls: false, nw: true, al: true, tr: false, hr: false, pa: false, zr: false };
@@ -91,20 +113,49 @@
       const px = (M.d.ov && M.d.ov.key === keyNow() && M.d.ov.mark) || S.lastPx || 0;
       return { coins: +c.openInterest, val: +c.openInterest * px, hist: h.map(r => ({ t: +r.timestamp, v: +r.sumOpenInterest })) };
     },
+    // whales vs retail, as the classic's 🐋 line: Binance top traders by position and by accounts, every account on Binance
+    // and on Bybit (whichever exchange the chart is on), each now / 1 h / 4 h before (5-minute points), takers' buy / sell
+    // over the last hour (Binance), open interest 1h / 4h and the price over the last hour (the chart's exchange)
     async ls() {
-      if (U.ex === 'bybit') {
-        const g = (await by(`/account-ratio?category=linear&symbol=${U.sym}&period=5min&limit=1`)).list[0];
-        return { acc: g ? +g.buyRatio : null, top: null, taker: null };
+      const sym = U.sym, ex = U.ex, now = Date.now();
+      const bn = p => getJSON(`${BN}/futures/data/${p}?symbol=${sym}&period=5m&limit=60`);
+      const [tp, ta, gl, byr, tk, oi, kl, ov] = await Promise.allSettled([
+        bn('topLongShortPositionRatio'), bn('topLongShortAccountRatio'), bn('globalLongShortAccountRatio'),
+        by(`/account-ratio?category=linear&symbol=${sym}&period=5min&limit=60`),
+        getJSON(`${BN}/futures/data/takerlongshortRatio?symbol=${sym}&period=5m&limit=12`),
+        ex === 'bybit' ? by(`/open-interest?category=linear&symbol=${sym}&intervalTime=5min&limit=60`) : bn('openInterestHist'),
+        u.api(ex).klines(sym, '5m', { limit: 13 }), ovNow()]);
+      const got = s => s.status === 'fulfilled' ? s.value : null;
+      // a series of { t, l: long share, r: long / short } oldest first → now, 1 h and 4 h before (nothing in the last 30 min = no data)
+      const side = a => {
+        if (!a || !a.length) return null;
+        const p = a[a.length - 1]; if (now - p.t > 30 * MIN) return null;
+        const back = ms => { let j = a.length - 1; while (j > 0 && a[j].t > p.t - ms) j--; return Math.abs(a[j].t - (p.t - ms)) <= 3 * MIN ? a[j].l : null; };
+        return { now: p.l, ratio: p.r != null ? p.r : p.l < 1 ? p.l / (1 - p.l) : null, h1: back(HOUR), h4: back(4 * HOUR), at: p.t };
+      };
+      const bnSer = s => { const v = got(s); return Array.isArray(v) ? v.map(x => ({ t: +x.timestamp, l: +x.longAccount, r: +x.longShortRatio })).sort((a, b) => a.t - b.t) : null; };
+      const byv = got(byr), bySer = byv && byv.list ? byv.list.map(x => ({ t: +x.timestamp, l: +x.buyRatio, r: +x.sellRatio > 0 ? +x.buyRatio / +x.sellRatio : null })).sort((a, b) => a.t - b.t) : null;
+      const whales = side(bnSer(tp)), whalesAcc = side(bnSer(ta)), retail = side(bnSer(gl)), retailBybit = side(bySer);
+      let taker = null; const tkv = got(tk);
+      if (Array.isArray(tkv) && tkv.length && now - +tkv[tkv.length - 1].timestamp <= 30 * MIN) {
+        const b = tkv.reduce((a, r) => a + +r.buyVol, 0), s = tkv.reduce((a, r) => a + +r.sellVol, 0); if (s > 0) taker = { buy: b, sell: s, ratio: b / s };
       }
-      const [g, tp, tk] = await Promise.allSettled([
-        getJSON(`${BN}/futures/data/globalLongShortAccountRatio?symbol=${U.sym}&period=5m&limit=1`),
-        getJSON(`${BN}/futures/data/topLongShortPositionRatio?symbol=${U.sym}&period=5m&limit=1`),
-        getJSON(`${BN}/futures/data/takerlongshortRatio?symbol=${U.sym}&period=5m&limit=12`)]);
-      if (g.status !== 'fulfilled' && tp.status !== 'fulfilled' && tk.status !== 'fulfilled') throw g.reason;
-      const one = s => (s.status === 'fulfilled' && s.value[0] ? +s.value[0].longAccount : null);
-      let taker = null;
-      if (tk.status === 'fulfilled' && tk.value.length) { const b = tk.value.reduce((a, r) => a + +r.buyVol, 0), s = tk.value.reduce((a, r) => a + +r.sellVol, 0); taker = { buy: b, sell: s }; }
-      return { acc: one(g), top: one(tp), taker };
+      const oiv = got(oi), ois = !oiv ? [] : ex === 'bybit' ? (oiv.list || []).map(x => ({ t: +x.timestamp, v: +x.openInterest })).sort((a, b) => a.t - b.t)
+        : oiv.map(x => ({ t: +x.timestamp, v: +x.sumOpenInterest, usd: +x.sumOpenInterestValue }));
+      const oiAt = ms => { if (!ois.length) return null; const last = ois[ois.length - 1]; let j = ois.length - 1; while (j > 0 && ois[j].t > last.t - ms) j--; return Math.abs(ois[j].t - (last.t - ms)) <= 3 * MIN ? ois[j] : null; };
+      const oiNow = ois.length && now - ois[ois.length - 1].t <= 30 * MIN ? ois[ois.length - 1] : null, o1 = oiNow && oiAt(HOUR), o4 = oiNow && oiAt(4 * HOUR);
+      const pc = (a, b) => (a > 0 && b > 0 ? (a / b - 1) * 100 : null);
+      const ks = got(kl), ch1h = ks && ks.length >= 13 ? pc(ks[ks.length - 1][4], ks[ks.length - 13][4]) : null;
+      const ovd = got(ov);
+      if (!whales && !whalesAcc && !retail && !retailBybit && !taker) throw (tp.reason || byr.reason || new Error('no long / short data for this coin'));
+      return {
+        whales, whalesAcc, retail, retailBybit, taker, ch1h,
+        oi1: oiNow && o1 ? pc(oiNow.v, o1.v) : null, oi4: oiNow && o4 ? pc(oiNow.v, o4.v) : null,
+        oiUsd: oiNow ? oiNow.usd || (ovd && ovd.oi && ovd.oi.val) || (ks && ks.length ? oiNow.v * ks[ks.length - 1][4] : null) : null,
+        funding: ovd && ovd.fund && isFinite(ovd.fund.rate) ? ovd.fund.rate * 100 : null,
+        at: Math.max(0, ...[whales, retail, retailBybit].filter(Boolean).map(s => s.at), oiNow ? oiNow.t : 0),
+        bnMissing: !got(tp) && !got(gl), byMissing: !byv,
+      };
     },
     async tr() {
       if (!window.SMC) throw new Error('the SMC engine did not load');
@@ -286,17 +337,33 @@
     ls() {
       const d = M.d.ls;
       if (!d) return { html: M.err.ls ? errBox('ls', M.err.ls) : spin };
-      const split = (label, l, title) => l == null ? '' : `<div class="mk-split" title="${esc(title)}"><div class="mk-sh"><span>${label}</span><b>${(l * 100).toFixed(1)}% long</b></div>
-        <div class="mk-sb"><i class="l" style="width:${(l * 100).toFixed(1)}%"></i><i class="s" style="width:${((1 - l) * 100).toFixed(1)}%"></i></div>
-        <div class="mk-sl"><span class="up">Long ${(l * 100).toFixed(0)}%</span><span class="down">Short ${((1 - l) * 100).toFixed(0)}%</span></div></div>`;
-      const tk = d.taker, tb = tk && tk.buy + tk.sell > 0 ? tk.buy / (tk.buy + tk.sell) : null;
+      const p0 = v => (v == null || !isFinite(v) ? '?' : Math.round(v * 100) + '%');
+      const mv = s => (s.h1 == null ? '' : s.now - s.h1 >= 0.02 ? ' <span class="up" title="2 points or more above 1 h ago">↑</span>' : s.h1 - s.now >= 0.02 ? ' <span class="down" title="2 points or more below 1 h ago">↓</span>' : '');
+      const bar = l => `<div class="mk-sb"><i class="l" style="width:${(l * 100).toFixed(1)}%"></i><i class="s" style="width:${((1 - l) * 100).toFixed(1)}%"></i></div>`;
+      const side = (label, s, title, none) => !s ? `<div class="mk-split mk-none"><div class="mk-sh"><span>${label}</span><b class="m">${none}</b></div></div>`
+        : `<div class="mk-split" title="${esc(title)}"><div class="mk-sh"><span>${label}</span><b>${p0(s.now)} long${mv(s)}</b></div>${bar(s.now)}
+          <div class="mk-sl"><span>ratio ${s.ratio != null ? s.ratio.toFixed(2) : '?'}</span><span>1 h ago ${p0(s.h1)} · 4 h ago ${p0(s.h4)}</span></div></div>`;
+      const bnNone = d.bnMissing ? 'not on Binance' : 'no data', byNone = d.byMissing ? 'not on Bybit' : 'no data';
+      const w = d.whales, r = d.retail || d.retailBybit, rd = flowReading(w && w.ratio, r && r.ratio), od = flowOiReading(d.oi1, d.ch1h);
+      const tk = d.taker, f = d.funding;
+      const fu = f == null ? '' : `funding <b class="${tone(f)}">${f >= 0 ? '+' : '−'}${Math.abs(f).toFixed(4)}%</b> ${f >= 0.05 ? 'longs paying a lot' : f > 0.0101 ? 'longs pay more than usual' : f >= 0 ? 'longs pay shorts (normal)' : f > -0.05 ? 'shorts pay longs' : 'shorts paying a lot'}`;
+      const sg = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%';
+      const facts = [fu,
+        d.oi1 != null ? `open interest${U.ex === 'bybit' ? ' (Bybit)' : ' (Binance)'} 1h <b>${sg(d.oi1)}</b>, 4h ${d.oi4 != null ? sg(d.oi4) : '?'}${d.oiUsd ? ` (${big(d.oiUsd)} open)` : ''}` : '',
+        tk ? `taker buy/sell 1h <b>${tk.ratio.toFixed(2)}</b> ${tk.ratio >= 1.1 ? '(buyers hitting harder)' : tk.ratio <= 0.9 ? '(sellers hitting harder)' : '(even)'}` : '',
+        od ? `last hour: ${esc(od)}` : '', d.at ? `5-minute data of ${hhmm(d.at)} UTC` : ''].filter(Boolean);
       return {
-        sum: d.acc != null ? `<span class="${d.acc >= 0.5 ? 'up' : 'down'}">${(d.acc * 100).toFixed(0)}% long</span>` : '—',
-        html: split('Accounts · everyone', d.acc, 'Share of all accounts with a position that are long') +
-          split('Top traders · positions', d.top, 'Share of the biggest traders\' position size that is long') +
-          split('Takers · last hour', tb, 'Market buys vs market sells over the last hour (who crossed the spread)') +
-          (U.ex === 'bybit' ? '<p class="mk-p m">Top traders and taker flow come from Binance only.</p>' : '') +
-          '<p class="mk-p m">Context, not a signal: in our tests long/short ratios on their own did not predict the next move.</p>',
+        sum: w || r ? `${w ? `🐋 <span class="${w.now >= 0.5 ? 'up' : 'down'}">${p0(w.now)}</span>` : ''}${w && r ? ' · ' : ''}${r ? `👥 <span class="${r.now >= 0.5 ? 'up' : 'down'}">${p0(r.now)}</span>` : ''}` : '—',
+        html: (rd ? `<p class="mk-flow${rd.warn ? ' warn' : ''}">${esc(rd.text)}</p>` : '') +
+          side('🐋 Whales · by position (Binance top traders)', w, 'Binance\'s top traders (the 20% of accounts with the most margin): share of their position size that is long', bnNone) +
+          side('🐋 Whales · by accounts', d.whalesAcc, 'Binance\'s top traders: share of those accounts that are long, one vote each', bnNone) +
+          side('👥 Retail · Binance (all accounts)', d.retail, 'Every Binance account with a position, one vote each', bnNone) +
+          side('👥 Retail · Bybit (all accounts)', d.retailBybit, 'Every Bybit account with a position, one vote each', byNone) +
+          (tk ? `<div class="mk-split" title="Market buys vs market sells over the last hour (who crossed the spread), Binance"><div class="mk-sh"><span>Takers · last hour (Binance)</span><b>${p0(tk.buy / (tk.buy + tk.sell))} buys</b></div>${bar(tk.buy / (tk.buy + tk.sell))}</div>` : '') +
+          (facts.length ? `<p class="mk-p">${facts.join(' · ')}</p>` : '') +
+          '<p class="mk-p m">Whales = Binance\'s top traders (the 20% of accounts with the most margin), counted by position size; retail = every account, one vote each. ' +
+          'Funding above 0 = longs pay shorts each funding period (more people want to be long); below 0 = shorts pay longs.</p>' +
+          '<p class="mk-p m"><b>Positioning, not a signal:</b> in our tests long/short ratios on their own showed no edge. October (one month — Binance keeps 30 days): shorts taken while whales and retail were both ≥ 1.4 lost <span class="mk-nw">−$2.58/trade</span> over 22 trades; WEAK pump shorts with funding above +0.005% lost in both replay periods.</p>',
       };
     },
     nw() {

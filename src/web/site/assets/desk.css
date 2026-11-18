@@ -814,3 +814,8 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .sg-clr { margin: 4px 2px 0; font-size: 11.5px; color: var(--muted); }
 .sg-clr .lnk { padding: 0; background: none; color: var(--primary); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }
 .dk-pop label.dk-sub { padding: 4px 8px 4px 32px; font-size: 12px; color: var(--text-2); }   /* an option of the line above (A+ → pause) */
+.mk-flow { margin: 2px 0 10px; padding: 6px 9px; border-radius: 8px; background: var(--dk-hover); font-size: 12px; font-style: italic; color: var(--text-2); }   /* the whales vs retail reading */
+.mk-flow.warn { color: var(--warn); background: color-mix(in oklab, var(--warn) 10%, transparent); }
+.mk-split.mk-none { opacity: .7; } .mk-split.mk-none .mk-sh { margin: 0; } .mk-sh b.m { color: var(--muted); font-weight: 500; }
+.mk-sh span .up, .mk-sh b .up { color: var(--up); } .mk-sh b .down { color: var(--down); }
+.mk-sh b { flex: none; margin-left: 8px; white-space: nowrap; } .mk-nw { white-space: nowrap; }
