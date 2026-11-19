@@ -7,7 +7,7 @@ import { C, SANS, MONO, Chart, Tag, HLine, Box, Glow, Ring, Arrow, SwingLabels, 
 
 const line = (scene, i) => scene.lines[i].from;
 // frame at which a piecewise-linear `upto` track reaches time v (for labels that appear when confirmed)
-const when = (pts, v) => {
+export const when = (pts, v) => {
   if (v <= pts[0][1]) return -999;
   for (let i = 1; i < pts.length; i++) {
     const [f0, v0] = pts[i - 1], [f1, v1] = pts[i];
@@ -199,7 +199,7 @@ export const Break = ({ scene }) => {
 };
 
 // ================================================================== step 3: premium / discount
-const Meter = ({ at: pos, k }) => (
+export const Meter = ({ at: pos, k }) => (
   <div style={{ opacity: Math.min(1, k), marginTop: 6 }}>
     <div style={{ position: 'relative', height: 30, borderRadius: 15, overflow: 'hidden', display: 'flex' }}>
       <div style={{ flex: 1, background: '#dcfce7' }} /><div style={{ flex: 1, background: '#fee2e2' }} />
@@ -479,6 +479,9 @@ export const Long = ({ scene }) => {
           );
         })}
       </div>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 860, textAlign: 'center', opacity: Math.min(1, pop(f, fps, at(scene, 'next'))), transform: `scale(${0.85 + 0.15 * Math.min(1, pop(f, fps, at(scene, 'next')))})` }}>
+        <span style={{ fontSize: 40, fontWeight: 900, color: '#fff', background: C.up, borderRadius: 18, padding: '14px 34px' }}>▶ Next: a real LONG on Bitcoin 🔺</span>
+      </div>
     </AbsoluteFill>
   );
 };
@@ -505,7 +508,7 @@ export const Rules = ({ scene }) => {
       <div style={{ position: 'absolute', left: 80, right: 80, top: 480, background: '#fffbeb', border: `3px solid ${C.amber}`, borderRadius: 24, padding: '26px 34px',
         opacity: Math.min(1, kT), transform: `translateY(${(1 - kT) * 30}px)` }}>
         <div style={{ fontSize: 38, fontWeight: 900, color: '#92400e' }}>🧪 The truth</div>
-        <div style={{ fontSize: 32, color: C.ink, marginTop: 10, lineHeight: 1.35 }}>Not every setup wins like this one. On the 207 coins our bot traded (14 Oct – 13 Nov 2026), these exact rules lost a little after fees, about the same as entering at a random time.</div>
+        <div style={{ fontSize: 32, color: C.ink, marginTop: 10, lineHeight: 1.35 }}>We picked two setups that won, so you could see every step. Many don’t. On the 207 coins our bot traded (14 Oct – 13 Nov 2026), these exact rules lost a little after fees, about the same as entering at a random time.</div>
         <div style={{ fontSize: 32, fontWeight: 800, color: C.ink, marginTop: 10 }}>Use them to practise reading charts, not as a money machine.</div>
       </div>
       <div style={{ position: 'absolute', left: 0, right: 0, top: 790, textAlign: 'center', opacity: Math.min(1, kB), transform: `scale(${0.85 + 0.15 * kB})` }}>

@@ -1,7 +1,7 @@
 // Building blocks: the desk-style chart, chart overlays, the 🎓 coach card, the desk's top line and the captions.
 import React from 'react';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { EX, MIN, candlesAt, checklist, fp, hm, S } from './data.js';
+import { SHORT, MIN, fp, hm } from './data.js';
 import { STEP_TITLES } from './script.js';
 
 export const C = {
@@ -32,20 +32,21 @@ function niceStep(raw) {
 
 // ------------------------------------------------------------------ the chart
 // view {t0, t1, p0, p1}; tf ms; upto ms (what has printed); overlay(g) / under(g) draw on top / below the candles
-export const Chart = ({ id = 'c', x = 30, y = 122, w = 1292, h = 762, tf, upto, view, overlay, under, opacity = 1, scale = 1, candleOpacity = 1 }) => {
+// d = which example (SHORT by default, LONG for the long walk-through)
+export const Chart = ({ id = 'c', x = 30, y = 122, w = 1292, h = 762, tf, upto, view, overlay, under, opacity = 1, scale = 1, candleOpacity = 1, d = SHORT }) => {
   const AX = 98, TX = 36, W = w - AX, H = h - TX;
   const { t0, t1, p0, p1 } = view;
   const X = (t) => ((t - t0) / (t1 - t0)) * W;
   const Y = (p) => ((p1 - p) / (p1 - p0)) * H;
   const slot = (tf / (t1 - t0)) * W, cw = Math.max(3, slot * 0.64);
   const cx = (t) => X(t + tf / 2);
-  const ks = candlesAt(tf, upto).filter((k) => k.t + tf > t0 && k.t < t1);
+  const ks = d.candlesAt(tf, upto).filter((k) => k.t + tf > t0 && k.t < t1);
   const step = niceStep((p1 - p0) / 7);
   const pt = []; for (let p = Math.ceil(p0 / step) * step; p <= p1; p += step) pt.push(p);
   const tStep = tf >= 5 * MIN ? 30 * MIN : 10 * MIN;
   const tt = []; for (let t = Math.ceil(t0 / tStep) * tStep; t <= t1; t += tStep) tt.push(t);
   const last = ks[ks.length - 1];
-  const g = { X, Y, cx, slot, cw, W, H, tf, upto, view };
+  const g = { X, Y, cx, slot, cw, W, H, tf, upto, view, d };
   return (
     <svg width={w} height={h} style={{ position: 'absolute', left: x, top: y, opacity, transform: `scale(${scale})`, transformOrigin: '60% 50%', overflow: 'visible' }}>
       <defs><clipPath id={`clip-${id}`}><rect x={0} y={-4} width={W} height={H + 8} /></clipPath></defs>
@@ -137,7 +138,7 @@ export const Arrow = ({ x1, y1, x2, y2, color = C.ink, k = 1, width = 4 }) => {
 // HH / HL / LH / LL labels, each appearing once its swing is confirmed (as on the desk)
 export const SwingLabels = ({ g, frame, fps, keep, dim = 1, appearAt = {} }) => (
   <g>
-    {S.swings.filter((s) => g.upto >= s.conf && s.t >= g.view.t0 && s.t < g.view.t1).map((s) => {
+    {(g.d || SHORT).S.swings.filter((s) => g.upto >= s.conf && s.t >= g.view.t0 && s.t < g.view.t1).map((s) => {
       const up = /HH|HL/.test(s.label), y = s.side === 'H' ? g.Y(s.p) - 22 : g.Y(s.p) + 38;
       const k = appearAt[s.t] != null ? pop(frame, fps, appearAt[s.t]) : 1;
       const o = keep && !keep.includes(s.t) ? 0.28 : dim;
@@ -147,26 +148,27 @@ export const SwingLabels = ({ g, frame, fps, keep, dim = 1, appearAt = {} }) => 
 );
 
 // ------------------------------------------------------------------ the desk's top line (symbol, OHLC, A+ checklist)
-export const DeskStrip = ({ tf, upto, showIdea = true, pulse = 0 }) => {
-  const ks = candlesAt(tf, upto), k = ks[ks.length - 1] || { o: 0, h: 0, l: 0, c: 0 };
-  const list = checklist(upto), idea = showIdea && upto >= S.brk.conf;
+export const DeskStrip = ({ tf, upto, showIdea = true, pulse = 0, d = SHORT }) => {
+  const ks = d.candlesAt(tf, upto), k = ks[ks.length - 1] || { o: 0, h: 0, l: 0, c: 0 };
+  const list = d.checklist(upto), idea = showIdea && upto >= d.S.brk.conf, short = d.EX.dir === -1;
   return (
     <div style={{ position: 'absolute', left: 36, top: 22, fontFamily: MONO, fontSize: 23, color: C.ink, lineHeight: 1.55 }}>
-      <div><b>{EX.pair} · {tf >= 5 * MIN ? '5m' : '1m'} · Binance</b>
+      <div><b>{d.EX.pair} · {tf >= 5 * MIN ? '5m' : '1m'} · Binance</b>
         <span style={{ color: C.soft }}>  O </span>{fp(k.o)}<span style={{ color: C.soft }}> H </span>{fp(k.h)}<span style={{ color: C.soft }}> L </span>{fp(k.l)}<span style={{ color: C.soft }}> C </span>{fp(k.c)}
         <span style={{ color: C.mute }}>   {hm(upto - 1)} UTC</span></div>
       <div style={{ transform: `scale(${1 + 0.06 * pulse})`, transformOrigin: 'left center', minHeight: 36 }}>
         {idea ? (<>
-          <span style={{ color: C.down, fontWeight: 700 }}>A+ {EX.side} idea</span><span style={{ color: C.soft }}> since the CHoCH {hm(S.brk.t)} · </span>
+          <span style={{ color: short ? C.down : C.up, fontWeight: 700 }}>A+ {d.EX.side} idea</span><span style={{ color: C.soft }}> since the CHoCH {hm(d.S.brk.t)} · </span>
           {list.map((x) => <span key={x.k} style={{ color: x.done ? C.up : C.mute, fontWeight: x.done ? 700 : 400, marginRight: 14 }}>{x.done ? '✓' : '○'} {x.k}</span>)}
-        </>) : <span style={{ color: C.soft }}>SMC trend <b style={{ color: C.up }}>up</b></span>}
+        </>) : <span style={{ color: C.soft }}>SMC trend <b style={{ color: short ? C.up : C.down }}>{short ? 'up' : 'down'}</b></span>}
       </div>
     </div>
   );
 };
 
 // ------------------------------------------------------------------ the 🎓 coach card (as on the desk) with kid-size bullets
-export const Card = ({ step, items = [], footer, top = 122 }) => {
+// title: a different step title (the long says "demand zone")
+export const Card = ({ step, items = [], footer, top = 122, title }) => {
   const f = useCurrentFrame(), { fps } = useVideoConfig();
   const shown = items.filter((it) => f >= it.at);
   const cur = shown.length ? shown[shown.length - 1] : null;
@@ -183,7 +185,7 @@ export const Card = ({ step, items = [], footer, top = 122 }) => {
         <span style={{ fontFamily: MONO, fontSize: 21, color: C.soft, marginLeft: 8 }}>{step + 1}/7</span>
       </div>
       <div style={{ borderTop: `1.5px solid ${C.line}`, padding: '22px 26px 24px' }}>
-        <div style={{ fontSize: 33, fontWeight: 800, color: C.ink, marginBottom: 18, lineHeight: 1.2 }}>{step + 1} · {STEP_TITLES[step]}</div>
+        <div style={{ fontSize: 33, fontWeight: 800, color: C.ink, marginBottom: 18, lineHeight: 1.2 }}>{step + 1} · {title || STEP_TITLES[step]}</div>
         {items.map((it, i) => {
           const k = pop(f, fps, it.at, 15);
           if (k <= 0.001) return null;

@@ -1,7 +1,10 @@
 import React from 'react';
 import { AbsoluteFill, Html5Audio, Sequence, Series, staticFile, useCurrentFrame } from 'remotion';
 import { TIMELINE } from './timing.js';
-import { SCENE_COMPONENTS } from './scenes.jsx';
+import { SCENE_COMPONENTS as SHORT_SCENES } from './scenes.jsx';
+import { LONG_SCENES } from './scenes_long.jsx';
+
+const SCENE_COMPONENTS = { ...SHORT_SCENES, ...LONG_SCENES };
 import { C, Captions, fade } from './kit.jsx';
 
 const Shell = ({ scene }) => {

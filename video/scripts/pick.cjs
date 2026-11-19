@@ -3,12 +3,13 @@
 // Binance USDⓈ-M futures (public klines, no keys). Causal: each layer is what the engine knew when it happened.
 //   node scripts/pick.cjs                → scan the default coins over the last 3 days, list candidates, save the best
 //   node scripts/pick.cjs LTCUSDT 2      → one coin, 2 days ("all" = the default coins) · PICK=ETHUSDT@<ms> picks one
-//   SIDE=long lists only longs
+//   SIDE=long lists and saves only longs · OUT=example_long.json saves to another file (the long walk-through)
 const fs = require('fs'), path = require('path');
 const SMC = require(path.join(__dirname, '../../src/web/smcEngine.js'));
 const MIN = 60000, TF = 5 * MIN;
 const COINS = process.argv[2] && process.argv[2] !== 'all' ? [process.argv[2]] : ['LTCUSDT', 'SOLUSDT', 'ETHUSDT', 'BTCUSDT', 'XRPUSDT', 'DOGEUSDT', 'BNBUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'SUIUSDT', 'DOTUSDT'];
 const DAYS = Number(process.argv[3] || 3);
+const OUT = process.env.OUT || 'example.json';   // the long walk-through uses OUT=example_long.json
 
 async function klines(sym, start, end) {
   const out = [];
@@ -69,7 +70,8 @@ const agg5 = (base, from, to) => {
   }
   cands.sort((a, b) => b.score - a.score || b.o.t - a.o.t);
   for (const c of cands.filter(c => !process.env.SIDE || c.s.side === process.env.SIDE).slice(0, 15)) console.log(`${c.sym.padEnd(9)} ${c.s.side.padEnd(5)} ${new Date(c.s.t).toISOString().slice(5, 16)} R ${c.s.R.toFixed(2)} ${c.s.tgtKind} zone ${c.s.inZone} ${c.s.brk.kind} trend ${c.trendOk} span ${c.span}m score ${c.score}`);
-  const pick = process.env.PICK ? cands.find(c => `${c.sym}@${c.s.t}` === process.env.PICK) : cands[0];
+  const pool = cands.filter(c => !process.env.SIDE || c.s.side === process.env.SIDE);
+  const pick = process.env.PICK ? cands.find(c => `${c.sym}@${c.s.t}` === process.env.PICK) : pool[0];
   if (!pick) { console.log('no candidate'); process.exit(1); }
 
   const { sym, s, o, base, B } = pick, brk = s.brk;
@@ -95,6 +97,6 @@ const agg5 = (base, from, to) => {
     setup: { t: s.t, conf: s.conf, entry: s.entry, stop: s.stop, target: s.target, R: s.R, tgtKind: s.tgtKind },
     outcome: { hit: o.hit, t: o.t },
   };
-  fs.writeFileSync(path.join(__dirname, '../src/data/example.json'), JSON.stringify(ex));
+  fs.writeFileSync(path.join(__dirname, '../src/data', OUT), JSON.stringify(ex));
   console.log(`\nsaved ${sym} ${s.side} at ${new Date(s.t).toISOString()} · ${k5.length} 5m candles, ${k1.length} 1m candles · entry ${s.entry} stop ${s.stop} target ${s.target} R ${s.R.toFixed(2)} → ${o.hit} ${new Date(o.t).toISOString()}`);
 })().catch(e => { console.log('FAILED', e.message); process.exit(1); });
