@@ -53,6 +53,7 @@ async function loadConfig() {
       source = 'live DB config';
     } finally { await pool.end(); }
   }
+  if (args.has('--skip-weak-funding')) auto.config.skipWeakFunding = true;   // see what the 🚫 WEAK + funding skip would do
   const c = auto.config;
   return {
     source, auto,
@@ -72,6 +73,8 @@ async function loadConfig() {
       ...(auto.skipDays('switch').length ? { skipDaysSwitch: auto.skipDays('switch') } : {}),
       // /autopump 🎯 WEAK sweep entry (listed only when on; --weak-sweep forces it on to see what it would do)
       ...(c.weakSweep === true || args.has('--weak-sweep') ? { weakSweep: true } : {}),
+      // /autopump 🚫 WEAK + funding skip (listed only when on). The 🚫 squeeze skip is not modelled, like the crowd skip.
+      ...(c.skipWeakFunding === true ? { skipWeakFunding: true } : {}),
     },
   };
 }
@@ -136,7 +139,7 @@ async function replaySet(dir, cfg) {
     // Short: rules met at the signal itself → re-check on a later step at least recheckMinMin later
     if (i0 === 0) { i0 = steps.findIndex((s, i) => i >= 1 && s.now - r.t >= PUMP_RULES.recheckMinMin * M && passes(s)); if (i0 < 0) continue; }
     const s = steps[i0];
-    const info = { symbol: sym, spot: spotAt(s), replayAt: s.now };
+    const info = { symbol: sym, spot: spotAt(s), replayAt: s.now, pumpPct: r.sig?.pump, signalFunding: r.sig?.fr };
     const b = btc7(s.now);
     auto.measureBtc = async () => b;
     auto.commonBlock = async () => null;

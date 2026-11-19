@@ -29,14 +29,14 @@ Replays the pump-signal history (`backtest/data` Jun–Oct, `backtest/data_early
 (BTC pause, spot share, no-spot, days off), the no-spot switch (`switchSide` on the closed-candle 7-day run), TP/stop levels,
 early stop move, executor TP close sizes, the 🎯 WEAK sweep entry (`sweepScan`, when /autopump has it on) — with the live
 /autopump config from the DB (`--defaults` for code defaults; `--switch-on` counts switch trades while "switch real
-trades" is off; `--weak-sweep` forces the WEAK sweep entry on). $150/trade, fees in. Switch trades enter 15 min
+trades" is off; `--weak-sweep` forces the WEAK sweep entry on; `--skip-weak-funding` forces the 🚫 WEAK + funding skip on). $150/trade, fees in. Switch trades enter 15 min
 after the replay signal: the live scanner fires ~15–20 min after the replay's signal, so a replay entry at the signal
 itself overstates longs (the retired runner long showed +$457 there, ≈ $0 with the delay, −$69 live).
 - **MUST PASS before committing** changes to `src/collectors/pumpSignalCheck.js`, `src/engine/pumpAutoTrader.js`,
   `src/engine/pumpSwitchPaper.js`, `src/engine/pumpRunnerPaper.js`, `src/collectors/spotShare.js`, and to the TP/stop
   handling in `tradeExecutor.js`
 - Pass = P&L equal or better in **both** periods; it lists trades that got worse, new and no longer taken
-- Not modelled: max open, daily loss stop, real fills/slippage, liquidation, the /autopump crowd skip (no whale/retail
+- Not modelled: max open, daily loss stop, real fills/slippage, liquidation, the /autopump crowd skip and 🚫 squeeze skip (no whale/retail
   history past 30 days), the ⭐ size on switch shorts (no Bybit retail in backtest/data; exhaust-short ⭐ size is modelled)
 
 ### Updating a baseline

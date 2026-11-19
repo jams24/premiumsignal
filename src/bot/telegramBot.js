@@ -6,7 +6,7 @@ const { formatSignalMessage, formatListingAlert, formatWhaleAlert, formatScanRes
 const { generateSignalChart, generateSetupChart } = require('../utils/chartGenerator');
 const { PUMP_RULES, channelLevels, measureTop, measureRun7d, runType, entryVerdict } = require('../collectors/pumpSignalCheck');
 const { spotVerdict, DEFAULT_MAX_SPOT_SHARE, HOT_ALT_MARKET_PCT } = require('../collectors/spotShare');
-const { SWEEP, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
+const { SKIP_RULES, SWEEP, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES } = require('../engine/pumpAutoTrader');
 const { rowTpPcts } = require('../engine/pumpRunnerPaper');
 const { marginSaverLeverage, liquidationPct, safeLeverage, LIQ_BUFFER } = require('../utils/marginSaver');
 const manualLimits = require('../engine/manualLimitOrders');
@@ -3432,6 +3432,7 @@ class TelegramBot {
               (pre?.n ? ` <i>(Oct: ${pre.n} skipped, ${pre.lost} lost, saves $${pre.saved.toFixed(2)} · one month)</i>` : '')
             : `🐋 Crowd skip: <b>off</b> — every short traded; the trade DM shows ⚠️ when whales and retail are both ≥ ${CROWD_WARN_AT}`;
         })(),
+        `🚫 Skip rules: 🐋 squeeze 🔥 <b>${c.skipSqueezeExhaust === true ? 'ON' : 'off'}</b> · 🔀 <b>${c.skipSqueezeSwitch === true ? 'ON' : 'off'}</b> · ⚪ WEAK + funding <b>${c.skipWeakFunding === true ? 'ON' : 'off'}</b>`,
         ap.aMult() > 1
           ? `⭐ A-setups: <b>size ×${ap.aMult()}</b> — exhaust short with funding &lt; 0 + entry ≥ 1% below the signal price · switch short with Bybit retail ≥ 1.18 (⭐ in the DM)`
           : `⭐ A-setups: tagged ⭐ in the trade DM · bigger size <b>off</b>`,
@@ -3481,6 +3482,7 @@ class TelegramBot {
          Markup.button.callback(`₿ BTC pause: ${c.btcPausePct > 0 ? '< −' + c.btcPausePct + '%' : 'off'}`, 'ap_btc')],
         [Markup.button.callback(`🛡️ Tighter stop: ${c.beAtPct > 0 ? `✅ +${c.beAtPct}% → ${beStopLabel(c)}` : '⛔ OFF'} ⚙️`, 'ap_be')],
         [Markup.button.callback(`🐋 Crowd skip: ${Number(c.crowdSkipAt) > 0 ? `✅ ${ap.crowdLabel()}` : '⛔ OFF'} ⚙️`, 'ap_crowd')],
+        [Markup.button.callback(`🚫 Skip rules: ${(() => { const n = [c.skipSqueezeExhaust, c.skipSqueezeSwitch, c.skipWeakFunding].filter(v => v === true).length; return n ? `✅ ${n} on` : '⛔ OFF'; })()} ⚙️`, 'ap_skips')],
         [Markup.button.callback(`⭐ A-setup size: ${ap.aMult() > 1 ? `✅ ×${ap.aMult()}` : '⛔ OFF'} ⚙️`, 'ap_asize')],
         [Markup.button.callback(`🎯 WEAK: wait for sweep: ${c.weakSweep ? '✅ ON' : '⛔ OFF'}`, 'ap_sweep')],
         [Markup.button.callback(`📅 Trading days: ${ap.skipDays('exhaust').length || ap.skipDays('switch').length ? `🔥 ${daysLabel(ap.skipDays('exhaust'))} · 🔀 ${daysLabel(ap.skipDays('switch'))} off` : 'all on'} ⚙️`, 'ap_days')],
@@ -3593,6 +3595,43 @@ class TelegramBot {
       await ap.update({ btcPausePct: next });
       await ack(ctx, next ? `Pause while BTC 7d < −${next}%` : 'BTC pause off');
       await showAutoPump(ctx, true);
+    });
+    // 🚫 Skip rules menu: each rule is off until it is tapped on, with what the replay and the real trades said about it
+    const SKIP_TOGGLES = {
+      sqx: ['skipSqueezeExhaust', '🐋 Squeeze skip on pump shorts'],
+      sqs: ['skipSqueezeSwitch', '🐋 Squeeze skip on switch shorts'],
+      wf: ['skipWeakFunding', '⚪ WEAK + funding skip'],
+    };
+    const showSkipsMenu = async (ctx, ap) => {
+      const c = ap.config, word = (v) => (v === true ? 'ON' : 'OFF'), tick = (v) => (v === true ? '✅' : '⛔');
+      const text = [
+        `🚫 <b>Skip rules</b>`,
+        `Tap a button to turn a rule on or off. A rule only stops new auto trades: open trades, the paper lab and channel posts carry on. You get a DM for every skip. No reading for a coin = not skipped.`,
+        '',
+        `🐋 <b>Squeeze risk</b>: whales long and retail short on Binance (whales ≥ ${SKIP_RULES.squeezeWhales}, retail ≤ ${SKIP_RULES.squeezeRetail})`,
+        `🔥 Pump shorts: <b>${word(c.skipSqueezeExhaust)}</b> · 🔀 Switch shorts: <b>${word(c.skipSqueezeSwitch)}</b>`,
+        `<i>Real auto trades with this reading: 🔥 3, none won, −$105.53 · 🔀 1, EVAA −$102.44.</i>`,
+        `⚠️ <i>The 3-month replay disagrees: the shorts it skips made money (+$85.66 from 18 Aug to 18 Nov, +$185.86 from Dec to 17 Aug), so this rule is not proven.</i>`,
+        '',
+        `⚪ <b>WEAK + funding</b>: pump shorts under ${SWEEP.weakBelowPumpPct}% with funding above +${SKIP_RULES.weakFundingPct}% at the signal`,
+        `Now: <b>${word(c.skipWeakFunding)}</b>`,
+        `<i>Replay on the 19 Nov settings, $150 a trade: Jun–Oct +$136.22 (61 fewer trades) · Dec–May +$151.60 (57 fewer). Real auto trades since 10 Oct: 7 skipped, 3 won, −$57.37.</i>`,
+      ].join('\n');
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback(`${tick(c.skipSqueezeExhaust)} 🐋 Pump shorts`, 'ap_skt_sqx'), Markup.button.callback(`${tick(c.skipSqueezeSwitch)} 🐋 Switch shorts`, 'ap_skt_sqs')],
+        [Markup.button.callback(`${tick(c.skipWeakFunding)} ⚪ WEAK + funding`, 'ap_skt_wf')],
+        [Markup.button.callback('⬅️ Back', 'ap_refresh')],
+      ]);
+      return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch((e) => {
+        if (!/not modified/i.test(e.message)) throw e;
+      });
+    };
+    apAction('ap_skips', async (ctx, ap) => { await ack(ctx); await showSkipsMenu(ctx, ap); });
+    apAction(/^ap_skt_(sqx|sqs|wf)$/, async (ctx, ap) => {
+      const [key, label] = SKIP_TOGGLES[ctx.match[1]];
+      await ap.update({ [key]: ap.config[key] !== true });
+      await ack(ctx, `${label}: ${ap.config[key] === true ? 'ON' : 'OFF'}`);
+      await showSkipsMenu(ctx, ap);
     });
     // 🐋 Crowd skip menu: presets (October numbers) + custom which-shorts and level
     const showCrowdMenu = async (ctx, ap) => {

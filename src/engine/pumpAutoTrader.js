@@ -122,6 +122,13 @@ function sweepScan(candles, top0, holdCandles = SWEEP.holdCandles) {
   }
   return { kind: 'wait', top, swept: swept >= 0 };
 }   // all = pump (exhaust) + switch shorts · switch = switch shorts only
+// 🚫 Skip rules (/autopump → 🚫), each off until it is turned on. No reading for the coin → the trade is not skipped.
+//  • Squeeze risk, per kind of short: Binance whales long and Binance retail short at entry (whales ≥ 1.2, retail ≤ 0.9).
+//  • WEAK + funding, pump shorts: pump under 40% with funding at the signal above +0.005%.
+const SKIP_RULES = { squeezeWhales: 1.2, squeezeRetail: 0.9, weakFundingPct: 0.005 };
+const isSqueezeRisk = (c) => !!(c && c.w != null && c.g != null && c.w >= SKIP_RULES.squeezeWhales && c.g <= SKIP_RULES.squeezeRetail);
+const isWeakHotFunding = (pumpPct, fundingFrac) => pumpPct != null && fundingFrac != null && isFinite(pumpPct) && isFinite(fundingFrac) &&
+  pumpPct < SWEEP.weakBelowPumpPct && fundingFrac * 100 > SKIP_RULES.weakFundingPct;
 const DEFAULTS = {
   enabled: false,
   mode: 'paper',
@@ -186,6 +193,10 @@ const DEFAULTS = {
   aSizeMult: 1,
   // 🎯 WEAK sweep entry (SWEEP above): WEAK pump shorts wait for a sweep of the top and a close back under it
   weakSweep: false,
+  // 🚫 Skip rules (SKIP_RULES above)
+  skipSqueezeExhaust: false,
+  skipSqueezeSwitch: false,
+  skipWeakFunding: false,
 };
 const AUTO_MAX_LEVERAGE = 10;                      // −8% SL at 10x: liquidation ≈ −9.4%, still past the stop
 // Size menu buttons — margin $ and leverage. 0 = /autopump: from /trade · switch: = short · switch long: = switch
@@ -505,7 +516,7 @@ class PumpAutoTrader {
     this.busy.add(key);
     const label = `${info.side.toUpperCase()}`;
     try {
-      const block = await this.commonBlock(info) || (info.side === 'short' ? await this.crowdBlock(info, 'switch') : null) || this.dayOffBlock('switch');
+      const block = await this.commonBlock(info) || (info.side === 'short' ? await this.crowdBlock(info, 'switch') || await this.squeezeBlock(info, 'switch') : null) || this.dayOffBlock('switch');
       if (block) {
         const reason = typeof block === 'string' ? block : block.reason;
         const lab = block.dayOff ? await this.recordDayOff(info, 'switch', info.side, block.day) : null;
@@ -731,6 +742,8 @@ class PumpAutoTrader {
     }
     const crowd = await this.crowdBlock(info, 'exhaust');
     if (crowd) return crowd;
+    const skip = await this.squeezeBlock(info, 'exhaust') || await this.weakFundingBlock(info);
+    if (skip) return skip;
     // Day off last: everything else passed, so this is a trade that would have opened (→ day-off lab).
     // The replay passes the entry time in replayAt.
     return this.dayOffBlock('exhaust', info.replayAt ?? Date.now());
@@ -800,6 +813,29 @@ class PumpAutoTrader {
     const cr = await this.readCrowd(info);
     if (!isCrowded(cr, at)) return null;
     return `Crowd skip (${this.crowdLabel()}): whales ${cr.w.toFixed(2)} and retail ${cr.g.toFixed(2)} on Binance are both heavily long. Change it in /autopump → 🐋.`;
+  }
+
+  // 🚫 Squeeze risk on this kind of short ('exhaust' | 'switch'): whales long, retail short. Off or no data → null.
+  async squeezeBlock(info, kind) {
+    if ((kind === 'switch' ? this.config.skipSqueezeSwitch : this.config.skipSqueezeExhaust) !== true) return null;
+    const cr = await this.readCrowd(info);
+    if (!isSqueezeRisk(cr)) return null;
+    return `Squeeze skip: whales ${cr.w.toFixed(2)} are long and retail ${cr.g.toFixed(2)} is short on Binance. Change it in /autopump → 🚫.`;
+  }
+
+  // 🚫 WEAK pump short with funding above neutral at the signal. Off or no data → null.
+  async weakFundingBlock(info) {
+    if (this.config.skipWeakFunding !== true) return null;
+    let pumpPct = info.pumpPct ?? null, fr = info.signalFunding ?? null;
+    if ((pumpPct == null || fr == null) && info.signalId != null) {
+      const { rows } = await db.query('SELECT pump_pct, funding_rate FROM pump_signals WHERE id = $1', [info.signalId]).catch(() => ({ rows: [] }));
+      if (rows[0]) {
+        pumpPct = pumpPct ?? (rows[0].pump_pct != null ? Number(rows[0].pump_pct) : null);
+        fr = fr ?? (rows[0].funding_rate != null ? Number(rows[0].funding_rate) : null);
+      }
+    }
+    if (!isWeakHotFunding(pumpPct, fr)) return null;
+    return `WEAK + funding skip: pump +${pumpPct.toFixed(0)}% with funding ${(fr * 100).toFixed(4)}% at the signal. Change it in /autopump → 🚫.`;
   }
 
   // Guards shared by the short and the runner long: owner, market, keys, existing position, signal already traded
@@ -908,4 +944,4 @@ class PumpAutoTrader {
   }
 }
 
-module.exports = { PumpAutoTrader, SWEEP, sweepScan, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };
+module.exports = { PumpAutoTrader, SKIP_RULES, isSqueezeRisk, isWeakHotFunding, SWEEP, sweepScan, DAY_NAMES, PLAN_TP_PCTS, AUTO_TP1_PCTS, AUTO_BTC_PAUSE_PCTS, AUTO_CROWD_AT, CROWD_PRESETS, CROWD_SCOPES, A_SIZE_MULTS, aSetupExhaust, aSetupSwitchShort, BE_AT_PCTS, BE_STOP_PCTS, BE_DEFAULT, AUTO_MAX_LEVERAGE, AUTO_MARGINS, AUTO_LEVERAGES, SWITCH_MARGINS, SWITCH_LEVERAGES, SWITCH_LONG_MARGINS, SWITCH_LONG_LEVERAGES };
