@@ -1,0 +1,93 @@
+// The narration, scene by scene. `text` is the caption, `say` (optional) is how the Mac voice should read it,
+// `cue` names a moment the scene animates on (the line's start). scripts/voice.js turns every line into
+// public/voice/<scene>_<line>.wav and src/data/voice.json (seconds), and the video times itself from those.
+export const SCENES = [
+  { id: 'intro', lines: [
+    { text: 'Hi! Today you will learn to find a trade on a chart, one small step at a time.' },
+    { text: 'We will use a real chart: Ethereum, on 17 November.', say: 'We will use a real chart: Ethereum, on the seventeenth of November.', cue: 'coin' },
+    { text: 'The desk’s 🎓 Walk me through button has 7 steps. Let’s do them together!', say: "The desk's Walk me through button has seven steps. Let's do them together!", cue: 'steps' },
+  ] },
+  { id: 'candles', lines: [
+    { text: 'First: what is a candle? Each bar shows 5 minutes of price.', say: 'First: what is a candle? Each bar shows five minutes of price.' },
+    { text: 'A white candle means price went UP in those 5 minutes.', say: 'A white candle means price went up in those five minutes.', cue: 'up' },
+    { text: 'A black candle means price went DOWN.', say: 'A black candle means price went down.', cue: 'down' },
+    { text: 'The thin lines are wicks: how far price poked before it came back.', cue: 'wick' },
+    { text: 'Where the body ends is the CLOSE. Remember that word. It matters a lot!', say: 'Where the body ends is the close. Remember that word. It matters a lot!', cue: 'close' },
+  ] },
+  { id: 'swings', step: 0, lines: [
+    { text: 'Step 1: read the swings.', say: 'Step one. Read the swings.' },
+    { text: 'Price moves like a hiker in the mountains: up to a peak, down to a valley, and up again.', cue: 'hike' },
+    { text: 'A peak is a swing HIGH. A valley is a swing LOW.', say: 'A peak is a swing high. A valley is a swing low.', cue: 'names' },
+    { text: 'A peak only counts when 3 candles on each side are lower. So we know it 15 minutes later, not sooner.', say: 'A peak only counts when three candles on each side are lower. So we only know it fifteen minutes later, not sooner.', cue: 'confirm' },
+    { text: 'Each peak higher than the last = HH (higher high). Each valley higher = HL (higher low).', say: 'Each peak higher than the last one is a higher high, H H. Each valley higher than the last is a higher low, H L.', cue: 'labels' },
+    { text: 'Higher highs + higher lows = climbing the stairs. That’s an UPTREND.', say: "Higher highs and higher lows mean price is climbing the stairs. That's an uptrend.", cue: 'stairs' },
+    { text: 'Lower highs (LH) + lower lows (LL) would be walking DOWN the stairs: a downtrend.', say: 'Lower highs and lower lows, L H and L L, would be walking down the stairs. A downtrend.' },
+  ] },
+  { id: 'break', step: 1, lines: [
+    { text: 'Step 2: spot the break.', say: 'Step two. Spot the break.' },
+    { text: 'In an uptrend, the last valley is like a floor under the price. Here it is: the dashed line.', cue: 'floor' },
+    { text: 'At 06:15, a candle CLOSED below the floor.', say: 'At six fifteen, a candle closed below the floor.', cue: 'go' },
+    { text: 'That’s a CHoCH: a change of character. The trend changed its mind!', say: "That's called a chock. A change of character. The trend changed its mind!", cue: 'choch' },
+    { text: 'Now we only look for SHORTS: trades that win when price goes DOWN.', say: 'Now we only look for shorts. Trades that win when price goes down.', cue: 'bias' },
+    { text: 'Only a CLOSE counts. A wick that pokes through and closes back is not a break. It’s a trick called a sweep (step 5).', say: "Careful. Only a close counts. A wick that pokes through and closes back is not a break. It's a trick called a sweep. We'll meet it in step five.", cue: 'wickclose' },
+  ] },
+  { id: 'premium', step: 2, lines: [
+    { text: 'Step 3: premium or discount?', say: 'Step three. Premium, or discount?' },
+    { text: 'Take the move that broke the floor: from its top, here… to its bottom, here.', say: 'Take the move that broke the floor. From its top, here. To its bottom, here.', cue: 'leg' },
+    { text: 'Cut it in half. Top half = PREMIUM (expensive). Bottom half = DISCOUNT (cheap, like a sale).', say: 'Cut it in half. The top half is premium. Expensive. The bottom half is discount. Cheap, like a sale in a shop.', cue: 'halves' },
+    { text: 'You sell when it’s expensive. So for a short, we wait for price to climb back into premium.', say: "You want to sell when it's expensive. So for a short, we wait for price to climb back up into the premium half.", cue: 'wait' },
+    { text: 'And here it comes! At 07:01 price is back above the halfway line. Premium ✓', say: 'And here it comes! At seven o one, price is back above the halfway line. Premium. Tick!', cue: 'tick' },
+  ] },
+  { id: 'zone', step: 3, lines: [
+    { text: 'Step 4: mark the supply zone.', say: 'Step four. Mark the supply zone.' },
+    { text: 'Find the last UP candle right before the big drop. That’s where the big sellers started.', say: "Find the last up candle right before the big drop. That's where the big sellers started.", cue: 'ob' },
+    { text: 'The box from that candle to the top of the move is the supply zone.', cue: 'box' },
+    { text: 'When price comes back into this box, those sellers often push it down again.', cue: 'back' },
+    { text: 'If a candle ever CLOSES above the box, the zone is broken and we forget it.', say: 'If a candle ever closes above the box, the zone is broken, and we forget it.' },
+  ] },
+  { id: 'sweep', step: 4, lines: [
+    { text: 'Step 5: liquidity and the sweep.', say: 'Step five. Liquidity, and the sweep.' },
+    { text: 'Lots of traders hide their stop-loss just above an old peak. That pile of orders is called LIQUIDITY.', say: 'Lots of traders hide their stop loss just above an old peak. That pile of orders is called liquidity.', cue: 'pile' },
+    { text: 'Big traders like to push price just above the peak to grab those orders… then let it fall back.', say: 'Big traders like to push price just above the peak, to grab those orders. Then they let it fall back.' },
+    { text: 'Watch the peak from 07:20. At 07:55 a wick pokes above it… and the candle closes back below!', say: 'Watch the peak from seven twenty. At seven fifty five, a wick pokes above it. And the candle closes back below!', cue: 'go' },
+    { text: 'That’s the SWEEP! Like a fake-out in football: it pretends to go up, then turns around.', say: "That's the sweep! It's like a fake out in football. It pretends to go up, then turns around.", cue: 'sweep' },
+    { text: 'Three ticks now: break ✓ premium ✓ sweep ✓', say: 'Three ticks now. The break. Premium. And the sweep.', cue: 'ticks' },
+  ] },
+  { id: 'trigger', step: 5, lines: [
+    { text: 'Step 6: the trigger.', say: 'Step six. The trigger.' },
+    { text: 'Now we zoom in to the 1-minute chart, like using a magnifying glass. 🔍', say: 'Now we zoom in to the one minute chart, like using a magnifying glass.', cue: 'zoom' },
+    { text: 'Find the last little valley before the top of the sweep. Here it is: the blue line.', cue: 'blue' },
+    { text: 'We wait. When a 1-minute candle CLOSES below the blue line, the small chart has turned down too.', say: 'Now we wait. When a one minute candle closes below the blue line, the small chart has turned down too.', cue: 'wait' },
+    { text: 'At 08:30 it happens! That’s our GO signal. We enter the short right here.', say: "At eight thirty, it happens! That's our go signal. We enter the short, right here.", cue: 'entry' },
+  ] },
+  { id: 'plan', step: 6, lines: [
+    { text: 'Step 7: plan the trade, before anything else.', say: 'Step seven. Plan the trade, before anything else.' },
+    { text: 'ENTRY is where the trigger candle closed.', say: 'The entry is where the trigger candle closed.', cue: 'entry' },
+    { text: 'The STOP goes just above the sweep’s wick. It’s our safety net: if price gets there, we were wrong, and we leave with a small loss.', say: "The stop goes just above the sweep's wick. It's our safety net. If price gets there, we were wrong, and we leave with a small loss.", cue: 'stop' },
+    { text: 'The TARGET here is 2 times our risk: risk 1 step to win 2. We call that 2R.', say: 'The target here is two times our risk. We risk one step, to win two steps. We call that two R.', cue: 'target' },
+    { text: 'Now we let it play… and we don’t touch it.', say: "Now we let it play. And we don't touch it.", cue: 'play' },
+    { text: 'About 1½ hours later, price reaches the target. +2R! 🎯', say: 'About an hour and a half later, price reaches the target. Two R won!', cue: 'hit' },
+  ] },
+  { id: 'desk', lines: [
+    { text: 'On the desk you don’t have to remember all this.', say: "On the desk, you don't have to remember all of this." },
+    { text: 'The line at the top of the chart keeps the checklist for you.', cue: 'line' },
+    { text: '○ = that step is still waiting. ✓ = done.', say: 'An empty circle means that step is still waiting. A tick means it is done.', cue: 'ticks' },
+    { text: 'When all 4 are ticked, the setup is ready, and step 7 of Walk me through shows the plan.', say: 'When all four are ticked, the setup is ready, and step seven of Walk me through shows you the plan.', cue: 'ready' },
+  ] },
+  { id: 'long', lines: [
+    { text: 'For a LONG, flip everything upside down.', say: 'For a long, flip everything upside down.' },
+    { text: 'A candle closes ABOVE the last peak. Wait for the cheap half: discount.', say: 'A candle closes above the last peak. Then wait for the cheap half. Discount.', cue: 'a' },
+    { text: 'Wait for a wick UNDER an old valley that closes back up. Then a 1-minute close above the last little peak.', say: 'Wait for a wick under an old valley that closes back up. Then a one minute close above the last little peak.', cue: 'b' },
+    { text: 'Stop just under the wick. Target above.', say: 'The stop goes just under the wick. The target goes above.', cue: 'c' },
+  ] },
+  { id: 'rules', lines: [
+    { text: 'Three golden rules.' },
+    { text: '1. Only a candle CLOSE counts.', say: 'One. Only a candle close counts.', cue: 'r1' },
+    { text: '2. Set your stop BEFORE you enter. Every time.', say: 'Two. Set your stop before you enter. Every time.', cue: 'r2' },
+    { text: '3. Keep your size small.', say: 'Three. Keep your size small.', cue: 'r3' },
+    { text: 'The truth: not every setup wins like this one. On our 207 coins these exact rules lost a little after fees, about the same as a random entry.', say: 'And the truth. Not every setup wins like this one. In our tests on two hundred and seven coins, these exact rules lost a little after fees. About the same as entering at a random time.', cue: 'truth' },
+    { text: 'So use them to practise reading charts, not as a money machine. Now open the desk, press 🎓 Walk me through, and try it yourself!', say: 'So use them to practise reading charts, not as a money machine. Now open the desk, press Walk me through, and try it yourself!', cue: 'bye' },
+  ] },
+];
+
+export const STEP_TITLES = ['Read the swings', 'Spot the break (CHoCH / BOS)', 'Premium or discount?', 'Mark the supply zone', 'Liquidity and the sweep', 'The trigger: 1m CHoCH', 'Plan the trade'];

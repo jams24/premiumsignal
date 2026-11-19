@@ -1,0 +1,18 @@
+{
+  "name": "walk-me-through-video",
+  "private": true,
+  "type": "module",
+  "description": "Remotion video: the desk's Walk me through (A+ SMC setup) step by step, on a real ETH chart",
+  "scripts": {
+    "pick": "node scripts/pick.cjs",
+    "voice": "node scripts/voice.js",
+    "studio": "remotion studio src/index.jsx",
+    "render": "remotion render src/index.jsx WalkMeThrough out/walk-me-through.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.539",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.539"
+  }
+}
