@@ -3367,18 +3367,22 @@
     const items = () => [started && AL.on ? { id: 'classic', label: 'Simulator alerts (🔔 Alerts on): a beep for zone touches, 3/4 and A+ on every coin in its menu' } : null,
       started && NW.warn ? { id: 'classic-news', label: 'Red news warning, 15 minutes before' } : null].filter(Boolean);
     const state = () => post({ t: 'state', page: 'classic', where: 'Classic dashboard', items: items(), ring: null });
+    const muted = () => { try { return localStorage.getItem('rd-snd-mute') === 'true'; } catch (e) { return false; } };
+    // muted, or nothing here can beep: switch the sound system off (beep() switches it back on when it needs it)
+    const idle = () => { try { if (AL.ctx && AL.ctx.state === 'running' && (muted() || !(AL.on || NW.warn))) AL.ctx.suspend().catch(() => {}); } catch (e) { /* closed */ } };
+    setInterval(idle, 3000); window.addEventListener('storage', e => { if (e.key === 'rd-snd-mute') idle(); });
     if (ch) ch.onmessage = e => {
       const m = e.data || {}; if (!m.from || m.from === TAB) return;
       if (m.t === 'hi') state();
       else if (m.t === 'off' && (m.to === TAB || m.to === '*')) {
         if (m.id === 'classic' && AL.on) setAlerts(false);
         if (m.id === 'classic-news' && NW.warn) { NW.warn = false; saveNews(); $('sim-news-warn').checked = false; }
-        state();
-      }
+        state(); idle();
+      } else if (m.t === 'mute') idle();
     };
     window.addEventListener('pagehide', () => post({ t: 'bye' }));
     return {
-      muted: () => { try { return localStorage.getItem('rd-snd-mute') === 'true'; } catch (e) { return false; } },
+      muted,
       played(title) {
         try { const L = JSON.parse(localStorage.getItem('rd-snd-log') || '[]'); L.push({ at: Date.now(), title: String(title).slice(0, 140), tab: TAB, page: 'classic', where: 'Classic dashboard' }); localStorage.setItem('rd-snd-log', JSON.stringify(L.slice(-25))); } catch (e) { /* ignore */ }
         post({ t: 'played' });

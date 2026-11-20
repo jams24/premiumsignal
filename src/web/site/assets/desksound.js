@@ -2,7 +2,10 @@
    BroadcastChannel: desk tabs (the A+ alarm, the A+ Watchlist, price alerts, the red news warning) and the classic dashboard
    (its simulator alerts and news warning). So from any desk tab you can stop an alarm ringing in a tab you cannot see, mute
    every tab, see what is set to make a sound (and turn it off where it runs) and what sounded lately, with the tab it came from.
-   A ringing tab also puts 🔔 ALARM in front of its title, so it stands out in the tab bar. */
+   A ringing tab also puts 🔔 ALARM in front of its title, so it stands out in the tab bar.
+   Every sound system this page opens (AudioContext) is tracked: while you mute, or while nothing in this tab is set to make a
+   sound, they are all switched off, so no sound can come from this tab — not even one left playing by mistake — and the
+   browser's speaker icon goes away. */
 (function () {
   'use strict';
   const RD = window.__rd, root = document.querySelector('[data-snd]');
@@ -22,6 +25,19 @@
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const where = () => `${u.coin(U.sym)} ${U.tf}${R.on ? ' replay' : ''}`;
   const muted = () => ls.get(MUTE, false) === true;
+
+  // ---------------------------------------------------------------- every sound system of this page (desk modules open their own)
+  const CTX = new Set(), Native = window.AudioContext || window.webkitAudioContext;
+  if (Native) {
+    try {
+      const Tracked = class extends Native {
+        constructor(...a) { super(...a); CTX.add(this); }
+        resume() { return muted() ? Promise.resolve() : super.resume(); }   // muted: nothing on this page can switch sound back on
+      };
+      window.AudioContext = Tracked; if (window.webkitAudioContext) window.webkitAudioContext = Tracked;
+    } catch (e) { /* an old browser: the modules' own checks still apply */ }
+  }
+  function hush() { for (const c of CTX) { try { if (c.state === 'running' && typeof c.suspend === 'function') c.suspend().catch(() => {}); } catch (e) { /* closed */ } } }
 
   // ---------------------------------------------------------------- this tab's state, sent to the others when it changes
   function items() {
@@ -43,7 +59,9 @@
 
   // ---------------------------------------------------------------- stop, mute, the tab title
   function stopHere() { for (const f of S.stops) { try { f(); } catch (e) { console.error(e); } } }
-  function applyMute(on) { for (const f of S.mutes) { try { f(on); } catch (e) { console.error(e); } } paint(); }
+  function applyMute(on) { if (on) hush(); for (const f of S.mutes) { try { f(on); } catch (e) { console.error(e); } } paint(); }
+  // nothing in this tab can sound (or all muted): switch its sound systems off
+  function idle() { if (muted() || (!S.ring && !items().length)) hush(); }
   function setMute(on) { ls.set(MUTE, !!on); post({ t: 'mute', on: !!on }); applyMute(!!on); }
   function setTitle() { const t = document.title.split(PRE).join(''); X.titlePre = S.ring ? PRE : ''; document.title = X.titlePre + t; }
 
@@ -67,12 +85,12 @@
   function turnOff(id) { const d = S.src.get(id); if (d) { try { d.off(); } catch (e) { console.error(e); } } }
 
   RD.sound = {
-    tab: TAB, muted, claim,
+    tab: TAB, muted, claim, contexts: () => [...CTX].map(c => c.state),
     // d: { label() → what it is ('' while it cannot sound), off(), all: one setting for every desk tab, btn: button text }
     source(id, d) { S.src.set(id, d); },
     onStop(f) { S.stops.push(f); },
     onMute(f) { S.mutes.push(f); },
-    stopAll() { stopHere(); post({ t: 'stop' }); },
+    stopAll() { stopHere(); post({ t: 'stop' }); setTimeout(idle, 300); },
     ringing(title) { const r = title || null; if (r === S.ring) return; S.ring = r; setTitle(); state(); paint(); },
     played(title, rang) { logIt(title, rang); paint(); },
     changed() { if (state()) paint(); },
@@ -100,7 +118,8 @@
     }
     h += '<div class="snd-sec">Set to make a sound</div>';
     h += rows.length ? rows.map(x => `<div class="snd-row"><span><b>${esc(x.who)}</b>${esc(x.label)}</span><button type="button" data-snd-off="${esc(x.all ? '*' : x.tab)}|${esc(x.id)}">${esc(x.btn || 'Turn off')}</button></div>`).join('')
-      : `<p>${settled ? 'Nothing in the open tabs of this site is set to make a sound.' : 'Asking the other tabs…'}</p>`;
+      : `<p>${settled ? 'Nothing in the open tabs of this site is set to make a sound, and their sound is switched off.' : 'Asking the other tabs…'}</p>`;
+    if (settled) h += '<p class="snd-help"><b>Still hearing a sound?</b> It is not from a tab listed here. Check for a tab of this site that has been open since before this bell was added (reload it once), or another site or app: YouTube, Telegram, a notification. The tab playing it shows a speaker icon.</p>';
     const L = ls.get(LOG, []).slice(-8).reverse();
     h += '<div class="snd-sec">Sounded lately</div>';
     h += L.length ? '<div class="snd-log">' + L.map(e => {
@@ -132,7 +151,7 @@
     const off = e.target.closest('[data-snd-off]');
     if (off) {
       const [tab, id] = off.dataset.sndOff.split('|');
-      if (tab === TAB || tab === '*') turnOff(id);
+      if (tab === TAB || tab === '*') { turnOff(id); setTimeout(idle, 300); }
       if (tab !== TAB) post({ t: 'off', to: tab, id });
       off.disabled = true; off.textContent = 'Off';
       setTimeout(() => { state(); S.asked = Date.now(); S.tabs.clear(); post({ t: 'hi' }); paint(); setTimeout(paint, 700); }, 400);
@@ -152,15 +171,15 @@
     if (m.t === 'hi') state(true);
     else if (m.t === 'state') { S.tabs.set(m.from, m); paint(); }
     else if (m.t === 'bye') { S.tabs.delete(m.from); paint(); }
-    else if (m.t === 'stop') stopHere();
+    else if (m.t === 'stop') { stopHere(); setTimeout(idle, 300); }
     else if (m.t === 'mute') applyMute(!!m.on);
     else if (m.t === 'played') { if (!pop.hidden) paint(); }
-    else if (m.t === 'off' && (m.to === TAB || m.to === '*')) { turnOff(m.id); setTimeout(() => state(), 300); }
+    else if (m.t === 'off' && (m.to === TAB || m.to === '*')) { turnOff(m.id); setTimeout(() => { state(); idle(); }, 300); }
   };
   window.addEventListener('storage', e => { if (e.key === MUTE) applyMute(muted()); });
   window.addEventListener('pagehide', () => { release(); post({ t: 'bye' }); });
   window.addEventListener('pageshow', e => { if (e.persisted) { post({ t: 'hi' }); state(true); } });
-  setInterval(() => { if (state()) paint(); else paintBell(); }, 2000);   // a setting changed in this tab
+  setInterval(() => { if (state()) paint(); else paintBell(); idle(); }, 2000);   // a setting changed in this tab
   post({ t: 'hi' }); setTimeout(() => state(true), 50);
   paintBell();
 })();

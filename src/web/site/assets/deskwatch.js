@@ -121,7 +121,7 @@
 
   // browsers keep a page silent until its first click
   document.addEventListener('click', () => { if (W.cfg && W.cfg.on) AP.unlock(); }, true);
-  X.legend.push(() => (W.cfg && W.cfg.on && !AP.soundReady() && !(U.aplus && U.aplusAlert && !R.on) ? '<span class="down">🔇 Click the page once so Watchlist alerts can sound</span>' : ''));
+  X.legend.push(() => (W.cfg && W.cfg.on && !AP.soundReady() && !(RD.sound && RD.sound.muted()) && !(U.aplus && U.aplusAlert && !R.on) ? '<span class="down">🔇 Click the page once so Watchlist alerts can sound</span>' : ''));
 
   // ---------------------------------------------------------------- /app#chart=BTCUSDT/15m/binance (the Telegram link)
   function readLink() {

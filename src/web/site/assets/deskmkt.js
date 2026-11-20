@@ -684,6 +684,7 @@
     if (what && RD.sound) RD.sound.played(what);
     try {
       actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state !== 'running') actx.resume().catch(() => {});   // switched off while nothing could sound (desksound.js)
       const t = actx.currentTime, tones = kind === 'news' ? [660, 880, 660] : [880, 1320];
       tones.forEach((f, i) => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; o.type = 'sine';
         g.gain.setValueAtTime(0.0001, t + i * 0.16); g.gain.exponentialRampToValueAtTime(0.18, t + i * 0.16 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.16 + 0.14);

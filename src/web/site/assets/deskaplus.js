@@ -320,7 +320,7 @@
       (trig ? ` · waiting for a 1m close ${sh ? 'below' : 'above'} <b>${u.fp(lg.trig.p)}</b>${lg.plan ? ` · plan stop ${u.fp(lg.plan.stop)} · target ${u.fp(lg.plan.target)} · ${lg.plan.R.toFixed(1)}R` : ''}` : '') + `</span>` + count;
   };
   // browsers keep a page silent until its first click: say so, or the alarm could stay quiet after a reload
-  X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && !soundReady() ? '<span class="down">🔇 Click the page once so the alert can sound</span>' + s : s; });
+  X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && (quiet() || !soundReady()) ? (quiet() ? '<span class="down">🔕 Sounds muted · the bell in the top bar</span>' : '<span class="down">🔇 Click the page once so the alert can sound</span>') + s : s; });
 
   // ---------------------------------------------------------------- when to read again
   RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing || ((U.aplusRingTrig || U.aplusFull) && RG.stage === 2)) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });

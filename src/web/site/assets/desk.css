@@ -903,5 +903,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .snd-log time { font: 11px var(--mono); color: var(--muted); padding-top: 1px; }
 .snd-log span { overflow-wrap: anywhere; } .snd-log em { grid-column: 2; font-style: normal; font-size: 11px; color: var(--muted); }
 .dk-pop p.snd-utc { padding-top: 6px; font: 10.5px var(--mono); }
+.dk-pop p.snd-help { margin: 6px 4px 0; padding: 8px 10px; border-radius: 9px; background: var(--dk-hover); color: var(--text-2); }
+.dk-pop p.snd-help b { color: var(--text); font-weight: 600; }
 @media (max-width: 899px) { .dk-bell.ringing { padding: 0 9px; } .dk-bell.ringing .dk-bell-t { font-size: 12px; } .dk-pop.dk-sndpop { position: fixed; left: 8px; right: 8px; top: 52px; width: auto; max-height: calc(100dvh - 150px); } }
 @media (max-width: 520px) { .dk-bell.ringing { padding: 0 8px; } .dk-bell.ringing .dk-bell-t { display: none; } }   /* a narrow phone: the red ringing bell alone keeps the top bar on screen */
