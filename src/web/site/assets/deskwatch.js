@@ -132,6 +132,10 @@
   }
   readLink(); window.addEventListener('hashchange', readLink);   // the desk may already be open in this tab
 
+  if (RD.sound) RD.sound.source('watch', { all: true,
+    label: () => (W.cfg && W.cfg.on ? `A+ Watchlist: ${W.cfg.coins.length} coins on ${W.cfg.tfs.join(', ')}${W.cfg.ready ? '' : ', fully ready only'}. Turning it off stops the Telegram messages too.` : ''),
+    off: () => { const b = $('[data-aw="on"]'); if (b && b.checked) b.click(); } });
+
   const poll = async () => { try { take(await call()); } catch (e) { if (!W.cfg) paint(); } };
   poll(); setInterval(poll, POLL);
   W.poll = poll; window.__rdWatch = W;   // for tests

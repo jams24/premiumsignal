@@ -3359,6 +3359,34 @@
     'Checks the coins picked in the menu, plus the coin on your chart and the compare chart. Paper-trade them and let your journal show whether your picks do better.';
   const saveAlert = () => { try { localStorage.setItem(AKEY, JSON.stringify({ on: AL.on, side: AL.side, early: AL.early, zone: AL.zone, scope: $('sim-scan-scope').value })); } catch (e) { /* ignore */ } };
   try { Object.assign(AL, JSON.parse(localStorage.getItem(AKEY)) || {}); } catch (e) { /* ignore */ }
+  // ReplayDesk's bell (desk top bar, desksound.js): it can mute this page, list what it beeped for and turn its alerts off
+  const SNDH = (() => {
+    const TAB = 'c' + Math.random().toString(36).slice(2, 10);
+    let ch = null; try { ch = 'BroadcastChannel' in window ? new BroadcastChannel('rd-sound') : null; } catch (e) { ch = null; }
+    const post = m => { try { if (ch) ch.postMessage(Object.assign({ from: TAB }, m)); } catch (e) { /* closed */ } };
+    const items = () => [started && AL.on ? { id: 'classic', label: 'Simulator alerts (🔔 Alerts on): a beep for zone touches, 3/4 and A+ on every coin in its menu' } : null,
+      started && NW.warn ? { id: 'classic-news', label: 'Red news warning, 15 minutes before' } : null].filter(Boolean);
+    const state = () => post({ t: 'state', page: 'classic', where: 'Classic dashboard', items: items(), ring: null });
+    if (ch) ch.onmessage = e => {
+      const m = e.data || {}; if (!m.from || m.from === TAB) return;
+      if (m.t === 'hi') state();
+      else if (m.t === 'off' && (m.to === TAB || m.to === '*')) {
+        if (m.id === 'classic' && AL.on) setAlerts(false);
+        if (m.id === 'classic-news' && NW.warn) { NW.warn = false; saveNews(); $('sim-news-warn').checked = false; }
+        state();
+      }
+    };
+    window.addEventListener('pagehide', () => post({ t: 'bye' }));
+    return {
+      muted: () => { try { return localStorage.getItem('rd-snd-mute') === 'true'; } catch (e) { return false; } },
+      played(title) {
+        try { const L = JSON.parse(localStorage.getItem('rd-snd-log') || '[]'); L.push({ at: Date.now(), title: String(title).slice(0, 140), tab: TAB, page: 'classic', where: 'Classic dashboard' }); localStorage.setItem('rd-snd-log', JSON.stringify(L.slice(-25))); } catch (e) { /* ignore */ }
+        post({ t: 'played' });
+      },
+      state,
+    };
+  })();
+  window.__simSnd = SNDH;   // for tests
   function spot(x) {   // where the sweep wick sat in the move (1 = the far end), and whether it reached the order-block zone
     const sh = x.dir === -1, w = x.sweep.wick, rng = x.hi - x.lo;
     return { sh, depth: rng > 0 ? (sh ? w - x.lo : x.hi - w) / rng : 0, zone: !!x.zone && (sh ? w >= x.zone.bot : w <= x.zone.top) };
@@ -3378,7 +3406,7 @@
     return Object.assign(a, { title: `⚠️ ${sym} ${a3 ? 'A+++ ' : ''}${side} 3/4`, body: `swept ${f(x.sweep.wick)} (${where}) · A+ if a 1m candle closes ${sh ? 'below' : 'above'} ${f(x.trig.p)}` });
   }
   function beep(n) {
-    const c = AL.ctx; if (!c) return;
+    const c = AL.ctx; if (!c || SNDH.muted()) return false;
     try {
       if (c.state === 'suspended') c.resume();
       for (let i = 0; i < n; i++) {
@@ -3386,10 +3414,11 @@
         o.frequency.value = 880; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
         o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.24);
       }
-    } catch (e) { /* no sound */ }
+      return true;
+    } catch (e) { return false; }
   }
   function ping(title, body, a) {
-    beep(a && (a.kind === 'heads' || a.kind === 'zone') ? 1 : 2);
+    if (beep(a && (a.kind === 'heads' || a.kind === 'zone') ? 1 : 2)) SNDH.played(title);
     document.title = '🔔 ' + title + ' · ' + AL.title;
     try {
       if ('Notification' in window && Notification.permission === 'granted') {

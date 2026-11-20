@@ -1618,7 +1618,7 @@
     $$('[data-act="smcall"]').forEach(b => { if (!b.closest('[data-legend]')) b.classList.toggle('on', (b.dataset.v === '1') === !!U.smcAll); });
     $$('[data-ind]').forEach(i => { i.checked = !!U[i.dataset.ind]; });
     $$('[data-act="candles"]').forEach(b => { const on = b.dataset.v === (U.candles === 'mono' ? 'mono' : 'color'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
-    document.title = `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`;
+    document.title = (X.titlePre || '') + `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`;
     $$('.wl-row').forEach(r => r.classList.toggle('on', r.dataset.s === U.sym));
   }
   function modeUI() {
@@ -1654,7 +1654,7 @@
   let uiQ = false;
   function tickUI() {
     if (uiQ) return; uiQ = true;
-    requestAnimationFrame(() => { uiQ = false; legend(); renderTicket(); renderAcct(); renderBottom(true); syncLines(); qtUI(); if (Q.on) qRead(); document.title = `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`; emit('tick'); });
+    requestAnimationFrame(() => { uiQ = false; legend(); renderTicket(); renderAcct(); renderBottom(true); syncLines(); qtUI(); if (Q.on) qRead(); document.title = (X.titlePre || '') + `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`; emit('tick'); });
   }
   function renderAll() { renderTicket(); renderAcct(); renderBottom(false); syncLines(); legend(); qtUI(); }
 

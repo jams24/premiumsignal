@@ -678,8 +678,10 @@
   const saveAl = () => { AL.list = AL.list.slice(-60); store.set('rd-alerts-v1', AL.list); };
   const notifyOK = () => 'Notification' in window && Notification.permission === 'granted';
   let actx = null;
-  function beep(kind) {
-    if (!AL.sound) return;
+  const quiet = () => !!(RD.sound && RD.sound.muted());   // the bell in the top bar: every sound on this site muted
+  function beep(kind, what) {
+    if (!AL.sound || quiet()) return;
+    if (what && RD.sound) RD.sound.played(what);
     try {
       actx = actx || new (window.AudioContext || window.webkitAudioContext)();
       const t = actx.currentTime, tones = kind === 'news' ? [660, 880, 660] : [880, 1320];
@@ -690,7 +692,7 @@
   }
   function notify(title, text) {
     if (!AL.notify || !notifyOK() || !document.hidden) return;   // the page shows a toast when you are looking at it
-    try { const n = new Notification(title, { body: text, tag: 'rd-' + title, icon: '/icon.svg' }); n.onclick = () => { window.focus(); n.close(); }; } catch (e) { /* not allowed */ }
+    try { const n = new Notification(title, { body: text, tag: 'rd-' + title, icon: '/icon.svg', silent: quiet() }); n.onclick = () => { window.focus(); n.close(); }; } catch (e) { /* not allowed */ }
   }
   function addAlert(p, note) {
     const px = S.lastPx; if (!(p > 0) || !px) return false;
@@ -703,7 +705,7 @@
   function fire(a, px) {
     a.fired = Date.now(); saveAl(); RD.syncLines(); paintSec('al');
     const msg = `${u.coin(a.sym)} ${a.dir === 1 ? 'rose to' : 'fell to'} ${fp(a.p)} (now ${fp(px)})${a.note ? ' · ' + a.note : ''}`;
-    RD.toast('🔔 ' + msg, a.dir === 1 ? 'up' : 'down'); beep('alert'); notify('Price alert', msg);
+    RD.toast('🔔 ' + msg, a.dir === 1 ? 'up' : 'down'); beep('alert', '🔔 Price alert: ' + msg); notify('Price alert', msg);
   }
   function checkAt(sym, ex, px) {
     if (!(px > 0)) return;
@@ -724,6 +726,13 @@
   })));
   if (X.chartChips) X.chartChips.push(v => ['🔔 Alert', () => addAlert(v)]);
 
+  if (RD.sound) {   // listed once for every desk tab (a setting of this browser); "off" reaches each open tab
+    RD.sound.source('price', { all: true, btn: 'Sound off', label: () => { const n = AL.list.filter(a => !a.fired).length; return AL.sound && n ? `Price alerts: ${n} waiting, with a sound` : ''; },
+      off: () => { AL.sound = false; store.set('rd-al-sound', false); const b = document.querySelector('[data-mk-snd]'); if (b) b.checked = false; } });
+    RD.sound.source('news', { all: true, label: () => (M.warn ? 'Red news warning, 15 minutes before each red event' : ''),
+      off: () => { M.warn = false; store.set('rd-mk-warn', false); const b = document.querySelector('[data-mk-warn]'); if (b) b.checked = false; } });
+  }
+
   // ---------------------------------------------------------------- news warning (15 min before red news), runs with the panel closed too
   function newsWarn() {
     if (!M.warn || !M.news) return;
@@ -733,7 +742,7 @@
       const id = e.t + '|' + e.title; if (M.warned.has(id)) continue;
       M.warned.add(id);
       const msg = `${e.cur} ${e.title} in ${Math.max(1, Math.round((e.t - now) / MIN))} min (${hhmm(e.t)} UTC) — price can jump either way.`;
-      RD.toast('📰 Red news: ' + msg, 'down'); beep('news'); notify('Red news soon', msg);
+      RD.toast('📰 Red news: ' + msg, 'down'); beep('news', '📰 Red news: ' + msg); notify('Red news soon', msg);
     }
   }
 

@@ -873,3 +873,35 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 @media (max-width: 899px) { .fd-seg button, .fd-f select { height: 40px; font-size: 13px; } .fd-f select { font-size: 16px; } .fd-go { height: 44px; } .fd-x { width: 40px; height: 40px; } .fd-row { padding: 11px 12px; } }
 .wl-aw { margin-left: 5px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
 @media (max-width: 899px) { .dk-alarm { width: calc(100vw - 32px); flex-wrap: wrap; } .dk-alarm-txt { flex: 1 1 calc(100% - 44px); } .dk-alarm-open, .dk-alarm-stop { flex: 1 1 0; } }
+
+/* sounds and alarms: the bell in the top bar (desksound.js) */
+.dk-snd { position: relative; }
+.dk-bell { display: inline-flex; align-items: center; gap: 6px; width: auto; min-width: 30px; padding: 0 7px; border: 0; background: none; cursor: pointer; }
+.dk-bell .b-off, .dk-bell.muted .b-on, .dk-bell-t { display: none; }
+.dk-bell.muted .b-off { display: block; }
+.dk-bell.muted { color: var(--down); }
+.dk-bell.ringing { padding: 0 11px; background: var(--down); color: #fff; }
+.dk-bell.ringing:hover { background: var(--down); color: #fff; filter: brightness(1.08); }
+.dk-bell.ringing .dk-bell-t { display: inline; font: 600 12.5px var(--sans, inherit); white-space: nowrap; }
+.dk-bell.ringing .b-on { transform-origin: 50% 10%; animation: dkring 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .dk-bell.ringing .b-on { animation: none; } }
+.dk-pop.dk-sndpop { left: auto; right: 0; width: 330px; max-height: calc(100dvh - 58px); overflow-y: auto; overscroll-behavior: contain; z-index: 61; }
+.dk-sndpop h3 { margin: 0; padding: 4px 8px 8px; font-size: 13.5px; font-weight: 600; }
+.snd-ring { display: grid; gap: 2px; margin: 0 4px 8px; padding: 9px 10px; border-radius: 9px; background: color-mix(in oklab, var(--down) 14%, transparent); font-size: 12.5px; line-height: 1.4; }
+.snd-ring span { overflow-wrap: anywhere; } .snd-ring em { font-style: normal; font-size: 11.5px; color: var(--text-2); }
+.snd-stop { display: block; width: calc(100% - 8px); height: 40px; margin: 0 4px 8px; border: 0; border-radius: 9px; background: var(--down); color: #fff; font: 600 13px var(--sans, inherit); cursor: pointer; }
+.snd-stop:hover { filter: brightness(1.08); }
+.dk-pop label.snd-mute { font-weight: 600; }
+.snd-sec { padding: 10px 8px 4px; border-top: 1px solid var(--dk-line); margin-top: 6px; font: 600 10.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.snd-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; font-size: 12.5px; line-height: 1.4; }
+.snd-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.snd-row b { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-2); }
+.snd-row button { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--text); font: 600 12px var(--sans, inherit); cursor: pointer; }
+.snd-row button:hover { background: var(--dk-hover); } .snd-row button:disabled { opacity: .55; cursor: default; }
+.snd-log { display: grid; gap: 6px; padding: 2px 8px 4px; font-size: 12px; line-height: 1.35; }
+.snd-log div { display: grid; grid-template-columns: 38px 1fr; gap: 0 8px; }
+.snd-log time { font: 11px var(--mono); color: var(--muted); padding-top: 1px; }
+.snd-log span { overflow-wrap: anywhere; } .snd-log em { grid-column: 2; font-style: normal; font-size: 11px; color: var(--muted); }
+.dk-pop p.snd-utc { padding-top: 6px; font: 10.5px var(--mono); }
+@media (max-width: 899px) { .dk-bell.ringing { padding: 0 9px; } .dk-bell.ringing .dk-bell-t { font-size: 12px; } .dk-pop.dk-sndpop { position: fixed; left: 8px; right: 8px; top: 52px; width: auto; max-height: calc(100dvh - 150px); } }
+@media (max-width: 520px) { .dk-bell.ringing { padding: 0 8px; } .dk-bell.ringing .dk-bell-t { display: none; } }   /* a narrow phone: the red ringing bell alone keeps the top bar on screen */

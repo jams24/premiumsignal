@@ -37,6 +37,9 @@
   // Browsers only allow sound after a click on the page, so the audio starts on the first click and stays ready.
   let actx = null;
   const RG = { on: false, stage: 0, src: null, el: null, open: null, hide: 0 };   // the alarm that rings until it is stopped
+  const SND = () => RD.sound || null;   // the bell in the top bar (desksound.js): mute every tab, stop from any tab
+  const quiet = () => !!(SND() && SND().muted());
+  const userStop = () => { if (SND()) SND().stopAll(); else stopRing(); };   // pressed by you: the same alarm stops in every tab
   const unlockAudio = () => {
     try {
       const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -54,17 +57,17 @@
   }
   function stopSound() { if (!RG.src) return; try { RG.src.stop(); RG.src.disconnect(); } catch (e) { /* already stopped */ } RG.src = null; }
   function ringSound() {
-    stopSound(); if (!actx) return;
+    stopSound(); if (!actx || quiet()) return;
     try { const s = actx.createBufferSource(); s.buffer = ringBuffer(RG.stage); s.loop = true; s.connect(actx.destination); s.start(); RG.src = s; if (actx.state !== 'running') actx.resume().catch(() => {}); } catch (e) { RG.src = null; }
   }
-  function stopRing() { RG.on = false; RG.stage = 0; RG.open = null; clearTimeout(RG.hide); stopSound(); if (RG.el) RG.el.hidden = true; }
+  function stopRing() { RG.on = false; RG.stage = 0; RG.open = null; clearTimeout(RG.hide); stopSound(); if (RG.el) RG.el.hidden = true; if (SND()) SND().ringing(null); }
   // the card under the toolbar: an alarm that rings, or a quiet notice for a coin that is not on this chart
   function card(title, body, tone, open, ringing) {
     if (!RG.el) {
       const el = document.createElement('div'); el.setAttribute('role', 'alert');
       el.innerHTML = '<span class="dk-alarm-bell" aria-hidden="true">🔔</span><div class="dk-alarm-txt"><b></b><span></span></div><button type="button" class="dk-alarm-open" hidden>Open chart</button><button type="button" class="dk-alarm-stop">Stop alarm</button>';
-      el.querySelector('.dk-alarm-stop').addEventListener('click', stopRing);
-      el.querySelector('.dk-alarm-open').addEventListener('click', () => { const f = RG.open; stopRing(); if (f) f(); });
+      el.querySelector('.dk-alarm-stop').addEventListener('click', userStop);
+      el.querySelector('.dk-alarm-open').addEventListener('click', () => { const f = RG.open; userStop(); if (f) f(); });
       document.body.appendChild(el); RG.el = el;
     }
     clearTimeout(RG.hide); RG.open = open || null;
@@ -77,10 +80,11 @@
     const again = RG.on && RG.stage === stage && RG.src;
     RG.on = true; RG.stage = stage; if (!again) ringSound();
     card(title, body, tone, open, true);
+    if (SND()) SND().ringing(title);
   }
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && RG.on) { e.preventDefault(); e.stopPropagation(); stopRing(); } }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && RG.on) { e.preventDefault(); e.stopPropagation(); userStop(); } }, true);
   function chime(stage) {
-    if (!actx) return;
+    if (!actx || quiet()) return;
     const asked = Date.now(), play = () => {
       if (Date.now() - asked > 1500) return;   // the audio woke up long after the alert: too late to mean anything
       const t = actx.currentTime, notes = stage === 3 ? [880, 1175, 1568] : [660, 880], vol = stage === 3 ? 0.3 : 0.2;
@@ -92,14 +96,17 @@
   }
   function popup(title, body, tag, sticky, open) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!sticky }); n.onclick = () => { window.focus(); stopRing(); n.close(); if (open) open(); }; } catch (e) { /* phones only allow these from an installed app */ }
+    try { const n = new Notification(title, { body, tag, icon: '/icon.svg', requireInteraction: !!sticky, silent: quiet() }); n.onclick = () => { window.focus(); userStop(); n.close(); if (open) open(); }; } catch (e) { /* phones only allow these from an installed app */ }
   }
   const away = () => document.hidden || !document.hasFocus();   // looking at the page: the toast and the sound are enough
   const alertsOn = () => !!U.aplusAlert && !!U.aplus && !R.on && !X.smcOff;
   function alertUser(stage, title, body, tag, tone, open) {
+    if (SND() && !SND().claim(tag)) return;   // another tab of this site already sounded this alert
     const rings = U.aplusRing && !(stage === 2 && U.aplusRingTrig);   // "only when a setup triggers": almost ready plays the short sound once
+    const sounds = rings ? !(RG.on && RG.stage > stage) : !RG.on;   // a triggered alarm keeps ringing over a new "almost ready"
     if (rings) ring(stage, title, body, tone, open); else if (!RG.on) { chime(stage); if (open) card(title, body, tone, open, false); }
     if (away()) popup(title, body, tag, rings, open);
+    if (SND() && sounds && !quiet()) SND().played(title, rings);
   }
   document.addEventListener('click', e => {
     if (U.aplusAlert) unlockAudio();
@@ -322,6 +329,12 @@
   RD.on('mode', () => { reset(); load(); });
   RD.on('bars', () => { if (U.aplus) load(); });   // a new candle, a replay step, another timeframe
   setInterval(() => { if (U.aplus && !R.on && (!document.hidden || U.aplusAlert)) load(); }, 20000);   // live: new 1-minute closes between chart candles (alerts keep watching from a hidden tab)
+  if (SND()) {
+    SND().onStop(stopRing);
+    SND().onMute(m => { if (m) stopSound(); else if (RG.on && !RG.src) ringSound(); });
+    SND().source('aplus', { label: () => (alertsOn() && stfNow() ? `A+ alerts on this chart (${u.coin(U.sym)} ${stfNow()}${U.aplusFull ? ', fully ready only' : ''}${U.aplusRing ? ', rings until stopped' : ''})` : ''),
+      off: () => { const b = document.querySelector('[data-ind="aplusAlert"]'); if (b && b.checked) b.click(); } });
+  }
   // the Watchlist alerts (deskwatch.js) ring through the same sound, card and notification
   Object.assign(M, { analyze, alertUser, stopRing, unlock: unlockAudio, soundReady, stfNow }); window.__rdAplus = M;
   if (U.aplus) load();
