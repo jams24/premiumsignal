@@ -121,12 +121,13 @@ function desk(who, nonce) {
       <label class="dk-sub"><input type="checkbox" data-ind="aplusPause"> Pause the replay on a new A+</label>
       <label class="dk-sub" title="Off: setups that already hit their stop or target leave the chart; open ones and the idea being built stay. The A+ count in the top-left line still counts them."><input type="checkbox" data-ind="aplusDone"> Show finished A+ setups (target / stop hit)</label>
       <label class="dk-sub" title="A sound and a browser notification when the sweep is done (almost ready) and again when the setup triggers. Watches the coin and timeframe on this chart while this page is open. Not during a replay."><input type="checkbox" data-ind="aplusAlert"> Alert me: sound + browser notification</label>
+      <label class="dk-sub" title="Fully ready = all 4 steps done: the 1-minute close past the trigger line came, the entry, stop and target are set. No sound, notification or note when only the sweep is done (almost ready)."><input type="checkbox" data-ind="aplusFull"> Only alert when the setup is fully ready (triggered)</label>
       <label class="dk-sub" title="The alert sound repeats until you press Stop alarm, press Esc or click the notification."><input type="checkbox" data-ind="aplusRing"> Keep ringing until I stop it</label>
       <label class="dk-sub" title="A triggered setup rings until you stop it. Almost ready plays the short sound once and does not ring."><input type="checkbox" data-ind="aplusRingTrig"> Only ring when a setup triggers (almost ready plays one short sound)</label>
       ${A ? `<div class="dk-awbox" data-awbox>
         <label title="The server checks every coin in your Watchlist each minute with the same A+ rules as the chart. Alerts go to your Telegram even with this page closed, and ring here on any chart. Practice setups, not signals: these rules lost after fees in our test."><input type="checkbox" data-aw="on"> Watch my Watchlist for A+ (Telegram + this page)</label>
         <div class="dk-smcall" role="group" aria-label="Timeframes to watch"><span>Timeframes</span>${['5m', '15m', '1H', '4H'].map(t => `<button type="button" data-awpick="${t}">${t}</button>`).join('')}</div>
-        <label class="dk-sub"><input type="checkbox" data-aw="ready" checked> Also alert when almost ready</label>
+        <label class="dk-sub" title="Fully ready = all 4 steps done: the 1-minute close past the trigger line came. Off: you also get a message when the sweep is done (almost ready), one close before."><input type="checkbox" data-aw="full"> Only alert when the setup is fully ready (triggered)</label>
         <div class="dk-awstat" data-awstat aria-live="polite"></div>
         <button type="button" class="dk-awsync" data-awsync hidden>Watch this device's Watchlist</button>
       </div>` : ''}

@@ -110,6 +110,14 @@
       RD.toast('🔔 The alarm rings when a setup triggers. Almost ready plays one short sound.', 'up');
       return;
     }
+    if (e.target && e.target.matches && e.target.matches('[data-ind="aplusFull"]') && e.target.checked) {
+      U.aplusFull = true; unlockAudio();
+      if (RG.on && RG.stage === 2) stopRing();
+      const box = document.querySelector('[data-ind="aplusAlert"]');
+      if (box && !box.checked) box.click(); else chime(3);   // the option needs the alert on
+      RD.toast('🎯 A+ alerts only when a setup is fully ready (triggered). Nothing when only the sweep is done.', 'up');
+      return;
+    }
     if (e.target && e.target.matches && e.target.matches('[data-ind="aplusRing"]') && !e.target.checked) U.aplusRingTrig = false;
     if (e.target && e.target.matches && e.target.matches('[data-ind="aplusRing"]') && e.target.checked) {
       U.aplusRing = true; unlockAudio();
@@ -124,7 +132,7 @@
     const done = () => {
       chime(3);
       const perm = 'Notification' in window ? Notification.permission : 'none';
-      if (perm === 'granted') popup('A+ alerts are on', 'You will get one of these when a setup is almost ready and when it triggers.', 'rd-aplus-on');
+      if (perm === 'granted') popup('A+ alerts are on', U.aplusFull ? 'You will get one of these when a setup is fully ready (triggered).' : 'You will get one of these when a setup is almost ready and when it triggers.', 'rd-aplus-on');
       RD.toast(perm === 'granted' ? '🔔 A+ alerts on for the chart you have open. Keep this page open.'
         : perm === 'none' ? '🔔 A+ sound is on. This browser cannot show notifications.'
           : '🔔 A+ sound is on. Notifications are blocked: allow them for this site in your browser settings.', perm === 'granted' ? 'up' : 'down');
@@ -192,7 +200,7 @@
       if (id !== M.armed) {
         M.armed = id;
         // a deeper sweep of the same move soon after is the same warning: stay quiet for 30 minutes
-        if (!first && alertsOn() && !(M.armedLeg === lg.brk.t && end - M.armedAt < 30 * MIN)) {
+        if (!first && alertsOn() && !U.aplusFull && !(M.armedLeg === lg.brk.t && end - M.armedAt < 30 * MIN)) {
           M.armedLeg = lg.brk.t; M.armedAt = end;
           const side = lg.dir === -1 ? 'short' : 'long', how = `a 1-minute close ${lg.dir === -1 ? 'below' : 'above'} ${u.fp(lg.trig.p)}`;
           RD.toast(`🔔 A+ ${side} almost ready on ${u.coin(U.sym)}: it triggers on ${how}.`, lg.dir === -1 ? 'down' : 'up');
@@ -308,7 +316,7 @@
   X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && !soundReady() ? '<span class="down">🔇 Click the page once so the alert can sound</span>' + s : s; });
 
   // ---------------------------------------------------------------- when to read again
-  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing || (U.aplusRingTrig && RG.stage === 2)) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
+  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing || ((U.aplusRingTrig || U.aplusFull) && RG.stage === 2)) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
   RD.on('sym', () => { reset(); load(); });
   RD.on('load', () => load());
   RD.on('mode', () => { reset(); load(); });

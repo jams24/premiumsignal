@@ -65,9 +65,9 @@
 
   // ---------------------------------------------------------------- the Indicators rows
   function paint() {
-    const c = W.cfg, s = W.status, on = !!(c && c.on), box = $('[data-aw="on"]'), rd = $('[data-aw="ready"]'), line = $('[data-awstat]'), sync = $('[data-awsync]');
+    const c = W.cfg, s = W.status, on = !!(c && c.on), box = $('[data-aw="on"]'), full = $('[data-aw="full"]'), line = $('[data-awstat]'), sync = $('[data-awsync]');
     if (!c) { line.textContent = 'Could not reach the server.'; return; }
-    box.checked = on; rd.checked = c.ready;
+    box.checked = on; full.checked = !c.ready;
     root.querySelectorAll('[data-awpick]').forEach(b => b.classList.toggle('on', c.tfs.includes(b.dataset.awpick)));
     const mine = listNow(), differs = on && !sameList(mine, c.coins);
     let t = 'Every coin in your Watchlist, checked each minute by the server. Alerts reach Telegram even with this page closed.';
@@ -102,7 +102,7 @@
     }
     if (e.target.closest('[data-awsync]')) save({ coins: listNow(), ex: U.ex }, '🔔 Now watching the Watchlist on this device.');
   });
-  $('[data-aw="ready"]').addEventListener('change', e => save({ ready: e.target.checked }));
+  $('[data-aw="full"]').addEventListener('change', e => save({ ready: !e.target.checked }, e.target.checked ? '🎯 Watchlist: Telegram and this page alert only when a setup is fully ready (triggered).' : '🔔 Watchlist: you also get an alert when a setup is almost ready.'));
   $('[data-aw="on"]').addEventListener('change', e => {
     if (!e.target.checked) { AP.stopRing(); save({ on: false }, 'A+ Watchlist alerts are off.'); return; }
     const list = listNow();
