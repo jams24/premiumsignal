@@ -123,7 +123,7 @@
         const clock = nowT(), b0 = bucket(clock, tf);
         const hist = await api(C.ex).klines(C.sym, tf, { end: b0 - 1, limit: 1000 });
         if (g !== C.gen) return;
-        C.bars = hist.filter(k => k[0] < b0); C.buf = []; C.bufEnd = b0; C.res = RES[tf]; C.fetching = null; C.clock = b0;
+        C.bars = hist.filter(k => k[0] < b0); C.buf = []; C.bufEnd = b0; C.res = RD.util.resOf ? RD.util.resOf(tf, C.ex) : RES[tf]; C.fetching = null; C.clock = b0;
         await feed(clock + 120 * TF[C.res].ms, g);
         if (g !== C.gen) return;
         reveal(clock, true);

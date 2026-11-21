@@ -18,6 +18,7 @@ const LRN = require('./learn');
 const ADM = require('./admin');
 const { ASSETS, FAVICON, safeNext } = require('./html');
 const NEWS = require('./news');
+const FX = require('./fx');   // interbank FX candles for the desk (server-side: the source has no CORS)
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 /** Email links work (confirm address, reset password): the database, an email sender, and the public address for the links.
@@ -95,7 +96,7 @@ const PAGES = new Set(['/', '/learn', '/terms', '/privacy', '/risk', '/signin', 
 
 async function handle(req, res, url, opts = {}) {
   const p = url.pathname;
-  if (!(PAGES.has(p) || p.startsWith('/assets/') || p.startsWith('/auth/') || /^\/learn\/[a-z0-9-]{1,60}\/?$/.test(p))) return false;
+  if (!(PAGES.has(p) || p.startsWith('/assets/') || p.startsWith('/auth/') || p.startsWith('/api/site/fx/') || /^\/learn\/[a-z0-9-]{1,60}\/?$/.test(p))) return false;
   try {
     return await route(req, res, url, opts);
   } catch (e) {
@@ -127,6 +128,11 @@ async function route(req, res, url, { dashboardHtml, newsEvents }) {
   const userWho = who && !who.keyOnly ? who : null;
   const next = safeNext(url.searchParams.get('next'));
 
+  if (p.startsWith('/api/site/fx/')) {   // the desk's FX pairs: candles, prices (signed in; a chart polls every ~10 s, replays page fast)
+    if (!who) { json(res, 401, { error: 'auth' }); return true; }
+    if (!A.limit(`fx:${A.clientIp(req)}`, 900, 300e3)) { json(res, 429, { error: 'rate', message: 'Too many FX requests. Wait a few minutes.' }); return true; }
+    await FX.route(res, url, json); return true;
+  }
   if (p === '/api/site/news') {   // the desk's Market panel: economic calendar + crypto headlines (signed in, rate limited)
     if (!who) { json(res, 401, { error: 'auth' }); return true; }
     if (!A.limit(`nw:${A.clientIp(req)}`, 40, 300e3)) { json(res, 429, { error: 'rate', message: 'Too many requests. Wait a few minutes.' }); return true; }

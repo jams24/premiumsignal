@@ -22,7 +22,7 @@
     tf: TFS.includes(saved.tf) ? saved.tf : (TFS.includes(U.tf) ? U.tf : '15m'),
     side: ['all', 'long', 'short', 'a3'].includes(saved.side) ? saved.side : 'all',
     min: [4, 3, 2].includes(saved.min) ? saved.min : 2,
-    ex: saved.ex === 'bybit' || saved.ex === 'binance' ? saved.ex : U.ex,
+    ex: saved.ex === 'bybit' || saved.ex === 'binance' ? saved.ex : U.ex === 'fx' ? 'binance' : U.ex,
   };
   const S = { run: 0, busy: false, rows: [], early: 0, quiet: 0, bad: [], missing: [], total: 0, done: 0, t0: 0, at: 0, tf: '', ex: '', scope: '', msg: '', cool: 0, open: '' };
 

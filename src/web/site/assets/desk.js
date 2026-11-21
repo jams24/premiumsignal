@@ -24,6 +24,8 @@
     '1H': { ms: HOUR, b: '1h', y: '60' }, '4H': { ms: 4 * HOUR, b: '4h', y: '240' }, '1D': { ms: DAY, b: '1d', y: 'D' }, '1W': { ms: WEEK, b: '1w', y: 'W' },
   };
   const RES = { '1m': '1m', '5m': '1m', '15m': '1m', '1H': '1m', '4H': '5m', '1D': '15m', '1W': '1H' };   // replay feed per chart timeframe
+  const FXRES = { '1m': '1m', '5m': '5m', '15m': '15m', '1H': '1H', '4H': '1H', '1D': '1H', '1W': '1D' };   // FX: 1m kept 30 days, 5m / 15m 60, 1H 2 years
+  const resOf = (tf, ex) => ((ex || U.ex) === 'fx' ? FXRES : RES)[tf];
   const FEE_T = 0.0005, FEE_M = 0.0002, MMR = 0.005, START_BAL = 10000;
   const bucket = (t, tf) => tf === '1W' ? Math.floor((t - WEEK_OFF) / WEEK) * WEEK + WEEK_OFF : Math.floor(t / TF[tf].ms) * TF[tf].ms;
   const floorTo = (t, ms) => Math.floor(t / ms) * ms, ceilTo = (t, ms) => Math.ceil(t / ms) * ms;
@@ -36,7 +38,7 @@
   const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
-  if (U.ex !== 'bybit') U.ex = 'binance';
+  if (!['binance', 'bybit', 'fx'].includes(U.ex)) U.ex = 'binance';
   const saveUI = () => store.set('rd-ui-v1', U);
   // extension points: the admin layer (/assets/deskadmin.js, served to admins only) adds chart lines, markers and bottom tabs
   // and listens to these events: sym (coin changed), mode (live ⇄ replay), tick (prices / clock moved), pane (side tab),
@@ -59,6 +61,7 @@
   const rt = p => +(Math.round(p / TICK) * TICK).toFixed(PREC);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const coin = s => s.replace(/USDT$/, '');
+  const mktName = (s, ex) => ((ex || U.ex) === 'fx' ? (/^[A-Z]{6}$/.test(s) ? s.slice(0, 3) + '/' + s.slice(3) : s) : coin(s) + '/USDT');
   const tnice = t => new Date(t).toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' UTC';
   const tshort = t => new Date(t).toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const dur = ms => { const m = Math.round(ms / MIN); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + (m % 60 ? (m % 60) + 'm' : '') : Math.floor(m / 1440) + 'd ' + (Math.floor(m / 60) % 24) + 'h'; };
@@ -81,7 +84,7 @@
     const ac = new AbortController(), to = setTimeout(() => ac.abort(), ms);
     try {
       const r = await fetch(url, { signal: ac.signal, cache: 'no-store' });
-      if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); if (j && j.msg) m = j.msg; } catch (e) { /* not json */ } const er = new Error(m); er.status = r.status; throw er; }
+      if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); if (j && (j.msg || j.message)) m = j.msg || j.message; } catch (e) { /* not json */ } const er = new Error(m); er.status = r.status; throw er; }
       return await r.json();
     } catch (e) { if (e.name === 'AbortError') throw new Error('the exchange did not answer in time'); throw e; } finally { clearTimeout(to); }
   }
@@ -97,8 +100,10 @@
       },
       async symbols() {
         const d = await getJSON('https://fapi.binance.com/fapi/v1/exchangeInfo', 25000);
-        return d.symbols.filter(s => s.contractType === 'PERPETUAL' && s.quoteAsset === 'USDT' && s.status === 'TRADING')
-          .map(s => ({ s: s.symbol, b: s.baseAsset, k: (s.filters.find(f => f.filterType === 'PRICE_FILTER') || {}).tickSize || '0.01', t0: s.onboardDate || 0 }));
+        const CAT = { COMMODITY: 'Commodity', EQUITY: 'Stock', KR_EQUITY: 'Stock', HK_EQUITY: 'Stock', CN_EQUITY: 'Stock', FX: 'Forex', PREMARKET: 'Pre-IPO', INDEX: 'Index' };
+        return d.symbols.filter(s => (s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.quoteAsset === 'USDT' && s.status === 'TRADING')
+          .map(s => ({ s: s.symbol, b: s.baseAsset, k: (s.filters.find(f => f.filterType === 'PRICE_FILTER') || {}).tickSize || '0.01', t0: s.onboardDate || 0,
+            cat: s.contractType === 'TRADIFI_PERPETUAL' ? CAT[s.underlyingType] || 'TradFi' : '' }));
       },
       async tickers() {
         const d = await getJSON('https://fapi.binance.com/fapi/v1/ticker/24hr');
@@ -129,7 +134,7 @@
           const d = await getJSON('https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), 25000);
           if (d.retCode !== 0) throw new Error(d.retMsg || 'Bybit error');
           out = out.concat(d.result.list.filter(s => s.quoteCoin === 'USDT' && s.status === 'Trading' && s.contractType === 'LinearPerpetual')
-            .map(s => ({ s: s.symbol, b: s.baseCoin, k: s.priceFilter.tickSize, t0: +s.launchTime || 0 })));
+            .map(s => ({ s: s.symbol, b: s.baseCoin, k: s.priceFilter.tickSize, t0: +s.launchTime || 0, cat: { forex: 'Forex', stock: 'Stock', commodity: 'Commodity', ETF: 'ETF' }[s.symbolType] || '' })));
           cursor = d.result.nextPageCursor; if (!cursor) break;
         }
         return out;
@@ -150,6 +155,22 @@
         ws.addEventListener('close', () => clearInterval(ping));
         return { ws, close() { clearInterval(ping); ws.onclose = null; try { ws.close(); } catch (e) { /* closed */ } } };
       },
+    },
+    // interbank FX (EURUSD, USDJPY… the prices TradingView's FX charts show) through our server, which reads Yahoo's FX
+    // feed (site/fx.js; browsers can't call it). No socket: the live check below polls every ~10 s. Price only: no volume,
+    // funding or open interest, and no real orders (the exchanges' FX perps are other, thinner markets).
+    fx: {
+      name: 'FX', cap: 1000, fx: true,
+      async klines(sym, iv, o) {
+        const q = new URLSearchParams({ s: sym, tf: iv, limit: String(Math.min(o.limit || 1000, 1000)) });
+        if (o.start != null) q.set('start', String(o.start));
+        if (o.end != null) q.set('end', String(o.end));
+        return (await getJSON('/api/site/fx/klines?' + q, 25000)).k;
+      },
+      async symbols() { return (await getJSON('/api/site/fx/pairs')).pairs.map(p => ({ s: p.s, b: p.s, k: p.k, t0: 0, cat: 'Forex', name: p.name })); },
+      async tickers() { return (await getJSON('/api/site/fx/tickers', 25000)).t; },
+      async ticker(sym) { const t = (await tickers24('fx'))[sym]; if (!t) throw new Error('no price for ' + sym); return t; },
+      socket() { throw new Error('FX has no live socket'); },
     },
   };
   for (const ex in EX) EX[ex].stream = (sym, iv, onK, o) => liveFeed(ex, sym, iv, onK, o || {});
@@ -408,7 +429,7 @@
   const saveRSoon = () => { if (Date.now() - saveRT > 2000) { saveRT = Date.now(); saveR(); } };
 
   // the latest replay start: 2 candles of the replay feed ago (1D plays 15m candles into the forming day, so today works)
-  const rpMin = () => 2 * TF[RES[U.tf]].ms;
+  const rpMin = () => 2 * TF[resOf(U.tf)].ms;
   async function enterReplay(t) {
     if (!isFinite(t) || t > Date.now() - rpMin()) { toast('Pick a moment in the past.'); return; }
     closeModals(); pausePlay(); clearPick();
@@ -419,7 +440,7 @@
   }
   async function rebuildReplay() {
     const g = ++S.gen; R.gen = g; pausePlay();
-    R.res = RES[U.tf]; R.buf = []; R.bufEnd = R.clock; R.end = false; R.fetching = null; R.back = [];
+    R.res = resOf(U.tf); R.buf = []; R.bufEnd = R.clock; R.end = false; R.fetching = null; R.back = [];
     stepLabel();
     loading(`Rewinding ${U.sym} to ${tnice(R.clock)}…`);
     try {
@@ -1367,7 +1388,7 @@
   // Sell to its review dialog (X.quickReal) — no real order is ever placed from here without that dialog.
   const chartEl = $('.dk-chart');
   const okFor = (side, entry, v, isSl) => v != null && !isNaN(v) && entry > 0 && (isSl ? (side === 1 ? v < entry : v > entry) : (side === 1 ? v > entry : v < entry));
-  const realOn = () => !!(X.quickReal && X.realActive && X.realActive() && !R.on);
+  const realOn = () => !!(X.quickReal && X.realActive && X.realActive() && !R.on && U.ex !== 'fx');
   function paperCheck(o) {
     const px = S.lastPx;
     if (!px) return 'Wait for the chart to load.';
@@ -1769,12 +1790,12 @@
   function legend() {
     const b = hoverBar || lastBar(); if (!b) { LG.innerHTML = ''; return; }
     const ch = b[4] - b[1], up = ch >= 0, cl = up ? 'up' : 'down';
-    let l2 = U.vol ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';
+    let l2 = U.vol && U.ex !== 'fx' ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';   // FX has no shared volume
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
     if (U.smc && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
       `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
-    LG.innerHTML = `<div class="l1"><b>${esc(coin(U.sym))}/USDT · ${U.tf} · ${api().name}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
+    LG.innerHTML = `<div class="l1"><b>${esc(mktName(U.sym))} · ${U.tf} · ${api().name}${U.ex === 'fx' ? ' <em class="lg-fx" title="Interbank prices (the market TradingView’s FX charts show), via our server, ~10 s refresh. Chart and paper trades only.">interbank</em>' : ''}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
   }
   chart.subscribeCrosshairMove(p => {
     if (p && p.time != null) { const t = p.time * 1000, B = S.bars; let lo = 0, hi = B.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (B[m][0] <= t) lo = m; else hi = m - 1; } hoverBar = B[lo] && B[lo][0] === t ? B[lo] : null; }
@@ -1800,7 +1821,7 @@
   }
   function clockUI() { $$('[data-clock]').forEach(e => { e.textContent = R.on ? tnice(R.clock) : ''; }); }
   function playUI() { $$('[data-act="play"]').forEach(b => { b.innerHTML = ic(R.playing ? 'pause' : 'play'); b.setAttribute('aria-label', R.playing ? 'Pause' : 'Play'); }); }
-  function stepLabel() { const o = $('[data-stepsize] option[value="small"]'); if (o) o.textContent = 'Step: ' + (RES[U.tf] === '1H' ? '1 hour' : RES[U.tf]); }
+  function stepLabel() { const o = $('[data-stepsize] option[value="small"]'); if (o) o.textContent = 'Step: ' + (resOf(U.tf) === '1H' ? '1 hour' : resOf(U.tf) === '1D' ? '1 day' : resOf(U.tf)); }
   $('[data-stepsize]').innerHTML = '<option value="bar">Step: 1 bar</option><option value="small">Step: 1m</option>';
 
   // The top bar never runs under the right-hand buttons: when it doesn't fit (a narrower screen, the replay controls, the
@@ -1832,40 +1853,52 @@
   let WL = store.get('rd-wl-v1', null) || ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'SUIUSDT', 'LINKUSDT', 'AVAXUSDT', '1000PEPEUSDT'];
   const WLD = {};
   const saveWL = () => { store.set('rd-wl-v1', WL); emit('watchlist', WL); };
+  const exFor = s => { for (const ex of [U.ex, 'binance', 'bybit', 'fx']) if (SYMS[ex] && SYMS[ex].some(x => x.s === s)) return ex; return /USDT$/.test(s) ? (U.ex === 'fx' ? 'binance' : U.ex) : 'fx'; };
+  const wlDec = (s, px) => (exFor(s) === 'fx' ? (/JPY$|^DXY$/.test(s) ? 3 : 5) : px >= 100 ? 2 : px >= 1 ? 4 : 6);
   function renderWatch() {
-    $('[data-watch]').innerHTML = WL.map(s => { const d = WLD[s]; return `<div class="wl-row${s === U.sym ? ' on' : ''}" data-s="${esc(s)}"><b>${esc(coin(s))}${X.wlMark ? X.wlMark(s) : ''}</b><span class="mono">${d ? fp(d.px, d.px >= 100 ? 2 : d.px >= 1 ? 4 : 6) : '…'}</span><span class="chg ${d && d.chg < 0 ? 'down' : 'up'}">${d ? pct(d.chg) : ''}</span></div>`; }).join('') || '<p class="wl-note">Your watchlist is empty.</p>';
+    $('[data-watch]').innerHTML = WL.map(s => { const d = WLD[s]; return `<div class="wl-row${s === U.sym ? ' on' : ''}" data-s="${esc(s)}"><b>${esc(coin(s))}${X.wlMark ? X.wlMark(s) : ''}</b><span class="mono">${d ? fp(d.px, wlDec(s, d.px)) : '…'}</span><span class="chg ${d && d.chg < 0 ? 'down' : 'up'}">${d ? pct(d.chg) : ''}</span></div>`; }).join('') || '<p class="wl-note">Your watchlist is empty.</p>';
   }
   const watchVisible = () => !$('[data-pane="watch"]').hidden && (!phone() || $('.dk-side').classList.contains('open'));
   async function pollWatch(force) {
     if (document.hidden || (!force && !watchVisible())) return;
-    await Promise.allSettled(WL.map(s => api().ticker(s).then(d => { WLD[s] = d; })));
+    if (WL.some(s => !/USDT$/.test(s))) await symList('fx').catch(() => null);
+    await Promise.allSettled(WL.map(s => api(exFor(s)).ticker(s).then(d => { WLD[s] = d; })));
     renderWatch();
   }
   const sModal = $('[data-search]'), sList = $('[data-slist]'), sIn = $('[data-q]');
-  let sEx = U.ex, sSel = 0, sRows = [];
+  let sEx = 'all', sSel = 0, sRows = [];
+  const SEXS = ['binance', 'bybit', 'fx'];
+  const ALIAS = { XAU: 'GOLD', XAUT: 'GOLD', PAXG: 'GOLD', XAG: 'SILVER', XPT: 'PLATINUM', XPD: 'PALLADIUM' };
   async function openSearch() {
-    sEx = U.ex; $$('[data-sex]').forEach(b => b.classList.toggle('on', b.dataset.sex === sEx));
+    $$('[data-sex]').forEach(b => b.classList.toggle('on', b.dataset.sex === sEx));
     openModal(sModal); sIn.value = ''; sIn.focus(); await renderSearch();
   }
   async function renderSearch() {
     sList.innerHTML = '<div class="pt-empty"><div><div class="spin" style="width:18px;height:18px;margin:0 auto 8px;border:2px solid var(--dk-line);border-top-color:var(--primary);border-radius:99px;animation:spin .8s linear infinite"></div>Loading coins…</div></div>';
-    let list, tk = {};
-    try { list = await symList(sEx); } catch (e) { sList.innerHTML = `<div class="pt-empty">Could not load the coin list from ${EX[sEx].name}: ${esc(e.message)}</div>`; return; }
-    try { tk = await tickers24(sEx); } catch (e) { /* prices optional */ }
+    const want = sEx === 'all' ? SEXS : [sEx], fail = [];
+    const [ls, ts] = await Promise.all([Promise.allSettled(want.map(ex => symList(ex))), Promise.allSettled(want.map(ex => tickers24(ex)))]);
+    let rows = [];
+    want.forEach((ex, i) => {
+      if (ls[i].status !== 'fulfilled') { fail.push(EX[ex].name); return; }
+      const tk = ts[i].status === 'fulfilled' ? ts[i].value : {};
+      for (const s of ls[i].value) rows.push({ s, ex, t: tk[s.s] || {} });
+    });
+    if (!rows.length) { sList.innerHTML = `<div class="pt-empty">Could not load the markets from ${esc(fail.join(' or ') || 'the exchanges')}. Check the connection and try again.</div>`; return; }
     const q = sIn.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    let rows = list.map(s => ({ s, t: tk[s.s] || {} }));
     if (q) {
-      rows = rows.filter(r => r.s.s.includes(q));
-      const rank = r => (r.s.b === q || r.s.b === '1000' + q ? 0 : r.s.b.startsWith(q) ? 1 : 2);
-      rows.sort((a, b) => rank(a) - rank(b) || (b.t.vol || 0) - (a.t.vol || 0));
+      const words = r => (r.s.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '') + (ALIAS[r.s.b] || '');
+      rows = rows.filter(r => r.s.s.includes(q) || words(r).includes(q));
+      const rank = r => (r.s.b === q || r.s.b === '1000' + q ? 0 : r.s.b.startsWith(q) ? 1 : r.s.s.includes(q) ? 2 : 3);
+      rows.sort((a, b) => rank(a) - rank(b) || (b.ex === 'fx') - (a.ex === 'fx') || (b.t.vol || 0) - (a.t.vol || 0));
     } else rows.sort((a, b) => (WL.includes(b.s.s) - WL.includes(a.s.s)) || (b.t.vol || 0) - (a.t.vol || 0));
     sRows = rows.slice(0, 80); sSel = 0;
     sList.innerHTML = sRows.map((r, i) => `<div class="s-row${i === 0 ? ' sel' : ''}" role="option" data-i="${i}"><button type="button" class="s-star${WL.includes(r.s.s) ? ' on' : ''}" data-star="${esc(r.s.s)}" aria-label="Watchlist">${ic('star')}</button>
-      <b>${esc(r.s.b)}<span>/USDT</span></b><span class="mono">${r.t.px ? fp(r.t.px, Math.min(8, decs(r.s.k))) : ''}</span><span class="chg ${(r.t.chg || 0) < 0 ? 'down' : 'up'}">${r.t.chg != null ? pct(r.t.chg) : ''}</span></div>`).join('') ||
-      `<div class="pt-empty">No USDT perpetual matches “${esc(sIn.value)}” on ${EX[sEx].name}.</div>`;
+      <b>${r.ex === 'fx' ? esc(mktName(r.s.s, 'fx')) : `${esc(r.s.b)}<span>/USDT</span>`}${r.s.cat ? `<em class="s-cat">${esc(r.s.cat)}</em>` : ''}</b><span class="s-ex ${r.ex}" title="${r.ex === 'fx' ? 'Interbank FX prices (TradingView’s FX charts): chart and paper only' : esc(EX[r.ex].name) + ' USDT perpetual'}">${r.ex === 'fx' ? 'FX' : esc(EX[r.ex].name)}</span><span class="mono">${r.t.px ? fp(r.t.px, Math.min(8, decs(r.s.k))) : ''}</span><span class="chg ${(r.t.chg || 0) < 0 ? 'down' : 'up'}">${r.t.chg != null ? pct(r.t.chg) : ''}</span></div>`).join('') ||
+      `<div class="pt-empty">Nothing matches “${esc(sIn.value)}”${sEx === 'all' ? '' : ' on ' + EX[sEx].name}.</div>`;
+    if (fail.length && sRows.length) sList.insertAdjacentHTML('beforeend', `<div class="pt-empty">${esc(fail.join(' and '))} did not answer, so ${fail.length > 1 ? 'they are' : 'it is'} missing here.</div>`);
   }
   function searchMove(d) { const rs = $$('.s-row', sList); if (!rs.length) return; sSel = (sSel + d + rs.length) % rs.length; rs.forEach((r, i) => r.classList.toggle('sel', i === sSel)); rs[sSel].scrollIntoView({ block: 'nearest' }); }
-  function chooseRow(i) { const r = sRows[i]; if (!r) return; closeModals(); setSymbol(r.s.s, sEx); }
+  function chooseRow(i) { const r = sRows[i]; if (!r) return; closeModals(); setSymbol(r.s.s, r.ex); }
   let sT = null;
   sIn.addEventListener('input', () => { clearTimeout(sT); sT = setTimeout(renderSearch, 120); });
   sIn.addEventListener('keydown', e => {
@@ -1968,7 +2001,8 @@
       else if (act === 'retry') { hideMsg(); if (S.retry) S.retry(); }
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
-      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc) U.smc = true; saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
+      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc && !U.smcFvg) U.smc = true;   // FVG alone uses it too: don't switch SMC on for it
+      saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'smc') { U.smc = !U.smc; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
@@ -2007,7 +2041,7 @@
     const cn = e.target.closest('[data-cancel]'); if (cn) { A.ord = A.ord.filter(o => o.id !== +cn.dataset.cancel); changed(); toast('Order cancelled.'); return; }
     const ed = e.target.closest('[data-edit]'); if (ed && !ed.querySelector('input')) return editCell(ed);
     const go = e.target.closest('[data-goto]'); if (go && !e.target.closest('button')) { if (go.dataset.goto !== U.sym) setSymbol(go.dataset.goto); return; }
-    const wl = e.target.closest('.wl-row'); if (wl) { setSymbol(wl.dataset.s); if (phone()) closeSheets(); return; }
+    const wl = e.target.closest('.wl-row'); if (wl) { setSymbol(wl.dataset.s, exFor(wl.dataset.s)); if (phone()) closeSheets(); return; }
     const rq = e.target.closest('[data-rq]'); if (rq) { $('[data-rdate]').value = toLocalInput(rq.dataset.rq === 'today' ? rToday() : Date.now() - parseInt(rq.dataset.rq, 10) * DAY); return; }
     const sx = e.target.closest('[data-sex]'); if (sx) { sEx = sx.dataset.sex; $$('[data-sex]').forEach(b => b.classList.toggle('on', b === sx)); renderSearch(); return; }
     if (!e.target.closest('.dk-ind')) { const p = $('[data-indpop]'); if (!p.hidden) { p.hidden = true; $('[data-act="ind"]').setAttribute('aria-expanded', 'false'); } }
@@ -2061,7 +2095,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden && R.on) saveR(); if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
@@ -2070,7 +2104,7 @@
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
     pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
-    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, bucket, MIN, HOUR, DAY, WEEK_OFF, liqOf } };
+    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, MIN, HOUR, DAY, WEEK_OFF, liqOf } };
   root.classList.toggle('b-min', !!U.bmin);
   playUI(); toolUI(); headUI(); renderWatch(); renderAll(); stepLabel();
   symList(U.ex).then(() => { if (S.bars.length) applyMeta(); }).catch(() => { /* precision guessed from prices */ });

@@ -100,6 +100,7 @@
   // ---------------------------------------------------------------- loaders (each one exchange-aware, each fails on its own)
   const L = {
     async ov() {
+      if (U.ex === 'fx') throw new Error("Interbank FX has no funding, open interest or long / short data. Search the pair and pick its Bybit row (a USDT perpetual) to see those.");
       if (U.ex === 'bybit') {
         const [t, k] = await Promise.all([by(`/tickers?category=linear&symbol=${U.sym}`), by(`/kline?category=linear&symbol=${U.sym}&interval=D&limit=8`)]);
         const x = t.list[0]; if (!x) throw new Error('not listed on Bybit');
@@ -112,6 +113,7 @@
         fund: { rate: +p.lastFundingRate, next: +p.nextFundingTime } };
     },
     async fu() {
+      if (U.ex === 'fx') throw new Error("Interbank FX has no funding, open interest or long / short data. Search the pair and pick its Bybit row (a USDT perpetual) to see those.");
       let hist;
       if (U.ex === 'bybit') hist = (await by(`/funding/history?category=linear&symbol=${U.sym}&limit=12`)).list.map(r => ({ t: +r.fundingRateTimestamp, r: +r.fundingRate })).reverse();
       else hist = (await getJSON(`${BN}/fapi/v1/fundingRate?symbol=${U.sym}&limit=12`)).map(r => ({ t: +r.fundingTime, r: +r.fundingRate }));
@@ -121,6 +123,7 @@
       return { rate: ov.fund.rate, next: ov.fund.next, iv, hist };
     },
     async oi() {
+      if (U.ex === 'fx') throw new Error("Interbank FX has no funding, open interest or long / short data. Search the pair and pick its Bybit row (a USDT perpetual) to see those.");
       if (U.ex === 'bybit') {
         const h = (await by(`/open-interest?category=linear&symbol=${U.sym}&intervalTime=1h&limit=25`)).list.map(r => ({ t: +r.timestamp, v: +r.openInterest })).reverse();
         const ov = await ovNow();
@@ -134,6 +137,7 @@
     // and on Bybit (whichever exchange the chart is on), each now / 1 h / 4 h before (5-minute points), takers' buy / sell
     // over the last hour (Binance), open interest 1h / 4h and the price over the last hour (the chart's exchange)
     async ls() {
+      if (U.ex === 'fx') throw new Error("Interbank FX has no funding, open interest or long / short data. Search the pair and pick its Bybit row (a USDT perpetual) to see those.");
       const sym = U.sym, ex = U.ex, now = Date.now();
       const bn = p => getJSON(`${BN}/futures/data/${p}?symbol=${sym}&period=5m&limit=60`);
       const [tp, ta, gl, byr, tk, oi, kl, ov] = await Promise.allSettled([

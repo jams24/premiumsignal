@@ -13,7 +13,8 @@
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const coin = s => u.coin(s);
   const sameList = (a, b) => a.length === b.length && a.every(x => b.includes(x));
-  const listNow = () => RD.watchlist().slice(0, W.status ? W.status.max : 30);
+  const listNow = () => RD.watchlist().filter(s => /USDT$/.test(s)).slice(0, W.status ? W.status.max : 30);   // the server watches exchange coins (not FX pairs)
+  const exNow = () => (U.ex === 'fx' ? 'binance' : U.ex);
 
   async function call(body) {
     const q = !body && W.last ? '?since=' + W.last : '';
@@ -100,7 +101,7 @@
       if (!set.length) { RD.toast('Keep at least one timeframe.', 'down'); return; }
       save({ tfs: set });
     }
-    if (e.target.closest('[data-awsync]')) save({ coins: listNow(), ex: U.ex }, '🔔 Now watching the Watchlist on this device.');
+    if (e.target.closest('[data-awsync]')) save({ coins: listNow(), ex: exNow() }, '🔔 Now watching the Watchlist on this device.');
   });
   $('[data-aw="full"]').addEventListener('change', e => save({ ready: !e.target.checked }, e.target.checked ? '🎯 Watchlist: Telegram and this page alert only when a setup is fully ready (triggered).' : '🔔 Watchlist: you also get an alert when a setup is almost ready.'));
   $('[data-aw="on"]').addEventListener('change', e => {
@@ -109,7 +110,7 @@
     if (!list.length) { e.target.checked = false; RD.toast('Add coins to your Watchlist first.', 'down'); return; }
     AP.unlock();
     try { if ('Notification' in window && Notification.permission === 'default') { const p = Notification.requestPermission(); if (p && p.then) p.then(() => {}, () => {}); } } catch (err) { /* sound and Telegram still work */ }
-    save({ on: true, coins: list, ex: U.ex }, `🔔 Watching ${list.length} coin${list.length === 1 ? '' : 's'}. Check Telegram for the first message.`);
+    save({ on: true, coins: list, ex: exNow() }, `🔔 Watching ${list.length} coin${list.length === 1 ? '' : 's'}. Check Telegram for the first message.`);
   });
 
   // a coin starred or removed on this device is watched too

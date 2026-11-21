@@ -412,6 +412,7 @@
   const refPx = () => (T.entry !== 'market' ? val('limit') : RD.S.lastPx);
   function check() {
     const e = refPx(), errs = [], short = T.side === 'short', where = T.entry === 'stop' ? 'stop entry' : T.entry === 'limit' ? 'limit' : 'price now';
+    if (RD.U.ex === 'fx') { errs.push('This chart is interbank FX (price only). To trade the pair, open its Bybit row from the search: that perpetual is a separate market and its price can sit ~20 pips away.'); return errs; }
     const lim = val('limit'), stop = val('stop'), tp = val('tp'), m = val('margin'), lev = val('lev');
     if (T.entry === 'limit' && !(lim > 0)) errs.push('Set the limit price — type it or pick it on the chart.');
     if (T.entry === 'stop') {

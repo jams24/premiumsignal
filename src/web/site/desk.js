@@ -217,11 +217,11 @@ function desk(who, nonce) {
 
 <div class="dk-modal" data-search hidden role="dialog" aria-modal="true" aria-label="Find a coin">
   <div class="dk-mbox dk-sbox">
-    <div class="dk-sin">${icon('search', 'i-45')}<input data-q placeholder="Search coin — BTC, SOL, PEPE…" autocomplete="off" spellcheck="false" aria-label="Coin">
-      <div class="dk-exsw" role="tablist"><button type="button" data-sex="binance" class="on">Binance</button><button type="button" data-sex="bybit">Bybit</button></div>
+    <div class="dk-sin">${icon('search', 'i-45')}<input data-q placeholder="Search — BTC, SOL, EURUSD, gold…" autocomplete="off" spellcheck="false" aria-label="Market">
+      <div class="dk-exsw" role="tablist" aria-label="Where"><button type="button" data-sex="all" class="on">All</button><button type="button" data-sex="binance">Binance</button><button type="button" data-sex="bybit">Bybit</button><button type="button" data-sex="fx" title="Interbank FX prices, the ones TradingView's FX charts show">FX</button></div>
       <button type="button" class="dk-ib" data-act="close-modal" aria-label="Close">${icon('x', 'i-4')}</button></div>
     <div class="dk-slist" data-slist role="listbox"></div>
-    <p class="dk-sfoot">USDT perpetual futures · ↑ ↓ to move, Enter to open, ☆ adds to the watchlist</p>
+    <p class="dk-sfoot">Binance and Bybit USDT perpetuals · FX = interbank prices (chart and paper only) · ↑ ↓ to move, Enter to open, ☆ adds to the watchlist</p>
   </div>
 </div>
 
