@@ -569,8 +569,38 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .cs-bar { position: relative; display: inline-block; width: 46px; height: 4px; border-radius: 99px; background: linear-gradient(90deg, color-mix(in oklab, var(--down) 55%, transparent), color-mix(in oklab, var(--up) 55%, transparent)); }
 .cs-bar i { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; border-radius: 1px; background: var(--text); }
 .cs-v { padding-left: 10px; border-left: 1px solid var(--dk-line); color: var(--text-2); } .cs-v b { color: var(--primary); }
+.dk-more { display: none; position: relative; }
+.dk-morepop { padding: 6px; }
+.mo-i { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 6px 10px; border-radius: 10px; text-align: left; color: var(--text-2); }
+.mo-i[hidden] { display: none; }
+.mo-i:hover, .mo-i:active { background: var(--dk-hover); }
+.mo-i b { display: block; font-size: 14px; font-weight: 600; color: var(--text); } .mo-i small { display: block; margin-top: 1px; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.mo-i .mo-on { visibility: hidden; padding: 2px 7px; border-radius: 99px; font: 600 10.5px var(--mono); font-style: normal; color: var(--primary); background: color-mix(in oklab, var(--primary) 14%, transparent); }
+.mo-i.on .mo-on { visibility: visible; } .mo-i.on .icon { color: var(--primary); }
 @media (max-width: 899px) {
-  .dk-qt, .dk-plus { display: none !important; }
+  /* phone: the desktop pills move into the Tools menu (dk-more), the chart's Buy / Sell box sits bottom-left */
+  .dk-more { display: block; }
+  .dk-top .dk-smc, .dk-top .dk-coachb, .dk-top .dk-findb, .dk-top .dk-cmpb, .dk-right [data-theme-toggle] { display: none !important; }
+  .dk-moreb { padding: 0 8px; } .dk-moreb[aria-expanded="true"] { background: var(--dk-hover); color: var(--text); }
+  .dk-plus { display: none !important; }
+  .dk-qt { top: auto !important; bottom: 34px; left: 52px; }   /* right of the TradingView mark, left of the pencil button */
+  .dk.replay .dk-qt { bottom: 92px; }
+  .dk-chart.cmp-on .dk-qt { bottom: calc(50% + 40px); }   /* Compare: on the main (top) chart, above the 24h strip — it trades the main coin */
+  .dk-qt > button { min-width: 64px; height: 44px; padding: 0 8px; }
+  .dk-qt .qt-m { padding: 0 4px; }
+  .dk-qt .qt-sz { height: 20px; }
+  .dk-chart:has(.dk-qt:not([hidden])) .dk-qbar { bottom: 86px; }
+  .dk.replay .dk-chart:has(.dk-qt:not([hidden])) .dk-qbar { bottom: 144px; }
+  .dk-chart:has(.dk-qt:not([hidden])) .dk-fab { bottom: 86px; }   /* the pencil goes above the Buy / Sell box */
+  .dk.replay .dk-chart:has(.dk-qt:not([hidden])) .dk-fab { bottom: 144px; }
+  .dk:has(.dk-qt:not([hidden])) ~ .dk-toast { bottom: calc(var(--tabbar) + 86px + env(safe-area-inset-bottom)); }   /* toasts above the box */
+  .dk.replay:has(.dk-qt:not([hidden])) ~ .dk-toast { bottom: calc(var(--tabbar) + 144px + env(safe-area-inset-bottom)); }
+  /* finger-sized buttons */
+  .dk-smcall button { height: 34px; font-size: 12.5px; }
+  .tk2-pcts button { height: 34px; font-size: 12px; }
+  [data-acct] h3 button[data-act="reset"] { min-height: 32px; padding: 0 10px; }
+  .dk-wt { width: 32px; height: 32px; }
+  .dk-legend .lg-btn { height: 26px; padding: 0 10px; }
   .dk-cmpb { padding: 0 8px; } .dk-cmpb span { display: none; }
   .dk-chart.cmp-on .dk-canvas { right: 0; bottom: 50%; }
   .dk-chart.cmp-on .dk-hint, .dk-chart.cmp-on .dk-qbar { left: 50%; }

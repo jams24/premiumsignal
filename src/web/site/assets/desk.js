@@ -1619,9 +1619,9 @@
       (canReal ? `<span class="qb-mode" role="radiogroup"><button type="button" data-q="paper" aria-checked="${!Q.real}"${!Q.real ? ' class="on"' : ''}>Paper</button><button type="button" data-q="real" class="${Q.real ? 'on real' : 'real'}" aria-checked="${Q.real}">Real</button></span>` : '<span class="qb-tag">Paper</span>') +
       `<button type="button" class="qb-x" data-q="x" aria-label="Cancel the plan">${ic('x')}</button></div>` +
       `<div class="qb-steps">${step('①', Q.mkt ? 'Market' : 'Entry', Q.mkt ? null : Q.entry, Q.stage === 'entry')}${step('②', 'Stop', Q.sl, Q.stage === 'sl')}${step('③', 'Target', Q.tp, Q.stage === 'tp')}</div>`;
-    if (Q.stage === 'entry') h += `<p class="qb-say">Click your <b>${B} price</b> on the chart — ${below} the price for a ${B} limit, ${above} it for a ${B} stop.</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="mktnow">Market now instead</button></div>`;
-    else if (Q.stage === 'sl') h += `<p class="qb-say">Click your <b>stop</b> on the chart — ${Q.side ? `${below} the entry` : 'below the entry for a long, above it for a short'}.</p>`;
-    else if (Q.stage === 'tp') h += `<p class="qb-say">Click your <b>target</b> on the chart (${s === 1 ? 'above' : 'below'} the entry).</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="skip">${Q.real ? "Use the bot's TP plan" : 'No target'}</button></div>`;
+    if (Q.stage === 'entry') h += `<p class="qb-say">${phone() ? 'Tap' : 'Click'} your <b>${B} price</b> on the chart — ${below} the price for a ${B} limit, ${above} it for a ${B} stop.</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="mktnow">Market now instead</button></div>`;
+    else if (Q.stage === 'sl') h += `<p class="qb-say">${phone() ? 'Tap' : 'Click'} your <b>stop</b> on the chart — ${Q.side ? `${below} the entry` : 'below the entry for a long, above it for a short'}.</p>`;
+    else if (Q.stage === 'tp') h += `<p class="qb-say">${phone() ? 'Tap' : 'Click'} your <b>target</b> on the chart (${s === 1 ? 'above' : 'below'} the entry).</p><div class="qb-row"><button type="button" class="btn btn-ghost btn-sm" data-q="skip">${Q.real ? "Use the bot's TP plan" : 'No target'}</button></div>`;
     else {
       h += Q.real ? `<div class="qb-size"><label>Margin <input inputmode="decimal" data-qf="margin" placeholder="saved" value="${Q.margin > 0 ? Q.margin : ''}"></label><label>× <input inputmode="numeric" data-qf="lev" placeholder="saved" value="${Q.lev > 0 ? Q.lev : ''}"></label><span class="qb-sn">blank = your saved size · you can change it again in the review</span></div>` : `<div class="qb-size"><label>Margin <input inputmode="decimal" data-qf="margin" value="${Q.margin || ''}"></label><label>× <input inputmode="numeric" data-qf="lev" value="${Q.lev}"></label>
         <span class="qb-risk">${[0.5, 1, 2].map(r => `<button type="button" data-qr="${r}" title="Margin so the stop costs ${r}% of the paper balance">${r}%</button>`).join('')}</span></div>`;
@@ -1692,7 +1692,7 @@
   QT.className = 'dk-qt'; QT.hidden = true; QT.setAttribute('role', 'group'); QT.setAttribute('aria-label', 'Buy or sell');
   chartEl.appendChild(QT);
   // the box sits under the top-left text (54px in desk.css); when that text runs longer (news, sessions, the A+ idea) it moves down with it
-  { const lg = $('[data-legend]'), below = () => { const need = lg.offsetTop + lg.offsetHeight + 6; QT.style.top = need > 54 ? need + 'px' : ''; };
+  { const lg = $('[data-legend]'), below = () => { const need = lg.offsetTop + lg.offsetHeight + 6; QT.style.top = need > 54 ? need + 'px' : ''; if (U.hilo) prim.req(); };
     if (window.ResizeObserver) new ResizeObserver(below).observe(lg); }
   if (U.qtk !== 'lmt') U.qtk = 'mkt';
   function qtUI() {
@@ -1702,7 +1702,7 @@
     const side = s => {
       const nm = real ? `Real ${s === 1 ? 'buy' : 'sell'}${lim ? ' limit' : ''}` : `${s === 1 ? 'Buy' : 'Sell'}${lim ? ' limit' : ''}`;
       const tip = lim ? `Then click your ${s === 1 ? 'buy' : 'sell'} price on the chart, your stop and your target${real ? ' — you review the bot\'s exact order before it is placed' : ''}` : `${s === 1 ? 'Buy' : 'Sell'} at market now${real ? ' — you review the bot\'s exact order before it is placed' : ' (paper)'}`;
-      return `<button type="button" class="${s === 1 ? 'qt-b' : 'qt-s'}${armed === s ? ' arm' : ''}" data-qt="${s}" title="${esc(tip)}"><span>${nm}</span><b>${lim ? (armed === s ? 'click the chart' : 'pick a price') : fp(S.lastPx)}</b></button>`;
+      return `<button type="button" class="${s === 1 ? 'qt-b' : 'qt-s'}${armed === s ? ' arm' : ''}" data-qt="${s}" title="${esc(tip)}"><span>${nm}</span><b>${lim ? (armed === s ? (phone() ? 'tap the chart' : 'click the chart') : 'pick a price') : fp(S.lastPx)}</b></button>`;
     };
     const sz = busy ? 'Real trade open' : real ? 'Real ticket' : t.margin > 0 ? `${money(t.margin)} × ${t.lev}×` : 'Set size';
     const h = side(-1) +
@@ -1992,14 +1992,30 @@
     inp.addEventListener('blur', () => commit(true));
   }
 
+  // ------------------------------------------------------------------ phone Tools menu
+  // A phone's top bar has room for the coin, timeframe and Indicators only; the rest of the desktop pills live here.
+  // Each item clicks the real (hidden) pill, so SMC, the coach, Find setups and Compare keep one code path.
+  const MORE_OF = { smc: '.dk-top .dk-smc', coach: '.dk-top .dk-coachb', find: '.dk-top .dk-findb', cmp: '.dk-top .dk-cmpb', theme: '.dk-right [data-theme-toggle]', full: '.dk-right [data-act="full"]' };
+  function moreUI() {
+    for (const b of $$('[data-mi]')) {
+      const k = b.dataset.mi, o = $(MORE_OF[k]);
+      b.hidden = !o || (k === 'full' && !document.fullscreenEnabled);   // iPhone Safari has no page full screen
+      b.classList.toggle('on', !!o && k !== 'theme' && k !== 'full' && (o.getAttribute('aria-pressed') === 'true' || o.classList.contains('on')));
+    }
+  }
+  function moreClose() { const p = $('[data-morepop]'); if (p && !p.hidden) { p.hidden = true; $('[data-act="more"]').setAttribute('aria-expanded', 'false'); } }
+
   // ------------------------------------------------------------------ events
   document.addEventListener('click', e => {
+    const mi = e.target.closest('[data-mi]');
+    if (mi) { moreClose(); const o = $(MORE_OF[mi.dataset.mi]); if (o) o.click(); return; }
     const a = e.target.closest('[data-act]');
     if (a) {
       const act = a.dataset.act;
       if (act === 'search') openSearch();
       else if (act === 'retry') { hideMsg(); if (S.retry) S.retry(); }
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
+      else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
       else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc && !U.smcFvg) U.smc = true;   // FVG alone uses it too: don't switch SMC on for it
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
@@ -2045,6 +2061,7 @@
     const rq = e.target.closest('[data-rq]'); if (rq) { $('[data-rdate]').value = toLocalInput(rq.dataset.rq === 'today' ? rToday() : Date.now() - parseInt(rq.dataset.rq, 10) * DAY); return; }
     const sx = e.target.closest('[data-sex]'); if (sx) { sEx = sx.dataset.sex; $$('[data-sex]').forEach(b => b.classList.toggle('on', b === sx)); renderSearch(); return; }
     if (!e.target.closest('.dk-ind')) { const p = $('[data-indpop]'); if (!p.hidden) { p.hidden = true; $('[data-act="ind"]').setAttribute('aria-expanded', 'false'); } }
+    if (!e.target.closest('.dk-more')) moreClose();
   });
   $('[data-tfsel]').addEventListener('change', e => setTF(e.target.value));
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
