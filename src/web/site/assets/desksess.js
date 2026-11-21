@@ -69,6 +69,19 @@
     return list;
   }
   const active = () => SESS.filter(s => P[s.k]);
+  // which sessions are open at time t, for the Trend table: all three cities at the times set here, weekend ones flagged
+  RD.sessionsAt = t => {
+    const out = [];
+    for (const s of SESS) {
+      const o = tOf(s, 'open'), c = tOf(s, 'close');
+      for (let D = Math.floor(t / DAY) - 1; D <= Math.floor(t / DAY) + 1; D++) {
+        const ld = localDate(s.tz, D * DAY + 12 * HOUR), open = wall(s.tz, ld.y, ld.m, ld.d, o);
+        let close = wall(s.tz, ld.y, ld.m, ld.d, c); if (close <= open) close = wall(s.tz, ld.y, ld.m, ld.d + 1, c);
+        if (open <= t && t < close) { out.push({ k: s.k, name: s.name, short: s.short, wk: ld.wd === 'Sat' || ld.wd === 'Sun', close }); break; }
+      }
+    }
+    return out;
+  };
 
   // ---------------------------------------------------------------- what the chart shows
   const tfOK = () => u.TF[U.tf] && u.TF[U.tf].ms <= 4 * HOUR;

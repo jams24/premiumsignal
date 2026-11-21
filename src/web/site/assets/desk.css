@@ -907,3 +907,24 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .dk-pop p.snd-help b { color: var(--text); font-weight: 600; }
 @media (max-width: 899px) { .dk-bell.ringing { padding: 0 9px; } .dk-bell.ringing .dk-bell-t { font-size: 12px; } .dk-pop.dk-sndpop { position: fixed; left: 8px; right: 8px; top: 52px; width: auto; max-height: calc(100dvh - 150px); } }
 @media (max-width: 520px) { .dk-bell.ringing { padding: 0 8px; } .dk-bell.ringing .dk-bell-t { display: none; } }   /* a narrow phone: the red ringing bell alone keeps the top bar on screen */
+
+/* ---- Trend table (desktrend.js): a small table in a corner of the chart, clicks pass through to the chart */
+.tt { position: absolute; z-index: 4; pointer-events: none; display: grid; grid-template-columns: auto auto; min-width: 176px;
+  font: 500 11px/1 "Geist Mono", ui-monospace, monospace; background: color-mix(in srgb, var(--dk-panel) 92%, transparent);
+  border: 1px solid var(--dk-line); border-radius: 8px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+.tt[hidden] { display: none; }
+.tt-h { grid-column: 1 / -1; padding: 6px 8px; text-align: center; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--dk-line); background: var(--dk-hover); }
+.tt-r { display: contents; }
+.tt-r > span, .tt-c { padding: 5px 8px; border-bottom: 1px solid var(--dk-line); }
+.tt-r:last-child > span, .tt-r:last-child > .tt-c { border-bottom: 0; }
+.tt-r > span { color: var(--muted); white-space: nowrap; }
+.tt-r.cur > span { color: var(--text); font-weight: 700; }
+.tt-r.cur > span::before { content: '› '; color: var(--primary); }
+.tt-c { text-align: center; font-weight: 600; white-space: nowrap; color: var(--muted); }
+.tt-c.up { color: #fff; background: color-mix(in srgb, var(--up) 72%, transparent); }
+.tt-c.down { color: #fff; background: color-mix(in srgb, var(--down) 72%, transparent); }
+.tt-c.s { color: var(--up); }
+.tt-c.n { color: var(--muted); }
+.tt-leg { white-space: nowrap; } .tt-leg b { font-weight: 700; } .tt-leg em { font-style: normal; color: var(--muted); }
+.tt-opts { padding: 2px 4px 4px 28px; } .tt-opts[hidden] { display: none; }
+.tt-opts .dk-smcall { margin: 2px 0 4px; } .tt-opts .dk-smcall button { padding: 0 3px; }
