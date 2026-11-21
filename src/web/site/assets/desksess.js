@@ -6,7 +6,8 @@
    The times can be changed in the menu (e.g. New York 09:30 for the US stock open). Opens are solid lines, closes dashed;
    optional shading and each session's high / low (the newest finished one runs on to the right edge, the level traders
    watch for a sweep). Highs / lows use only candles already on the chart, so in a replay they never see past the clock.
-   Weekdays only (the cities' markets are shut at the weekend). Shown on 1m–4H. Settings in this browser: rd-sess-v1. */
+   Weekends too by default (crypto trades every day), drawn fainter since the cities' markets are shut then; "Weekends too"
+   off = weekdays only. Shown on 1m–4H. Settings in this browser: rd-sess-v1. */
 (function () {
   'use strict';
   const RD = window.__rd;
@@ -20,7 +21,7 @@
     { k: 'ldn', name: 'London', short: 'LDN', tz: 'Europe/London', city: 'London', open: '08:00', close: '17:00', color: '#38bdf8' },
     { k: 'ny', name: 'New York', short: 'NY', tz: 'America/New_York', city: 'New York', open: '08:00', close: '17:00', color: '#fb923c' },
   ];
-  const P = Object.assign({ on: false, asia: true, ldn: true, ny: true, shade: true, hl: false, times: {} }, store.get('rd-sess-v1', null) || {});
+  const P = Object.assign({ on: false, asia: true, ldn: true, ny: true, shade: true, hl: false, wkend: true, times: {} }, store.get('rd-sess-v1', null) || {});
   P.times = Object.assign({}, P.times || {});
   const save = () => store.set('rd-sess-v1', P);
   const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -48,18 +49,19 @@
   let cache = { key: '', list: [] };
   function sessions(t0, t1) {
     const d0 = Math.floor(t0 / DAY) - 1, d1 = Math.floor(t1 / DAY) + 1;
-    const key = d0 + '|' + d1 + '|' + JSON.stringify(P.times);
+    const key = d0 + '|' + d1 + '|' + !!P.wkend + '|' + JSON.stringify(P.times);
     if (cache.key === key) return cache.list;
     const list = [];
     for (const s of SESS) {
       const o = tOf(s, 'open'), c = tOf(s, 'close');
       for (let D = d0; D <= d1; D++) {
         const ld = localDate(s.tz, D * DAY + 12 * HOUR);
-        if (ld.wd === 'Sat' || ld.wd === 'Sun') continue;
+        const wk = ld.wd === 'Sat' || ld.wd === 'Sun';
+        if (wk && !P.wkend) continue;
         const open = wall(s.tz, ld.y, ld.m, ld.d, o);
         let close = wall(s.tz, ld.y, ld.m, ld.d, c);
         if (close <= open) close = wall(s.tz, ld.y, ld.m, ld.d + 1, c);   // a session set to run past midnight
-        list.push({ s, open, close });
+        list.push({ s, open, close, wk });
       }
     }
     list.sort((a, b) => a.open - b.open);
@@ -99,7 +101,7 @@
       if (!P.shade) return;
       for (const x of list) {
         const a = RD.t2x(x.open), b = RD.t2x(x.close); if (a == null || b == null || b < 0 || a > W) continue;
-        g.fillStyle = A(x.s.color, 0.055); g.fillRect(clamp(a), 0, clamp(b) - clamp(a), v.H);
+        g.fillStyle = A(x.s.color, x.wk ? 0.03 : 0.055); g.fillRect(clamp(a), 0, clamp(b) - clamp(a), v.H);
       }
       return;
     }
@@ -128,10 +130,12 @@
       const y0 = v.H - 12 - (2 - row(x.s.k)) * 17;   // bottom of the chart (the legend and price tags live at the top)
       for (const [t, isOpen] of [[x.open, true], [x.close, false]]) {
         const px = RD.t2x(t); if (px == null || px < -1 || px > W + 1) continue;
-        g.strokeStyle = A(x.s.color, isOpen ? 0.85 : 0.6); g.lineWidth = 1; g.setLineDash(isOpen ? [] : [4, 4]);
+        g.strokeStyle = A(x.s.color, (isOpen ? 0.85 : 0.6) * (x.wk ? 0.55 : 1)); g.lineWidth = 1; g.setLineDash(isOpen ? [] : [4, 4]);
         g.beginPath(); g.moveTo(Math.round(px) + 0.5, 0); g.lineTo(Math.round(px) + 0.5, v.H); g.stroke(); g.setLineDash([]); dbg.lines++;
-        if (big) { RD.label(g, `${x.s.short} ${isOpen ? 'OPEN' : 'CLOSE'}`, isOpen ? px + 3 : px - 3, y0, x.s.color, isOpen ? 'left' : 'right'); dbg.labels++; }
-        else if (mid && isOpen) { RD.label(g, x.s.short, px + 3, y0, x.s.color, 'left'); dbg.labels++; }
+        const lc = x.wk ? A(x.s.color, 0.6) : x.s.color;
+        if (big) { RD.label(g, `${x.s.short} ${isOpen ? 'OPEN' : 'CLOSE'}`, isOpen ? px + 3 : px - 3, y0, lc, isOpen ? 'left' : 'right'); dbg.labels++; }
+        else if (mid && isOpen) { RD.label(g, x.s.short, px + 3, y0, lc, 'left'); dbg.labels++; }
+        if (x.wk) dbg.wk = (dbg.wk || 0) + 1;
       }
     }
     S2.dbg = dbg;
@@ -144,10 +148,12 @@
     const open = list.filter(x => x.open <= now && now < x.close);
     if (open.length) {
       const first = open.reduce((a, b) => (b.close < a.close ? b : a));
-      return { open, text: `${open.map(x => x.s.name).join(' + ')} open · ${first.s.short} closes in ${span(first.close - now)}` };
+      return { open, text: `${open.map(x => x.s.name).join(' + ')} open${open.some(x => x.wk) ? ' (weekend)' : ''} · ${first.s.short} closes in ${span(first.close - now)}` };
     }
     const nx = list.find(x => x.open > now);
-    return { open, text: nx ? `Between sessions · ${nx.s.name} opens in ${span(nx.open - now)}` : 'Between sessions' };
+    const wkNow = ['Sat', 'Sun'].includes(localDate('UTC', now).wd);
+    const lead = !P.wkend && wkNow ? 'Weekend, no sessions (Weekends too is off)' : 'Between sessions';
+    return { open, text: nx ? `${lead} · ${nx.s.name} opens in ${span(nx.open - now)}` : lead };
   }
   if (X.legend) X.legend.push(() => {
     if (!P.on || !active().length) return '';
@@ -169,6 +175,7 @@
         <div class="ss-chips">${SESS.map(s => `<button type="button" class="ss-chip${P[s.k] ? ' on' : ''}" data-sess-k="${s.k}" aria-pressed="${!!P[s.k]}"><i style="background:${s.color}"></i>${s.name}</button>`).join('')}</div>
         <label class="ss-sub"><input type="checkbox" data-sess-shade${P.shade ? ' checked' : ''}> Shade the sessions</label>
         <label class="ss-sub"><input type="checkbox" data-sess-hl${P.hl ? ' checked' : ''}> Session highs / lows</label>
+        <label class="ss-sub" title="Crypto trades every day, but the cities' markets are shut at the weekend, so weekend sessions are drawn fainter"><input type="checkbox" data-sess-wk${P.wkend ? ' checked' : ''}> Weekends too (fainter)</label>
         <details class="ss-times" data-sess-times><summary>Times · each city's own clock</summary>
           <div class="ss-grid">${SESS.map(s => `<span><i style="background:${s.color}"></i>${s.name}${s.city !== s.name ? ` <em>${s.city}</em>` : ''}</span>
             <input data-sess-t="${s.k}|open" value="${tOf(s, 'open')}" inputmode="numeric" maxlength="5" aria-label="${s.name} open (${s.city} time)">
@@ -185,6 +192,7 @@
     if (t.matches('[data-sess-on]')) { P.on = t.checked; box.querySelector('[data-sess-opts]').hidden = !P.on; if (P.on && !tfOK()) RD.toast('Sessions show on 1m to 4H charts.'); changed(); }
     else if (t.matches('[data-sess-shade]')) { P.shade = t.checked; changed(); }
     else if (t.matches('[data-sess-hl]')) { P.hl = t.checked; changed(); }
+    else if (t.matches('[data-sess-wk]')) { P.wkend = t.checked; changed(); }
     else if (t.matches('[data-sess-t]')) {
       const [k, w] = t.dataset.sessT.split('|'), s = SESS.find(x => x.k === k);
       let v = t.value.trim().replace(/^(\d):/, '0$1:').replace(/^(\d\d)(\d\d)$/, '$1:$2');
