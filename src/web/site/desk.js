@@ -143,6 +143,7 @@ function desk(who, nonce) {
   <button type="button" class="dk-pill dk-rbtn" data-act="replay" title="Replay: trade past candles one by one">${icon('rewind', 'i-35')}<span>Replay</span></button>
   <div class="dk-rp" data-rp hidden>
     ${ib('rstart', 'calendar-clock', 'Choose the start')}
+    ${ib('back', 'step-back', 'Back one step (←)')}
     <button type="button" class="dk-ib dk-play" data-act="play" aria-label="Play" title="Play / pause (Space)">${icon('play', 'i-4')}</button>
     ${ib('step', 'step-forward', 'Next candle (→)')}
     <select data-speed aria-label="Speed"><option value="1500">0.5×</option><option value="800" selected>1×</option><option value="400">2×</option><option value="160">5×</option><option value="60">10×</option></select>
@@ -170,6 +171,7 @@ function desk(who, nonce) {
   <div class="dk-fab" data-fab><button type="button" data-act="tools-m" aria-label="Drawing tools">${icon('pen-line', 'i-45')}</button></div>
   <div class="dk-rpm" data-rpm hidden>
     <button type="button" data-act="rstart" aria-label="Choose the start">${icon('calendar-clock', 'i-45')}</button>
+    <button type="button" data-act="back" aria-label="Back one step">${icon('step-back', 'i-45')}</button>
     <button type="button" class="dk-play" data-act="play" aria-label="Play">${icon('play', 'i-5')}</button>
     <button type="button" data-act="step" aria-label="Next candle">${icon('step-forward', 'i-45')}</button>
     <span class="mono" data-clock></span>
@@ -238,7 +240,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('desksound.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`, `<script src="${asset('deskfind.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('desksound.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('desktrend.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`, `<script src="${asset('deskfind.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`, `<script src="${asset('deskwatch.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,

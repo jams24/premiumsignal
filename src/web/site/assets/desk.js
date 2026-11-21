@@ -305,7 +305,7 @@
 
   // ------------------------------------------------------------------ state
   const S = { bars: [], gen: 0, lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
-  const R = { on: false, clock: 0, buf: [], bufEnd: 0, res: '1m', playing: false, timer: null, busy: false, end: false, step: 'bar', speed: 800, gen: 0, fetching: null };
+  const R = { on: false, clock: 0, buf: [], bufEnd: 0, res: '1m', playing: false, timer: null, busy: false, end: false, step: 'bar', speed: 800, gen: 0, fetching: null, back: [] };
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
   const toV = b => ({ time: b[0] / 1000, value: b[5], color: volColor(b[4] >= b[1]) });
   const lastBar = () => S.bars[S.bars.length - 1];
@@ -419,7 +419,7 @@
   }
   async function rebuildReplay() {
     const g = ++S.gen; R.gen = g; pausePlay();
-    R.res = RES[U.tf]; R.buf = []; R.bufEnd = R.clock; R.end = false; R.fetching = null;
+    R.res = RES[U.tf]; R.buf = []; R.bufEnd = R.clock; R.end = false; R.fetching = null; R.back = [];
     stepLabel();
     loading(`Rewinding ${U.sym} to ${tnice(R.clock)}…`);
     try {
@@ -464,8 +464,9 @@
       await ensureBuf(target);
       if (g !== R.gen) return;
       const n0 = S.bars.length; let changed = Infinity;
+      const lb = lastBar(), snap = { clock: R.clock, last: lb ? lb.slice() : null, took: [], lastPx: S.lastPx, paper: paperSnap() };
       while (R.buf.length && R.buf[0][0] < target) {
-        const k = R.buf.shift();
+        const k = R.buf.shift(); snap.took.push(k);
         if (k[0] < R.clock) continue;
         changed = Math.min(changed, aggInto(k));
         S.lastPx = k[4]; S.rpx[U.sym] = k[4];
@@ -473,6 +474,7 @@
         P.candle(U.sym, k, 'replay');
       }
       if (R.bufEnd >= target) R.clock = Math.max(R.clock, target);
+      if (R.clock !== snap.clock) { R.back.push(snap); if (R.back.length > 3000) R.back.shift(); }
       if (changed !== Infinity) {
         for (let i = changed; i < S.bars.length; i++) { cs.update(toC(S.bars[i])); if (U.vol) vs.update(toV(S.bars[i])); }
         if (S.bars.length !== n0 || R.step !== 'small') smcSchedule(); else smcSchedule();
@@ -481,6 +483,56 @@
       clockUI(); tickUI(); if (R.playing) saveRSoon(); else saveR();
       if (R.buf.length < 300 && !R.end) ensureBuf(R.bufEnd + 1).catch(() => { /* next step retries */ });
     } catch (e) { pausePlay(); toast('Could not load the next candles: ' + e.message, 'down'); } finally { R.busy = false; }
+  }
+  // ---- one step back. Each forward step remembered what it changed (the feed candles it took, the candle it grew,
+  // the replay paper trades), so the chart and the replay trades go back exactly as they were. With nothing remembered
+  // (the replay's first candle, or after a reload) the chart goes back one candle by loading it again — only while no
+  // replay trade is open, since there is nothing to put those back to.
+  function paperSnap() {
+    const cp = a => JSON.parse(JSON.stringify(a.filter(x => x.mode === 'replay')));
+    return { pos: cp(A.pos), ord: cp(A.ord), rbal: A.rbal || 0, head: A.hist[0] || null };
+  }
+  function paperBack(s) {
+    const was = JSON.stringify([A.pos.filter(x => x.mode === 'replay'), A.ord.filter(x => x.mode === 'replay')]);
+    A.pos = A.pos.filter(x => x.mode !== 'replay').concat(JSON.parse(JSON.stringify(s.pos)));
+    A.ord = A.ord.filter(x => x.mode !== 'replay').concat(JSON.parse(JSON.stringify(s.ord)));
+    const i = s.head ? A.hist.indexOf(s.head) : A.hist.length;   // history entries in front of it came after the snapshot
+    let closed = 0;
+    if (i > 0) { const newer = A.hist.slice(0, i); closed = newer.filter(h => h.mode === 'replay').length; A.hist = newer.filter(h => h.mode !== 'replay').concat(A.hist.slice(i)); }
+    A.bal -= (A.rbal || 0) - s.rbal; A.rbal = s.rbal;
+    const moved = was !== JSON.stringify([s.pos, s.ord]) || closed > 0;
+    changed();
+    return moved;
+  }
+  async function stepBack() {
+    if (!R.on) return;
+    if (R.playing) pausePlay();
+    if (R.busy) { if (!R.backWait) { R.backWait = true; setTimeout(() => { R.backWait = false; stepBack(); }, 60); } return; }
+    const s = R.back.pop();
+    if (s) {
+      R.buf = s.took.concat(R.buf);
+      if (s.last) {   // drop the candles the step added, put back the one it grew (found by time: older candles may have loaded in front)
+        let j = S.bars.length - 1; while (j >= 0 && S.bars[j][0] > s.last[0]) j--;
+        S.bars.length = j + 1; if (j >= 0 && S.bars[j][0] === s.last[0]) S.bars[j] = s.last;
+      }
+      R.clock = s.clock; S.lastPx = s.lastPx; S.rpx[U.sym] = s.lastPx;
+      const undid = paperBack(s.paper);
+      setAll(); clockUI(); tickUI(); saveR();
+      if (undid) toast(`Back to ${tnice(R.clock)} · replay trades are as they were then`);
+      return;
+    }
+    if (A.pos.some(p => p.mode === 'replay') || A.ord.some(o => o.mode === 'replay')) { toast('Can\'t go further back with a replay trade open. Close it, or choose an earlier start.', 'down'); return; }
+    const t = bucket(R.clock - 1, U.tf);
+    if (!S.bars.length || t <= S.bars[0][0]) { toast('No older candles here. Choose an earlier start.', 'down'); return; }
+    R.busy = true; const g = R.gen;
+    try {
+      const ks = await fetchSpan(U.sym, t, R.clock, R.res);
+      if (g !== R.gen) return;
+      R.buf = ks.filter(k => k[0] >= t && k[0] < R.clock).concat(R.buf);
+      while (S.bars.length && S.bars[S.bars.length - 1][0] >= t) S.bars.pop();
+      R.clock = t; S.lastPx = lastBar()[4]; S.rpx[U.sym] = S.lastPx; R.end = false;
+      setAll(); clockUI(); tickUI(); saveR();
+    } catch (e) { toast('Could not load the earlier candles: ' + e.message, 'down'); } finally { R.busy = false; }
   }
   function play() { if (!R.on) return; R.playing = true; playUI(); loop(); }
   async function loop() {
@@ -513,7 +565,7 @@
   const P = {
     open(o, px, t, maker) {
       const notional = o.margin * o.lev, qty = notional / px, fee = notional * (maker ? FEE_M : FEE_T);
-      A.bal -= fee;
+      A.bal -= fee; if (o.mode === 'replay') A.rbal = (A.rbal || 0) - fee;
       const p = { id: A.seq++, sym: o.sym, ex: o.ex, side: o.side, qty, entry: px, lev: o.lev, margin: o.margin, sl: o.sl || null, tp: o.tp || null,
         t, mode: o.mode, fee, risk: o.sl ? Math.abs(px - o.sl) * qty + fee : null, liq: liqOf(o.side, px, o.lev) };
       A.pos.push(p);
@@ -526,7 +578,7 @@
       A.pos.splice(i, 1);
       let pnl = p.side * (px - p.entry) * p.qty, fee = 0;
       if (why === 'Liquidated') pnl = -p.margin; else fee = px * p.qty * (why === 'Target' ? FEE_M : FEE_T);
-      A.bal += pnl - fee;
+      A.bal += pnl - fee; if (p.mode === 'replay') A.rbal = (A.rbal || 0) + pnl - fee;
       const net = pnl - fee - p.fee;
       A.hist.unshift({ id: p.id, sym: p.sym, side: p.side, lev: p.lev, qty: p.qty, margin: p.margin, entry: p.entry, exit: px, pnl: net,
         r: p.risk ? net / p.risk : null, why, t0: p.t, t1: t, mode: p.mode });
@@ -848,13 +900,35 @@
     const k = Math.floor(l); return B[k][0] + (B[k + 1][0] - B[k][0]) * (l - k);
   }
   const p2y = p => cs.priceToCoordinate(p), y2p = y => cs.coordinateToPrice(y);
-  function tp(x, y) {
-    const t = x2t(x); let p = y2p(y);
-    if (U.magnet && t != null) {
-      const b = S.bars[Math.round(t2l(t))];
-      if (b) { let best = p, bd = Infinity; for (const v of [b[1], b[2], b[3], b[4]]) { const d = Math.abs(p2y(v) - y); if (d < bd) { bd = d; best = v; } } if (bd < 36) p = best; }
+  // a drawing point: the candle under x, the price exactly under y. Magnet: a candle's open / high / low / close close to
+  // the pointer (a few px, both ways) wins; anywhere else the point stays where the pointer is, so a line can sit between
+  // wicks. (It used to take the nearest candle's nearest price within 36 px up or down — zoomed out, that is a different
+  // candle every 2–3 px, so an end hopped from wick to wick.) o.flip (⌘ / Ctrl held) turns the magnet the other way for a moment.
+  const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+  const MODK = IS_MAC ? '⌘' : 'Ctrl';
+  const ptOpts = e => ({ flip: !!(IS_MAC ? e.metaKey : e.ctrlKey), touch: e.pointerType && e.pointerType !== 'mouse' });
+  function tp(x, y, o = {}) {
+    let t = x2t(x), p = y2p(y);
+    if (U.magnet !== !!o.flip && t != null && p != null) {
+      const ts = chart.timeScale(), l0 = Math.round(t2l(t)), rad = o.touch ? 22 : 12;
+      const a = ts.logicalToCoordinate(l0), b = ts.logicalToCoordinate(l0 + 1), gap = a != null && b != null ? Math.abs(b - a) : 0;
+      const k = Math.min(40, Math.ceil(rad / Math.max(gap, 0.5)) + 1);
+      let best = null, bd = rad;
+      for (let i = l0 - k; i <= l0 + k; i++) {
+        const c = S.bars[i]; if (!c) continue;
+        const cx = ts.logicalToCoordinate(i); if (cx == null || Math.abs(cx - x) > rad) continue;
+        for (const v of [c[1], c[2], c[3], c[4]]) { const cy = p2y(v); if (cy == null) continue; const d = Math.hypot(cx - x, cy - y); if (d < bd) { bd = d; best = [c[0], v]; } }
+      }
+      if (best) { t = best[0]; p = best[1]; }
     }
     return { t, p };
+  }
+  // logical index → time, between candles too (the inverse of t2l)
+  function l2t(l) {
+    const B = S.bars, n = B.length, ms = TF[U.tf].ms; if (!n) return null;
+    if (l <= 0) return B[0][0] + l * ms;
+    if (l >= n - 1) return B[n - 1][0] + (l - n + 1) * ms;
+    const i = Math.floor(l); return B[i][0] + (B[i + 1][0] - B[i][0]) * (l - i);
   }
   const paneW = () => chart.timeScale().width();
   const paneH = () => box.clientHeight - chart.timeScale().height();
@@ -966,17 +1040,17 @@
     const k = L ? Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / L)) : 0;
     return Math.hypot(px - (x0 + k * dx), py - (y0 + k * dy));
   }
-  function hitDrawing(x, y) {
-    const list = DRAW[U.sym] || [];
+  function hitDrawing(x, y, touch) {
+    const list = DRAW[U.sym] || [], hr = touch ? 18 : 10, lr = touch ? 12 : 6;
     for (let i = list.length - 1; i >= 0; i--) {
       const d = list[i], P = d.pts.map(q => [t2x(q.t), p2y(q.p)]);
       if (P.some(q => q[0] == null || q[1] == null)) continue;
-      if (d.type !== 'hline' && d.type !== 'pen') for (let h = 0; h < P.length; h++) if (Math.hypot(P[h][0] - x, P[h][1] - y) < 10) return { d, h };
+      if (d.type !== 'hline' && d.type !== 'pen') { let bh = -1, bd = hr; for (let h = 0; h < P.length; h++) { const dd = Math.hypot(P[h][0] - x, P[h][1] - y); if (dd < bd) { bd = dd; bh = h; } } if (bh >= 0) return { d, h: bh }; }
       const [x0, y0] = P[0], x1 = P[1] ? P[1][0] : 0, y1 = P[1] ? P[1][1] : 0;
       let hit = false;
-      if (d.type === 'hline') hit = Math.abs(y - y0) < 6;
-      else if (d.type === 'ray') hit = Math.abs(y - y0) < 6 && x > x0 - 6;
-      else if (d.type === 'trend') hit = distSeg(x, y, x0, y0, x1, y1) < 6;
+      if (d.type === 'hline') hit = Math.abs(y - y0) < lr;
+      else if (d.type === 'ray') hit = Math.abs(y - y0) < lr && x > x0 - lr;
+      else if (d.type === 'trend') hit = distSeg(x, y, x0, y0, x1, y1) < lr;
       else if (d.type === 'pen') { for (let s = 1; s < P.length && !hit; s++) hit = distSeg(x, y, P[s - 1][0], P[s - 1][1], P[s][0], P[s][1]) < 7; }
       else if (d.type === 'rect') hit = x >= Math.min(x0, x1) - 4 && x <= Math.max(x0, x1) + 4 && y >= Math.min(y0, y1) - 4 && y <= Math.max(y0, y1) + 4;
       else if (d.type === 'fib') hit = x >= Math.min(x0, x1) && x <= Math.max(x0, x1) && FIBS.some(k => { const yy = p2y(d.pts[1].p + (d.pts[0].p - d.pts[1].p) * k); return yy != null && Math.abs(y - yy) < 6; });
@@ -1013,7 +1087,7 @@
     }
     if (TWO.has(TOOL) || ONE.has(TOOL)) {
       e.stopPropagation(); e.preventDefault();
-      const pt = tp(x, y); if (pt.t == null || pt.p == null) return;
+      const pt = tp(x, y, ptOpts(e)); if (pt.t == null || pt.p == null) return;
       if (ONE.has(TOOL)) { addDrawing({ type: TOOL, pts: [pt] }); setTool('cursor'); return; }
       if (!DRAFT) { DRAFT = { type: TOOL, pts: [pt, Object.assign({}, pt)] }; PD = { kind: 'draft', x, y }; if (TOOL === 'measure') MEASURE = null; prim.req(); }
       else { DRAFT.pts[1] = pt; finishDraft(); }
@@ -1021,11 +1095,13 @@
     }
     const L = hitLine(y);
     if (L) { e.stopPropagation(); e.preventDefault(); lock(true); DRAG = { key: L.key, e: L.e, price: L.e.w.price }; PD = { kind: 'line' }; return; }
-    const H = hitDrawing(x, y);
+    const H = hitDrawing(x, y, e.pointerType !== 'mouse');
     if (H) {
       e.stopPropagation(); e.preventDefault(); lock(true);
       SEL = H.d; selUI(); prim.req();
-      PD = { kind: 'drawing', h: H.h, d: H.d, t0: x2t(x), p0: y2p(y), orig: H.d.pts.map(q => Object.assign({}, q)) };
+      // grabbing an end: keep the gap between the pointer and the end, so the end doesn't jump to the pointer on the first move
+      const g = H.h >= 0 ? [t2x(H.d.pts[H.h].t), p2y(H.d.pts[H.h].p)] : null;
+      PD = { kind: 'drawing', h: H.h, d: H.d, t0: x2t(x), p0: y2p(y), off: g && g[0] != null && g[1] != null ? [g[0] - x, g[1] - y] : [0, 0], orig: H.d.pts.map(q => Object.assign({}, q)) };
       return;
     }
     const desel = !!SEL;
@@ -1046,7 +1122,7 @@
       }
       prim.req(); return;
     }
-    if (DRAFT) { const pt = tp(x, y); if (pt.t != null && pt.p != null) { DRAFT.pts[1] = pt; prim.req(); } return; }
+    if (DRAFT) { const pt = tp(x, y, ptOpts(e)); if (pt.t != null && pt.p != null) { DRAFT.pts[1] = pt; prim.req(); } return; }
     if (!PD) { hover(x, y); return; }
     if (PD.kind === 'line' && DRAG) {
       const v = rt(y2p(y)); if (!isFinite(v)) return;
@@ -1054,7 +1130,7 @@
       ltip.hidden = true;
     } else if (PD.kind === 'drawing') {
       const d = PD.d;
-      if (PD.h >= 0) { const pt = tp(x, y); if (pt.t != null && pt.p != null) d.pts[PD.h] = pt; }
+      if (PD.h >= 0) { const pt = tp(x + PD.off[0], y + PD.off[1], ptOpts(e)); if (pt.t != null && pt.p != null) d.pts[PD.h] = pt; }
       else {
         const t = x2t(x), p = y2p(y); if (t == null || p == null) return;
         const dt = t - PD.t0, dp = p - PD.p0;
@@ -1141,7 +1217,7 @@
     if (PICK) c = 'c-pick';
     else if (drawTool(TOOL)) c = 'c-draw';
     else if (inPane(x, y) && hitLine(y)) c = 'c-ns';
-    else if (inPane(x, y) && hitDrawing(x, y)) c = 'c-move';
+    else if (inPane(x, y) && hitDrawing(x, y, false)) c = 'c-move';
     else if (TOOL === 'cross') c = 'c-cross';
     box.className = 'dk-canvas' + (c ? ' ' + c : '');
   }
@@ -1174,9 +1250,21 @@
     prim.req();
   }
   function penUndo() { const id = PENS.pop(); if (id == null) return; DRAW[U.sym] = (DRAW[U.sym] || []).filter(d => d.id !== id); saveDraw(); prim.req(); }
+  // arrow keys on a selected drawing: ← → one candle, ↑ ↓ one pixel of price (Shift: 10)
+  function nudgeSel(k, big) {
+    const d = SEL; if (!d) return; const n = big ? 10 : 1;
+    if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      const s = (k === 'ArrowRight' ? 1 : -1) * n;
+      d.pts = d.pts.map(q => { const l = t2l(q.t), t = l == null ? null : l2t(l + s); return { t: t == null ? q.t : Math.round(t), p: q.p }; });
+    } else {
+      const dy = (k === 'ArrowUp' ? -1 : 1) * n;
+      d.pts = d.pts.map(q => { const y = p2y(q.p), p = y == null ? null : y2p(y + dy); return { t: q.t, p: p == null || !isFinite(p) ? q.p : +p.toPrecision(10) }; });
+    }
+    saveDraw(); prim.req();
+  }
   function removeSel() { if (!SEL) return; DRAW[U.sym] = (DRAW[U.sym] || []).filter(d => d !== SEL); SEL = null; saveDraw(); selUI(); prim.req(); }
   function setTool(t) {
-    if (t === 'magnet') { U.magnet = !U.magnet; saveUI(); toolUI(); toast(U.magnet ? 'Magnet on: points snap to candle open / high / low / close' : 'Magnet off'); return; }
+    if (t === 'magnet') { U.magnet = !U.magnet; saveUI(); toolUI(); toast(U.magnet ? `Magnet on: a point near a candle's open / high / low / close snaps to it${phone() ? '' : ` · hold ${MODK} to place it freely`}` : `Magnet off${phone() ? '' : ` · hold ${MODK} to snap for a moment`}`); return; }
     if (t === 'clear') { hint(`Remove all ${(DRAW[U.sym] || []).length} drawings on ${esc(U.sym)}?`, [['Remove', () => { DRAW[U.sym] = []; SEL = null; saveDraw(); prim.req(); hint(); }], ['Cancel', () => hint()]]); return; }
     TOOL = t; DRAFT = null; PENS = []; lock(drawTool(t)); toolUI();
     if (t === 'pen') hint('Pencil: drag on the chart to draw', [['Undo', penUndo], ['Done', () => setTool('cursor')]]);
@@ -1195,7 +1283,7 @@
     hintEl.hidden = false; hintEl._b = btns || [];
   }
   hintEl.addEventListener('click', e => { const b = e.target.closest('[data-h]'); if (b && hintEl._b[+b.dataset.h]) hintEl._b[+b.dataset.h][1](); });
-  function selUI() { touchUI(); if (SEL) hint('Drawing selected', [['Delete', removeSel], ['Done', () => { SEL = null; touchUI(); prim.req(); hint(); }]]); else if (!PICK && TOOL === 'cursor') hint(); }
+  function selUI() { touchUI(); if (SEL) hint(phone() ? 'Drawing selected' : 'Drawing selected · arrow keys nudge it', [['Delete', removeSel], ['Done', () => { SEL = null; touchUI(); prim.req(); hint(); }]]); else if (!PICK && TOOL === 'cursor') hint(); }
 
   // pick a price for the ticket, or a candle to start the replay from
   // cb (admin layer): the picked price goes to cb instead of the paper ticket; field names the button that lights up
@@ -1808,6 +1896,7 @@
       else if (act === 'rexit') exitReplay();
       else if (act === 'play') { if (R.playing) pausePlay(); else play(); }
       else if (act === 'step') { pausePlay(); step(); }
+      else if (act === 'back') stepBack();
       else if (act === 'close-modal') closeModals();
       else if (act === 'close-sheet') closeSheets();
       else if (act === 'collapse') { U.bmin = !U.bmin; saveUI(); root.classList.toggle('b-min', U.bmin); }
@@ -1815,7 +1904,7 @@
       else if (act === 'tools-m') root.classList.toggle('tools-open');
       else if (act === 'reset') {
         if (!A._armed) { A._armed = true; renderAcct(); setTimeout(() => { A._armed = false; renderAcct(); }, 3500); }
-        else { A = freshAcct(); store.set('rd-acct-v1', A); toast('Paper account reset to $10,000.'); renderAll(); }
+        else { A = freshAcct(); R.back = []; store.set('rd-acct-v1', A); toast('Paper account reset to $10,000.'); renderAll(); }
       }
       return;
     }
@@ -1861,8 +1950,10 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === 'Escape') { if (Q.on) qEnd(); menuClose(); if (DRAFT || TOOL !== 'cursor') setTool('cursor'); if (PICK) clearPick(); if (MEASURE) { MEASURE = null; prim.req(); } if (SEL) { SEL = null; selUI(); prim.req(); } closeSheets(); }
+    else if (SEL && /^Arrow(Up|Down|Left|Right)$/.test(k)) { e.preventDefault(); nudgeSel(k, e.shiftKey); }
     else if (k === ' ' && R.on) { e.preventDefault(); if (R.playing) pausePlay(); else play(); }
     else if (k === 'ArrowRight' && R.on) { e.preventDefault(); pausePlay(); step(); }
+    else if (k === 'ArrowLeft' && R.on) { e.preventDefault(); stepBack(); }
     else if ((k === 'Delete' || k === 'Backspace') && SEL) { e.preventDefault(); removeSel(); }
     else { const map = { p: 'pen', t: 'trend', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
   });
@@ -1888,7 +1979,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden && R.on) saveR(); if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
