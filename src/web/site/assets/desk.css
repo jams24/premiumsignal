@@ -31,8 +31,10 @@
 .dk.replay .dk-rbtn { display: none; }
 .dk-ind { position: relative; }
 [data-indpop] { max-height: calc(100dvh - 58px); overflow-y: auto; overscroll-behavior: contain; }
-.dk-pop { position: absolute; left: 0; top: 38px; z-index: 40; width: 250px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
-.dk-pop label { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 8px; cursor: pointer; color: var(--text); }
+.dk-pop { position: absolute; left: 0; top: 38px; z-index: 40; width: 300px; overflow-x: hidden; padding: 8px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
+.dk-pop label { display: flex; align-items: flex-start; gap: 9px; padding: 7px 8px; border-radius: 8px; cursor: pointer; color: var(--text); line-height: 1.35; }
+/* a checkbox sits beside the first line of its text (centred on it), not halfway down a wrapped label */
+.dk-pop label > input[type=checkbox] { flex: none; margin: calc(.675em - 6.5px) 0 0; }
 .dk-pop label:hover { background: var(--dk-hover); }
 .dk-pop input { accent-color: var(--primary); }
 .dk-pop hr { margin: 6px 0; border: 0; border-top: 1px solid var(--dk-line); }
@@ -789,8 +791,8 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .dk-autofit:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 
 /* ---- Sessions indicator (desksess.js) inside Indicators ---- */
-.ss-opts { padding: 2px 4px 4px 28px; } .ss-opts[hidden] { display: none; }
-.ss-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+.ss-opts { padding: 2px 4px 4px 26px; } .ss-opts[hidden] { display: none; }
+.ss-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px 4px; }
 .ss-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--dk-line); border-radius: 99px; font-size: 11.5px; color: var(--muted); }
 .ss-chip i { width: 8px; height: 8px; border-radius: 2px; opacity: .35; }
 .ss-chip.on { border-color: var(--line-strong); color: var(--text); background: var(--dk-hover); } .ss-chip.on i { opacity: 1; }
@@ -802,7 +804,8 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .ss-grid span i { flex: none; width: 8px; height: 8px; border-radius: 2px; } .ss-grid em { font-style: normal; color: var(--muted); }
 .ss-grid input { width: 52px; height: 26px; padding: 0 4px; border: 1px solid var(--dk-line); border-radius: 6px; background: var(--dk-bg); color: var(--text); font: 500 12px var(--mono); text-align: center; }
 .ss-grid input:focus { outline: none; border-color: var(--primary); }
-.dk-pop p.ss-utc, .dk-pop p.ss-hint { padding: 2px 4px; font: 10.5px var(--mono); }
+.dk-pop p.ss-utc { padding: 2px 4px; font: 10.5px var(--mono); }
+.dk-pop p.ss-hint { padding: 2px 4px; }
 .ss-reset { padding: 2px 4px; background: none; color: var(--primary); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }
 .ss-leg { display: inline-flex; align-items: center; gap: 4px; }
 .ss-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; }
@@ -815,7 +818,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .dk-legend .lg-btn:hover { color: var(--text); border-color: var(--primary); } .dk-legend .lg-btn.m { color: var(--muted); }
 .sg-clr { margin: 4px 2px 0; font-size: 11.5px; color: var(--muted); }
 .sg-clr .lnk { padding: 0; background: none; color: var(--primary); font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; }
-.dk-pop label.dk-sub { padding: 4px 8px 4px 32px; font-size: 12px; color: var(--text-2); }   /* an option of the line above (A+ → pause) */
+.dk-pop label.dk-sub { padding: 4px 8px 4px 30px; font-size: 12px; color: var(--text-2); }   /* an option of the line above (A+ → pause) */
 .mk-flow { margin: 2px 0 10px; padding: 6px 9px; border-radius: 8px; background: var(--dk-hover); font-size: 12px; font-style: italic; color: var(--text-2); }   /* the whales vs retail reading */
 .mk-flow.warn { color: var(--warn); background: color-mix(in oklab, var(--warn) 10%, transparent); }
 .mk-split.mk-none { opacity: .7; } .mk-split.mk-none .mk-sh { margin: 0; } .mk-sh b.m { color: var(--muted); font-weight: 500; }
@@ -926,5 +929,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .tt-c.s { color: var(--up); }
 .tt-c.n { color: var(--muted); }
 .tt-leg { white-space: nowrap; } .tt-leg b { font-weight: 700; } .tt-leg em { font-style: normal; color: var(--muted); }
-.tt-opts { padding: 2px 4px 4px 28px; } .tt-opts[hidden] { display: none; }
-.tt-opts .dk-smcall { margin: 2px 0 4px; } .tt-opts .dk-smcall button { padding: 0 3px; }
+.tt-lab { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.tt-opts { padding: 0 6px 6px 30px; } .tt-opts[hidden] { display: none; }
+.tt-cap { padding: 5px 0 3px; font-size: 11px; color: var(--muted); }
+.tt-opts .dk-smcall { margin: 0; }

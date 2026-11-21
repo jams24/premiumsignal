@@ -18,7 +18,7 @@
   const { esc, MIN } = u;
 
   const TFS = ['5m', '15m', '1H', '4H'];
-  const BY = { e20: { name: 'EMA 20 / 50', a: 20, b: 50 }, e50: { name: 'EMA 50 / 200', a: 50, b: 200 }, st: { name: 'Structure' } };
+  const BY = { e20: { name: 'EMA 20 / 50', btn: 'EMA 20/50', a: 20, b: 50 }, e50: { name: 'EMA 50 / 200', btn: 'EMA 50/200', a: 50, b: 200 }, st: { name: 'Structure', btn: 'Structure' } };
   const P = Object.assign({ on: false, by: 'e20', pos: 'tr' }, store.get('rd-trend-v1', null) || {});
   if (!BY[P.by]) P.by = 'e20';
   const save = () => store.set('rd-trend-v1', P);
@@ -166,10 +166,10 @@
   pop.insertBefore(document.createElement('hr'), note);
   pop.insertBefore(menu, note);
   function menuHtml() {
-    menu.innerHTML = `<label title="The trend on 5m, 15m, 1H and 4H in a corner of the chart, whether they agree, and the London / New York session. Practice read, not a signal: in our tests A+ setups with the 4H trend did no better than against it."><input type="checkbox" data-tt-on${P.on ? ' checked' : ''}> Trend table · 5m 15m 1H 4H + session</label>
+    menu.innerHTML = `<label title="The trend on 5m, 15m, 1H and 4H in a corner of the chart, whether they agree, and the London / New York session. Practice read, not a signal: in our tests A+ setups with the 4H trend did no better than against it."><input type="checkbox" data-tt-on${P.on ? ' checked' : ''}><span>Trend table<small class="tt-lab">5m · 15m · 1H · 4H · London / NY</small></span></label>
       <div class="tt-opts" data-tt-opts${P.on ? '' : ' hidden'}>
-        <div class="dk-smcall" role="group" aria-label="Trend by"><span>Trend by</span>${Object.keys(BY).map(k => `<button type="button" data-tt-by="${k}" aria-pressed="${P.by === k}"${P.by === k ? ' class="on"' : ''}>${BY[k].name}</button>`).join('')}</div>
-        <div class="dk-smcall" role="group" aria-label="Corner"><span>Corner</span><button type="button" data-tt-pos="tr" aria-pressed="${P.pos === 'tr'}"${P.pos === 'tr' ? ' class="on"' : ''}>Top right</button><button type="button" data-tt-pos="br" aria-pressed="${P.pos === 'br'}"${P.pos === 'br' ? ' class="on"' : ''}>Bottom right</button></div>
+        <div class="tt-cap">Trend by</div><div class="dk-smcall" role="group" aria-label="Trend by">${Object.keys(BY).map(k => `<button type="button" data-tt-by="${k}" aria-pressed="${P.by === k}"${P.by === k ? ' class="on"' : ''}>${BY[k].btn}</button>`).join('')}</div>
+        <div class="tt-cap">Corner</div><div class="dk-smcall" role="group" aria-label="Corner"><button type="button" data-tt-pos="tr" aria-pressed="${P.pos === 'tr'}"${P.pos === 'tr' ? ' class="on"' : ''}>Top right</button><button type="button" data-tt-pos="br" aria-pressed="${P.pos === 'br'}"${P.pos === 'br' ? ' class="on"' : ''}>Bottom right</button></div>
       </div>`;
   }
   menuHtml();
