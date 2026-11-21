@@ -28,7 +28,7 @@ function start(req, res, url) {
   redirect(res, `https://accounts.google.com/o/oauth2/v2/auth?${p}`);
 }
 
-async function callback(req, res, url) {
+async function callback(req, res, url, opts = {}) {
   const fail = why => { logger.warn(`[web] google sign-in failed: ${why}`); A.addCookie(res, A.cookie(req, STATE_COOKIE, '', 0)); redirect(res, '/signin?error=google'); };
   if (!enabled()) return redirect(res, '/signin');
   const state = url.searchParams.get('state') || '', code = url.searchParams.get('code') || '';
@@ -66,6 +66,7 @@ async function callback(req, res, url) {
       if (!ex.email_verified) await A.endAllSessions(ex.id);
       user = { id: ex.id, banned: ex.banned };
     } else {
+      if (opts.canCreate === false) { A.addCookie(res, A.cookie(req, STATE_COOKIE, '', 0)); return redirect(res, '/signin?error=closed'); }
       const u = await A.createUser({ email, name: name || email.split('@')[0], passwordHash: null, verified: true, googleSub: claims.sub, image });
       if (!u) return fail('create');
       user = u;

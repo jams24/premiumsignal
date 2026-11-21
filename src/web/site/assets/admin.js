@@ -176,4 +176,15 @@ ${list.map(t => `<tr><td class="mono muted">${when(t.closed_at)}</td><td class="
   const main = $('#main');
   if (view === 'overview' && $('[data-bot-overview]')) overview($('[data-bot-overview]'));
   if (view === 'trades' && main) trades(main);
+
+  // open / close new accounts (Accounts card)
+  $$('[data-signups]').forEach(b => b.addEventListener('click', async () => {
+    const open = b.dataset.signups === 'open';
+    b.disabled = true; b.textContent = open ? 'Opening…' : 'Closing…';
+    try {
+      const r = await fetch('/auth/admin/signups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ open }) });
+      if (!r.ok) throw new Error(String(r.status));
+      location.reload();
+    } catch (e) { b.disabled = false; b.textContent = 'Couldn’t save — try again'; }
+  }));
 })();

@@ -50,7 +50,7 @@ function overview(d) {
   <div data-open-mini></div>
 </section>
 <section class="adm-card">
-  <div class="adm-card-h"><h2>${icon('users', 'i-4')} Accounts</h2>${d.accountsOpen ? '<span class="pill up">Sign-ups open</span>' : '<span class="pill warn">Sign-ups closed — set RESEND_API_KEY, EMAIL_FROM and PUBLIC_URL</span>'}<a class="adm-more" href="/admin?view=users">All users ${icon('arrow-right', 'i-35')}</a></div>
+  <div class="adm-card-h"><h2>${icon('users', 'i-4')} Accounts</h2>${d.signups ? `<span class="pill up">Sign-ups open</span><span class="muted adm-note">${d.accountsOpen ? 'New accounts confirm their email first.' : 'Straight into the desk (no email sender: set RESEND_API_KEY, EMAIL_FROM and PUBLIC_URL to make new accounts confirm their email first).'}</span>` : '<span class="pill warn">Sign-ups closed</span>'}<button type="button" class="btn btn-secondary btn-sm" data-signups="${d.signups ? 'close' : 'open'}">${d.signups ? 'Close sign-ups' : 'Open sign-ups'}</button><a class="adm-more" href="/admin?view=users">All users ${icon('arrow-right', 'i-35')}</a></div>
   <div class="adm-tiles">${[['Users', c.users], ['Confirmed email', c.verified], ['New in 7 days', c.week], ['Google sign-ins', c.google]].map(([k, v]) => `<div class="adm-tile"><span>${k}</span><b>${n0(v)}</b></div>`).join('')}</div>
   <h3 class="adm-h3">Newest sign-ups</h3>${userTable(d.latest, 'No users yet.')}
 </section>
@@ -89,10 +89,10 @@ function adminConsole(who, nonce, d) {
 }
 
 /** Reads what a view needs from the accounts DB. q: the db module. */
-async function adminData(db, url, accountsOpen) {
+async function adminData(db, url, accountsOpen, signups) {
   const v = url.searchParams.get('view');
   const view = VIEWS.some(([k]) => k === v) ? v : 'overview';
-  const d = { view, accountsOpen };
+  const d = { view, accountsOpen, signups };
   if (view === 'overview') {
     const [c, latest] = await Promise.all([
       db.q(`SELECT count(*)::int AS users, count(*) FILTER (WHERE email_verified)::int AS verified,

@@ -503,3 +503,89 @@ img, svg { display: block; }
 .cta2 h2 { font-size: 32px; line-height: 1.08; font-weight: 600; }
 @media (min-width: 640px) { .cta2 h2 { font-size: 50px; } }
 .cta2 p { margin-top: 18px; font-size: 17px; color: var(--text-2); }
+
+/* ===================================================================== auth motion (sign in / sign up / forgot / reset) */
+/* page to page: the form slides, the right-hand panel stays (browsers without view transitions just load the page).
+   Only the auth pages opt in (a <style> in their head), so the desk and the landing never run one. */
+.auth-aside { view-transition-name: rd-auth-aside; }
+.auth-main { view-transition-name: rd-auth-main; }
+::view-transition-group(rd-auth-aside) { animation-duration: 0s; }
+::view-transition-old(rd-auth-main) { animation: rd-vt-out .16s ease-in both; }
+::view-transition-new(rd-auth-main) { animation: rd-vt-in .36s cubic-bezier(.22,1,.36,1) both; }
+@keyframes rd-vt-out { to { opacity: 0; transform: translateY(-8px); } }
+@keyframes rd-vt-in { from { opacity: 0; transform: translateY(12px); } }
+
+/* entrance: the form builds itself top to bottom, the panel's lines follow */
+.auth-main > h1, .auth-sub, .auth-body > :not(form), .auth-body form > *, .auth-foot { animation: rise .6s cubic-bezier(.22,1,.36,1) both; }
+.auth-sub { animation-delay: .05s; }
+.auth-body > :nth-child(1) { animation-delay: .1s; } .auth-body > :nth-child(2) { animation-delay: .14s; } .auth-body > :nth-child(3) { animation-delay: .18s; }
+.auth-body form > :nth-child(1) { animation-delay: .14s; } .auth-body form > :nth-child(2) { animation-delay: .19s; } .auth-body form > :nth-child(3) { animation-delay: .24s; }
+.auth-body form > :nth-child(4) { animation-delay: .29s; } .auth-body form > :nth-child(5) { animation-delay: .34s; } .auth-body form > :nth-child(6) { animation-delay: .38s; }
+.auth-foot { animation-delay: .42s; }
+.auth-aside-in > .eyebrow, .auth-aside-in > h2, .auth-points li { animation: rise .7s cubic-bezier(.22,1,.36,1) both; }
+.auth-aside-in > h2 { animation-delay: .06s; }
+.auth-points li:nth-child(1) { animation-delay: .14s; } .auth-points li:nth-child(2) { animation-delay: .2s; } .auth-points li:nth-child(3) { animation-delay: .26s; } .auth-points li:nth-child(4) { animation-delay: .32s; }
+.auth-nav .auth-aside-in > .eyebrow, .auth-nav .auth-aside-in > h2, .auth-nav .auth-points li, .auth-nav .ra { animation: none; }
+.auth-aside .aurora .a1 { top: -120px; margin-left: -300px; width: 620px; height: 380px; }
+.auth-aside .aurora .a2 { top: 46%; margin-left: -120px; width: 520px; height: 360px; opacity: .35; }
+
+/* fields */
+.field label { transition: color .15s; } .field:focus-within label { color: var(--text); }
+.input { transition: border-color .15s, box-shadow .2s, background-color .2s; } .input:focus { background: var(--panel); }
+.pw-meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 8px; }
+.pw-meter i { height: 4px; border-radius: 4px; background: var(--line-strong); transition: background-color .3s; }
+.pw-meter[data-s="1"] i:nth-child(-n+1) { background: var(--down); }
+.pw-meter[data-s="2"] i:nth-child(-n+2) { background: var(--warn); }
+.pw-meter[data-s="3"] i:nth-child(-n+3) { background: color-mix(in oklab, var(--up) 65%, var(--warn)); }
+.pw-meter[data-s="4"] i { background: var(--up); }
+.hint.ok { color: var(--up); }
+.caps { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; color: var(--warn); animation: rise .25s both; }
+.typo { margin-top: 6px; font-size: 12.5px; color: var(--text-2); animation: rise .25s both; }
+.typo button { color: var(--primary); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
+
+/* buttons: spinner while it works, a tick when it worked */
+.btn .spin { width: 16px; height: 16px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.auth .btn.is-busy { opacity: .9; }
+.btn.is-done { background: var(--up); color: #fff; box-shadow: 0 10px 30px -10px color-mix(in oklab, var(--up) 70%, transparent); pointer-events: none; transition: background-color .25s, box-shadow .25s; }
+.btn .tick { width: 18px; height: 18px; } .btn .tick path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: tick .4s .05s ease-out forwards; }
+@keyframes tick { to { stroke-dashoffset: 0; } }
+.alert { animation: rise .35s cubic-bezier(.22,1,.36,1) both; }
+.shake { animation: shake .42s cubic-bezier(.36,.07,.19,.97) both !important; }
+@keyframes shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(3px); } 30%, 50%, 70% { transform: translateX(-5px); } 40%, 60% { transform: translateX(5px); } }
+.badge-float { animation: bob 3.2s ease-in-out infinite; box-shadow: 0 0 0 0 var(--ring); }
+
+/* the replay card in the right-hand panel */
+.ra { position: relative; width: 100%; max-width: 460px; margin-top: 44px; padding: 12px 12px 10px; border: 1px solid var(--line-strong); border-radius: 18px;
+  background: color-mix(in oklab, var(--panel) 80%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: 0 30px 80px -34px color-mix(in oklab, var(--primary) 55%, transparent), var(--shadow); animation: rise .8s .3s cubic-bezier(.22,1,.36,1) both; }
+.ra-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 9px; font: 500 12px var(--mono); color: var(--text-2); }
+.ra-sym b { margin-right: 6px; color: var(--text); font-weight: 600; } .ra-sym em { font-style: normal; color: var(--muted); }
+.ra-live { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--primary); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; }
+.ra-live i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s ease-in-out infinite; }
+.ra-stage { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in oklab, var(--bg) 72%, transparent); }
+.ra-chart { display: block; width: 100%; height: auto; aspect-ratio: 440 / 200; transition: opacity .45s, transform .45s, filter .45s; }
+.ra.rewind .ra-chart { opacity: 0; transform: translateX(-14px); filter: blur(3px); }
+.ra-c { transform-box: fill-box; transform-origin: center; animation: ra-pop .3s cubic-bezier(.22,1,.36,1) both; }
+@keyframes ra-pop { from { opacity: 0; transform: scaleY(.2); } }
+.ra-f { animation: ra-fade .45s ease-out both; }
+@keyframes ra-fade { from { opacity: 0; } }
+.ra-txt { font: 600 9.5px var(--mono); letter-spacing: .02em; }
+.ra-toast { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 20px); padding: 6px 10px;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: color-mix(in oklab, var(--panel) 94%, transparent); box-shadow: var(--shadow);
+  font-size: 12px; color: var(--text); opacity: 0; transform: translateY(-6px); transition: opacity .3s, transform .3s; pointer-events: none; }
+.ra-toast.on { opacity: 1; transform: none; }
+.ra-toast .dot { width: 8px; height: 8px; flex: none; border-radius: 2px; background: var(--primary); }
+.ra-toast .up { color: var(--up); } .ra-toast .down { color: var(--down); }
+.ra-foot { display: flex; align-items: center; gap: 10px; padding: 9px 4px 0; font: 500 11px var(--mono); color: var(--muted); }
+.ra-bar { flex: 1; height: 4px; overflow: hidden; border-radius: 4px; background: var(--line-strong); }
+.ra-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width .25s linear; }
+@media (prefers-reduced-motion: reduce) { .shake { animation: none !important; } }
+/* phones / tablets: no right-hand panel, so a soft moving glow behind the form instead */
+.auth-col { position: relative; overflow: hidden; }
+.auth-col > :not(.aurora) { position: relative; z-index: 1; }
+.auth-col-glow { opacity: .6; }
+.auth-col-glow .a1 { top: -170px; margin-left: -330px; width: 460px; height: 300px; }
+.auth-col-glow .a2 { top: -120px; margin-left: -20px; width: 380px; height: 260px; }
+@media (min-width: 1024px) { .auth-col-glow { display: none; } }

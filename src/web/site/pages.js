@@ -69,27 +69,41 @@ function miniCandles() {
     return `<line x1="${x}" x2="${x}" y1="${y(h)}" y2="${y(l)}" stroke="${col}" stroke-width="1.5"/><rect x="${x - 6}" width="12" y="${y(Math.max(o, cl))}" height="${Math.max(2, Math.abs(cl - o))}" rx="2" fill="${col}"/>`;
   }).join('')}</svg>`;
 }
+// the aside's replay card: site.js plays a scripted replay in it (candles print, liquidity swept, CHoCH, paper long to target);
+// without JavaScript, or with reduced motion, the static candles stay
+function replayCard() {
+  return `<div class="ra" data-ra aria-hidden="true">
+  <div class="ra-head"><span class="ra-sym"><b>BTCUSDT</b><em>Perp · 5m</em></span><span class="ra-live"><i></i>Replay</span></div>
+  <div class="ra-stage"><svg class="ra-chart" viewBox="0 0 440 200" data-ra-svg><g transform="translate(34 18) scale(1.25)">${miniCandles().replace(/^<svg[^>]*>|<\/svg>$/g, '')}</g></svg>
+  <div class="ra-toast" data-ra-toast></div></div>
+  <div class="ra-foot"><span data-ra-clock>21 Nov · 02:40</span><div class="ra-bar"><i data-ra-bar></i></div><span class="ra-speed">4×</span></div>
+</div>`;
+}
 function authShell(nonce, { title, sub, inner, foot, pageTitle }) {
   const body = `<div class="auth">
-<div class="auth-col">
+<div class="auth-col"><div class="aurora auth-col-glow" aria-hidden="true"><i class="a1"></i><i class="a2"></i></div>
   <div class="auth-top"><a href="/" aria-label="${SITE.name} home">${logo()}</a>${themeBtn()}</div>
   <main class="auth-main"><h1>${title}</h1>${sub ? `<p class="auth-sub">${sub}</p>` : ''}<div class="auth-body">${inner}</div>${foot ? `<div class="auth-foot">${foot}</div>` : ''}</main>
   <p class="auth-note">Paper trading and education only. Not financial advice.</p>
 </div>
-<aside class="auth-aside"><div class="bg-grid"></div><div class="glow"></div><div class="auth-aside-in">
+<aside class="auth-aside"><div class="aurora" aria-hidden="true"><i class="a1"></i><i class="a2"></i></div><div class="bg-grid"></div><div class="auth-aside-in">
   <p class="eyebrow" style="margin:0">ReplayDesk</p>
   <h2><span class="text-gradient">Practice on the past.</span><br><span class="text-brand">Trade the future better.</span></h2>
   <ul class="auth-points">${POINTS.map(p => `<li>${icon('circle-check', 'i-5')}${p}</li>`).join('')}</ul>
-  ${miniCandles()}
+  ${replayCard()}
 </div></aside></div>`;
-  return page({ title: pageTitle || title, body, nonce, noindex: false });
+  // moving between sign-in / sign-up / forgot: the right-hand panel stays put (no second entrance animation)
+  const head = `<script nonce="${nonce}">try{var n=+sessionStorage.getItem('rd-auth-nav');sessionStorage.removeItem('rd-auth-nav');if(n&&Date.now()-n<4000)document.documentElement.classList.add('auth-nav');}catch(e){}
+addEventListener('pageswap',function(e){var v=e.viewTransition,f=function(){},u='';if(!v)return;v.ready.catch(f);v.finished.catch(f);v.updateCallbackDone.catch(f);try{u=new URL(e.activation.entry.url).pathname;}catch(x){}if(['/signin','/signup','/forgot','/reset','/check-email'].indexOf(u)<0)v.skipTransition();});</script><style>@view-transition{navigation:auto}@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}</style>`;
+  return page({ title: pageTitle || title, body, nonce, noindex: false, head, bodyClass: 'auth-page' });
 }
 const field = ({ label, name, type = 'text', auto, placeholder = '', aside = '', hint = '', minlen, value = '', max }) => `<div class="field">
 <div class="field-top"><label for="f-${name}">${label}</label>${aside}</div>
 <div class="input-wrap"><input class="input${type === 'password' ? ' has-eye' : ''}" id="f-${name}" name="${name}" type="${type}"${auto ? ` autocomplete="${auto}"` : ''}
  placeholder="${esc(placeholder)}" value="${esc(value)}"${minlen ? ` data-minlen="${minlen}"` : ''}${max ? ` maxlength="${max}"` : ''}${type === 'email' || type === 'password' ? ' required' : ''} autocapitalize="off" spellcheck="false">
 ${type === 'password' ? `<button type="button" class="eye" data-eye aria-label="Show password">${icon('eye')}</button>` : ''}</div>
-${hint ? `<p class="hint" data-text="${esc(hint)}">${esc(hint)}</p>` : ''}</div>`;
+${auto === 'new-password' && minlen ? '<div class="pw-meter" data-pw-meter aria-hidden="true"><i></i><i></i><i></i><i></i></div>' : ''}
+${hint ? `<p class="hint" data-text="${esc(hint)}" aria-live="polite">${esc(hint)}</p>` : ''}</div>`;
 const hidden = (name, value) => `<input type="hidden" name="${name}" value="${esc(value)}">`;
 const google = (next, label) => `<a class="btn btn-secondary btn-lg btn-block" href="/auth/google?next=${encodeURIComponent(next)}">
 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.65l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.11A6.6 6.6 0 0 1 5.5 12c0-.73.13-1.44.34-2.11V7.05H2.18A11 11 0 0 0 1 12c0 1.78.43 3.45 1.18 4.95l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.05l3.66 2.84c.87-2.6 3.3-4.51 6.16-4.51z"/></svg>
@@ -100,6 +114,7 @@ const ERRORS = {
   google: 'Google sign-in didn’t finish. Try again, or use your email.',
   verify: 'That confirmation link has expired or was already used. Sign in to get a new one.',
   banned: 'This account is suspended.',
+  closed: 'New accounts are paused right now, so Google can’t create one. Try again later.',
 };
 function signin(nonce, { next, googleOn, error, reset, verified }) {
   const msg = reset ? alertSlot('up', 'Password changed. Sign in with the new one.') : verified ? alertSlot('up', 'Email confirmed. Sign in to continue.')
@@ -115,12 +130,12 @@ ${field({ label: 'Password', name: 'password', type: 'password', auto: 'current-
     pageTitle: 'Sign in',
   });
 }
-function signup(nonce, { next, googleOn, open }) {
+function signup(nonce, { next, googleOn, open, confirm }) {
   if (!open) return authShell(nonce, { title: 'Sign-ups open soon', sub: 'ReplayDesk is getting ready for its first traders.',
     inner: `<div class="center-card"><span class="badge-ico">${icon('sparkles', 'i-6')}</span><p class="t2" style="margin-top:16px">New accounts aren't open yet. Meanwhile, the free guides are being written.</p>
 <div style="margin-top:16px">${btn('/learn', 'See the guides', 'btn-secondary')}</div></div>`, foot: `Already have an account? <a class="link" href="/signin">Sign in</a>`, pageTitle: 'Sign up' });
   return authShell(nonce, {
-    title: 'Create your free account', sub: 'Replay, paper trade and learn. No card needed.',
+    title: 'Create your free account', sub: confirm ? 'Replay, paper trade and learn. No card needed.' : 'Replay, paper trade and learn. No card, and you’re in the desk in seconds.',
     inner: `${alertSlot()}${googleOn ? google(next, 'Sign up with Google') : ''}
 <form data-form="signup" novalidate>${hidden('next', next)}
 ${field({ label: 'Name', name: 'name', auto: 'name', placeholder: 'What should we call you?', max: 60 })}
@@ -135,7 +150,7 @@ ${field({ label: 'Password', name: 'password', type: 'password', auto: 'new-pass
 function checkEmail(nonce, { email, next }) {
   return authShell(nonce, {
     title: 'Check your inbox', sub: 'One click and you’re in.',
-    inner: `<div class="center-card"><span class="badge-ico">${icon('mail-check', 'i-6')}</span>
+    inner: `<div class="center-card"><span class="badge-ico badge-float">${icon('mail-check', 'i-6')}</span>
 <p class="t2" style="margin-top:16px;font-size:15px">We sent a confirmation link to</p><p style="margin-top:4px;font-weight:500;overflow-wrap:anywhere">${esc(email || 'your email')}</p>
 <p class="muted" style="margin-top:16px;font-size:13.5px">Open it on this device to land straight in the desk. Nothing in the inbox? Check spam, or:</p>
 <button type="button" class="btn btn-secondary" style="margin-top:16px" data-resend data-email="${esc(email)}" data-next="${esc(next)}"${email ? '' : ' disabled'}>Send it again</button></div>`,

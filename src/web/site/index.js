@@ -20,8 +20,22 @@ const { ASSETS, FAVICON, safeNext } = require('./html');
 const NEWS = require('./news');
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
-/** Sign-up and email links need: the database, an email sender, and the public address for the links. */
+/** Email links work (confirm address, reset password): the database, an email sender, and the public address for the links.
+ *  On → a new account confirms its email before it can sign in. Off → a new account goes straight into the desk
+ *  (email not confirmed: it can never be admin, and Google sign-in with that address takes the account over). */
 const accountsOpen = () => db.ready() && mail.ready() && !!publicUrl();
+// the admin's open / closed switch for new accounts (web_settings 'signups'; open unless closed), read at most every 30 s
+let signupCfg = { open: true, at: 0 };
+async function signupsOpen() {
+  if (!db.ready()) return false;
+  if (Date.now() - signupCfg.at > 30e3) {
+    try {
+      const r = await db.q("SELECT value FROM web_settings WHERE key = 'signups'");
+      signupCfg = { open: !(r.rows[0] && r.rows[0].value && r.rows[0].value.open === false), at: Date.now() };
+    } catch (e) { signupCfg.at = Date.now(); }
+  }
+  return signupCfg.open;
+}
 
 let started = false;
 function init() {
@@ -135,7 +149,8 @@ async function route(req, res, url, { dashboardHtml, newsEvents }) {
       return true;
     case '/signup':
       if (userWho) { redirect(res, next); return true; }
-      html(res, n => P.signup(n, { next, googleOn: G.enabled() && db.ready(), open: accountsOpen() })); return true;
+      { const open = await signupsOpen(); html(res, n => P.signup(n, { next, googleOn: G.enabled() && db.ready(), open, confirm: accountsOpen() })); }
+      return true;
     case '/check-email': html(res, n => P.checkEmail(n, { email: String(url.searchParams.get('email') || '').slice(0, 254), next })); return true;
     case '/forgot': html(res, n => P.forgot(n, { open: accountsOpen() })); return true;
     case '/reset': html(res, n => P.reset(n, { token: String(url.searchParams.get('token') || '').slice(0, 100) })); return true;
@@ -148,7 +163,7 @@ async function route(req, res, url, { dashboardHtml, newsEvents }) {
     case '/admin': {
       if (!who) { toSignin(res, '/admin'); return true; }
       if (!who.admin) { redirect(res, '/app'); return true; }
-      const d = await ADM.adminData(db, url, accountsOpen());
+      const d = await ADM.adminData(db, url, accountsOpen(), await signupsOpen());
       html(res, n => ADM.adminConsole(who, n, d));
       return true;
     }
@@ -174,7 +189,7 @@ async function authRoute(req, res, url) {
   const p = url.pathname;
   if (req.method === 'GET') {
     if (p === '/auth/google') { G.start(req, res, url); return true; }
-    if (p === '/auth/google/callback') { if (!db.ready()) { redirect(res, '/signin?error=google'); return true; } await G.callback(req, res, url); return true; }
+    if (p === '/auth/google/callback') { if (!db.ready()) { redirect(res, '/signin?error=google'); return true; } await G.callback(req, res, url, { canCreate: await signupsOpen() }); return true; }
     if (p === '/auth/verify') { await verifyEmail(req, res, url); return true; }
     json(res, 405, { error: 'method' }); return true;
   }
@@ -189,17 +204,25 @@ async function authRoute(req, res, url) {
 
   switch (p) {
     case '/auth/sign-up': {
-      if (!accountsOpen()) return json(res, 403, { error: 'closed', message: 'Sign-ups are not open yet.' }), true;
+      if (!(await signupsOpen())) return json(res, 403, { error: 'closed', message: 'New accounts are paused right now. Try again later.' }), true;
       if (!A.limit(`su:${ip}`, 5, 600e3)) return tooMany(), true;
       const email = A.cleanEmail(b.email), name = A.cleanName(b.name) || email.split('@')[0], next = safeNext(b.next);
       if (!A.validEmail(email)) return json(res, 400, { error: 'email', message: 'Enter a valid email address.' }), true;
       if (!A.validPassword(b.password)) return json(res, 400, { error: 'password', message: 'Use 8 to 128 characters for the password.' }), true;
+      // an admin address only signs up with a confirmed email (no one can take it first while sign-ups skip the email step)
+      if (!accountsOpen() && A.adminEmails().includes(email)) return json(res, 403, { error: 'reserved', message: 'This address can’t sign up here. Use the dashboard key.' }), true;
       if (await A.userByEmail(email)) return json(res, 409, { error: 'exists' }), true;
       const u = await A.createUser({ email, name: name.slice(0, 60), passwordHash: await A.hashPassword(b.password) });
       if (!u) return json(res, 409, { error: 'exists' }), true;
-      await sendVerifyLink(u, next);
-      logger.info(`[web] sign-up user=${u.id}`);
-      json(res, 200, { ok: true, redirect: `/check-email?email=${encodeURIComponent(email)}&next=${encodeURIComponent(next)}` });
+      if (accountsOpen()) {   // email links work: confirm first
+        await sendVerifyLink(u, next);
+        logger.info(`[web] sign-up user=${u.id} (confirm email)`);
+        json(res, 200, { ok: true, redirect: `/check-email?email=${encodeURIComponent(email)}&next=${encodeURIComponent(next)}` });
+        return true;
+      }
+      await A.startSession(req, res, { userId: u.id });   // no email sender: straight into the desk
+      logger.info(`[web] sign-up user=${u.id} (instant)`);
+      json(res, 200, { ok: true, instant: true, redirect: next });
       return true;
     }
     case '/auth/sign-in': {
@@ -209,8 +232,8 @@ async function authRoute(req, res, url) {
       const ok = await A.verifyPassword(String(b.password || ''), u && u.password_hash);
       if (!u || !ok) return json(res, 401, { error: 'invalid' }), true;
       if (u.banned) return json(res, 403, { error: 'banned', message: 'This account is suspended.' }), true;
-      if (!u.email_verified) {
-        if (accountsOpen() && A.limit(`rs:${email}`, 3, 900e3)) await sendVerifyLink(u, safeNext(b.next));
+      if (!u.email_verified && accountsOpen()) {   // without an email sender there is no link to confirm with: let them in
+        if (A.limit(`rs:${email}`, 3, 900e3)) await sendVerifyLink(u, safeNext(b.next));
         return json(res, 403, { error: 'email_not_verified' }), true;
       }
       await A.startSession(req, res, { userId: u.id });
@@ -246,6 +269,17 @@ async function authRoute(req, res, url) {
       await A.endAllSessions(uid);   // signed out everywhere, including whoever had the old password
       logger.info(`[web] password reset user=${uid}`);
       json(res, 200, { ok: true });
+      return true;
+    }
+    case '/auth/admin/signups': {   // admin: open or close new accounts
+      const who = await A.readSession(req);
+      if (!who || !who.admin) return json(res, 403, { error: 'admin' }), true;
+      const open = b.open !== false;
+      await db.q(`INSERT INTO web_settings (key, value, updated_at) VALUES ('signups', $1, now())
+        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`, [JSON.stringify({ open })]);
+      signupCfg = { open, at: Date.now() };
+      logger.info(`[web] sign-ups ${open ? 'opened' : 'closed'} by admin`);
+      json(res, 200, { ok: true, open });
       return true;
     }
     case '/auth/key': {

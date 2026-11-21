@@ -51,7 +51,8 @@ ${noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta property="og:description" content="${esc(description || SITE.description)}"><meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#07090d"><meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f8fb">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
-<script nonce="${nonce}">try{var t=localStorage.getItem('rd-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script nonce="${nonce}">try{var t=localStorage.getItem('rd-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}
+addEventListener('pagereveal',function(e){var v=e.viewTransition,n=function(){};if(v){v.ready.catch(n);v.finished.catch(n);v.updateCallbackDone.catch(n);}});</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="${asset('site.css')}">${head}
