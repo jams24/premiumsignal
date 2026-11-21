@@ -974,22 +974,29 @@
     }
     if (sel) for (const [x, y] of (d.type === 'hline' ? [] : d.type === 'pen' ? [P[0], P[P.length - 1]] : P)) { g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fillStyle = COL.bg; g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.pri; g.stroke(); }
   }
-  // fair value gaps: their own indicator, drawn with SMC on or off
+  // fair value gaps: their own indicator, drawn with SMC on or off. Like TradingView's SMC script: a pale box over the gap from
+  // its middle candle, FVG_LEN candles long (shorter when price fills the gap first), "FVG" at its right end.
+  // Recent: the newest 8 not filled yet · Whole chart: every gap, filled ones fainter
+  const FVG_LEN = 15;
+  let FVGBOX = [];   // what was drawn last, for tests
   function drawFVG(g, W) {
-    const all = !!U.smcAll;
-    // fair value gaps: dashed boxes labelled FVG. Recent: the newest 8 still open · Whole chart: every open one, filled ones faint
-    {
-      const open = FVGS.filter(f => !f.filled), list = all ? FVGS : open.slice(-8);
-      g.font = '600 9.5px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
-      for (const f of list) {
-        const x0 = t2x(f.t), xe = f.filled ? t2x(f.filled) : W, y0 = p2y(f.filled ? f.top0 : f.top), y1 = p2y(f.filled ? f.bot0 : f.bot);
-        if (x0 == null || xe == null || y0 == null || y1 == null || xe < 0 || x0 > W) continue;
-        const c = f.dir === 1 ? COL.up : COL.fvgDn, faint = !!f.filled, h = Math.max(1, Math.abs(y1 - y0)), y = Math.min(y0, y1);
-        g.fillStyle = hexA(c, faint ? 0.04 : 0.13); g.fillRect(x0, y, Math.max(1, xe - x0), h);
-        g.strokeStyle = hexA(c, faint ? 0.2 : 0.55); g.setLineDash([3, 2]); g.lineWidth = 1; g.strokeRect(x0, y, Math.max(1, xe - x0), h); g.setLineDash([]);
-        if (!faint && h >= 7) { g.fillStyle = hexA(c, 0.95); g.textAlign = 'right'; g.fillText('FVG', Math.min(W, xe) - 4, y + h / 2 + 0.5); g.textAlign = 'left'; }
-      }
+    const ms = TF[U.tf].ms, list = U.smcAll ? FVGS : FVGS.filter(f => !f.filled).slice(-8), out = [];
+    g.font = '600 9px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
+    for (const f of list) {
+      const x0 = t2x(f.t), xl = t2x(f.t + FVG_LEN * ms), xf = f.filled ? t2x(f.filled) : null;
+      if (x0 == null || xl == null) continue;
+      const xe = xf != null ? Math.min(xf, xl) : xl, y0 = p2y(f.top0), y1 = p2y(f.bot0);
+      if (y0 == null || y1 == null || xe < 0 || x0 > W) continue;
+      const c = f.dir === 1 ? COL.up : COL.fvgDn, faint = !!f.filled, y = Math.min(y0, y1), h = Math.max(1.5, Math.abs(y1 - y0)), w = Math.max(2, xe - x0);
+      g.fillStyle = hexA(c, faint ? 0.08 : 0.22); g.fillRect(x0, y, w, h);
+      out.push({ x0, xe: x0 + w, y, h, dir: f.dir, filled: faint });
+      if (faint) continue;
+      g.fillStyle = hexA(c, 0.85);
+      const xr = Math.min(x0 + w, W);   // the box can run past the last candle: keep the label on screen
+      if (h >= 9 && xr - x0 >= 28) { g.textAlign = 'right'; g.fillText('FVG', xr - 3, y + h / 2 + 0.5); }   // inside, right end
+      else if (x0 + w + 24 < W) { g.textAlign = 'left'; g.fillText('FVG', x0 + w + 3, y + h / 2 + 0.5); }   // thin gap: just after the box
     }
+    FVGBOX = out;
   }
   function drawSMC(g, W) {
     const r = SMCR; if (!r) return;
@@ -2057,7 +2064,7 @@
   window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
