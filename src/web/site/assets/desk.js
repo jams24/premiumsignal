@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: true, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -251,7 +251,7 @@
   const FALL = { '--dk-bg': ['#0b0e14', '#ffffff'], '--up': ['#16c784', '#0d9f6e'], '--down': ['#f0475b', '#dc2f45'], '--muted': ['#727b8f', '#6b7486'], '--primary': ['#4f7cff', '#3461f5'], '--warn': ['#f5a524', '#c27c0e'], '--panel-3': ['#1a2130', '#eceff5'], '--grid': ['rgba(255,255,255,.045)', 'rgba(15,23,42,.05)'], '--dk-line': ['rgba(255,255,255,.075)', 'rgba(15,23,42,.1)'] };
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || (FALL[n] ? FALL[n][document.documentElement.dataset.theme === 'light' ? 1 : 0] : '');
   const COL = {};
-  const readCol = () => Object.assign(COL, { up: css('--up'), down: css('--down'), pri: css('--primary'), warn: css('--warn'), acc: css('--accent'), text: css('--text'), muted: css('--muted'), bg: css('--dk-bg'), panel: css('--panel') });
+  const readCol = () => Object.assign(COL, { up: css('--up'), down: css('--down'), pri: css('--primary'), warn: css('--warn'), fvgDn: '#f97316', acc: css('--accent'), text: css('--text'), muted: css('--muted'), bg: css('--dk-bg'), panel: css('--panel') });
   readCol();
   // candle style (Indicators → Candles). Black / white: light bodies up, dark bodies down, with one ink for wicks and outlines
   const isLight = () => document.documentElement.dataset.theme === 'light';
@@ -993,6 +993,19 @@
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent');
     }
+    // fair value gaps: dashed boxes labelled FVG. Recent: the newest 8 still open · Whole chart: every open one, filled ones faint
+    if (U.smcFvg && r.fvgs) {
+      const open = r.fvgs.filter(f => !f.filled), list = all ? r.fvgs : open.slice(-8);
+      g.font = '600 9.5px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
+      for (const f of list) {
+        const x0 = t2x(f.t), xe = f.filled ? t2x(f.filled) : W, y0 = p2y(f.filled ? f.top0 : f.top), y1 = p2y(f.filled ? f.bot0 : f.bot);
+        if (x0 == null || xe == null || y0 == null || y1 == null || xe < 0 || x0 > W) continue;
+        const c = f.dir === 1 ? COL.up : COL.fvgDn, faint = !!f.filled, h = Math.max(1, Math.abs(y1 - y0)), y = Math.min(y0, y1);
+        g.fillStyle = hexA(c, faint ? 0.04 : 0.13); g.fillRect(x0, y, Math.max(1, xe - x0), h);
+        g.strokeStyle = hexA(c, faint ? 0.2 : 0.55); g.setLineDash([3, 2]); g.lineWidth = 1; g.strokeRect(x0, y, Math.max(1, xe - x0), h); g.setLineDash([]);
+        if (!faint && h >= 7) { g.fillStyle = hexA(c, 0.95); g.textAlign = 'right'; g.fillText('FVG', Math.min(W, xe) - 4, y + h / 2 + 0.5); g.textAlign = 'left'; }
+      }
+    }
     // equal lows / highs price has already taken (Indicators → keep them): faded, from the first low to the candle that took
     // it, "swept" = wick through and closed back, "broken" = closed through. Recent: the newest 6 · Whole chart: all
     // two pairs at one price (lows 1+2 and 1+3) are one level: drawn once, so they don't use up the newest-N slots
@@ -1015,6 +1028,37 @@
       label(g, b.kind, (x0 + x1) / 2, y + (b.dir === 1 ? -9 : 9), c, 'center', 'transparent');
     }
   }
+  // the highest high and lowest low of the candles on screen, like TradingView's high / low labels: a faint line from
+  // that candle to the price axis and its price. Follows scrolling and zooming; in a replay only candles up to the clock exist.
+  function drawHiLo(g, W) {
+    const B = S.bars, n = B.length, r = chart.timeScale().getVisibleLogicalRange(); if (!n || !r) return;
+    const i0 = Math.max(0, Math.ceil(r.from)), i1 = Math.min(n - 1, Math.floor(r.to)); if (i1 - i0 < 2) return;
+    const cr = box.getBoundingClientRect(), covers = [];
+    const add = r => { if (r.width > 0 && r.height > 0) covers.push({ l: r.left - cr.left - 2, r: r.right - cr.left + 2, t: r.top - cr.top - 1, b: r.bottom - cr.top + 1 }); };
+    for (const el of [document.querySelector('.dk-qt'), document.querySelector('.tt')]) if (el && !el.hidden && el.offsetParent) add(el.getBoundingClientRect());
+    const lg = document.querySelector('[data-legend]');
+    if (lg && lg.offsetParent) { const rg = document.createRange(); rg.selectNodeContents(lg); for (const r of rg.getClientRects()) add(r); }
+    let hi = i0, lo = i0;
+    for (let i = i0; i <= i1; i++) { if (B[i][2] > B[hi][2]) hi = i; if (B[i][3] < B[lo][3]) lo = i; }
+    for (const [i, p, tag, dy] of [[hi, B[hi][2], 'High', -1], [lo, B[lo][3], 'Low', 1]]) {
+      const x = chart.timeScale().logicalToCoordinate(i), y = p2y(p); if (x == null || y == null) continue;
+      const txt = `${tag} ${fp(p)}`;
+      g.font = '600 10.5px "Geist Mono", ui-monospace, monospace';
+      const w = g.measureText(txt).width + 10; let ly = y + dy * 11;
+      let lx = x + 7; if (lx + w > W - 4) lx = x - 7 - w; lx = Math.max(2, lx);   // right of the candle, or left of it at the chart's edge
+      // step around what sits on the chart (Buy / Sell box, Trend table, the legend's text): beside it, or under it
+      const hit = (x, y) => covers.find(r => x < r.r && x + w > r.l && y + 8 > r.t && y - 8 < r.b);
+      for (let k = 0, r; k < 6 && (r = hit(lx, ly)); k++) {
+        if (r.r + 6 + w <= W - 4 && !hit(r.r + 6, ly)) lx = r.r + 6;
+        else if (r.l - 6 - w >= 2 && !hit(r.l - 6 - w, ly)) lx = r.l - 6 - w;
+        else ly = r.b + 9;   // no room beside it: just under it
+      }
+      g.strokeStyle = hexA(COL.muted, 0.45); g.lineWidth = 1; g.setLineDash([1, 3]); g.beginPath(); g.moveTo(Math.max(x + 4, lx + w), y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
+      g.fillStyle = hexA(COL.panel, 0.9); g.fillRect(lx, ly - 8, w, 16);
+      g.strokeStyle = hexA(COL.muted, 0.4); g.strokeRect(lx + 0.5, ly - 7.5, w - 1, 15);
+      g.fillStyle = COL.text; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(txt, lx + 5, ly + 0.5);
+    }
+  }
   const prim = {
     _p: null,
     attached(p) { this._p = p; }, detached() { this._p = null; },
@@ -1026,6 +1070,7 @@
     { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smc && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
+      if (U.hilo) { g.save(); drawHiLo(g, W); g.restore(); }
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
@@ -1663,8 +1708,33 @@
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); return; }
     const l = base[base.length - 1];
     base.push([l[0] + ms, l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
-    try { SMCR = window.SMC.analyze(base, base.length - 1, { tf: ms, off: U.tf === '1W' ? WEEK_OFF : 0 }); } catch (e) { SMCR = null; }
+    try { SMCR = window.SMC.analyze(base, base.length - 1, { tf: ms, off: U.tf === '1W' ? WEEK_OFF : 0 }); SMCR.fvgs = fvgScan(base.slice(0, -1), ms); } catch (e) { SMCR = null; }
     setMarkers(); prim.req(); legend();
+  }
+  // fair value gaps: candle 1's high below candle 3's low (bullish) or its low above candle 3's high (bearish), at least a
+  // quarter of the average candle range (ATR 14) so 1-minute noise stays off. Known when candle 3 closes. Later candles
+  // fill it from the near side: the box shrinks to the part not traded yet and ends when a wick reaches the far side.
+  function fvgScan(B, ms) {
+    const out = []; let atr = null, open = [];
+    for (let i = 1; i < B.length; i++) {
+      const c = B[i], p = B[i - 1];
+      const tr = Math.max(c[2] - c[3], Math.abs(c[2] - p[4]), Math.abs(c[3] - p[4]));
+      atr = atr == null ? tr : atr + (tr - atr) / 14;
+      if (open.length) {
+        for (const f of open) {
+          if (f.dir === 1) { if (c[3] <= f.bot) f.filled = c[0]; else if (c[3] < f.top) f.top = c[3]; }
+          else if (c[2] >= f.top) f.filled = c[0]; else if (c[2] > f.bot) f.bot = c[2];
+        }
+        open = open.filter(f => !f.filled);
+      }
+      if (i < 2) continue;
+      const a = B[i - 2], min = 0.25 * atr;
+      let f = null;
+      if (c[3] > a[2] && c[3] - a[2] >= min) f = { dir: 1, top: c[3], bot: a[2], top0: c[3], bot0: a[2], t: B[i - 1][0], conf: c[0] + ms, filled: null };
+      else if (c[2] < a[3] && a[3] - c[2] >= min) f = { dir: -1, top: a[3], bot: c[2], top0: a[3], bot0: c[2], t: B[i - 1][0], conf: c[0] + ms, filled: null };
+      if (f) { out.push(f); open.push(f); }
+    }
+    return out;
   }
   function setMarkers() {
     if (!markers) return;
@@ -1934,7 +2004,7 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone') prim.req(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'smcFvg' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
