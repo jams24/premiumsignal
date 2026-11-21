@@ -87,8 +87,8 @@
     const rows = TFS.map(tf => readTf(tf, t, px));
     const vs = rows.map(r => r.v);
     const all = vs.every(v => v === 1) ? 1 : vs.every(v => v === -1) ? -1 : vs.some(v => v == null) ? null : 0;
-    const sess = RD.sessionsAt ? RD.sessionsAt(t) : null;
-    return { rows, all, sess, t };
+    const sess = RD.sessionsAt ? RD.sessionsAt(t) : null, clock = RD.sessionClock ? RD.sessionClock(t) : [];
+    return { rows, all, sess, clock, t };
   }
 
   // ---------------------------------------------------------------- drawing
@@ -97,12 +97,21 @@
   box.appendChild(el);
   const word = v => (v === 1 ? 'BULLISH' : v === -1 ? 'BEARISH' : 'MIXED');
   const cls = v => (v === 1 ? 'up' : v === -1 ? 'down' : 'n');
-  function sessText(sess) {
-    if (!sess) return { text: '—', c: 'n' };
-    const main = sess.filter(x => x.k !== 'asia'), asia = sess.find(x => x.k === 'asia');
-    if (main.length) return { text: main.map(x => (x.k === 'ny' ? 'NY' : x.name)).join(' + ') + (main.some(x => x.wk) ? ' · wknd' : ''), c: main.some(x => x.wk) ? 'n' : 's' };
-    if (asia) return { text: 'Asia' + (asia.wk ? ' · wknd' : ''), c: 'n' };
-    return { text: 'closed', c: 'n' };
+  // sessions: "open · 2h 04m left" / "opens in 5h 10m"; a weekend session (stock markets shut, crypto trades on) reads "wknd"
+  const dur = ms => { const m = Math.max(0, Math.ceil(ms / 60e3 - 1e-9)); return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm' : Math.floor(m / 1440) + 'd ' + Math.floor((m % 1440) / 60) + 'h'; };
+  const hm = at => new Date(at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const WK = ' (weekend: stock markets are shut, crypto trades on)';
+  function sessCell(c, t) {
+    if (c.at == null) return { text: '—', c: 'n', tip: '' };
+    if (c.open) return { text: (c.wk ? 'wknd' : 'open') + ' · ' + dur(c.at - t) + ' left', c: c.wk ? 'n' : 'so', tip: `${c.name} is open, closes ${hm(c.at)} your time${c.wk ? WK : ''}` };
+    return { text: 'opens in ' + dur(c.at - t), c: 'n', tip: `${c.name} opens ${hm(c.at)} your time${c.wk ? WK : ''}` };
+  }
+  // phone line: the open ones with time left, or the next to open
+  function sessLine(d) {
+    const on = d.clock.filter(c => c.open);
+    if (on.length) return on.map(c => `${c.short} ${c.wk ? 'wknd ' : ''}${dur(c.at - d.t)} left`).join(', ');
+    const nx = d.clock.filter(c => c.at != null).sort((a, b) => a.at - b.at)[0];
+    return nx ? `${nx.short} opens in ${dur(nx.at - d.t)}` : '';
   }
   function place() {
     let w = 0, h = 0;
@@ -117,21 +126,20 @@
     if (!show) { last = ''; return; }
     const d = read(), by = BY[P.by], tfNow = U.tf;
     const lineup = d.all === 1 ? ['ALIGNED ▲', 'up'] : d.all === -1 ? ['ALIGNED ▼', 'down'] : d.all === 0 ? ['NOT ALIGNED', 'n'] : ['…', 'n'];
-    const ss = sessText(d.sess);
     const html = `<div class="tt-h" title="${esc(by.name)} on each timeframe${R.on ? ', at the replay clock' : ''}. Practice read, not a signal.">${esc(by.name)}${R.on ? ' · replay' : ''}</div>` +
       `<div class="tt-r"><span>${P.by === 'st' ? 'All agree' : 'EMA lineup'}</span><b class="tt-c ${lineup[1]}">${lineup[0]}</b></div>` +
       d.rows.map(r => `<div class="tt-r${r.tf === tfNow ? ' cur' : ''}"><span>${r.tf === '1H' || r.tf === '4H' ? r.tf : r.tf.replace('m', ' m').toUpperCase()}</span>` +
         `<b class="tt-c ${r.v == null ? 'n' : cls(r.v)}"${r.note ? ` title="${esc(r.note)}"` : ''}>${r.v == null ? (r.wait ? '…' : '—') : word(r.v)}</b></div>`).join('') +
-      `<div class="tt-r"><span>London / NY</span><b class="tt-c ${ss.c}">${esc(ss.text)}</b></div>`;
+      d.clock.map((c, i) => { const x = sessCell(c, d.t); return `<div class="tt-r tt-s${i ? '' : ' first'}"><span>${c.k === 'ny' ? 'New York' : esc(c.name)}</span><b class="tt-c ${x.c}" title="${esc(x.tip)}">${esc(x.text)}</b></div>`; }).join('');
     if (html !== last) { el.innerHTML = html; last = html; }
     place();
   }
   // phone: one line in the legend instead of a table over the candles
   if (X.legend) X.legend.push(() => {
     if (!P.on || !u.phone()) return '';
-    const d = read(), ss = sessText(d.sess);
+    const d = read(), ss = sessLine(d);
     const a = v => (v === 1 ? '<b class="up">▲</b>' : v === -1 ? '<b class="down">▼</b>' : v === 0 ? '<b class="muted">•</b>' : '<b class="muted">…</b>');
-    return `<span class="tt-leg" title="${esc(BY[P.by].name)}">${d.rows.map(r => `${r.tf} ${a(r.v)}`).join(' ')}${d.all === 1 || d.all === -1 ? ' <em>aligned</em>' : ''} · ${esc(ss.text)}</span>`;
+    return `<span class="tt-leg" title="${esc(BY[P.by].name)}">${d.rows.map(r => `${r.tf} ${a(r.v)}`).join(' ')}${d.all === 1 || d.all === -1 ? ' <em>aligned</em>' : ''}${ss ? ' · ' + esc(ss) : ''}</span>`;
   });
 
   // ---------------------------------------------------------------- when to read again
@@ -144,7 +152,7 @@
       const t = u.nowT();
       for (const tf of TFS) load(tf, t);
       render();
-      if (u.phone()) { const d = read(), k = JSON.stringify([d.rows.map(r => r.v), d.all, sessText(d.sess).text]); if (k !== lastLeg) { lastLeg = k; RD.legend(); } }
+      if (u.phone()) { const d = read(), k = JSON.stringify([d.rows.map(r => r.v), d.all, sessLine(d)]); if (k !== lastLeg) { lastLeg = k; RD.legend(); } }
     }, R.on && R.playing ? 300 : 120);
   }
   const reset = () => { for (const k in C) delete C[k]; last = ''; sched(); };
@@ -166,7 +174,7 @@
   pop.insertBefore(document.createElement('hr'), note);
   pop.insertBefore(menu, note);
   function menuHtml() {
-    menu.innerHTML = `<label title="The trend on 5m, 15m, 1H and 4H in a corner of the chart, whether they agree, and the London / New York session. Practice read, not a signal: in our tests A+ setups with the 4H trend did no better than against it."><input type="checkbox" data-tt-on${P.on ? ' checked' : ''}><span>Trend table<small class="tt-lab">5m · 15m · 1H · 4H · London / NY</small></span></label>
+    menu.innerHTML = `<label title="The trend on 5m, 15m, 1H and 4H in a corner of the chart, whether they agree, and the Asia, London and New York sessions: open with the time left, or how long until they open. Practice read, not a signal: in our tests A+ setups with the 4H trend did no better than against it."><input type="checkbox" data-tt-on${P.on ? ' checked' : ''}><span>Trend table<small class="tt-lab">5m · 15m · 1H · 4H · sessions</small></span></label>
       <div class="tt-opts" data-tt-opts${P.on ? '' : ' hidden'}>
         <div class="tt-cap">Trend by</div><div class="dk-smcall" role="group" aria-label="Trend by">${Object.keys(BY).map(k => `<button type="button" data-tt-by="${k}" aria-pressed="${P.by === k}"${P.by === k ? ' class="on"' : ''}>${BY[k].btn}</button>`).join('')}</div>
         <div class="tt-cap">Corner</div><div class="dk-smcall" role="group" aria-label="Corner"><button type="button" data-tt-pos="tr" aria-pressed="${P.pos === 'tr'}"${P.pos === 'tr' ? ' class="on"' : ''}>Top right</button><button type="button" data-tt-pos="br" aria-pressed="${P.pos === 'br'}"${P.pos === 'br' ? ' class="on"' : ''}>Bottom right</button></div>

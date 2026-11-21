@@ -83,6 +83,18 @@
     return out;
   };
 
+  // each city at time t: open and when it closes, or shut and when it next opens (times set here, weekend sessions flagged)
+  RD.sessionClock = t => SESS.map(s => {
+    const o = tOf(s, 'open'), c = tOf(s, 'close');
+    for (let D = Math.floor(t / DAY) - 1; D <= Math.floor(t / DAY) + 8; D++) {
+      const ld = localDate(s.tz, D * DAY + 12 * HOUR), wk = ld.wd === 'Sat' || ld.wd === 'Sun', open = wall(s.tz, ld.y, ld.m, ld.d, o);
+      let close = wall(s.tz, ld.y, ld.m, ld.d, c); if (close <= open) close = wall(s.tz, ld.y, ld.m, ld.d + 1, c);
+      if (open <= t && t < close) return { k: s.k, name: s.name, short: s.short, open: true, wk, at: close };
+      if (open > t) return { k: s.k, name: s.name, short: s.short, open: false, wk, at: open };   // days run in order: the first later open is the next one
+    }
+    return { k: s.k, name: s.name, short: s.short, open: false, wk: false, at: null };
+  });
+
   // ---------------------------------------------------------------- what the chart shows
   const tfOK = () => u.TF[U.tf] && u.TF[U.tf].ms <= 4 * HOUR;
   function view(W) {

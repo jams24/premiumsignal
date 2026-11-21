@@ -927,6 +927,9 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .tt-c.up { color: #fff; background: color-mix(in srgb, var(--up) 72%, transparent); }
 .tt-c.down { color: #fff; background: color-mix(in srgb, var(--down) 72%, transparent); }
 .tt-c.s { color: var(--up); }
+.tt-c.so { color: var(--up); background: color-mix(in srgb, var(--up) 16%, transparent); }   /* a session that is open */
+.tt-r.tt-s.first > span, .tt-r.tt-s.first > .tt-c { border-top: 1px solid var(--dk-line); box-shadow: inset 0 1px 0 var(--dk-line); }
+.tt-r.tt-s > .tt-c { font-weight: 500; text-align: left; }
 .tt-c.n { color: var(--muted); }
 .tt-leg { white-space: nowrap; } .tt-leg b { font-weight: 700; } .tt-leg em { font-style: normal; color: var(--muted); }
 .tt-lab { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
