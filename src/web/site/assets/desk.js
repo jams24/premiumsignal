@@ -33,7 +33,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: true, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (U.ex !== 'bybit') U.ex = 'binance';
@@ -858,7 +858,7 @@
   // ------------------------------------------------------------------ drawings + SMC overlay (a series primitive)
   let DRAW = store.get('rd-draw-v1', {});
   const saveDraw = () => store.set('rd-draw-v1', DRAW);
-  let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null;
+  let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null, FVGS = null;
   const ONE = new Set(['hline', 'ray']), TWO = new Set(['trend', 'rect', 'fib', 'measure']);
   const drawTool = t => ONE.has(t) || TWO.has(t) || t === 'pen';
   let PENS = [];   // strokes of this pencil session, newest last (Undo)
@@ -974,6 +974,23 @@
     }
     if (sel) for (const [x, y] of (d.type === 'hline' ? [] : d.type === 'pen' ? [P[0], P[P.length - 1]] : P)) { g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fillStyle = COL.bg; g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.pri; g.stroke(); }
   }
+  // fair value gaps: their own indicator, drawn with SMC on or off
+  function drawFVG(g, W) {
+    const all = !!U.smcAll;
+    // fair value gaps: dashed boxes labelled FVG. Recent: the newest 8 still open · Whole chart: every open one, filled ones faint
+    {
+      const open = FVGS.filter(f => !f.filled), list = all ? FVGS : open.slice(-8);
+      g.font = '600 9.5px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
+      for (const f of list) {
+        const x0 = t2x(f.t), xe = f.filled ? t2x(f.filled) : W, y0 = p2y(f.filled ? f.top0 : f.top), y1 = p2y(f.filled ? f.bot0 : f.bot);
+        if (x0 == null || xe == null || y0 == null || y1 == null || xe < 0 || x0 > W) continue;
+        const c = f.dir === 1 ? COL.up : COL.fvgDn, faint = !!f.filled, h = Math.max(1, Math.abs(y1 - y0)), y = Math.min(y0, y1);
+        g.fillStyle = hexA(c, faint ? 0.04 : 0.13); g.fillRect(x0, y, Math.max(1, xe - x0), h);
+        g.strokeStyle = hexA(c, faint ? 0.2 : 0.55); g.setLineDash([3, 2]); g.lineWidth = 1; g.strokeRect(x0, y, Math.max(1, xe - x0), h); g.setLineDash([]);
+        if (!faint && h >= 7) { g.fillStyle = hexA(c, 0.95); g.textAlign = 'right'; g.fillText('FVG', Math.min(W, xe) - 4, y + h / 2 + 0.5); g.textAlign = 'left'; }
+      }
+    }
+  }
   function drawSMC(g, W) {
     const r = SMCR; if (!r) return;
     const all = !!U.smcAll;
@@ -992,19 +1009,6 @@
       g.fillStyle = hexA(c, 0.11); g.fillRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent');
-    }
-    // fair value gaps: dashed boxes labelled FVG. Recent: the newest 8 still open · Whole chart: every open one, filled ones faint
-    if (U.smcFvg && r.fvgs) {
-      const open = r.fvgs.filter(f => !f.filled), list = all ? r.fvgs : open.slice(-8);
-      g.font = '600 9.5px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
-      for (const f of list) {
-        const x0 = t2x(f.t), xe = f.filled ? t2x(f.filled) : W, y0 = p2y(f.filled ? f.top0 : f.top), y1 = p2y(f.filled ? f.bot0 : f.bot);
-        if (x0 == null || xe == null || y0 == null || y1 == null || xe < 0 || x0 > W) continue;
-        const c = f.dir === 1 ? COL.up : COL.fvgDn, faint = !!f.filled, h = Math.max(1, Math.abs(y1 - y0)), y = Math.min(y0, y1);
-        g.fillStyle = hexA(c, faint ? 0.04 : 0.13); g.fillRect(x0, y, Math.max(1, xe - x0), h);
-        g.strokeStyle = hexA(c, faint ? 0.2 : 0.55); g.setLineDash([3, 2]); g.lineWidth = 1; g.strokeRect(x0, y, Math.max(1, xe - x0), h); g.setLineDash([]);
-        if (!faint && h >= 7) { g.fillStyle = hexA(c, 0.95); g.textAlign = 'right'; g.fillText('FVG', Math.min(W, xe) - 4, y + h / 2 + 0.5); g.textAlign = 'left'; }
-      }
     }
     // equal lows / highs price has already taken (Indicators → keep them): faded, from the first low to the candle that took
     // it, "swept" = wick through and closed back, "broken" = closed through. Recent: the newest 6 · Whole chart: all
@@ -1067,7 +1071,7 @@
     paneViews() { return VIEWS; },
   };
   const VIEWS = [
-    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smc && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
+    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smcFvg && FVGS && !X.smcOff) { s.context.save(); drawFVG(s.context, s.mediaSize.width); s.context.restore(); } if (U.smc && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
       if (U.hilo) { g.save(); drawHiLo(g, W); g.restore(); }
@@ -1696,19 +1700,20 @@
   let smcT = null;
   function smcSchedule() {
     emit('bars');   // the candles changed (new candle, replay step, load): add-ons like the A+ layer read again
-    if (!U.smc) { if (SMCR) { SMCR = null; setMarkers(); prim.req(); legend(); } return; }
+    if (!U.smc && !U.smcFvg) { if (SMCR || FVGS) { SMCR = null; FVGS = null; setMarkers(); prim.req(); legend(); } return; }
     if (smcT) return;
     smcT = setTimeout(() => { smcT = null; smcRun(); }, R.playing ? 200 : 20);
   }
   function smcRun() {
-    if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); return; }
     const B = S.bars, ms = TF[U.tf].ms;
     let n = B.length; if (n && B[n - 1][0] + ms > nowT()) n--;   // the forming candle is not closed yet
     const base = B.slice(Math.max(0, n - (U.smcAll ? 6000 : 500)), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);   // Recent: last 500 · Whole chart: all loaded
+    FVGS = U.smcFvg && base.length >= 3 ? fvgScan(base, ms) : null;   // closed candles only
+    if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); return; }
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); return; }
     const l = base[base.length - 1];
     base.push([l[0] + ms, l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
-    try { SMCR = window.SMC.analyze(base, base.length - 1, { tf: ms, off: U.tf === '1W' ? WEEK_OFF : 0 }); SMCR.fvgs = fvgScan(base.slice(0, -1), ms); } catch (e) { SMCR = null; }
+    try { SMCR = window.SMC.analyze(base, base.length - 1, { tf: ms, off: U.tf === '1W' ? WEEK_OFF : 0 }); } catch (e) { SMCR = null; }
     setMarkers(); prim.req(); legend();
   }
   // fair value gaps: candle 1's high below candle 3's low (bullish) or its low above candle 3's high (bearish), at least a
@@ -2004,7 +2009,7 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'smcFvg' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
@@ -2052,7 +2057,7 @@
   window.__rd = { S, R, U, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
