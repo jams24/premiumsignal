@@ -6,7 +6,8 @@ const { esc, page, LOGO_SVG, themeBtn, asset, icon } = require('./html');
 const LWC = '<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js" ' +
   'integrity="sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN" crossorigin="anonymous" defer></script>';
 
-const TFS = ['1m', '5m', '15m', '1H', '4H', '1D', '1W'];
+const TFS = ['1m', '5m', '15m', '1H', '4H', '1D', '1W', '1M'];
+const TFN = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1H': '1 hour', '4H': '4 hours', '1D': '1 day', '1W': '1 week', '1M': '1 month' };
 const TOOLS = [
   ['cursor', 'mouse-pointer-2', 'Cursor (Esc)'], ['cross', 'crosshair', 'Crosshair'], null,
   ['pen', 'pencil', 'Pencil: draw freehand (P)'], ['trend', 'move-diagonal', 'Trend line (T)'], ['hline', 'minus', 'Horizontal line (H)'], ['ray', 'move-horizontal', 'Horizontal ray (R)'],
@@ -103,8 +104,8 @@ function desk(who, nonce) {
 <header class="dk-top">
   <a href="/" class="dk-logo" aria-label="ReplayDesk home">${LOGO_SVG(26, 'dk')}</a>
   <button type="button" class="dk-sym" data-act="search" aria-label="Change coin">${icon('search', 'i-35')}<b data-sym>BTCUSDT</b><span data-exname>Binance</span></button>
-  <div class="dk-tfs" data-tfs role="tablist" aria-label="Timeframe">${TFS.map(t => `<button type="button" data-tf="${t}">${t}</button>`).join('')}</div>
-  <select class="dk-tfsel" data-tfsel aria-label="Timeframe">${TFS.map(t => `<option>${t}</option>`).join('')}</select>
+  <div class="dk-tfs" data-tfs role="tablist" aria-label="Timeframe">${TFS.map(t => `<button type="button" data-tf="${t}" title="${TFN[t]}" aria-label="${TFN[t]}">${t}</button>`).join('')}</div>
+  <select class="dk-tfsel" data-tfsel aria-label="Timeframe">${TFS.map(t => `<option value="${t}" title="${TFN[t]}">${t}</option>`).join('')}</select>
   <span class="dk-vsep"></span>
   <div class="dk-ind">
     <button type="button" class="dk-pill" data-act="ind" aria-expanded="false" title="Indicators">${icon('activity', 'i-35')}<span>Indicators</span></button>

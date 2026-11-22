@@ -9,7 +9,7 @@
   if (!RD || !LC) return;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const { fp, pct, esc, coin, fv, ic, phone, hexA, nowT, fetchSpan, api, TF, RES, bucket, MIN, HOUR, WEEK_OFF } = RD.util;
+  const { fp, pct, esc, coin, fv, ic, phone, hexA, nowT, fetchSpan, api, TF, RES, bucket, nextB, smcOpt, MIN, HOUR } = RD.util;
   const U = RD.U, R = RD.R, S = RD.S, COL = RD.COL, chartEl = RD.chartEl;
   const btn = $('[data-act="cmp"]');
   const C = Object.assign({ on: false, sym: 'ETHUSDT', tf: '', smc: true }, RD.store.get('rd-cmp-v1', {}),
@@ -179,11 +179,11 @@
   function smcRun() {
     C.A = null;
     if (C.smc && window.SMC && C.bars.length) {
-      const B = C.bars, ms = TF[ctf()].ms; let n = B.length; if (n && B[n - 1][0] + ms > nowT()) n--;
+      const B = C.bars, tf = ctf(); let n = B.length; if (n && nextB(B[n - 1][0], tf) > nowT()) n--;
       const base = B.slice(Math.max(0, n - 500), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);
       if (base.length >= 12) {
-        const l = base[base.length - 1]; base.push([l[0] + ms, l[4], l[4], l[4], l[4], 0]);
-        try { C.A = window.SMC.analyze(base, base.length - 1, { tf: ms, off: ctf() === '1W' ? WEEK_OFF : 0 }); } catch (e) { C.A = null; }
+        const l = base[base.length - 1]; base.push([nextB(l[0], tf), l[4], l[4], l[4], l[4], 0]);
+        try { C.A = window.SMC.analyze(base, base.length - 1, smcOpt(tf)); } catch (e) { C.A = null; }
       }
     }
     marks(); prim.req(); legend();

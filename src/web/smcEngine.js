@@ -5,7 +5,8 @@
 
    analyze(base, upto, { tf }) with base = [[openTimeMs, o, h, l, c, v], ...] in 1-minute candles. For 1H and up a day of
    minutes is too short: { hist: { k: older candles (hourly / daily) before base[0], step } } puts them in front, and
-   { off } shifts the candle grid (1W: 4 days, so weeks start Monday 00:00 UTC). Returns:
+   { off } shifts the candle grid (1W: 4 days, so weeks start Monday 00:00 UTC); { bk, next } replace the grid for candles
+   of uneven length (1M: bk = the month a time is in, next = when that month ends). Returns:
      swings  [{side:'H'|'L', t, at, p, label:'HH'|'LH'|'HL'|'LL', conf}]    t: its structure candle, at: when the high / low printed
      breaks  [{kind:'BOS'|'CHoCH', dir:1|-1, p, fromT, t, conf, close}]       dir -1 = broke down
      zones   [{type:'supply'|'demand', top, bot, t, conf, broken, touched}]   order block of the leg that broke
@@ -27,7 +28,8 @@
     const BUF = opt.buf == null ? 0.001 : opt.buf;      // stop goes this far past the sweep wick
     const TRIG_WIN = (opt.trigWindow || 90) * MIN;      // the 1m CHoCH must come within this long after the sweep
     const n = Math.min(upto == null ? base.length - 1 : upto, base.length - 1);
-    const OFF = opt.off || 0, bk = t => Math.floor((t - OFF) / tf) * tf + OFF;   // the structure candle a time is in (1W: off = 4 days, weeks from Monday)
+    const OFF = opt.off || 0, bk = opt.bk || (t => Math.floor((t - OFF) / tf) * tf + OFF);   // the structure candle a time is in (1W: off = 4 days, weeks from Monday)
+    const nx = opt.next || (t => t + tf);   // when the structure candle starting at t closes (1M: the next 1st)
     const H = opt.hist && opt.hist.k && opt.hist.k.length && n >= 0 ? opt.hist : null;   // { k: older candles before base[0], step }
     const R = { tf, len: L, ltfLen: L1, swings: [], breaks: [], zones: [], eqs: [], sweeps: [], setups: [], ltf: [], liq: [],
       leg: null, trend: 0, forming: null, atr: null, now: n >= 0 ? base[n][0] + MIN : null, price: n >= 0 ? base[n][4] : null };
@@ -50,7 +52,7 @@
 
     // ---- one closed structure candle ----
     function tfStep(j) {
-      const B = T[j], end = B.t + tf;
+      const B = T[j], end = nx(B.t);
       const pc = j ? T[j - 1].c : B.o;
       trs.push(Math.max(B.h - B.l, Math.abs(B.h - pc), Math.abs(B.l - pc))); if (trs.length > 14) trs.shift();
       atr = trs.reduce((a, x) => a + x, 0) / trs.length;
@@ -117,7 +119,7 @@
     }
 
     function brk(dir, sw, j) {
-      const B = T[j], end = B.t + tf;
+      const B = T[j], end = nx(B.t);
       const ev = { kind: R.trend === -dir ? 'CHoCH' : 'BOS', dir, p: sw.p, fromT: sw.t, t: B.t, conf: end, close: B.c };
       R.trend = dir; R.breaks.push(ev);
       // the leg that made the break starts at the extreme after the broken swing
@@ -197,7 +199,7 @@
     function add(k, b, step) {
       if (!cur) cur = { t: b, o: k[1], h: k[2], l: k[3], c: k[4], hT: k[0], lT: k[0] };
       else { if (k[2] > cur.h) { cur.h = k[2]; cur.hT = k[0]; } if (k[3] < cur.l) { cur.l = k[3]; cur.lT = k[0]; } cur.c = k[4]; }
-      if (k[0] + step >= b + tf) closeBar();
+      if (k[0] + step >= nx(b)) closeBar();
     }
     // older candles first (opt.hist), when base[] alone is too short for this timeframe: only those closed by the clock;
     // base[] minutes before the end of the last one are already in it

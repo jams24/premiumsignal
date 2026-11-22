@@ -19,15 +19,22 @@
 
   // ------------------------------------------------------------------ constants & helpers
   const MIN = 60e3, HOUR = 36e5, DAY = 864e5, WEEK = 7 * DAY, WEEK_OFF = 4 * DAY;   // weeks start Monday 00:00 UTC
+  const MONTH = 30.44 * DAY;   // 1M: months run 28–31 days (calendar months, from the 1st 00:00 UTC). This average only sizes
+                               // requests and places drawings past the last candle; candle edges come from bucket() / nextB()
   const TF = {
     '1m': { ms: MIN, b: '1m', y: '1' }, '5m': { ms: 5 * MIN, b: '5m', y: '5' }, '15m': { ms: 15 * MIN, b: '15m', y: '15' },
     '1H': { ms: HOUR, b: '1h', y: '60' }, '4H': { ms: 4 * HOUR, b: '4h', y: '240' }, '1D': { ms: DAY, b: '1d', y: 'D' }, '1W': { ms: WEEK, b: '1w', y: 'W' },
+    '1M': { ms: MONTH, b: '1M', y: 'M' },
   };
-  const RES = { '1m': '1m', '5m': '1m', '15m': '1m', '1H': '1m', '4H': '5m', '1D': '15m', '1W': '1H' };   // replay feed per chart timeframe
-  const FXRES = { '1m': '1m', '5m': '5m', '15m': '15m', '1H': '1H', '4H': '1H', '1D': '1H', '1W': '1D' };   // FX: 1m kept 30 days, 5m / 15m 60, 1H 2 years
+  const RES = { '1m': '1m', '5m': '1m', '15m': '1m', '1H': '1m', '4H': '5m', '1D': '15m', '1W': '1H', '1M': '4H' };   // replay feed per chart timeframe
+  const FXRES = { '1m': '1m', '5m': '5m', '15m': '15m', '1H': '1H', '4H': '1H', '1D': '1H', '1W': '1D', '1M': '1D' };   // FX: 1m kept 30 days, 5m / 15m 60, 1H 2 years
   const resOf = (tf, ex) => ((ex || U.ex) === 'fx' ? FXRES : RES)[tf];
   const FEE_T = 0.0005, FEE_M = 0.0002, MMR = 0.005, START_BAL = 10000;
-  const bucket = (t, tf) => tf === '1W' ? Math.floor((t - WEEK_OFF) / WEEK) * WEEK + WEEK_OFF : Math.floor(t / TF[tf].ms) * TF[tf].ms;
+  const monthOf = (t, add) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + add, 1); };
+  const bucket = (t, tf) => tf === '1M' ? monthOf(t, 0) : tf === '1W' ? Math.floor((t - WEEK_OFF) / WEEK) * WEEK + WEEK_OFF : Math.floor(t / TF[tf].ms) * TF[tf].ms;
+  const nextB = (t, tf) => tf === '1M' ? monthOf(t, 1) : bucket(t, tf) + TF[tf].ms;   // when the candle holding t closes
+  // the SMC engine's candle grid for a chart timeframe (weeks from Monday, months from the 1st)
+  const smcOpt = tf => tf === '1M' ? { tf: TF[tf].ms, bk: t => monthOf(t, 0), next: t => monthOf(t, 1) } : { tf: TF[tf].ms, off: tf === '1W' ? WEEK_OFF : 0 };
   const floorTo = (t, ms) => Math.floor(t / ms) * ms, ceilTo = (t, ms) => Math.ceil(t / ms) * ms;
   const phone = () => window.matchMedia('(max-width: 899px)').matches;
 
@@ -481,7 +488,7 @@
     try {
       if (!R.buf.length && !R.end) await ensureBuf(R.clock + TF[R.res].ms);
       if (g !== R.gen) return;
-      const target = R.step === 'small' ? (R.buf.length ? R.buf[0][0] + R.buf[0][6] : R.clock + TF[R.res].ms) : bucket(R.clock, U.tf) + TF[U.tf].ms;
+      const target = R.step === 'small' ? (R.buf.length ? R.buf[0][0] + R.buf[0][6] : R.clock + TF[R.res].ms) : nextB(R.clock, U.tf);
       await ensureBuf(target);
       if (g !== R.gen) return;
       const n0 = S.bars.length; let changed = Infinity;
@@ -1733,21 +1740,21 @@
     smcT = setTimeout(() => { smcT = null; smcRun(); }, R.playing ? 200 : 20);
   }
   function smcRun() {
-    const B = S.bars, ms = TF[U.tf].ms;
-    let n = B.length; if (n && B[n - 1][0] + ms > nowT()) n--;   // the forming candle is not closed yet
+    const B = S.bars;
+    let n = B.length; if (n && nextB(B[n - 1][0], U.tf) > nowT()) n--;   // the forming candle is not closed yet
     const base = B.slice(Math.max(0, n - (U.smcAll ? 6000 : 500)), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);   // Recent: last 500 · Whole chart: all loaded
-    FVGS = U.smcFvg && base.length >= 3 ? fvgScan(base, ms) : null;   // closed candles only
+    FVGS = U.smcFvg && base.length >= 3 ? fvgScan(base, U.tf) : null;   // closed candles only
     if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); return; }
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); return; }
     const l = base[base.length - 1];
-    base.push([l[0] + ms, l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
-    try { SMCR = window.SMC.analyze(base, base.length - 1, { tf: ms, off: U.tf === '1W' ? WEEK_OFF : 0 }); } catch (e) { SMCR = null; }
+    base.push([nextB(l[0], U.tf), l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
+    try { SMCR = window.SMC.analyze(base, base.length - 1, smcOpt(U.tf)); } catch (e) { SMCR = null; }
     setMarkers(); prim.req(); legend();
   }
   // fair value gaps: candle 1's high below candle 3's low (bullish) or its low above candle 3's high (bearish), at least a
   // quarter of the average candle range (ATR 14) so 1-minute noise stays off. Known when candle 3 closes. Later candles
   // fill it from the near side: the box shrinks to the part not traded yet and ends when a wick reaches the far side.
-  function fvgScan(B, ms) {
+  function fvgScan(B, tf) {
     const out = []; let atr = null, open = [];
     for (let i = 1; i < B.length; i++) {
       const c = B[i], p = B[i - 1];
@@ -1763,8 +1770,8 @@
       if (i < 2) continue;
       const a = B[i - 2], min = 0.25 * atr;
       let f = null;
-      if (c[3] > a[2] && c[3] - a[2] >= min) f = { dir: 1, top: c[3], bot: a[2], top0: c[3], bot0: a[2], t: B[i - 1][0], conf: c[0] + ms, filled: null };
-      else if (c[2] < a[3] && a[3] - c[2] >= min) f = { dir: -1, top: a[3], bot: c[2], top0: a[3], bot0: c[2], t: B[i - 1][0], conf: c[0] + ms, filled: null };
+      if (c[3] > a[2] && c[3] - a[2] >= min) f = { dir: 1, top: c[3], bot: a[2], top0: c[3], bot0: a[2], t: B[i - 1][0], conf: nextB(c[0], tf), filled: null };
+      else if (c[2] < a[3] && a[3] - c[2] >= min) f = { dir: -1, top: a[3], bot: c[2], top0: a[3], bot0: c[2], t: B[i - 1][0], conf: nextB(c[0], tf), filled: null };
       if (f) { out.push(f); open.push(f); }
     }
     return out;
@@ -1821,7 +1828,7 @@
   }
   function clockUI() { $$('[data-clock]').forEach(e => { e.textContent = R.on ? tnice(R.clock) : ''; }); }
   function playUI() { $$('[data-act="play"]').forEach(b => { b.innerHTML = ic(R.playing ? 'pause' : 'play'); b.setAttribute('aria-label', R.playing ? 'Pause' : 'Play'); }); }
-  function stepLabel() { const o = $('[data-stepsize] option[value="small"]'); if (o) o.textContent = 'Step: ' + (resOf(U.tf) === '1H' ? '1 hour' : resOf(U.tf) === '1D' ? '1 day' : resOf(U.tf)); }
+  function stepLabel() { const o = $('[data-stepsize] option[value="small"]'); if (o) o.textContent = 'Step: ' + ({ '1H': '1 hour', '4H': '4 hours', '1D': '1 day' }[resOf(U.tf)] || resOf(U.tf)); }
   $('[data-stepsize]').innerHTML = '<option value="bar">Step: 1 bar</option><option value="small">Step: 1m</option>';
 
   // The top bar never runs under the right-hand buttons: when it doesn't fit (a narrower screen, the replay controls, the
@@ -2121,7 +2128,7 @@
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
     pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
-    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, MIN, HOUR, DAY, WEEK_OFF, liqOf } };
+    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, nextB, smcOpt, MIN, HOUR, DAY, WEEK_OFF, liqOf } };
   root.classList.toggle('b-min', !!U.bmin);
   playUI(); toolUI(); headUI(); renderWatch(); renderAll(); stepLabel();
   symList(U.ex).then(() => { if (S.bars.length) applyMeta(); }).catch(() => { /* precision guessed from prices */ });

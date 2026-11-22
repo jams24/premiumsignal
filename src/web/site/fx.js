@@ -5,7 +5,8 @@
    further, and kept printing flat candles all weekend. So FX pairs get their own feed: Yahoo Finance's chart data (the source
    our FX research used), fetched here because browsers can't (no CORS), cached and shared so many viewers make few calls.
    Yahoo keeps 1m candles for 30 days, 5m / 15m for 60 days, 1h for 730 days, daily for decades. 4H and 1D are built from 1h
-   (Yahoo's own daily FX bars close near the day's open price), 1W from 1D, on the desk's UTC buckets (weeks from Monday);
+   (Yahoo's own daily FX bars close near the day's open price), 1W and 1M from 1D, on the desk's UTC buckets (weeks from
+   Monday, months from the 1st);
    days older than 730 days come from Yahoo's daily bars with each close set to the next day's open. FX closes at the
    weekend: no candles then, like TradingView. Known gaps vs TradingView: Yahoo's week starts Monday 00:00 UTC (TradingView
    has ~2 thin hours from Sunday 22:00), and TradingView's FX days end 17:00 New York, ours at 00:00 UTC. */
@@ -42,6 +43,7 @@ const IV = {
   '4H': { y: '60m', ms: 4 * HOUR, keep: 729 * DAY, span: 729 * DAY },
   '1D': { y: '60m', ms: DAY, keep: Infinity, span: Infinity },
   '1W': { y: '60m', ms: WEEK, keep: Infinity, span: Infinity },
+  '1M': { y: '60m', ms: 31 * DAY, keep: 40 * 365 * DAY, span: Infinity },   // Yahoo's daily FX goes back to ~2003 (DXY 1971)
 };
 
 // ---------------------------------------------------------------- upstream: one queue, a small cache
@@ -109,6 +111,7 @@ const IVMS = { '1m': MIN, '5m': 5 * MIN, '15m': 15 * MIN, '60m': HOUR };
 // candles into buckets: first open, highest high, lowest low, last close
 const dayKey = t => { let d = Math.floor(t / DAY) * DAY; const wd = new Date(d).getUTCDay(); if (wd === 0) d += DAY; else if (wd === 6) d -= DAY; return d; };   // weekend hours join Monday / Friday
 const weekKey = t => Math.floor((t - WEEK_OFF) / WEEK) * WEEK + WEEK_OFF;
+const monthKey = t => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
 // a window of raw candles. Live windows are two calls: the history (cached for hours, on whole days so viewers share it)
 // and the last two days (cached for seconds), so a live 1D chart doesn't fetch two years of 1h every 20 s
 async function rawRange(P, yiv, from, to, live, ttl, keep) {
@@ -148,7 +151,7 @@ async function klines(sym, tf, o = {}) {
   const q = live ? Math.max(I.ms, MIN) : I.ms;
   const qFrom = Math.floor(from / q) * q, qTo = live ? Math.ceil(now / ttl) * ttl : Math.ceil(to / q) * q;
   let rows;
-  if (tf === '1D' || tf === '1W') {
+  if (tf === '1D' || tf === '1W' || tf === '1M') {
     const hKeep = IV['1H'].keep, hFrom = Math.max(from, now - hKeep + DAY);
     rows = hFrom < to ? merge(await rawRange(P, '60m', hFrom, to, live, ttl, hKeep), dayKey) : [];
     if (from < hFrom) {   // older than Yahoo's 1h history: its daily bars, each close = the next day's open
@@ -158,6 +161,7 @@ async function klines(sym, tf, o = {}) {
       rows = fixed.filter(r => r[0] < first).concat(rows);
     }
     if (tf === '1W') rows = merge(rows, weekKey);
+    if (tf === '1M') rows = merge(rows, monthKey);
   } else {
     rows = await rawRange(P, I.y, qFrom, live ? now : qTo, live, ttl, I.keep);
     if (tf === '4H') rows = merge(rows, t => Math.floor(t / (4 * HOUR)) * 4 * HOUR);

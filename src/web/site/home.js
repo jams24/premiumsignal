@@ -67,7 +67,7 @@ const vizJournal = () => {
 <div class="viz-stats"><span>Win rate<b class="mono">58%</b></span><span>Avg R<b class="mono up">+0.89</b></span><span>Trades<b class="mono">12</b></span></div></div>`;
 };
 
-const vizTf = () => `<div class="viz viz-tf" aria-hidden="true">${['1m', '5m', '15m', '1H', '4H', '1D', '1W'].map((t, i) => `<span style="--i:${i}">${t}</span>`).join('')}</div>`;
+const vizTf = () => `<div class="viz viz-tf" aria-hidden="true">${['1m', '5m', '15m', '1H', '4H', '1D', '1W', '1M'].map((t, i) => `<span style="--i:${i}">${t}</span>`).join('')}</div>`;
 
 const vizData = () => `<div class="viz viz-data" aria-hidden="true"><span class="ex"><i></i>Binance</span><span class="ex"><i></i>Bybit</span>
 <span class="ex-note mono">USDT perpetuals · 1-minute candles · public market data</span></div>`;
@@ -97,7 +97,7 @@ const FEATURES = [
   { viz: vizSmc, ic: 'brain', t: 'Smart money concepts, drawn live', b: 'Swings, BOS and CHoCH, order blocks, fair value gaps, sweeps — only from candles already printed.', size: '' },
   { viz: vizFib, ic: 'pen-tool', t: 'Drawing tools that stay put', b: 'Trend lines, levels, Fibonacci, pencil and zig-zag, saved per coin across zoom and timeframes.', size: '' },
   { viz: vizJournal, ic: 'notebook-pen', t: 'A journal that keeps score', b: 'Every trade logged with its R. Win rate, average R and your best and worst setups.', size: '' },
-  { viz: vizTf, ic: 'layers', t: 'Every timeframe', b: '1-minute precision underneath, viewed from 1m to 1W. Compare two coins side by side.', size: '' },
+  { viz: vizTf, ic: 'layers', t: 'Every timeframe', b: '1-minute precision underneath, viewed from 1m to 1M. Compare two coins side by side.', size: '' },
   { viz: vizData, ic: 'chart-line', t: 'Real exchange data', b: 'Binance and Bybit perpetual candles, straight from public market data. No made-up prices.', size: 'w2' },
 ];
 const STEPS = [
@@ -171,7 +171,7 @@ function landing(who, nonce) {
 
     <div class="stats">
       <div><b data-count="500" data-suf="+">500+</b><span>USDT perpetuals</span></div>
-      <div><b data-count="7">7</b><span>timeframes, 1m to 1W</span></div>
+      <div><b data-count="8">8</b><span>timeframes, 1 minute to 1 month</span></div>
       <div><b data-count="1" data-suf="-min">1-min</b><span>replay precision</span></div>
       <div><b data-count="0" data-pre="$">$0</b><span>during the beta</span></div>
     </div>
