@@ -73,6 +73,8 @@
   const M = { open: Object.assign({}, OPEN0, store.get('rd-mk-v1', null) || {}), d: {}, err: {}, at: {}, busy: {}, key: '', nwTab: store.get('rd-mk-nwtab', 'cal'),
     imp: store.get('rd-mk-imp', 'hm'), zrTf: store.get('rd-mk-zrtf', '15m'), zrDays: [1, 2, 7, 30, 90].includes(+store.get('rd-mk-zrdays', 30)) ? +store.get('rd-mk-zrdays', 30) : 30, zrMarks: !!store.get('rd-mk-zrmk', false), again: {}, hlCoin: !!store.get('rd-mk-hlcoin', false), warn: !!store.get('rd-mk-warn', false), warned: new Set(), news: null, newsAt: 0, newsErr: '' };
   const saveOpen = () => store.set('rd-mk-v1', M.open);
+  M.calCur = Array.isArray(store.get('rd-mk-calcur', [])) ? store.get('rd-mk-calcur', []) : [];   // [] = every currency
+  M.calTz = store.get('rd-mk-caltz', 'utc') === 'local' ? 'local' : 'utc';
   const zrDays = () => (M.zrTf === '5m' ? Math.min(M.zrDays, 30) : M.zrDays);   // 5m: 30 days at most (8,640 candles)
   // Equal lows / highs section: its own timeframe and period (1m: 7 days at most, 5m: 30)
   M.eqTf = ['1m', '5m', '15m', '1H'].includes(store.get('rd-mk-eqtf', '5m')) ? store.get('rd-mk-eqtf', '5m') : '5m';
@@ -267,7 +269,72 @@
     try { M.news = await getJSON('/api/site/news', 20000); M.newsErr = ''; }
     catch (e) { M.newsErr = e.status === 401 ? 'Sign in to see the news.' : e.status === 429 ? 'Too many requests — try again in a few minutes.' : 'News did not load: ' + e.message; }
     finally { M.newsBusy = false; M.newsAt = Date.now(); }
-    paintSec('nw'); legendSoon();
+    paintSec('nw'); legendSoon(); if (calM && !calM.hidden) calPaint();
+  }
+  // ---------------------------------------------------------------- the full-week economic calendar (a window over the desk)
+  let calM = null, calSel = '';
+  function calOpen() {
+    if (!calM) {
+      calM = document.createElement('div'); calM.className = 'dk-modal cal-modal'; calM.hidden = true; calM.dataset.calm = '';
+      calM.setAttribute('role', 'dialog'); calM.setAttribute('aria-modal', 'true'); calM.setAttribute('aria-label', 'Economic calendar');
+      calM.innerHTML = '<div class="dk-mbox cal-box" data-calbox></div>';
+      const host = document.querySelector('.dk-modal'); (host ? host.parentNode : document.body).appendChild(calM);
+      calM.addEventListener('click', calClick);
+      calM.addEventListener('change', e => { if (e.target.matches('[data-mk-warn]')) setWarn(e.target.checked); });
+    }
+    calSel = ''; RD.openModal(calM); calPaint(true);
+    loadNews(false);
+  }
+  function calPaint(scroll) {
+    const box = calM.querySelector('[data-calbox]'), n = M.news, now = Date.now();
+    const head = `<div class="cal-hdr"><div><h2>Economic calendar</h2><p>This week · times in ${tzLabel()}</p></div><button type="button" class="cal-x" data-cal-x aria-label="Close" title="Close (Esc)">×</button></div>`;
+    if (!n) { box.innerHTML = head + (M.newsErr ? errBox('nw', M.newsErr) : spin); return; }
+    const all = n.events.slice().sort((a, b) => a.t - b.t);
+    const curs = [...new Set(all.map(e => e.cur))].sort((a, b) => ((CUR_ORDER.indexOf(a) + 1) || 99) - ((CUR_ORDER.indexOf(b) + 1) || 99) || (a < b ? -1 : 1));
+    // the week strip: every day from the feed's first to its last event (later FOMC dates are listed in the table only)
+    const w0 = n.week && n.week[0] ? n.week[0] : all.length ? all[0].t : now, w1 = n.week && n.week[1] ? n.week[1] : all.length ? all[all.length - 1].t : now;
+    const days = []; for (let k = cKey(w0), i = 0; k <= cKey(w1) && i < 10; i++, k = new Date(keyNoon(k) + DAY).toISOString().slice(0, 10)) days.push(k);
+    const today = cKey(now), byCur = all.filter(e => !M.calCur.length || M.calCur.includes(e.cur));
+    const cards = days.map(k => { const d = byCur.filter(e => cKey(e.t) === k), c = x => d.filter(e => e.impact === x).length;
+      return `<button type="button" class="cal-card${k === today ? ' today' : ''}${k === calSel ? ' on' : ''}" data-cal-go="${k}" title="Go to ${cLong(k)}"><b>${cShort(k).replace(/ \w+$/, '')}</b>
+        <span class="cnt"><span title="High impact"><i class="h"></i>${c('High')}</span><span title="Medium impact"><i class="m"></i>${c('Medium')}</span><span title="Low impact"><i class="l"></i>${c('Low')}</span></span></button>`; }).join('');
+    const tools = `<div class="cal-tools">
+        <div class="mk-seg sm" role="group" aria-label="Impact">${[['h', 'Red'], ['hm', 'Red + orange'], ['all', 'All']].map(([k, t]) => `<button type="button" data-cal-imp="${k}" class="${M.imp === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+        <div class="cal-chips" role="group" aria-label="Currencies"><button type="button" data-cal-cur="" class="${M.calCur.length ? '' : 'on'}">All</button>${curs.map(c => `<button type="button" data-cal-cur="${esc(c)}" class="${M.calCur.includes(c) ? 'on' : ''}">${flag(c)}${esc(c)}</button>`).join('')}</div>
+        <div class="mk-seg sm" role="group" aria-label="Time zone"><button type="button" data-cal-tz="utc" class="${M.calTz === 'utc' ? 'on' : ''}">UTC</button><button type="button" data-cal-tz="local" class="${M.calTz === 'local' ? 'on' : ''}" title="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}">My time</button></div>
+        <label class="mk-sw" title="A toast, a sound and a browser notification 15 minutes before each red (high impact) event"><input type="checkbox" data-mk-warn${M.warn ? ' checked' : ''}><span></span>Warn me 15 min before</label>
+      </div>`;
+    const shown = all.filter(calPass);
+    let rows = '', lastK = '', nowDone = false;
+    for (const e of shown) {
+      const k = cKey(e.t);
+      if (k !== lastK) { rows += (lastK ? '</section>' : '') + `<section class="cal-grp"><div class="cal-day" data-cal-day="${k}">${cLong(k)}${k === today ? '<em>today</em>' : ''}</div>`; lastK = k; }   // a group per day: its header sticks only while its rows show
+      if (!nowDone && e.t > now && k === today) { rows += `<div class="cal-now" data-cal-now><span>now · ${cT(now)}</span></div>`; nowDone = true; }
+      if (!nowDone && e.t > now) nowDone = true;   // the next event is on a later day: no line inside today
+      const past = e.t <= now, soon = !past && e.t - now < DAY, fp3 = afpLine(e);
+      rows += `<div class="cal-row${past ? ' past' : ''}${e.impact === 'High' ? ' hi' : ''}"${e.note ? ` title="${esc(e.note)}"` : ''}>
+        <span class="cal-t">${cT(e.t)}${soon ? `<em>in <span data-cd="${e.t}"></span></em>` : ''}</span><span class="cal-cur">${flag(e.cur)}${esc(e.cur)}</span>${impBars(e.impact)}
+        <span class="cal-ev">${esc(e.title)}${fp3 ? `<em class="cal-afp">${fp3}</em>` : ''}</span>
+        <span class="n a">${e.actual ? esc(e.actual) + calArrow(e) : past && (e.forecast || e.previous) ? '<span class="cal-wait" title="Not matched yet: actual figures come from a second calendar a few minutes after the release, when the event can be matched">…</span>' : ''}</span><span class="n">${esc(e.forecast || '')}</span><span class="n">${esc(e.previous || '')}</span></div>`;
+    }
+    if (lastK) rows += '</section>';
+    if (!shown.length) rows = `<p class="cal-empty">Nothing at this impact level${M.calCur.length ? ' for ' + esc(M.calCur.join(', ')) : ''} this week.</p>`;
+    const src = n.sources || {};
+    box.innerHTML = head + `<div class="cal-week" role="group" aria-label="Days">${cards}</div>` + tools +
+      `<div class="cal-scroll" data-cal-scroll><div class="cal-th"><span>Time</span><span>Cur.</span><span title="Impact: 3 bars high, 2 medium, 1 low"></span><span>Event</span><span>Actual</span><span>Forecast</span><span>Prior</span></div>${rows}</div>` +
+      `<p class="cal-foot">Events, impact, forecast and prior: ${esc(src.calendar || 'economic calendar')}. Actual: ${esc(src.actual || '—')}, filled in after the release when the event can be matched (… = not yet)${n.actualErr ? ' · ' + esc(n.actualErr) : ''}. FOMC dates: ${esc(src.fomc || '—')}.${n.calErrors && n.calErrors.length ? ' ' + esc(n.calErrors[0]) + '.' : ''} ▲ / ▼ = actual above / below the forecast.</p>`;
+    if (scroll) {   // open on today: its header at the top (or the next day with events)
+      const sc = box.querySelector('[data-cal-scroll]'), hd = [...box.querySelectorAll('[data-cal-day]')].find(d => d.dataset.calDay >= today), th = box.querySelector('.cal-th');
+      if (sc && hd) sc.scrollTop = Math.max(0, hd.offsetTop - ((th && th.offsetHeight) || 0)); }
+  }
+  function calClick(e) {
+    if (e.target === calM || e.target.closest('[data-cal-x]')) { RD.closeModals(); return; }
+    const im = e.target.closest('[data-cal-imp]'); if (im) { M.imp = im.dataset.calImp; store.set('rd-mk-imp', M.imp); calPaint(); paintSec('nw'); return; }
+    const cu = e.target.closest('[data-cal-cur]'); if (cu) { const c = cu.dataset.calCur; M.calCur = !c ? [] : M.calCur.includes(c) ? M.calCur.filter(x => x !== c) : M.calCur.concat(c); store.set('rd-mk-calcur', M.calCur); calPaint(); paintSec('nw'); return; }
+    const tz = e.target.closest('[data-cal-tz]'); if (tz) { M.calTz = tz.dataset.calTz; store.set('rd-mk-caltz', M.calTz); calPaint(true); paintSec('nw'); return; }
+    const go = e.target.closest('[data-cal-go]'); if (go) { calSel = go.dataset.calGo; calM.querySelectorAll('.cal-card').forEach(c => c.classList.toggle('on', c === go));
+      const sc = calM.querySelector('[data-cal-scroll]'), d = calM.querySelector(`[data-cal-day="${calSel}"]`); if (sc && d) sc.scrollTop = d.offsetTop - ((calM.querySelector('.cal-th') || {}).offsetHeight || 0); else RD.toast('Nothing on that day at this impact level / currency.'); return; }
+    const rt = e.target.closest('[data-mk-retry]'); if (rt) loadNews(true);
   }
   function refresh(force) {
     if (!visible()) return;
@@ -297,6 +364,26 @@
     $('[data-mk-rp]', pane).hidden = !R.on;
   }
   const spin = '<div class="mk-load"><span class="mk-spin"></span>Loading…</div>';
+  // ---------------------------------------------------------------- economic calendar helpers (panel + full week)
+  const LVL = { High: 3, Medium: 2, Low: 1 }, CUR_ORDER = ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'CAD', 'AUD', 'NZD', 'CHF'];
+  const FLAG = { USD: '🇺🇸', EUR: '🇪🇺', GBP: '🇬🇧', JPY: '🇯🇵', CNY: '🇨🇳', CAD: '🇨🇦', AUD: '🇦🇺', NZD: '🇳🇿', CHF: '🇨🇭' };
+  const noFlags = /Windows/.test(navigator.userAgent);   // Windows shows flag emoji as two letters
+  const flag = c => (noFlags ? '' : (FLAG[c] || '🌐') + ' ');
+  const impBars = imp => `<span class="mk-imp cal-imp ${imp === 'High' ? 'h' : imp === 'Medium' ? 'm' : 'l'}" title="${esc(imp || 'Low')} impact" role="img" aria-label="${esc(imp || 'Low')} impact"><i></i><i></i><i></i></span>`;
+  const tzName = () => (M.calTz === 'local' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC');
+  const tzLabel = () => { if (M.calTz !== 'local') return 'UTC'; const o = -new Date().getTimezoneOffset(), h = Math.floor(Math.abs(o) / 60), m = Math.abs(o) % 60; return 'your time (UTC' + (o < 0 ? '−' : '+') + h + (m ? ':' + String(m).padStart(2, '0') : '') + ')'; };
+  const cT = t => new Date(t).toLocaleTimeString('en-GB', { timeZone: tzName(), hour: '2-digit', minute: '2-digit', hour12: false });
+  const cKey = t => new Date(t).toLocaleDateString('en-CA', { timeZone: tzName() });   // YYYY-MM-DD in the chosen zone
+  const keyNoon = k => Date.parse(k + 'T12:00:00Z');
+  const cLong = k => new Date(keyNoon(k)).toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
+  const cShort = k => new Date(keyNoon(k)).toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
+  // "0.80%" "1,763K" "-30.9" → a number in one unit, for the above / below forecast arrow
+  const calNum = s => { const m = /^([-+−]?)\s*([\d,]*\.?\d+)\s*([KMBT%]?)/i.exec(String(s || '').trim()); if (!m) return null;
+    return parseFloat(m[2].replace(/,/g, '')) * (m[1] === '-' || m[1] === '−' ? -1 : 1) * ({ K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[m[3].toUpperCase()] || 1); };
+  const calArrow = e => { const a = calNum(e.actual), f = calNum(e.forecast); if (a == null || f == null || a === f) return '';
+    return a > f ? '<i class="cal-ar" title="Above the forecast (not good or bad by itself: higher unemployment is worse, higher GDP better)">▲</i>' : '<i class="cal-ar" title="Below the forecast (not good or bad by itself)">▼</i>'; };
+  const calPass = e => (LVL[e.impact] || 0) >= (M.imp === 'h' ? 3 : M.imp === 'hm' ? 2 : 0) && (!M.calCur.length || M.calCur.includes(e.cur));
+  const afpLine = e => (e.actual || e.forecast || e.previous ? `${e.actual ? `<b>A ${esc(e.actual)}</b>${calArrow(e)}` : ''}${e.actual && (e.forecast || e.previous) ? ' · ' : ''}${e.forecast ? 'F ' + esc(e.forecast) : ''}${e.forecast && e.previous ? ' · ' : ''}${e.previous ? 'P ' + esc(e.previous) : ''}` : '');
   const errBox = (k, m) => `<div class="mk-err">${esc(m)} <button type="button" class="mk-a" data-mk-retry="${k}">Try again</button></div>`;
   const row = (label, val, cls, title) => `<div class="mk-row"${title ? ` title="${esc(title)}"` : ''}><span>${label}</span><b class="${cls || ''}">${val}</b></div>`;
 
@@ -418,23 +505,26 @@
       if (!n) return { html: M.newsErr ? errBox('nw', M.newsErr) : spin };
       const now = Date.now(), lvl = { High: 3, Medium: 2, Low: 1 };
       const minL = M.imp === 'h' ? 3 : M.imp === 'hm' ? 2 : 0;
-      const evs = n.events.filter(e => (lvl[e.impact] || 0) >= minL);
+      const evs = n.events.filter(e => (lvl[e.impact] || 0) >= minL).sort((a, b) => a.t - b.t);
       const nextRed = n.events.find(e => e.impact === 'High' && e.t > now - 2 * MIN);
       const sum = nextRed ? `<span class="down">●</span> ${esc(nextRed.cur)} ${esc(short(nextRed.title))} · <span data-cd="${nextRed.t}"></span>` : 'No red news ahead';
       const tabs = `<div class="mk-seg" role="tablist"><button type="button" role="tab" data-mk-nt="cal" class="${M.nwTab === 'cal' ? 'on' : ''}">Calendar</button><button type="button" role="tab" data-mk-nt="hl" class="${M.nwTab === 'hl' ? 'on' : ''}">Headlines</button></div>`;
       let html = tabs;
       if (M.nwTab === 'cal') {
         html += `<div class="mk-tools"><div class="mk-seg sm">${[['h', 'Red'], ['hm', 'Red + orange'], ['all', 'All']].map(([k, t]) => `<button type="button" data-mk-imp="${k}" class="${M.imp === k ? 'on' : ''}">${t}</button>`).join('')}</div>
-          <label class="mk-sw" title="A toast, a sound and a browser notification 15 minutes before each red (high impact) event"><input type="checkbox" data-mk-warn${M.warn ? ' checked' : ''}><span></span>Warn me 15 min before</label></div>`;
-        if (nextRed) html += `<div class="mk-next"><span class="mk-imp h"></span><div><b>${esc(nextRed.cur)} · ${esc(nextRed.title)}</b><em>${day(nextRed.t)} · ${hhmm(nextRed.t)} UTC</em></div><b class="mono" data-cd="${nextRed.t}"></b></div>`;
+          <label class="mk-sw" title="A toast, a sound and a browser notification 15 minutes before each red (high impact) event"><input type="checkbox" data-mk-warn${M.warn ? ' checked' : ''}><span></span>Warn me 15 min before</label></div>
+          <button type="button" class="mk-calopen" data-mk-calopen title="The whole week: day by day, with actual, forecast and prior figures, currency filter and your time zone">📅 Full week calendar${M.calCur.length ? ' · ' + esc(M.calCur.join(', ')) : ''}<span aria-hidden="true">↗</span></button>`;
+        if (nextRed) html += `<div class="mk-next"><span class="mk-imp h"></span><div><b>${esc(nextRed.cur)} · ${esc(nextRed.title)}</b><em>${cShort(cKey(nextRed.t))} · ${cT(nextRed.t)} ${M.calTz === 'local' ? '' : 'UTC'}</em></div><b class="mono" data-cd="${nextRed.t}"></b></div>`;
         let lastDay = '';
-        html += '<div class="mk-cal">' + (evs.length ? evs.map(e => {
-          const d0 = day(e.t), past = e.t < now - 5 * MIN, hd = d0 !== lastDay ? `<p class="mk-day">${d0}${d0 === day(now) ? ' · today' : ''}</p>` : ''; lastDay = d0;
-          return hd + `<div class="mk-ev${past ? ' past' : ''}"><span class="mk-imp ${e.impact === 'High' ? 'h' : e.impact === 'Medium' ? 'm' : 'l'}" title="${esc(e.impact)} impact"></span><span class="mono mk-t">${hhmm(e.t)}</span><span class="mk-cur">${esc(e.cur)}</span>
-            <span class="mk-ti">${esc(e.title)}${e.forecast || e.previous ? `<em>${e.forecast ? 'f ' + esc(e.forecast) : ''}${e.forecast && e.previous ? ' · ' : ''}${e.previous ? 'p ' + esc(e.previous) : ''}</em>` : ''}</span>
+        const list = evs.filter(e => e.t > now - 36 * HOUR && calPass(e)), today = cKey(now);
+        html += '<div class="mk-cal">' + (list.length ? list.map(e => {
+          const k = cKey(e.t), past = e.t < now - 5 * MIN, hd = k !== lastDay ? `<p class="mk-day">${cShort(k)}${k === today ? ' · today' : ''}</p>` : ''; lastDay = k;
+          const fp3 = afpLine(e);
+          return hd + `<div class="mk-ev${past ? ' past' : ''}"${e.note ? ` title="${esc(e.note)}"` : ''}>${impBars(e.impact)}<span class="mono mk-t">${cT(e.t)}</span><span class="mk-cur">${flag(e.cur)}${esc(e.cur)}</span>
+            <span class="mk-ti">${esc(e.title)}${fp3 ? `<em>${fp3}</em>` : ''}</span>
             <span class="mk-when">${past ? ago(e.t) : e.t - now < DAY ? `in <span data-cd="${e.t}"></span>` : ''}</span></div>`;
-        }).join('') : '<p class="mk-p m">Nothing at this level this week.</p>') + '</div>';
-        html += `<p class="mk-p m">Times in UTC. ${esc((n.sources && n.sources.calendar) || 'Economic calendar')}${n.calErrors && n.calErrors.length ? ' · ' + esc(n.calErrors[0]) : ''}. Red = high impact: price can jump either way on the minute.</p>`;
+        }).join('') : '<p class="mk-p m">Nothing at this level' + (M.calCur.length ? ' for ' + esc(M.calCur.join(', ')) : '') + ' from yesterday on.</p>') + '</div>';
+        html += `<p class="mk-p m">Times in ${tzLabel()}. A = actual, F = forecast, P = prior. ${esc((n.sources && n.sources.calendar) || 'Economic calendar')}${n.calErrors && n.calErrors.length ? ' · ' + esc(n.calErrors[0]) : ''}. Red = high impact: price can jump either way on the minute.</p>`;
       } else {
         const re = coinRe(), list = (n.headlines || []).filter(h => !M.hlCoin || re.test(h.title));
         html += `<div class="mk-tools"><label class="mk-sw"><input type="checkbox" data-mk-hlcoin${M.hlCoin ? ' checked' : ''}><span></span>Only ${esc(coin())}</label><span class="mk-p m">${list.length} headline${list.length === 1 ? '' : 's'}</span></div>`;
@@ -793,6 +883,7 @@
     const zd = e.target.closest('[data-mk-zrd]'); if (zd && !zd.disabled) { M.zrDays = +zd.dataset.mkZrd; store.set('rd-mk-zrdays', M.zrDays); M.err.zr = ''; paintSec('zr'); loadSec('zr', true); return; }
     const et = e.target.closest('[data-mk-eqtf]'); if (et) { M.eqTf = et.dataset.mkEqtf; store.set('rd-mk-eqtf', M.eqTf); M.err.eq = ''; paintSec('eq'); loadSec('eq', true); return; }
     const ed = e.target.closest('[data-mk-eqd]'); if (ed && !ed.disabled) { M.eqDays = +ed.dataset.mkEqd; store.set('rd-mk-eqdays', M.eqDays); M.err.eq = ''; paintSec('eq'); loadSec('eq', true); return; }
+    if (e.target.closest('[data-mk-calopen]')) { calOpen(); return; }
     const im = e.target.closest('[data-mk-imp]'); if (im) { M.imp = im.dataset.mkImp; store.set('rd-mk-imp', M.imp); paintSec('nw'); return; }
     const del = e.target.closest('[data-mk-aldel]'); if (del) { AL.list = AL.list.filter(a => a.id !== del.dataset.mkAldel); saveAl(); RD.syncLines(); paintSec('al'); return; }
     const go = e.target.closest('[data-mk-algo]'); if (go) { const a = AL.list.find(x => x.id === go.dataset.mkAlgo); if (a) RD.setSymbol(a.sym, a.ex); return; }
@@ -800,13 +891,18 @@
   });
   pane.addEventListener('change', async e => {
     const t = e.target;
-    if (t.matches('[data-mk-warn]')) { M.warn = t.checked; store.set('rd-mk-warn', M.warn); if (M.warn) { beep('news'); askNotify(); RD.toast('You will get a warning 15 minutes before each red news event while this page is open.'); } }
+    if (t.matches('[data-mk-warn]')) setWarn(t.checked);
     else if (t.matches('[data-mk-hlcoin]')) { M.hlCoin = t.checked; store.set('rd-mk-hlcoin', M.hlCoin); paintSec('nw'); }
     else if (t.matches('[data-mk-zrmk]')) { M.zrMarks = t.checked; store.set('rd-mk-zrmk', M.zrMarks); if (M.zrMarks && !M.d.zr) loadSec('zr', true); if (RD.setMarkers) RD.setMarkers(); }
     else if (t.matches('[data-mk-eqmk]')) { M.eqMarks = t.checked; store.set('rd-mk-eqmk', M.eqMarks); if (M.eqMarks && !M.d.eq) loadSec('eq', true); if (RD.setMarkers) RD.setMarkers(); }
     else if (t.matches('[data-mk-snd]')) { AL.sound = t.checked; store.set('rd-al-sound', AL.sound); if (AL.sound) beep('alert'); }
     else if (t.matches('[data-mk-ntf]')) { AL.notify = t.checked; store.set('rd-al-notify', AL.notify); if (AL.notify) { const ok = await askNotify(); if (!ok) { AL.notify = false; store.set('rd-al-notify', false); t.checked = false; RD.toast('The browser blocked notifications for this site. Allow them in the site settings to use this.', 'down'); } } }
   });
+  function setWarn(on) {
+    M.warn = on; store.set('rd-mk-warn', M.warn);
+    if (M.warn) { beep('news'); askNotify(); RD.toast('You will get a warning 15 minutes before each red news event while this page is open.'); }
+    paintSec('nw'); if (calM && !calM.hidden) calPaint();
+  }
   async function askNotify() {
     if (!('Notification' in window)) return false;
     if (Notification.permission === 'granted') { AL.notify = true; store.set('rd-al-notify', true); return true; }
@@ -852,5 +948,5 @@
   if (M.zrMarks) setTimeout(() => loadSec('zr'), 2000);
   if (M.eqMarks) setTimeout(() => loadSec('eq'), 2500);
   if (M.warn) loadNews(false); else setTimeout(() => loadNews(false), 4000);   // the legend's red-news glance
-  window.__rdMkt = { M, AL, refresh, loadSec, loadNews, addAlert, checkAt, pollAlerts, P };   // for tests
+  window.__rdMkt = { M, AL, refresh, loadSec, loadNews, calOpen, calPaint, addAlert, checkAt, pollAlerts, P };   // for tests
 })();

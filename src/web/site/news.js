@@ -62,9 +62,9 @@ async function news(calendar) {
   const now = Date.now();
   return {
     now,
-    events: (cal.events || []).filter(e => e.t > now - 36 * 3600e3 && e.t < now + 21 * 86400e3)
-      .map(e => ({ t: e.t, cur: e.cur, title: e.title, impact: e.impact, forecast: e.forecast || '', previous: e.previous || '', note: e.note || '' })),
-    calErrors: cal.errors || [], sources: cal.sources || null,
+    events: (cal.events || []).filter(e => e.t > now - 8 * 86400e3 && e.t < now + 21 * 86400e3)   // the whole week (the full calendar shows its past days with their actual figures)
+      .map(e => ({ t: e.t, cur: e.cur, title: e.title, impact: e.impact, forecast: e.forecast || '', previous: e.previous || '', actual: e.actual || '', note: e.note || '' })),
+    week: cal.week || null, calErrors: cal.errors || [], actualErr: cal.actualErr || null, sources: cal.sources || null,
     headlines: hl.list, hlAt: hl.at, hlErrors: hl.errors || [],
   };
 }

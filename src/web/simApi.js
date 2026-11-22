@@ -2,6 +2,7 @@
 // and our own live trades to replay. It never places, changes or cancels orders.
 const db = require('../db/database');
 const coinFlow = require('../collectors/coinFlow');
+const calActual = require('./calActual');
 
 const STEP = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3, '1d': 86400e3 };
 const BYBIT_IV = { '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D' };
@@ -192,9 +193,12 @@ async function newsEvents() {
   // the weekly feed lists the same decision ("Federal Funds Rate", "FOMC Statement") with a forecast: keep that one
   const fedOnly = fed.filter(f => !ff.some(e => e.cur === 'USD' && Math.abs(e.t - f.t) < 3 * 3600e3 && /Federal Funds Rate|FOMC Statement/i.test(e.title)));
   const events = ff.concat(fedOnly).sort((a, b) => a.t - b.t);
+  // released figures ("actual"), which the Forex Factory feed doesn't carry: Nasdaq's public calendar, matched per event
+  let actualErr = null;
+  try { actualErr = await calActual.addActuals(ff); } catch (e) { actualErr = 'actual figures: ' + e.message; }
   const wk = ff.length ? [Math.min(...ff.map(e => e.t)), Math.max(...ff.map(e => e.t))] : null;
-  return { events, week: wk, errors: [NEWS.ffErr, NEWS.fedErr && NEWS.fed ? null : NEWS.fedErr].filter(Boolean), fedFallback: !NEWS.fed,
-    sources: { calendar: 'Forex Factory weekly feed', fomc: NEWS.fed ? 'federalreserve.gov' : 'built-in list (federalreserve.gov unreachable)' } };
+  return { events, week: wk, errors: [NEWS.ffErr, NEWS.fedErr && NEWS.fed ? null : NEWS.fedErr].filter(Boolean), fedFallback: !NEWS.fed, actualErr,
+    sources: { calendar: 'Forex Factory weekly feed', fomc: NEWS.fed ? 'federalreserve.gov' : 'built-in list (federalreserve.gov unreachable)', actual: 'Nasdaq economic calendar' } };
 }
 
 const iso = d => (d ? new Date(d).getTime() : null);
