@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   if (!['binance', 'bybit', 'fx'].includes(U.ex)) U.ex = 'binance';
@@ -886,7 +886,7 @@
   // ------------------------------------------------------------------ drawings + SMC overlay (a series primitive)
   let DRAW = store.get('rd-draw-v1', {});
   const saveDraw = () => store.set('rd-draw-v1', DRAW);
-  let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null, FVGS = null;
+  let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null, FVGS = null, TLS = null;
   const ONE = new Set(['hline', 'ray']), TWO = new Set(['trend', 'rect', 'fib', 'measure']);
   const drawTool = t => ONE.has(t) || TWO.has(t) || t === 'pen';
   let PENS = [];   // strokes of this pencil session, newest last (Undo)
@@ -1026,6 +1026,29 @@
     }
     FVGBOX = out;
   }
+  let TLBOX = [];   // what was drawn last, for tests
+  function drawTL(g, W) {
+    const ts = chart.timeScale(), B = S.bars; if (!B.length) return;
+    const xr = ts.coordinateToLogical(W), Lr = xr == null ? B.length + 5 : Math.ceil(xr) + 1, Ln = B.length - 1, out = [];
+    g.font = '600 10px "Geist Mono", ui-monospace, monospace';
+    for (const l of TLS) {
+      const L0 = t2l(l.tp); if (L0 == null) continue;
+      const Lp = Math.round(L0), at = L => l.v0 + l.s * (L - Lp), c = l.side === 'L' ? COL.up : COL.down, broken = l.brkT != null;
+      const x0 = ts.logicalToCoordinate(Lp), x1 = ts.logicalToCoordinate(Lr), y0 = p2y(at(Lp)), y1 = p2y(at(Lr));
+      if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
+      g.strokeStyle = hexA(c, broken ? 0.5 : 0.95); g.lineWidth = broken ? 1.5 : 3; g.setLineDash(broken ? [6, 5] : []);
+      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); g.setLineDash([]);
+      for (const t of l.touches) {
+        const L = t2l(t); if (L == null) continue;
+        const x = ts.logicalToCoordinate(Math.round(L)), y = p2y(at(Math.round(L))); if (x == null || y == null) continue;
+        g.beginPath(); g.arc(x, y, broken ? 2.5 : 3.5, 0, Math.PI * 2); g.fillStyle = hexA(c, broken ? 0.55 : 1); g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.bg; g.stroke();
+      }
+      const vn = at(Ln), xn = ts.logicalToCoordinate(Ln), yn = p2y(vn);
+      if (!broken && xn != null && yn != null && xn > 0 && xn < W - 60) label(g, fp(vn), xn + 8, yn + (l.side === 'L' ? 11 : -11), c, 'left', COL.panel);
+      out.push({ side: l.side, broken, x0, y0, x1, y1, now: vn, nT: l.nT });
+    }
+    TLBOX = out;
+  }
   function drawSMC(g, W) {
     const r = SMCR; if (!r) return;
     const all = !!U.smcAll;
@@ -1110,6 +1133,7 @@
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
       if (U.hilo) { g.save(); drawHiLo(g, W); g.restore(); }
+      if (U.tline && TLS) { g.save(); drawTL(g, W); g.restore(); }
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
@@ -1735,7 +1759,7 @@
   let smcT = null;
   function smcSchedule() {
     emit('bars');   // the candles changed (new candle, replay step, load): add-ons like the A+ layer read again
-    if (!U.smc && !U.smcFvg) { if (SMCR || FVGS) { SMCR = null; FVGS = null; setMarkers(); prim.req(); legend(); } return; }
+    if (!U.smc && !U.smcFvg && !U.tline) { if (SMCR || FVGS || TLS) { SMCR = null; FVGS = null; TLS = null; setMarkers(); prim.req(); legend(); } return; }
     if (smcT) return;
     smcT = setTimeout(() => { smcT = null; smcRun(); }, R.playing ? 200 : 20);
   }
@@ -1744,8 +1768,9 @@
     let n = B.length; if (n && nextB(B[n - 1][0], U.tf) > nowT()) n--;   // the forming candle is not closed yet
     const base = B.slice(Math.max(0, n - (U.smcAll ? 6000 : 500)), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);   // Recent: last 500 · Whole chart: all loaded
     FVGS = U.smcFvg && base.length >= 3 ? fvgScan(base, U.tf) : null;   // closed candles only
-    if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); return; }
-    if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); return; }
+    TLS = U.tline && base.length >= 12 ? tlineScan(base, U.tf) : null;
+    if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
+    if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
     const l = base[base.length - 1];
     base.push([nextB(l[0], U.tf), l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
     try { SMCR = window.SMC.analyze(base, base.length - 1, smcOpt(U.tf)); } catch (e) { SMCR = null; }
@@ -1754,6 +1779,51 @@
   // fair value gaps: candle 1's high below candle 3's low (bullish) or its low above candle 3's high (bearish), at least a
   // quarter of the average candle range (ATR 14) so 1-minute noise stays off. Known when candle 3 closes. Later candles
   // fill it from the near side: the box shrinks to the part not traded yet and ends when a wick reaches the far side.
+  // auto trend lines, the way Tori Trades draws them: a line joins swing lows (support) or swing highs (resistance) and no
+  // candle may poke through it. From each swing point (fractal: 2 candles each side on 1D and up, 3 below) the line swings
+  // to the first later candle that keeps every candle on one side. A wick through without a close redraws the line through
+  // that wick ("incorporate that wick"); a close through breaks it — kept, to watch the retest — and the next line from the
+  // same point starts at that candle (the fan of lines from one high or low). Touches = candles within 0.1 ATR of the line,
+  // a run of touching candles counted once. Shown: per side the nearest line still holding and the one with the most
+  // touches, plus the broken line with the most touches among those broken in the last 40 candles.
+  function tlineScan(B, tf) {
+    const n = B.length, k = TF[tf].ms >= 864e5 ? 2 : 3, out = [], atr = new Array(n).fill(0);
+    { let s = 0; const tr = i => i ? Math.max(B[i][2] - B[i][3], Math.abs(B[i][2] - B[i - 1][4]), Math.abs(B[i][3] - B[i - 1][4])) : B[i][2] - B[i][3];
+      for (let i = 0; i < n; i++) { s += tr(i); if (i >= 14) s -= tr(i - 14); atr[i] = s / Math.min(i + 1, 14); } }
+    const mk = (side, p, q, s, brk) => {
+      const v = side === 'L' ? i => B[i][3] : i => B[i][2], end = brk == null ? n : brk, touches = [];
+      let last = -9;
+      for (let i = p; i < end; i++) if (Math.abs(v(i) - (v(p) + s * (i - p))) <= 0.1 * atr[i]) { if (i - last > 1) touches.push(B[i][0]); last = i; }
+      return { side, tp: B[p][0], tq: B[q][0], v0: v(p), s, brkT: brk == null ? null : B[brk][0], touches, nT: touches.length, i0: p, ib: brk };
+    };
+    for (const side of ['L', 'H']) {
+      const lo = side === 'L', v = lo ? i => B[i][3] : i => B[i][2], sg = lo ? 1 : -1;   // sg 1: candles stay above the line
+      for (let p = k; p < n - k; p++) {
+        let piv = true; for (let j = 1; j <= k && piv; j++) piv = lo ? v(p) < v(p - j) && v(p) <= v(p + j) : v(p) > v(p - j) && v(p) >= v(p + j);
+        if (!piv) continue;
+        let q = -1, s = 0;
+        for (let t = p + 1; t < n; t++) {
+          const st = (v(t) - v(p)) / (t - p);
+          if (q < 0) { q = t; s = st; continue; }
+          if (sg * (st - s) >= 0) continue;                                    // this candle stays on its side
+          const closed = sg * (B[t][4] - (v(p) + s * (t - p))) < 0;            // past the line: closed through = broken
+          if (closed && q - p >= 3) out.push(mk(side, p, q, s, t));
+          q = t; s = st;                                                       // redraw through this candle
+        }
+        if (q > 0 && q - p >= 3) out.push(mk(side, p, q, s, null));
+      }
+    }
+    const px = B[n - 1][4], keep = [], now = l => l.v0 + l.s * (n - 1 - l.i0), tol = 0.25 * atr[n - 1];
+    for (const side of ['H', 'L']) {
+      const act = out.filter(l => l.side === side && l.brkT == null && l.nT >= 2 && now(l) > 0);
+      const near = act.slice().sort((a, b) => Math.abs(now(a) - px) - Math.abs(now(b) - px))[0];
+      const most = act.slice().sort((a, b) => b.nT - a.nT || Math.abs(now(a) - px) - Math.abs(now(b) - px))[0];
+      for (const l of [near, most]) if (l && !keep.some(m => m.brkT == null && m.side === side && Math.abs(now(m) - now(l)) < tol)) keep.push(l);
+      const br = out.filter(l => l.side === side && l.brkT != null && l.nT >= 2 && n - l.ib <= 40).sort((a, b) => b.nT - a.nT || b.ib - a.ib)[0];
+      if (br) keep.push(br);
+    }
+    return keep;
+  }
   function fvgScan(B, tf) {
     const out = []; let atr = null, open = [];
     for (let i = 1; i < B.length; i++) {
@@ -1800,6 +1870,8 @@
     let l2 = U.vol && U.ex !== 'fx' ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';   // FX has no shared volume
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
+    if (U.tline && TLS) { const Ln = S.bars.length - 1, hold = TLS.filter(l => l.brkT == null).map(l => { const L0 = t2l(l.tp); return L0 == null ? '' : `<b class="${l.side === 'L' ? 'up' : 'down'}" title="${l.side === 'L' ? 'Support' : 'Resistance'} line, ${l.nT} touches">${l.s < 0 ? '↘' : '↗'} ${fp(l.v0 + l.s * (Ln - Math.round(L0)))}</b>`; }).filter(Boolean);
+      if (hold.length) l2 += `<span>Trend lines ${hold.join(' · ')}</span>`; }
     if (U.smc && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
       `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
     LG.innerHTML = `<div class="l1"><b>${esc(mktName(U.sym))} · ${U.tf} · ${api().name}${U.ex === 'fx' ? ' <em class="lg-fx" title="Interbank prices (the market TradingView’s FX charts show), via our server, ~10 s refresh. Chart and paper trades only.">interbank</em>' : ''}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
@@ -2024,7 +2096,7 @@
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
-      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc && !U.smcFvg) U.smc = true;   // FVG alone uses it too: don't switch SMC on for it
+      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc && !U.smcFvg && !U.tline) U.smc = true;   // FVG / trend lines alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'smc') { U.smc = !U.smc; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
@@ -2074,7 +2146,7 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
@@ -2122,7 +2194,7 @@
   window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
