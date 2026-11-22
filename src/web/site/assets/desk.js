@@ -42,13 +42,13 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
   const TLF = { live: store.get('rd-tl-v1', {}), replay: {} };
   const tlSave = () => { const k = Object.keys(TLF.live); if (k.length > 40) k.sort((a, b) => TLF.live[a].at - TLF.live[b].at).slice(0, k.length - 40).forEach(x => delete TLF.live[x]); store.set('rd-tl-v1', TLF.live); };
-  { const s0 = store.get('rd-ui-v1', {}); if (U.smc && !('choch' in s0) && !('bos' in s0)) { U.choch = true; U.bos = true; } }
+  { const s0 = store.get('rd-ui-v1', {}); if (U.smc && !('choch' in s0) && !('bos' in s0)) { U.choch = true; U.bos = true; } if (U.smc && !('eq' in s0)) U.eq = true; }   // SMC users keep what SMC drew
   if (!['binance', 'bybit', 'fx'].includes(U.ex)) U.ex = 'binance';
   const saveUI = () => store.set('rd-ui-v1', U);
   // extension points: the admin layer (/assets/deskadmin.js, served to admins only) adds chart lines, markers and bottom tabs
@@ -1117,8 +1117,8 @@
     return out;
   }
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
-  function smcAny() { return !!(U.smc || U.choch || U.bos); }   // anything that needs the SMC engine
-  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, t2x, p2y }); if (d) SMCDRAWN = d; }
+  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq); }   // anything that needs the SMC engine
+  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, t2x, p2y }); if (d) SMCDRAWN = d; }
   function paintSMC(g, W, o) {
     const r = o.r, t2x = o.t2x, p2y = o.p2y; if (!r) return null;
     const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [] };
@@ -1139,6 +1139,10 @@
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent'); done.zones++;
     }
+    }
+    // equal highs / lows (their own tick, Indicators → EQH / EQL; on with SMC): two swing highs (lows) at about the same
+    // price = stops resting there (liquidity). Dotted line from the first one to the right edge while untaken.
+    if (o.eq) {
     // equal lows / highs price has already taken (Indicators → keep them): faded, from the first low to the candle that took
     // it, "swept" = wick through and closed back, "broken" = closed through. Recent: the newest 6 · Whole chart: all
     // two pairs at one price (lows 1+2 and 1+3) are one level: drawn once, so they don't use up the newest-N slots
@@ -2029,6 +2033,11 @@
       const htx = Object.keys(ht).sort((a, b) => TF[b].ms - TF[a].ms).map(k => '+' + ht[k] + ' ' + k).join(' ');
       l2 += `<span>Trend lines <em title="Drawn from the candles closed by then and kept there as price moves">drawn ${tshort(TLS.at)}</em>${hold.length ? ' ' + hold.join(' · ') : ''}${htx ? ` · <em title="Lines from your higher-timeframe charts of this coin (top-down), the nearest one each side. Their prices are on the chart.">${htx}</em>` : ''}${nb ? ` · <b class="m">${nb} broken since</b>` : ''}</span><button type="button" class="lg-btn" data-act="tlredraw" title="Draw the trend lines again from the latest closed candles (this coin and timeframe)">Redraw now</button>`; }
     if (U.pdhl && PDAY) l2 += `<span>PDH <b>${fp(PDAY.h)}</b> · PDL <b>${fp(PDAY.l)}</b></span>`;
+    if (U.eq && SMCR && SMCR.eqs) {
+      const px = S.lastPx, open = SMCR.eqs.filter(e => !e.taken);
+      const up = open.filter(e => e.side === 'H' && e.p >= px).sort((a, b) => a.p - b.p)[0], dn = open.filter(e => e.side === 'L' && e.p <= px).sort((a, b) => b.p - a.p)[0];
+      if (up || dn) l2 += `<span title="The nearest equal highs above the price and equal lows below it that price has not taken yet: stops rest there">${up ? `EQH <b class="down">${fp(up.p)}</b>` : ''}${up && dn ? ' · ' : ''}${dn ? `EQL <b class="up">${fp(dn.p)}</b>` : ''}</span>`;
+    }
     if (smcAny() && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
       `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
     LG.innerHTML = `<div class="l1"><b>${esc(mktName(U.sym))} · ${U.tf} · ${api().name}${U.ex === 'fx' ? ' <em class="lg-fx" title="Interbank prices (the market TradingView’s FX charts show), via our server, ~10 s refresh. Chart and paper trades only.">interbank</em>' : ''}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
@@ -2254,9 +2263,9 @@
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
       else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
-      else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
+      else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; U.eq = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
-      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
+      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
       else if (act === 'rpick-chart') { closeModals(); if (!R.on) startPick('replay'); else startPick('replay'); }
@@ -2304,8 +2313,8 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; saveUI(); headUI(); smcSchedule(); }
-    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos') smcSchedule();
+    else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; saveUI(); headUI(); smcSchedule(); }
+    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq') smcSchedule();
     else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
     legend();
   }));
