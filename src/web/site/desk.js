@@ -16,7 +16,7 @@ const TOOLS = [
 ];
 // icons the browser code builds rows with
 const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search', 'chevron-left', 'chevron-up', 'chevron-down',
-  'bell', 'clock', 'layers', 'users', 'activity', 'info', 'percent', 'newspaper'];
+  'bell', 'clock', 'layers', 'users', 'activity', 'info', 'percent', 'newspaper', 'circle-check'];
 // the admin layer's extra icons (only sent to admins)
 const ADMIN_ICONS = ['rewind', 'refresh-cw', 'send', 'zap', 'triangle-alert', 'circle-check', 'external-link', 'chart-candlestick', 'bot', 'radio', 'users', 'activity', 'crosshair', 'info', 'trending-down'];
 
@@ -252,7 +252,7 @@ function desk(who, nonce) {
 ${A ? `<div class="dk-modal" data-xmodal hidden role="dialog" aria-modal="true" aria-label="Confirm"><div class="dk-mbox dk-xbox" data-xbox></div></div>` : ''}
 <div class="dk-toast" data-toast hidden></div>
 <script type="application/json" id="dk-icons">${JSON.stringify(Object.fromEntries((A ? JS_ICONS.concat(ADMIN_ICONS) : JS_ICONS).map(n => [n, icon(n, 'i-35')]))).replace(/</g, '\\u003c')}</script>`;
-  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('desksound.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('desktrend.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`, `<script src="${asset('deskfind.js')}" defer></script>`];
+  const scripts = [LWC, `<script src="${asset('smc.js')}" defer></script>`, `<script src="${asset('desk.js')}" defer></script>`, `<script src="${asset('desksound.js')}" defer></script>`, `<script src="${asset('deskcmp.js')}" defer></script>`, `<script src="${asset('deskjournal.js')}" defer></script>`, `<script src="${asset('deskcoach.js')}" defer></script>`, `<script src="${asset('zonestats.js')}" defer></script>`, `<script src="${asset('deskmkt.js')}" defer></script>`, `<script src="${asset('desksess.js')}" defer></script>`, `<script src="${asset('desktrend.js')}" defer></script>`, `<script src="${asset('deskaplus.js')}" defer></script>`, `<script src="${asset('deskfind.js')}" defer></script>`];
   if (A) scripts.push(`<script src="${asset('deskadmin.js')}" defer></script>`, `<script src="${asset('deskwatch.js')}" defer></script>`);
   return page({
     title: 'Desk', nonce, noindex: true, bodyClass: 'desk-body', body,

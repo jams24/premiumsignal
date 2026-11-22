@@ -19,6 +19,7 @@ const ADM = require('./admin');
 const { ASSETS, FAVICON, safeNext } = require('./html');
 const NEWS = require('./news');
 const FX = require('./fx');   // interbank FX candles for the desk (server-side: the source has no CORS)
+const PAPER = require('./paper');   // the desk's paper journal (closed paper trades saved to the account)
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 /** Email links work (confirm address, reset password): the database, an email sender, and the public address for the links.
@@ -92,7 +93,7 @@ function serveAsset(req, res, url) {
 }
 
 const PAGES = new Set(['/', '/learn', '/terms', '/privacy', '/risk', '/signin', '/signup', '/check-email', '/forgot', '/reset', '/app', '/account',
-  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico', '/api/site/news']);
+  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico', '/api/site/news', '/api/site/paper']);
 
 async function handle(req, res, url, opts = {}) {
   const p = url.pathname;
@@ -121,6 +122,19 @@ async function route(req, res, url, { dashboardHtml, newsEvents }) {
     return true;
   }
   if (p.startsWith('/auth/')) return authRoute(req, res, url);
+  if (p === '/api/site/paper') {   // the desk's paper journal: GET it, POST new closed trades (signed-in users; not the key-only admin)
+    if (!db.ready()) { json(res, 503, { error: 'offline' }); return true; }
+    const me = await A.readSession(req);
+    if (!me || me.keyOnly || !me.user) { json(res, 401, { error: 'auth' }); return true; }
+    if (req.method === 'POST' && (!A.sameOrigin(req) || !/^application\/json/i.test(String(req.headers['content-type'] || '')))) { json(res, 403, { error: 'origin' }); return true; }
+    if (req.method !== 'GET' && req.method !== 'POST') { json(res, 405, { error: 'method' }); return true; }
+    if (!A.limit(`pp:${me.user.id}`, 240, 300e3)) { json(res, 429, { error: 'rate', message: 'Too many saves. Wait a few minutes.' }); return true; }
+    if (req.method === 'GET') { json(res, 200, await PAPER.get(me.user.id)); return true; }
+    const b = await readJson(req, 400000);
+    if (!b || typeof b !== 'object') { json(res, 400, { error: 'body' }); return true; }
+    const r = await PAPER.post(me.user.id, b);
+    json(res, r.status, r.body); return true;
+  }
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET' }); res.end(); return true; }
 
   if ((p === '/dashboard' || p === '/dashboard/classic') && !db.ready()) return false;   // accounts offline → old behaviour (key screen in the page)

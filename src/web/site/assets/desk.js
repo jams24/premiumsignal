@@ -437,7 +437,14 @@
     if (last && last[0] === b) { last[2] = Math.max(last[2], k[2]); last[3] = Math.min(last[3], k[3]); last[4] = k[4]; last[5] += k[5]; return S.bars.length - 1; }
     S.bars.push([b, k[1], k[2], k[3], k[4], k[5]]); return S.bars.length - 1;
   }
-  function saveR() { store.set('rd-replay-v1', R.on ? { sym: U.sym, ex: U.ex, clock: R.clock, step: R.step, speed: R.speed } : null); }
+  function saveR() { store.set('rd-replay-v1', R.on ? { sym: U.sym, ex: U.ex, clock: R.clock, step: R.step, speed: R.speed, sid: R.sid } : null); }
+  // a replay session = one replay start (a new start is a new session); its trades carry its id (the journal groups them)
+  function newSession() {
+    R.sid = newId();
+    A.sess.unshift({ id: R.sid, wt: Date.now(), at: R.clock, sym: U.sym, ex: U.ex, tf: U.tf });
+    if (A.sess.length > 300) A.sess.length = 300;
+    saveAcctNow(); emit('session', R.sid);
+  }
   let saveRT = 0;
   const saveRSoon = () => { if (Date.now() - saveRT > 2000) { saveRT = Date.now(); saveR(); } };
 
@@ -447,7 +454,7 @@
     if (!isFinite(t) || t > Date.now() - rpMin()) { toast('Pick a moment in the past.'); return; }
     closeModals(); pausePlay(); clearPick();
     if (R.on) P.closeMode('replay', 'Replay restarted');
-    R.on = true; R.clock = bucket(t, U.tf); TLF.replay = {};
+    R.on = true; R.clock = bucket(t, U.tf); TLF.replay = {}; newSession();
     stopStream(); modeUI(); saveR();
     await rebuildReplay();
   }
@@ -519,22 +526,31 @@
     } catch (e) { pausePlay(); toast('Could not load the next candles: ' + e.message, 'down'); } finally { R.busy = false; }
   }
   // ---- one step back. Each forward step remembered what it changed (the feed candles it took, the candle it grew,
-  // the replay paper trades), so the chart and the replay trades go back exactly as they were. With nothing remembered
-  // (the replay's first candle, or after a reload) the chart goes back one candle by loading it again — only while no
-  // replay trade is open, since there is nothing to put those back to.
+  // the open replay trades), so the chart goes back exactly as it was. Replay trades: a CLOSED trade is final — it stays
+  // in the journal with its result, a step back never opens it again or takes its result away (you rewind to look at
+  // it). Open ones go back as they were: a trade opened after that moment is taken back (its fee too) and its order, if
+  // it came from one, is working again; stops / targets moved since go back. With nothing remembered (the replay's
+  // first candle, or after a reload) the chart goes back one candle by loading it again — only while no replay trade
+  // is open, since there is nothing to put those back to.
   function paperSnap() {
     const cp = a => JSON.parse(JSON.stringify(a.filter(x => x.mode === 'replay')));
-    return { pos: cp(A.pos), ord: cp(A.ord), rbal: A.rbal || 0, head: A.hist[0] || null };
+    return { pos: cp(A.pos), ord: cp(A.ord) };
   }
   function paperBack(s) {
-    const was = JSON.stringify([A.pos.filter(x => x.mode === 'replay'), A.ord.filter(x => x.mode === 'replay')]);
-    A.pos = A.pos.filter(x => x.mode !== 'replay').concat(JSON.parse(JSON.stringify(s.pos)));
-    A.ord = A.ord.filter(x => x.mode !== 'replay').concat(JSON.parse(JSON.stringify(s.ord)));
-    const i = s.head ? A.hist.indexOf(s.head) : A.hist.length;   // history entries in front of it came after the snapshot
-    let closed = 0;
-    if (i > 0) { const newer = A.hist.slice(0, i); closed = newer.filter(h => h.mode === 'replay').length; A.hist = newer.filter(h => h.mode !== 'replay').concat(A.hist.slice(i)); }
-    A.bal -= (A.rbal || 0) - s.rbal; A.rbal = s.rbal;
-    const moved = was !== JSON.stringify([s.pos, s.ord]) || closed > 0;
+    const key = () => JSON.stringify([A.pos.filter(x => x.mode === 'replay').map(p => [p.id, p.sl, p.tp]), A.ord.filter(x => x.mode === 'replay').map(o => [o.id, o.price, o.sl, o.tp])]);
+    const was = key(), then = new Map(s.pos.map(p => [p.id, p]));
+    const pos = [];
+    for (const p of A.pos) {
+      if (p.mode !== 'replay') { pos.push(p); continue; }
+      const old = then.get(p.id);
+      if (!old) { A.bal += p.fee || 0; continue; }   // opened after that moment: taken back, fee back
+      pos.push(JSON.parse(JSON.stringify(old)));
+    }
+    // an order comes back unless it became a trade that is still here or already closed
+    const used = new Set(pos.map(p => p.oid).concat(A.hist.map(h => h.oid)).filter(Boolean));
+    A.ord = A.ord.filter(o => o.mode !== 'replay').concat(JSON.parse(JSON.stringify(s.ord.filter(o => !used.has(o.id)))));
+    A.pos = pos;
+    const moved = was !== key();
     changed();
     return moved;
   }
@@ -552,7 +568,7 @@
       R.clock = s.clock; S.lastPx = s.lastPx; S.rpx[U.sym] = s.lastPx;
       const undid = paperBack(s.paper);
       setAll(); clockUI(); tickUI(); saveR();
-      if (undid) toast(`Back to ${tnice(R.clock)} · replay trades are as they were then`);
+      if (undid) toast(`Back to ${tnice(R.clock)} · open replay trades are as they were then (closed ones stay in your journal)`);
       return;
     }
     if (A.pos.some(p => p.mode === 'replay') || A.ord.some(o => o.mode === 'replay')) { toast('Can\'t go further back with a replay trade open. Close it, or choose an earlier start.', 'down'); return; }
@@ -579,15 +595,34 @@
   function pausePlay() { R.playing = false; clearTimeout(R.timer); playUI(); if (R.on) saveR(); }
   function exitReplay() {
     pausePlay(); P.closeMode('replay', 'Replay ended');
-    R.on = false; R.gen++; R.buf = []; saveR(); modeUI(); loadLive();
+    R.on = false; R.gen++; R.buf = []; saveR(); modeUI(); R.sid = null; loadLive();
   }
 
   // ------------------------------------------------------------------ paper account (this browser only)
-  const freshAcct = () => ({ v: 1, start: START_BAL, bal: START_BAL, pos: [], ord: [], hist: [], seq: 1, seen: {} });
+  // hist: closed trades, newest first (the journal; the newest HIST_MAX are kept here — trim holds the P&L of older ones
+  // so the balance stays right). sess: replay sessions, newest first. epoch: which journal on the server this is (null =
+  // never synced; a reset starts a new one).
+  const HIST_MAX = 2000;
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const freshAcct = () => ({ v: 1, start: START_BAL, bal: START_BAL, pos: [], ord: [], hist: [], seq: 1, seen: {}, sess: [], epoch: null, trim: 0, unsent: [] });
+  // the balance from the journal: start + every closed trade's net P&L − the entry fees of the open ones
+  const acctBal = (a, trim = a.trim || 0) => a.start + trim + a.hist.reduce((x, h) => x + (+h.pnl || 0), 0) - a.pos.reduce((x, p) => x + (p.fee || 0), 0);
+  function acctFix(a) {   // accounts saved before the journal
+    if (!Array.isArray(a.sess)) a.sess = [];
+    if (!Array.isArray(a.unsent)) a.unsent = [];
+    if (a.epoch === undefined) a.epoch = null;
+    for (const h of a.hist) if (!h.uid) h.uid = 'h' + h.id + '-' + (h.t1 || 0);
+    a.hist.forEach((h, i) => { if (!Number.isFinite(h.wt)) h.wt = a.hist.length - i; });   // no wall-clock time: kept in order, counted as old
+    for (const p of a.pos) if (!p.uid) p.uid = newId();
+    if (typeof a.trim !== 'number' || !isFinite(a.trim)) a.trim = a.bal - acctBal(a, 0);   // what the old 500-trade cap left out
+    return a;
+  }
   let A = store.get('rd-acct-v1', null);
   if (!A || A.v !== 1) A = freshAcct();
+  acctFix(A);
   let saveAT = null;
   const saveAcct = () => { clearTimeout(saveAT); saveAT = setTimeout(() => store.set('rd-acct-v1', A), 300); };
+  const saveAcctNow = () => { clearTimeout(saveAT); saveAT = null; store.set('rd-acct-v1', A); };
   const mode = () => (R.on ? 'replay' : 'live');
   const markOf = it => (it.mode === 'replay' ? S.rpx[it.sym] : S.marks[it.sym]);
   const liqOf = (side, entry, lev) => (side === 1 ? entry * (1 - 1 / lev + MMR) : entry * (1 + 1 / lev - MMR));
@@ -600,8 +635,9 @@
     open(o, px, t, maker) {
       const notional = o.margin * o.lev, qty = notional / px, fee = notional * (maker ? FEE_M : FEE_T);
       A.bal -= fee; if (o.mode === 'replay') A.rbal = (A.rbal || 0) - fee;
-      const p = { id: A.seq++, sym: o.sym, ex: o.ex, side: o.side, qty, entry: px, lev: o.lev, margin: o.margin, sl: o.sl || null, tp: o.tp || null,
-        t, mode: o.mode, fee, risk: o.sl ? Math.abs(px - o.sl) * qty + fee : null, liq: liqOf(o.side, px, o.lev) };
+      const p = { id: A.seq++, uid: newId(), sym: o.sym, ex: o.ex, side: o.side, qty, entry: px, lev: o.lev, margin: o.margin, sl: o.sl || null, tp: o.tp || null,
+        t, mode: o.mode, fee, risk: o.sl ? Math.abs(px - o.sl) * qty + fee : null, liq: liqOf(o.side, px, o.lev),
+        tf: o.tf || U.tf, sid: o.mode === 'replay' ? R.sid || null : null, wt0: Date.now(), sl0: o.sl || null, tp0: o.tp || null, hi: px, lo: px, oid: o.oid || null };
       A.pos.push(p);
       if (o.mode === 'live') { const key = p.sym + '|' + p.ex; if (!A.seen[key]) A.seen[key] = floorTo(Date.now(), MIN); }
       changed();
@@ -614,17 +650,21 @@
       if (why === 'Liquidated') pnl = -p.margin; else fee = px * p.qty * (why === 'Target' ? FEE_M : FEE_T);
       A.bal += pnl - fee; if (p.mode === 'replay') A.rbal = (A.rbal || 0) + pnl - fee;
       const net = pnl - fee - p.fee;
-      A.hist.unshift({ id: p.id, sym: p.sym, side: p.side, lev: p.lev, qty: p.qty, margin: p.margin, entry: p.entry, exit: px, pnl: net,
-        r: p.risk ? net / p.risk : null, why, t0: p.t, t1: t, mode: p.mode });
-      if (A.hist.length > 500) A.hist.length = 500;
+      P.ext1(p, px, px);
+      const h = { id: p.id, uid: p.uid || newId(), sym: p.sym, ex: p.ex, side: p.side, lev: p.lev, qty: p.qty, margin: p.margin, entry: p.entry, exit: px, pnl: net,
+        r: p.risk ? net / p.risk : null, why, t0: p.t, t1: t, mode: p.mode, tf: p.tf || null, sid: p.sid || null, wt0: p.wt0 || null, wt: Date.now(),
+        sl: p.sl, tp: p.tp, sl0: p.sl0 !== undefined ? p.sl0 : p.sl, tp0: p.tp0 !== undefined ? p.tp0 : p.tp, hi: p.hi, lo: p.lo, risk: p.risk || null, fee: p.fee + fee, oid: p.oid || null };
+      A.hist.unshift(h); A.unsent.push(h.uid);
+      if (A.hist.length > HIST_MAX) for (const x of A.hist.splice(HIST_MAX)) A.trim += +x.pnl || 0;
+      if (A.unsent.length > HIST_MAX) A.unsent.splice(0, A.unsent.length - HIST_MAX);
       const label = `${coin(p.sym)} ${p.side === 1 ? 'long' : 'short'}`;
-      toast(`${why === 'Target' ? 'Target hit' : why === 'Stop' ? 'Stop hit' : why === 'Liquidated' ? 'Liquidated' : 'Closed'}: ${label} ${money(net, true)}${p.risk ? ' (' + fr(net / p.risk) + ')' : ''}`, net >= 0 ? 'up' : 'down');
-      changed();
+      if (!(X.ev.closed && X.ev.closed.length)) toast(`${why === 'Target' ? 'Target hit' : why === 'Stop' ? 'Stop hit' : why === 'Liquidated' ? 'Liquidated' : 'Closed'}: ${label} ${money(net, true)}${p.risk ? ' (' + fr(net / p.risk) + ')' : ''}`, net >= 0 ? 'up' : 'down');
+      changed(); saveAcctNow(); emit('closed', h);
     },
     fill(o, px, t) {
       const i = A.ord.indexOf(o); if (i < 0) return;
       A.ord.splice(i, 1);
-      P.open(o, px, t, o.kind !== 'stop');   // a stop entry fills as a market order (taker fee)
+      P.open(Object.assign({}, o, { oid: o.id }), px, t, o.kind !== 'stop');   // a stop entry fills as a market order (taker fee)
       toast(`${o.kind === 'stop' ? 'Stop entry' : 'Limit'} filled: ${coin(o.sym)} ${o.side === 1 ? 'long' : 'short'} at ${fp(px)}`);
     },
     // a price path inside one candle: up candles dip first (o→l→h→c), down candles spike first (o→h→l→c)
@@ -636,10 +676,12 @@
     seg(sym, a, b, t, md, tick) {
       for (let guard = 0; guard < 40; guard++) {
         const ev = P.next(sym, a, b, t, md, tick);
+        for (const p of A.pos) if (p.sym === sym && p.mode === md && (tick || p.t <= t)) P.ext1(p, a, ev ? ev.px : b);   // best / worst price while open
         if (!ev) return;
         ev.run(t); a = ev.px;
       }
     },
+    ext1(p, a, b) { const h = Math.max(a, b), l = Math.min(a, b); if (!(p.hi >= h)) p.hi = h; if (!(p.lo <= l)) p.lo = l; },
     next(sym, a, b, t, md, tick) {
       const lo = Math.min(a, b), hi = Math.max(a, b), up = b >= a;
       let best = null;
@@ -764,13 +806,16 @@
       <dl><dt>Since start</dt><dd class="${chg >= 0 ? 'up' : 'down'}">${money(chg, true)} (${pct(chg / A.start * 100)})</dd>
       <dt>Open P&amp;L</dt><dd class="${u >= 0 ? 'up' : 'down'}">${money(u, true)}</dd><dt>Balance</dt><dd>${money(A.bal)}</dd>
       <dt>Margin in use</dt><dd>${money(used())}</dd><dt>Free</dt><dd>${money(avail())}</dd></dl>
-      <p class="acct-note">Practice money only, saved in this browser. Fees 0.05% market / 0.02% limit.</p>`;
+      <p class="acct-note">${X.acctNote ? X.acctNote() : 'Practice money only, saved in this browser.'} Fees 0.05% market / 0.02% limit.</p>`;
   }
 
   // ------------------------------------------------------------------ positions / orders / history / stats
   let BTAB = 'pos', bottomAt = 0;
   const sd = s => `<span class="sd ${s === 1 ? 'up' : 'down'}">${s === 1 ? 'LONG' : 'SHORT'}</span>`;
   const rtag = it => (it.mode === 'replay' ? '<span class="tag-r">REPLAY</span>' : '');
+  // the furthest a closed trade went its way while open: in R when it had a stop, else in %
+  const bestMove = h => (h.hi == null || h.lo == null ? null : h.side === 1 ? h.hi - h.entry : h.entry - h.lo);
+  const bestOf = h => { const m = bestMove(h); if (m == null) return '—'; return h.risk ? fr(m * h.qty / h.risk) : pct(m / h.entry * 100); };
   function renderBottom(soft) {
     if (soft && Date.now() - bottomAt < 300) return;
     bottomAt = Date.now();
@@ -780,7 +825,7 @@
     $$('[data-cnt="ord"]').forEach(e => { e.textContent = A.ord.length; });
     const pm = $('[data-cnt="pos-m"]'); pm.hidden = !A.pos.length; pm.textContent = A.pos.length;
     $$('[data-btab]').forEach(b => b.classList.toggle('on', b.dataset.btab === BTAB));
-    if (X.bottom[BTAB]) { body.innerHTML = X.bottom[BTAB](); return; }
+    if (X.bottom[BTAB]) { const h = X.bottom[BTAB](soft); if (h != null) body.innerHTML = h; return; }
     let html = '';
     if (BTAB === 'pos') {
       if (!A.pos.length) html = `<div class="pt-empty">No open positions.${R.on ? ' Place a trade from the panel — it plays out as the replay moves.' : ' Place one from the Trade panel, or start a replay.'}</div>`;
@@ -811,9 +856,9 @@
           <div class="acts"><button type="button" data-cancel="${o.id}">Cancel</button></div></div>`).join('')}</div>`;
     } else if (BTAB === 'hist') {
       if (!A.hist.length) html = '<div class="pt-empty">Closed trades land here with their result and R.</div>';
-      else html = `<table class="pt"><thead><tr><th>Coin</th><th>Opened</th><th>Closed</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>R</th><th>Why</th></tr></thead><tbody>${A.hist.slice(0, 200).map(h => `
-        <tr data-goto="${esc(h.sym)}"><td>${sd(h.side)}<b>${esc(coin(h.sym))}</b> <span class="muted">${h.lev}×</span>${rtag(h)}</td><td class="muted">${tshort(h.t0)}</td><td class="muted">${tshort(h.t1)}</td>
-        <td>${fp(h.entry, Math.max(2, PREC))}</td><td>${fp(h.exit, Math.max(2, PREC))}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${money(h.pnl, true)}</td><td class="${(h.r || 0) >= 0 ? 'up' : 'down'}">${fr(h.r)}</td><td class="muted">${esc(h.why)}</td></tr>`).join('')}</tbody></table>
+      else html = `<table class="pt"><thead><tr><th>Coin</th><th>Opened</th><th>Closed</th><th>Held</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>R</th><th title="The furthest the trade went your way while it was open">Best</th><th>Why</th></tr></thead><tbody>${A.hist.slice(0, 200).map(h => `
+        <tr data-goto="${esc(h.sym)}"><td>${sd(h.side)}<b>${esc(coin(h.sym))}</b> <span class="muted">${h.lev}× ${h.tf ? esc(h.tf) : ''}</span>${rtag(h)}</td><td class="muted">${tshort(h.t0)}</td><td class="muted">${tshort(h.t1)}</td><td class="muted">${h.t1 > h.t0 ? dur(h.t1 - h.t0) : '—'}</td>
+        <td>${fp(h.entry, Math.max(2, PREC))}</td><td>${fp(h.exit, Math.max(2, PREC))}</td><td class="${h.pnl >= 0 ? 'up' : 'down'}">${money(h.pnl, true)}</td><td class="${(h.r || 0) >= 0 ? 'up' : 'down'}">${fr(h.r)}</td><td class="muted">${bestOf(h)}</td><td class="muted">${esc(h.why)}</td></tr>`).join('')}</tbody></table>
         <div class="p-cards">${A.hist.slice(0, 60).map(h => `<div class="pc"><div class="pc-h"><span>${sd(h.side)}<b>${esc(coin(h.sym))}</b> ${rtag(h)}</span><span class="pc-pnl ${h.pnl >= 0 ? 'up' : 'down'}">${money(h.pnl, true)}</span></div>
           <dl><div><dt>R</dt><dd>${fr(h.r)}</dd></div><div><dt>Why</dt><dd>${esc(h.why)}</dd></div><div><dt>Closed</dt><dd>${tshort(h.t1)}</dd></div></dl></div>`).join('')}</div>`;
     } else {
@@ -2228,7 +2273,7 @@
       else if (act === 'tools-m') root.classList.toggle('tools-open');
       else if (act === 'reset') {
         if (!A._armed) { A._armed = true; renderAcct(); setTimeout(() => { A._armed = false; renderAcct(); }, 3500); }
-        else { A = freshAcct(); R.back = []; store.set('rd-acct-v1', A); toast('Paper account reset to $10,000.'); renderAll(); }
+        else { A = freshAcct(); A.epoch = newId(); A.resetPending = true; R.back = []; if (R.on) newSession(); saveAcctNow(); toast('Paper account reset to $10,000 — journal cleared.'); renderAll(); emit('reset'); }
       }
       return;
     }
@@ -2302,11 +2347,11 @@
     });
     bres.addEventListener('dblclick', () => { U.bh = 0; setBH(0); saveUI(); });
   }
-  window.addEventListener('pagehide', () => { if (R.on) saveR(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && R.on) saveR(); if (!document.hidden) pollLive(); });   // the live feed checks itself on return
+  window.addEventListener('pagehide', () => { if (R.on) saveR(); saveAcctNow(); emit('hide'); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
@@ -2322,6 +2367,7 @@
   const rs = store.get('rd-replay-v1', null);
   if (rs && rs.sym && rs.clock && rs.clock < Date.now()) {
     U.sym = rs.sym; if (rs.ex) U.ex = rs.ex; R.on = true; R.clock = rs.clock; R.step = rs.step === 'small' ? 'small' : 'bar'; R.speed = +rs.speed || 800;
+    if (rs.sid && A.sess.some(x => x.id === rs.sid)) R.sid = rs.sid; else newSession();
     modeUI(); rebuildReplay();
   } else { modeUI(); loadLive(); }
   pollLive(); setInterval(pollLive, 4000);

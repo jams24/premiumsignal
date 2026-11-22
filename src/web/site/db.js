@@ -66,7 +66,24 @@ CREATE TABLE IF NOT EXISTS web_settings (
   key TEXT PRIMARY KEY,
   value JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);`;
+);
+-- the desk's paper journal (paper.js): one row per account (which journal, start balance, replay sessions) and one per
+-- closed paper trade. Open paper trades stay in the browser that opened them.
+CREATE TABLE IF NOT EXISTS web_paper (
+  user_id BIGINT PRIMARY KEY REFERENCES web_users(id) ON DELETE CASCADE,
+  epoch TEXT NOT NULL,
+  start_bal DOUBLE PRECISION NOT NULL DEFAULT 10000,
+  sess JSONB NOT NULL DEFAULT '[]',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS web_paper_trades (
+  user_id BIGINT NOT NULL REFERENCES web_users(id) ON DELETE CASCADE,
+  uid TEXT NOT NULL,
+  wt BIGINT NOT NULL,
+  data JSONB NOT NULL,
+  PRIMARY KEY (user_id, uid)
+);
+CREATE INDEX IF NOT EXISTS web_paper_trades_wt ON web_paper_trades(user_id, wt DESC);`;
 
 /** Create the tables. Never throws; logs and leaves ready() false on failure. */
 async function init() {
