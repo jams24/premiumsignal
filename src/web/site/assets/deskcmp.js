@@ -1,32 +1,57 @@
 /* ReplayDesk · Compare: a second chart beside the main one (below it on a phone) — "which one is stronger" (BTC vs ETH vs
-   SOL). Candles come straight from the exchange like the main chart. It follows the main chart's clock: in a replay it never
-   shows a candle the main chart hasn't reached (the forming candle is built from closed finer candles only). Same timeframe:
-   scroll, zoom and crosshair move together; its own timeframe: own zoom, the crosshair still points at the same moment.
-   Optional SMC marks on it, and a 24 h read-out of both coins: % change and where each sits in its 24 h high–low range. */
+   SOL), or the SAME coin on another timeframe for a top-down view (BTC 1m on the main chart, BTC 15m here). Candles come
+   straight from the exchange like the main chart. It follows the main chart's clock: in a replay it never shows a candle
+   the main chart hasn't reached (the forming candle is built from closed finer candles only). Same timeframe: scroll, zoom
+   and crosshair move together; its own timeframe: own zoom, the crosshair still points at the same moment.
+   Its own Indicators menu (volume, EMAs, high / low, PDH / PDL, sessions, FVG, trend lines, SMC, CHoCH, BOS), separate
+   from the main chart's ticks but drawn by the same code (RD.paint), and a 24 h read-out of both coins: % change and where
+   each sits in its 24 h high–low range. */
 (() => {
   'use strict';
   const RD = window.__rd, LC = window.LightweightCharts;
   if (!RD || !LC) return;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const { fp, pct, esc, coin, fv, ic, phone, hexA, nowT, fetchSpan, api, TF, RES, bucket, nextB, smcOpt, MIN, HOUR } = RD.util;
-  const U = RD.U, R = RD.R, S = RD.S, COL = RD.COL, chartEl = RD.chartEl;
+  const { fp, pct, esc, coin, fv, ic, phone, hexA, nowT, fetchSpan, api, TF, RES, bucket, nextB, smcOpt, MIN, HOUR, tshort, WEEK,
+    fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS } = RD.util;
+  const U = RD.U, R = RD.R, S = RD.S, COL = RD.COL, chartEl = RD.chartEl, PAINT = RD.paint, TLF = RD.TLF;
   const btn = $('[data-act="cmp"]');
-  const C = Object.assign({ on: false, sym: 'ETHUSDT', tf: '', smc: true }, RD.store.get('rd-cmp-v1', {}),
-    { bars: [], gen: 0, ws: null, wsT: null, buf: [], bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, prec: 2, driver: 'main', hover: null, err: '' });
-  const save = () => RD.store.set('rd-cmp-v1', { on: C.on, sym: C.sym, tf: C.tf, smc: C.smc });
+  const C = Object.assign({ on: false, sym: 'ETHUSDT', tf: '', smc: true, ind: null }, RD.store.get('rd-cmp-v1', {}),
+    { bars: [], gen: 0, ws: null, wsT: null, buf: [], bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, F: null, TL: null, tlsn: null, pd: null, ema: {},
+      key: '', prec: 2, driver: 'main', hover: null, err: '' });
+  // this chart's own indicator ticks (older saves had one SMC switch: it becomes SMC + CHoCH + BOS)
+  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false },
+    C.ind && typeof C.ind === 'object' ? C.ind : { smc: C.smc !== false, choch: C.smc !== false, bos: C.smc !== false });
+  C.ind = I;
+  const save = () => RD.store.set('rd-cmp-v1', { on: C.on, sym: C.sym, tf: C.tf, ind: I });
+  const smcAny = () => !!(I.smc || I.choch || I.bos);
   const ctf = () => C.tf || U.tf;
+  const same = () => C.sym === U.sym;
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const fpc = v => fp(v, C.prec);
+  // the main chart's timeframe → the one above it, for a top-down view of the same coin
+  const UP = { '1m': '15m', '5m': '1H', '15m': '4H', '1H': '4H', '4H': '1D', '1D': '1W', '1W': '1M' };
 
   // ---- the pane
+  const ROWS = [
+    ['vol', 'Volume'], ['ema20', 'EMA 20'], ['ema50', 'EMA 50'], ['ema200', 'EMA 200'],
+    ['hilo', 'High / low of the candles in view'],
+    ['pdhl', 'Previous day high / low (PDH / PDL)', 'Yesterday\'s high and low (UTC days) of this chart\'s coin. In a replay: the day before the replay clock. Not shown on 1W / 1M.'],
+    ['sess', 'Sessions (Asia, London, New York)', 'Session open / close lines with the main chart\'s session settings (Indicators → Sessions: which sessions, their times, shading). Shown on 1m–4H.'],
+    ['fvg', 'Fair value gaps (FVG)', 'Three candles where the first and third don\'t overlap. Green = gap below price, orange = gap above. Closed candles only.'],
+    ['tline', 'Trend lines (auto, frozen when drawn)', 'Drawn once when switched on, then kept while price moves: a × marks the first close through a line, hollow dots new touches. Redraw now (in this chart\'s legend) draws them again. The main chart\'s top-down option shows the lines drawn here.'],
+    ['tlineHtf', 'Also show higher-timeframe lines (top-down)', 'Lines drawn on a higher timeframe of this coin, on either chart, tagged with their timeframe.', 'sub'],
+    'hr',
+    ['smc', 'SMC: swing points, zones, liquidity', 'Swing labels, sweeps, supply / demand zones and equal highs / lows. On also ticks CHoCH and BOS; off clears all three.'],
+    ['choch', 'CHoCH: change of character'], ['bos', 'BOS: break of structure'],
+  ];
   const pane = document.createElement('div');
   pane.className = 'dk-cmp'; pane.hidden = true; pane.setAttribute('aria-label', 'Compare chart');
   pane.innerHTML = `<div class="cmp-bar">
-    <button type="button" class="cmp-sym" data-cx="pick" aria-haspopup="dialog" title="Change the coin">${ic('search')}<b data-cmp-name></b></button>
-    <select data-cmp-tf aria-label="Compare timeframe" title="Same as the main chart: both scroll and zoom together"><option value="">= Main</option>${Object.keys(TF).map(t => `<option value="${t}">${t}</option>`).join('')}</select>
-    <button type="button" class="cmp-b" data-cx="smc" aria-pressed="false" title="SMC marks on this chart">SMC</button>
-    <button type="button" class="cmp-b" data-cx="swap" title="Make this coin the main chart (the main coin comes here)">⇄</button>
+    <button type="button" class="cmp-sym" data-cx="pick" aria-haspopup="dialog" title="Change the coin (the main chart's coin too, on another timeframe)">${ic('search')}<b data-cmp-name></b></button>
+    <select data-cmp-tf aria-label="Compare timeframe" title="= Main: same timeframe, both scroll and zoom together. Another timeframe: its own zoom, the crosshair still points at the same moment."><option value="">= Main</option>${Object.keys(TF).map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+    <button type="button" class="cmp-b cmp-indb" data-cx="ind" aria-expanded="false" aria-haspopup="dialog" title="Indicators on this chart (its own ticks: the main chart keeps its own)">${ic('activity')}<span>Indicators</span></button>
+    <button type="button" class="cmp-b" data-cx="swap" title="Swap: this coin becomes the main chart (same coin: the two timeframes swap)">⇄</button>
     <button type="button" class="cmp-b" data-cx="x" aria-label="Close compare" title="Close compare">${ic('x')}</button>
   </div>
   <div class="cmp-legend" data-cmp-legend></div>
@@ -35,14 +60,20 @@
   <div class="cmp-pick" data-cmp-pick hidden role="dialog" aria-label="Compare with">
     <div class="cmp-pin">${ic('search')}<input data-cmp-q placeholder="Coin — ETH, SOL, PEPE…" autocomplete="off" spellcheck="false" aria-label="Coin to compare"></div>
     <div class="cmp-chips" data-cmp-chips></div>
+  </div>
+  <div class="dk-pop cmp-ipop" data-cmp-ipop hidden role="dialog" aria-label="Indicators on the compare chart">
+    <div class="cmp-ihd"><b>On this chart</b><button type="button" class="cmp-same" data-cx="indmain" title="Tick the same indicators as the main chart has now">Same as main</button></div>
+    ${ROWS.map(r => r === 'hr' ? '<hr>' : `<label${r[3] ? ' class="dk-sub"' : ''}${r[2] ? ` title="${esc(r[2])}"` : ''}><input type="checkbox" data-ci="${r[0]}"> ${esc(r[1])}</label>`).join('')}
+    <p>Its own ticks: the main chart keeps its own. FVG, trend lines and SMC read closed candles only, so in a replay nothing sees past the clock.</p>
   </div>`;
   chartEl.appendChild(pane);
   const box = $('[data-cmp-canvas]', pane), msgEl = $('[data-cmp-msg]', pane), lgEl = $('[data-cmp-legend]', pane), pickEl = $('[data-cmp-pick]', pane), qEl = $('[data-cmp-q]', pane);
+  const ipop = $('[data-cmp-ipop]', pane), indB = $('[data-cx="ind"]', pane);
   const sumEl = document.createElement('div');
   sumEl.className = 'cmp-sum'; sumEl.hidden = true; sumEl.setAttribute('aria-live', 'polite');
   chartEl.appendChild(sumEl);
 
-  let ch = null, cs = null, vs = null, mk = null;
+  let ch = null, cs = null, vs = null, mk = null; const es = {};
   function make() {
     if (ch) return;
     ch = LC.createChart(box, {
@@ -50,12 +81,13 @@
       layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11 },
       grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
       crosshair: { mode: LC.CrosshairMode.Normal, vertLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') }, horzLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') } },
-      rightPriceScale: { borderColor: css('--dk-line'), scaleMargins: { top: 0.12, bottom: 0.18 } },
+      rightPriceScale: { borderColor: css('--dk-line'), scaleMargins: { top: 0.12, bottom: I.vol ? 0.18 : 0.06 } },
       timeScale: { borderColor: css('--dk-line'), timeVisible: true, secondsVisible: false, rightOffset: 12, barSpacing: 8, minBarSpacing: 1 },
     });
     cs = ch.addSeries(LC.CandlestickSeries, Object.assign(RD.candleOpts(), { priceLineStyle: LC.LineStyle.Dashed }));
     vs = ch.addSeries(LC.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
     ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
+    for (const k in EMAS) es[k] = ch.addSeries(LC.LineSeries, { color: EMAS[k][1], lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: !!I[k] });
     mk = typeof LC.createSeriesMarkers === 'function' ? LC.createSeriesMarkers(cs, []) : null;
     cs.attachPrimitive(prim);
     // scroll / zoom / crosshair follow whichever chart the pointer is on
@@ -81,15 +113,23 @@
   const at = (B, t) => { let lo = 0, hi = B.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (B[m][0] <= t) lo = m; else hi = m - 1; } return B[lo] && B[lo][0] === t ? B[lo] : null; };
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
   const toV = b => ({ time: b[0] / 1000, value: b[5], color: RD.volColor(b[4] >= b[1]) });
+  // this chart's time → x and price → y (between candles too), for the shared painters
+  const t2l = t => t2lOf(C.bars, TF[ctf()].ms, t);
+  const t2x = t => (ch ? l2xOf(ch.timeScale(), t2l(t)) : null);
+  const p2y = p => cs.priceToCoordinate(p);
   function theme() {
     if (!ch) return;
     ch.applyOptions({ layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted }, grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
       crosshair: { vertLine: { labelBackgroundColor: css('--panel-3') }, horzLine: { labelBackgroundColor: css('--panel-3') } }, rightPriceScale: { borderColor: css('--dk-line') }, timeScale: { borderColor: css('--dk-line') } });
     cs.applyOptions(RD.candleOpts());
-    if (C.bars.length) vs.setData(C.bars.map(toV));
+    if (C.bars.length && I.vol) vs.setData(C.bars.map(toV));
     marks(); prim.req();
   }
   const say = t => { msgEl.innerHTML = t; msgEl.hidden = !t; };
+  // volume + EMAs from this chart's candles (its own ticks)
+  function setVol() { if (!ch) return; vs.setData(I.vol && C.bars.length ? C.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: I.vol ? 0.18 : 0.06 } }); }
+  function setEMAs() { if (!ch) return; for (const k in EMAS) { C.ema[k] = I[k] && C.bars.length ? emaOf(C.bars, EMAS[k][0]) : []; es[k].applyOptions({ visible: !!I[k] }); es[k].setData(C.ema[k]); } }
+  function emaLast() { for (const k in EMAS) if (I[k] && C.bars.length) { const a = emaOf(C.bars, EMAS[k][0]); C.ema[k] = a; if (a.length) es[k].update(a[a.length - 1]); } }
 
   // ---- data: live = the exchange's candles + its stream · replay = history before the clock's candle, then closed finer
   // candles (1m up to 1H, like the main replay) revealed only as the main clock passes them
@@ -103,15 +143,15 @@
   function onK(k) {
     if (R.on || !C.on) return;
     const B = C.bars, last = B[B.length - 1]; if (!last) return;
-    if (k[0] === last[0]) B[B.length - 1] = k; else if (k[0] > last[0]) { B.push(k); smcSoon(); } else return;
-    cs.update(toC(k)); vs.update(toV(k)); legendSoon();
+    if (k[0] === last[0]) B[B.length - 1] = k; else if (k[0] > last[0]) { B.push(k); runSoon(); } else return;
+    cs.update(toC(k)); if (I.vol) vs.update(toV(k)); emaLast(); legendSoon();
   }
   async function load() {
     if (!C.on || !C.sym) return;
     make();
     const g = ++C.gen, tf = ctf(); stopWs();
-    C.ex = U.ex; C.err = ''; C.A = null; C.hover = null; C.mode = '';
-    $('[data-cmp-name]', pane).textContent = coin(C.sym);
+    C.ex = U.ex; C.err = ''; C.A = null; C.F = null; C.TL = null; C.key = ''; C.hover = null; C.mode = '';
+    syncBar();
     say(`<span class="spin-s"></span> Loading ${esc(coin(C.sym))} ${tf}…`);
     try {
       if (!R.on) {
@@ -130,14 +170,15 @@
         if (!C.bars.length) throw new Error(`not listed yet at ${RD.util.tnice(clock)}`);
       }
       C.mode = R.on ? 'replay' : 'live';
+      C.key = C.ex + '|' + C.sym + '|' + tf;   // these candles are this coin + timeframe (frozen lines are kept per key)
       C.prec = guessPrec(C.bars[C.bars.length - 1][4]);
       cs.applyOptions({ priceFormat: { type: 'price', precision: C.prec, minMove: Math.pow(10, -C.prec) } });
-      cs.setData(C.bars.map(toC)); vs.setData(C.bars.map(toV));
-      fit(); say(''); smcRun(); legend();
+      cs.setData(C.bars.map(toC)); setVol(); setEMAs();
+      fit(); say(''); indRun(); legend();
       if (!R.on) startWs(g);
     } catch (e) {
       if (g !== C.gen) return;
-      C.bars = []; cs.setData([]); vs.setData([]); C.err = e.message; marks(); prim.req(); legend();
+      C.bars = []; cs.setData([]); vs.setData([]); setEMAs(); C.err = e.message; marks(); prim.req(); legend();
       say(`<b>Could not load ${esc(coin(C.sym))}</b><span>${esc(e.message)}${/Invalid symbol|not exist|-1121|10001/i.test(e.message) ? ` — it may not be listed on ${esc(api(C.ex).name)}.` : ''}</span><button type="button" class="btn btn-secondary btn-sm" data-cx="pick">Pick another coin</button>`);
     }
   }
@@ -169,59 +210,87 @@
       else if (!last || b > last[0]) { B.push([b, k[1], k[2], k[3], k[4], k[5]]); from = Math.min(from, B.length - 1); }
     }
     C.clock = clock;
-    if (!quiet && from !== Infinity) { for (let i = from; i < B.length; i++) { cs.update(toC(B[i])); vs.update(toV(B[i])); } smcSoon(); legendSoon(); }
+    if (!quiet && from !== Infinity) { for (let i = from; i < B.length; i++) { cs.update(toC(B[i])); if (I.vol) vs.update(toV(B[i])); } if (Object.keys(EMAS).some(k => I[k])) setEMAs(); runSoon(); legendSoon(); }
     if (C.buf.length < 60 && R.on) { const g = C.gen; feed(clock + 300 * TF[C.res].ms, g).then(() => { if (g === C.gen && C.clock === clock && C.buf.length && C.buf[0][0] + C.buf[0][6] <= nowT()) reveal(nowT()); }).catch(() => { /* next tick retries */ }); }
   }
 
-  // ---- SMC marks on the compare coin (closed candles only, like the main chart)
-  let smcT = null;
-  const smcSoon = () => { if (!C.smc || smcT) return; smcT = setTimeout(() => { smcT = null; smcRun(); }, R.playing ? 250 : 30); };
-  function smcRun() {
-    C.A = null;
-    if (C.smc && window.SMC && C.bars.length) {
-      const B = C.bars, tf = ctf(); let n = B.length; if (n && nextB(B[n - 1][0], tf) > nowT()) n--;
-      const base = B.slice(Math.max(0, n - 500), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);
-      if (base.length >= 12) {
-        const l = base[base.length - 1]; base.push([nextB(l[0], tf), l[4], l[4], l[4], l[4], 0]);
-        try { C.A = window.SMC.analyze(base, base.length - 1, smcOpt(tf)); } catch (e) { C.A = null; }
-      }
+  // ---- indicators that read the candles: FVG, frozen trend lines, SMC / CHoCH / BOS (closed candles only) and PDH / PDL
+  let runT = null;
+  const needRun = () => smcAny() || I.fvg || I.tline || I.pdhl;
+  const runSoon = () => { if (!needRun() || runT) return; runT = setTimeout(() => { runT = null; indRun(); }, R.playing ? 250 : 30); };
+  function indRun() {
+    C.A = null; C.F = null; C.TL = null;
+    const B = C.bars, tf = ctf(); let n = B.length; if (n && nextB(B[n - 1][0], tf) > nowT()) n--;
+    const base = B.slice(Math.max(0, n - 500), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);
+    if (I.fvg && base.length >= 3) C.F = fvgScan(base, tf);
+    if (I.tline && base.length >= 12 && C.key === C.ex + '|' + C.sym + '|' + tf) {
+      // frozen like the main chart's, in the same store (per coin + timeframe): the main chart's top-down shows them
+      const mode = R.on ? 'replay' : 'live', key = C.key;
+      let sn = TLF[mode][key];
+      if (!sn && C.tlsn && C.tlsn.key === key && C.tlsn.mode === mode) { sn = C.tlsn.sn; TLF[mode][key] = sn; if (mode === 'live') RD.tlSave(); }   // the main chart's "off" forgot them: this chart keeps its lines
+      if (!sn || sn.at > nowT()) { sn = tlSnap(base, tf); TLF[mode][key] = sn; if (mode === 'live') RD.tlSave(); }
+      C.tlsn = { key, mode, sn };
+      C.TL = tlAfterOn(sn, B, tf, t2l); C.TL.at = sn.at;
+      if (I.tlineHtf) C.TL.push(...tlTop(mode, key, B, TF[tf].ms, t2l));
     }
-    marks(); prim.req(); legend();
+    if (smcAny() && window.SMC && base.length >= 12) {
+      const l = base[base.length - 1]; base.push([nextB(l[0], tf), l[4], l[4], l[4], l[4], 0]);   // closes the last real candle
+      try { C.A = window.SMC.analyze(base, base.length - 1, smcOpt(tf)); } catch (e) { C.A = null; }
+    }
+    pdCheck(); marks(); prim.req(); legend();
   }
+  // yesterday's daily candle of this chart's coin (a replay: the day before the replay clock), once a day per coin
+  let PDB = '', PDF = { key: '', at: 0 };
+  const pdKey = () => C.ex + '|' + C.sym + '|' + bucket(nowT(), '1D');
+  const pdOK = () => I.pdhl && TF[ctf()].ms < WEEK && ctf() !== '1M';
+  function pdCheck() {
+    if (!C.on || !pdOK() || !C.sym) return;
+    const d0 = bucket(nowT(), '1D'), key = C.ex + '|' + C.sym + '|' + d0;
+    if ((C.pd && C.pd.key === key) || PDB === key || (PDF.key === key && Date.now() - PDF.at < 30e3)) return;
+    PDB = key;
+    api(C.ex).klines(C.sym, '1D', { end: d0 - 1, limit: 3 }).then(k => {
+      if (PDB !== key) return; PDB = '';
+      const p = (k || []).filter(c => c[0] < d0).pop();
+      C.pd = p ? { key, t: p[0], h: p[2], l: p[3] } : { key, none: true };
+      prim.req(); legend();
+    }).catch(() => { if (PDB === key) { PDB = ''; PDF = { key, at: Date.now() }; } });
+  }
+  const pdNow = () => (pdOK() && C.pd && !C.pd.none && C.pd.key === pdKey() ? C.pd : null);
   function marks() {
     if (!mk) return;
     const M = [], r = C.A, first = C.bars.length ? C.bars[0][0] : 0;
-    if (r && C.smc) {
+    if (r && I.smc) {
       for (const s of r.swings.slice(-30)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
       for (const w of r.sweeps.slice(-5)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
     }
     M.sort((a, b) => a.time - b.time); mk.setMarkers(M);
   }
+  // drawn with the main chart's painters on this chart's candles
+  let DRAWN = {};
+  const sctx = () => ({ bars: C.bars, tf: ctf(), t2x, p2y, ts: ch.timeScale(), H: () => box.clientHeight - ch.timeScale().height() });
+  function paint(g, W, z) {
+    if (!C.bars.length || !C.key) return;
+    const one = f => { g.save(); try { f(); } catch (e) { console.error(e); } g.restore(); };
+    if (z === 'bottom') {
+      DRAWN = {};
+      if (I.sess && RD.sessPaint) one(() => RD.sessPaint(g, W, 'bottom', sctx()));
+      if (I.fvg && C.F) one(() => { DRAWN.fvg = PAINT.fvg(g, W, { ms: TF[ctf()].ms, list: C.F.filter(f => !f.filled).slice(-8), t2x, p2y }); });
+      if (smcAny() && C.A) one(() => { DRAWN.smc = PAINT.smc(g, W, { r: C.A, all: false, smc: I.smc, taken: U.smcTaken, choch: I.choch, bos: I.bos, t2x, p2y }); });
+    } else {
+      if (I.hilo) one(() => { PAINT.hilo(g, W, { bars: C.bars, ts: ch.timeScale(), p2y, fp: fpc, covers: () => PAINT.covers(box, [$('.cmp-bar', pane), pickEl, ipop, sumEl], [lgEl]) }); DRAWN.hilo = true; });
+      if (I.sess && RD.sessPaint) one(() => { DRAWN.sess = RD.sessPaint(g, W, 'top', sctx()); });
+      if (I.tline && C.TL) one(() => { DRAWN.tl = PAINT.tl(g, W, { ts: ch.timeScale(), bars: C.bars, lines: C.TL, t2l, p2y, fp: fpc }); });
+      const pd = pdNow(); if (pd) one(() => { PAINT.pd(g, W, { pd, t2x, p2y, fp: fpc }); DRAWN.pd = true; });
+    }
+  }
   const prim = {
     _p: null, attached(p) { this._p = p; }, detached() { this._p = null; }, req() { if (this._p) this._p.requestUpdate(); }, updateAllViews() { /* drawn from state */ },
-    paneViews() { return [{ zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => drawSMC(s.context, s.mediaSize.width)) }) }]; },
+    paneViews() { return VIEWS; },
   };
-  const tx = t => ch.timeScale().timeToCoordinate(t / 1000), py = p => cs.priceToCoordinate(p);
-  function lab(g, text, x, y, color, align) {
-    g.font = '600 10px "Geist Mono", ui-monospace, monospace'; const w = g.measureText(text).width;
-    g.fillStyle = color; g.textBaseline = 'middle'; g.fillText(text, align === 'right' ? x - w - 4 : align === 'center' ? x - w / 2 : x + 4, y);
-  }
-  function drawSMC(g, W) {
-    const r = C.A; if (!r || !C.smc) return;
-    for (const z of r.zones.filter(z => !z.broken).slice(-5)) {
-      const x0 = tx(z.t), y0 = py(z.top), y1 = py(z.bot); if (x0 == null || y0 == null || y1 == null) continue;
-      const c = z.type === 'demand' ? COL.up : COL.down;
-      g.fillStyle = hexA(c, 0.11); g.fillRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
-      g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
-      lab(g, z.type === 'demand' ? 'Demand' : 'Supply', x0, Math.min(y0, y1) + 9, c);
-    }
-    for (const b of r.breaks.slice(-6)) {
-      const x0 = tx(b.fromT), x1 = tx(b.t), y = py(b.p); if (x0 == null || x1 == null || y == null) continue;
-      const c = b.dir === 1 ? COL.up : COL.down;
-      g.strokeStyle = c; g.setLineDash([5, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
-      lab(g, b.kind, (x0 + x1) / 2, y + (b.dir === 1 ? -9 : 9), c, 'center');
-    }
-  }
+  const VIEWS = [
+    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => paint(s.context, s.mediaSize.width, 'bottom')) }) },
+    { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => paint(s.context, s.mediaSize.width, 'top')) }) },
+  ];
 
   // ---- legend + the 24 h read-out of both coins
   function day(B, clock) {   // last 24 h of candles before the clock: change and where the price sits in the high–low range
@@ -232,16 +301,26 @@
     const s = Math.min(end, i + 1), open = B[s][1], c = B[end][4];
     return { chg: (c / open - 1) * 100, pos: hi > lo ? (c - lo) / (hi - lo) : 0.5, hrs: Math.max(1, Math.round((clock - B[s][0]) / HOUR)) };
   }
+  const emaAt = (k, t) => { const a = C.ema[k] || []; if (!a.length) return null; if (t == null) return a[a.length - 1].value; let lo = 0, hi = a.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (a[m].time <= t) lo = m; else hi = m - 1; } return a[lo].time === t ? a[lo].value : null; };
   let lgQ = false;
   const legendSoon = () => { if (lgQ) return; lgQ = true; requestAnimationFrame(() => { lgQ = false; legend(); }); };
   function legend() {
     if (!C.on) { sumEl.hidden = true; return; }
     const b = C.hover || C.bars[C.bars.length - 1];
     if (b) {
-      const d = b[4] - b[1], cl = d >= 0 ? 'up' : 'down';
+      const d = b[4] - b[1], cl = d >= 0 ? 'up' : 'down', bits = [];
+      for (const k in EMAS) if (I[k]) { const v = emaAt(k, C.hover ? C.hover[0] / 1000 : null); if (v != null) bits.push(`<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} <b>${fpc(v)}</b></span>`); }
+      if (smcAny() && C.A) bits.push(`<span>SMC trend <b class="${C.A.trend === 1 ? 'up' : C.A.trend === -1 ? 'down' : ''}">${C.A.trend === 1 ? 'up' : C.A.trend === -1 ? 'down' : '—'}</b></span>`);
+      const pd = pdNow(); if (pd) bits.push(`<span>PDH <b>${fpc(pd.h)}</b> · PDL <b>${fpc(pd.l)}</b></span>`);
+      if (I.tline && C.TL) {
+        const nb = C.TL.filter(l => l.liveBrk != null).length, ht = C.TL.filter(l => l.htf).length;
+        bits.push(`<span>Trend lines drawn <b>${esc(tshort(C.TL.at))}</b>${ht ? ` · +${ht} higher tf` : ''}${nb ? ` · ${nb} broken since` : ''} <button type="button" class="cmp-lb" data-cx="tlredraw" title="Draw the lines again from the latest closed candles">Redraw now</button></span>`);
+      }
+      if (I.vol) bits.push(`<span>Vol <b>${fv(b[5])}</b></span>`);
       lgEl.innerHTML = `<div class="l1"><b>${esc(coin(C.sym))}/USDT · ${ctf()}</b><span class="ohlc"><span><em>O</em>${fpc(b[1])}</span><span><em>H</em>${fpc(b[2])}</span><span><em>L</em>${fpc(b[3])}</span><span class="${cl}"><em>C</em>${fpc(b[4])}</span><span class="${cl}">${pct(d / b[1] * 100)}</span></span></div>` +
-        (C.smc && C.A ? `<div class="l2"><span>SMC trend <b class="${C.A.trend === 1 ? 'up' : C.A.trend === -1 ? 'down' : ''}">${C.A.trend === 1 ? 'up' : C.A.trend === -1 ? 'down' : '—'}</b></span><span>Vol <b>${fv(b[5])}</b></span></div>` : '');
+        (bits.length ? `<div class="l2">${bits.join('')}</div>` : '');
     } else lgEl.innerHTML = '';
+    if (same()) { sumEl.hidden = true; return; }   // the same coin on two timeframes: nothing to compare
     const clock = R.on ? nowT() : Date.now() + MIN, a = day(S.bars, clock), c = day(C.bars, clock);
     if (!a || !c) { sumEl.hidden = true; return; }
     const hrs = Math.min(a.hrs, c.hrs), lbl = hrs >= 24 ? '24h' : hrs + 'h';
@@ -251,14 +330,20 @@
     sumEl.hidden = false;
   }
 
-  // ---- open / close / pick a coin
+  // ---- open / close / pick a coin / indicators
+  function syncBar() {
+    $('[data-cmp-name]', pane).textContent = coin(C.sym);
+    const sel = $('[data-cmp-tf]', pane); sel.value = C.tf; sel.options[0].textContent = `= Main (${U.tf})`;
+    $$('[data-ci]', ipop).forEach(i => { i.checked = !!I[i.dataset.ci]; });
+    const n = ROWS.filter(r => r !== 'hr' && !r[3] && I[r[0]]).length;
+    indB.classList.toggle('has', n > 0); indB.title = `Indicators on this chart: ${n} on (its own ticks: the main chart keeps its own)`;
+  }
   function show(on) {
     C.on = on; save();
     pane.hidden = !on; chartEl.classList.toggle('cmp-on', on);
     if (btn) { btn.setAttribute('aria-pressed', String(on)); btn.classList.toggle('on', on); }
-    $('[data-cx="smc"]', pane).setAttribute('aria-pressed', String(!!C.smc));
-    $('[data-cmp-tf]', pane).value = C.tf;
-    if (on) { if (S.bars.length) load(); } else { C.gen++; stopWs(); C.bars = []; sumEl.hidden = true; pickEl.hidden = true; if (ch) { cs.setData([]); vs.setData([]); } }
+    syncBar();
+    if (on) { if (S.bars.length) load(); } else { C.gen++; stopWs(); C.bars = []; C.key = ''; sumEl.hidden = true; pickEl.hidden = true; indPop(false); if (ch) { cs.setData([]); vs.setData([]); setEMAs(); } }
   }
   function norm(q) {
     q = String(q || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -266,30 +351,76 @@
     return /USDT$/.test(q) ? q : q + 'USDT';
   }
   function openPick() {
+    indPop(false);
     const wl = RD.store.get('rd-wl-v1', null) || [];
-    const list = Array.from(new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].concat(wl))).filter(s => s !== U.sym).slice(0, 14);
-    $('[data-cmp-chips]', pane).innerHTML = list.map(s => `<button type="button" data-cs="${esc(s)}"${s === C.sym ? ' class="on"' : ''}>${esc(coin(s))}</button>`).join('');
+    const list = Array.from(new Set([U.sym, 'BTCUSDT', 'ETHUSDT', 'SOLUSDT'].concat(wl))).slice(0, 15);
+    $('[data-cmp-chips]', pane).innerHTML = list.map(s => s === U.sym
+      ? `<button type="button" data-cs="${esc(s)}" class="main${s === C.sym ? ' on' : ''}" title="The main chart's coin on another timeframe: a top-down view">${esc(coin(s))} · main</button>`
+      : `<button type="button" data-cs="${esc(s)}"${s === C.sym ? ' class="on"' : ''}>${esc(coin(s))}</button>`).join('');
     pickEl.hidden = false; qEl.value = ''; qEl.focus();
   }
   function choose(sym) {
     sym = norm(sym); if (!sym) return;
     pickEl.hidden = true;
-    if (sym === U.sym) { RD.toast(`${coin(sym)} is already the main chart.`); return; }
+    // the main chart's coin on the main chart's timeframe would be the same chart twice: go one timeframe up (top-down)
+    if (sym === U.sym && ctf() === U.tf && UP[U.tf]) { C.tf = UP[U.tf]; RD.toast(`${coin(sym)} ${C.tf} next to the main ${U.tf}: a top-down view. Change the timeframe in the box beside the coin.`); }
     C.sym = sym; save(); load();
+  }
+  function indPop(open) {
+    ipop.hidden = !open; indB.setAttribute('aria-expanded', String(open));
+    if (open) { pickEl.hidden = true; syncBar(); }
+  }
+  function apply(k) {
+    if (k === 'vol') setVol();
+    else if (k in EMAS) setEMAs();
+    else if (k === 'hilo' || k === 'sess') prim.req();
+    else indRun();
+    syncBar(); legend();
+  }
+  ipop.addEventListener('change', e => {
+    const i = e.target.closest('[data-ci]'); if (!i) return;
+    const k = i.dataset.ci; I[k] = i.checked;
+    if (k === 'smc') { I.choch = I.smc; I.bos = I.smc; }
+    if (k === 'tline' && !I.tline) forgetLines();
+    save(); apply(k);
+  });
+  function forgetLines() {   // off / Redraw now: this chart's frozen lines go (the main chart's other coins / timeframes stay)
+    const mode = R.on ? 'replay' : 'live';
+    if (C.key && !(U.tline && C.key === U.ex + '|' + U.sym + '|' + U.tf)) { delete TLF[mode][C.key]; if (mode === 'live') RD.tlSave(); }
+    C.tlsn = null;
   }
   qEl.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); choose(qEl.value); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); pickEl.hidden = true; }
   });
-  document.addEventListener('pointerdown', e => { if (!pickEl.hidden && !pickEl.contains(e.target) && !e.target.closest('[data-cx="pick"]')) pickEl.hidden = true; }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !ipop.hidden) { e.stopPropagation(); indPop(false); } }, true);
+  document.addEventListener('pointerdown', e => {
+    if (!pickEl.hidden && !pickEl.contains(e.target) && !e.target.closest('[data-cx="pick"]')) pickEl.hidden = true;
+    if (!ipop.hidden && !ipop.contains(e.target) && !e.target.closest('[data-cx="ind"]')) indPop(false);
+  }, true);
   pane.addEventListener('click', e => {
     const cs2 = e.target.closest('[data-cs]'); if (cs2) { choose(cs2.dataset.cs); return; }
     const b = e.target.closest('[data-cx]'); if (!b) return;
     const k = b.dataset.cx;
     if (k === 'x') show(false);
     else if (k === 'pick') { if (pickEl.hidden) openPick(); else pickEl.hidden = true; }
-    else if (k === 'smc') { C.smc = !C.smc; save(); b.setAttribute('aria-pressed', String(C.smc)); smcRun(); if (C.smc && !window.SMC) RD.toast('The SMC overlay did not load. Reload the page.', 'down'); }
-    else if (k === 'swap') { if (!C.bars.length) return; const other = C.sym; C.sym = U.sym; save(); RD.setSymbol(other); }
+    else if (k === 'ind') indPop(ipop.hidden);
+    else if (k === 'indmain') {   // the main chart's ticks, copied once (each chart keeps its own after that)
+      const ss = window.__rdSess && window.__rdSess.P;
+      Object.assign(I, { vol: !!U.vol, ema20: !!U.ema20, ema50: !!U.ema50, ema200: !!U.ema200, hilo: !!U.hilo, pdhl: !!U.pdhl, sess: !!(ss && ss.on), fvg: !!U.smcFvg, tline: !!U.tline, tlineHtf: U.tlineHtf !== false, smc: !!U.smc, choch: !!U.choch, bos: !!U.bos });
+      save(); setVol(); setEMAs(); indRun(); syncBar(); legend();
+    }
+    else if (k === 'tlredraw') {   // both charts show the same lines for one coin + timeframe: a redraw is for both
+      const mode = R.on ? 'replay' : 'live'; C.tlsn = null; if (C.key) { delete TLF[mode][C.key]; if (mode === 'live') RD.tlSave(); } indRun();
+    }
+    else if (k === 'swap') {
+      if (!C.bars.length) return;
+      if (same()) {   // the same coin: the two timeframes swap
+        const ct = ctf(); if (ct === U.tf) { RD.toast('Both charts show the same coin and timeframe: nothing to swap.'); return; }
+        C.tf = U.tf; save(); RD.setTF(ct); return;
+      }
+      const other = C.sym; C.sym = U.sym; save(); RD.setSymbol(other);
+    }
   });
   $('[data-cmp-tf]', pane).addEventListener('change', e => { C.tf = e.target.value; save(); load(); });
   document.addEventListener('click', e => {
@@ -297,8 +428,8 @@
     show(!C.on);
   });
 
-  // ---- follow the main chart
-  RD.on('load', () => { if (C.on) { if (C.sym === U.sym) { C.sym = U.sym === 'BTCUSDT' ? 'ETHUSDT' : 'BTCUSDT'; save(); } load(); } });
+  // ---- follow the main chart (its coin may be this one: then this is a top-down view of it)
+  RD.on('load', () => { if (C.on) load(); else syncBar(); });
   RD.on('tick', () => {
     if (!C.on || !C.bars.length) return;
     if (R.on && C.mode === 'replay' && nowT() > C.clock) reveal(nowT());
@@ -309,11 +440,10 @@
   // even for the second until the main chart's replay is ready (its 'load' then loads this one again)
   RD.on('mode', () => {
     if (!C.on) return;
-    C.gen++; stopWs(); C.mode = ''; C.bars = []; C.buf = []; C.A = null; C.hover = null;
-    if (ch) { cs.setData([]); vs.setData([]); marks(); prim.req(); }
+    C.gen++; stopWs(); C.mode = ''; C.bars = []; C.buf = []; C.A = null; C.F = null; C.TL = null; C.tlsn = null; C.key = ''; C.hover = null;
+    if (ch) { cs.setData([]); vs.setData([]); setEMAs(); marks(); prim.req(); }
     sumEl.hidden = true; lgEl.innerHTML = ''; say(`<span class="spin-s"></span> Loading ${esc(coin(C.sym))}…`);
   });
-  // the live feed checks itself when the tab comes back (fills the gap, reopens a dead socket)
-  window.__rdCmp = { C, show, load };   // for tests
-  if (C.on) show(true);
+  window.__rdCmp = { C, I, show, load, indRun, choose, openPick, get DRAWN() { return DRAWN; } };   // for tests
+  if (C.on) show(true); else syncBar();
 })();

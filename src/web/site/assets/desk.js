@@ -344,13 +344,14 @@
   const lastBar = () => S.bars[S.bars.length - 1];
   const nowT = () => R.on ? R.clock : Date.now();
 
-  function emaArr(n) {
+  function emaArr(n) { return emaOf(S.bars, n); }
+  function emaOf(B, n) {   // also the Compare chart's
     const out = [], k = 2 / (n + 1); let e = null, sum = 0;
-    for (let i = 0; i < S.bars.length; i++) {
-      const c = S.bars[i][4];
+    for (let i = 0; i < B.length; i++) {
+      const c = B[i][4];
       if (i < n - 1) { sum += c; continue; }
       if (e == null) { sum += c; e = sum / n; } else e = c * k + e * (1 - k);
-      out.push({ time: S.bars[i][0] / 1000, value: e });
+      out.push({ time: B[i][0] / 1000, value: e });
     }
     return out;
   }
@@ -897,8 +898,9 @@
   let PENS = [];   // strokes of this pencil session, newest last (Undo)
   const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
-  function t2l(t) {
-    const B = S.bars, n = B.length, ms = TF[U.tf].ms; if (!n) return null;
+  function t2l(t) { return t2lOf(S.bars, TF[U.tf].ms, t); }
+  function t2lOf(B, ms, t) {   // any chart's candles (the Compare chart too)
+    const n = B.length; if (!n) return null;
     if (t <= B[0][0]) return (t - B[0][0]) / ms;
     if (t >= B[n - 1][0]) return n - 1 + (t - B[n - 1][0]) / ms;
     let lo = 0, hi = n - 1;
@@ -906,13 +908,14 @@
     return lo + (t - B[lo][0]) / (B[hi][0] - B[lo][0]);
   }
   // the chart library answers 0 for a position between two candles (a 1m time on a 5m chart), so interpolate between them
-  const t2x = t => {
-    const l = t2l(t); if (l == null) return null;
-    const ts = chart.timeScale(), i = Math.floor(l), x0 = ts.logicalToCoordinate(i);
+  const t2x = t => l2xOf(chart.timeScale(), t2l(t));
+  function l2xOf(ts, l) {
+    if (l == null) return null;
+    const i = Math.floor(l), x0 = ts.logicalToCoordinate(i);
     if (x0 == null || l === i) return x0;
     const x1 = ts.logicalToCoordinate(i + 1);
     return x1 == null ? x0 : x0 + (x1 - x0) * (l - i);
-  };
+  }
   function x2t(x) {
     const B = S.bars, n = B.length, ms = TF[U.tf].ms;
     let l = chart.timeScale().coordinateToLogical(x); if (l == null || !n) return null;
@@ -1012,8 +1015,10 @@
   // Recent: the newest 8 not filled yet · Whole chart: every gap, filled ones fainter
   const FVG_LEN = 15;
   let FVGBOX = [];   // what was drawn last, for tests
-  function drawFVG(g, W) {
-    const ms = TF[U.tf].ms, list = U.smcAll ? FVGS : FVGS.filter(f => !f.filled).slice(-8), out = [];
+  function drawFVG(g, W) { FVGBOX = paintFVG(g, W, { ms: TF[U.tf].ms, list: U.smcAll ? FVGS : FVGS.filter(f => !f.filled).slice(-8), t2x, p2y }); }
+  // the painters below draw on any chart: o carries that chart's candles / time → x / price → y (main or Compare)
+  function paintFVG(g, W, o) {
+    const ms = o.ms, list = o.list, out = [], t2x = o.t2x, p2y = o.p2y;
     g.font = '600 9px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
     for (const f of list) {
       const x0 = t2x(f.t), xl = t2x(f.t + FVG_LEN * ms), xf = f.filled ? t2x(f.filled) : null;
@@ -1029,16 +1034,17 @@
       if (h >= 9 && xr - x0 >= 28) { g.textAlign = 'right'; g.fillText('FVG', xr - 3, y + h / 2 + 0.5); }   // inside, right end
       else if (x0 + w + 24 < W) { g.textAlign = 'left'; g.fillText('FVG', x0 + w + 3, y + h / 2 + 0.5); }   // thin gap: just after the box
     }
-    FVGBOX = out;
+    return out;
   }
   let TLBOX = [];   // what was drawn last, for tests
-  function drawTL(g, W) {
-    const ts = chart.timeScale(), B = S.bars; if (!B.length) return;
+  function drawTL(g, W) { TLBOX = paintTL(g, W, { ts: chart.timeScale(), bars: S.bars, lines: TLS, t2l, p2y, fp }); }
+  function paintTL(g, W, o) {
+    const ts = o.ts, B = o.bars, t2l = o.t2l, p2y = o.p2y, fp = o.fp; if (!B.length) return [];
     const xr = ts.coordinateToLogical(W), Lr = xr == null ? B.length + 5 : Math.ceil(xr) + 1, Ln = B.length - 1, out = [];
     g.font = '600 10px "Geist Mono", ui-monospace, monospace';
     const seg = (La, Lb, at, dash) => { const xa = ts.logicalToCoordinate(La), xb = ts.logicalToCoordinate(Lb), ya = p2y(at(La)), yb = p2y(at(Lb));
       if (xa == null || xb == null || ya == null || yb == null) return null; g.setLineDash(dash); g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb, yb); g.stroke(); g.setLineDash([]); return [xa, ya, xb, yb]; };
-    for (const l of TLS) {
+    for (const l of o.lines) {
       const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) continue;
       const at = L => l.p1 + (l.p2 - l.p1) * (L - L1) / (L2 - L1), c = l.side === 'L' ? COL.up : COL.down, htf = !!l.htf;
       const pre = l.brkT != null, Lb = l.liveBrk != null ? t2l(l.liveBrk) : null, holding = !pre && Lb == null;
@@ -1063,14 +1069,15 @@
       if (holding && xn != null && yn != null && xn > 0 && xn < W - 60) label(g, (htf ? l.htf + ' ' : '') + fp(vn), xn + 8, yn + (l.side === 'L' ? 11 : -11), c, 'left', COL.panel);
       out.push({ side: l.side, broken: !holding, pre, liveBrk: l.liveBrk, htf: l.htf || null, x0: box[0], y0: box[1], x1: box[2], y1: box[3], now: vn, nT: l.nT });
     }
-    TLBOX = out;
+    return out;
   }
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
   function smcAny() { return !!(U.smc || U.choch || U.bos); }   // anything that needs the SMC engine
-  function drawSMC(g, W) {
-    const r = SMCR; if (!r) return;
-    const all = !!U.smcAll, done = { zones: 0, eqs: 0, breaks: [] };
-    if (U.smc) {
+  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, t2x, p2y }); if (d) SMCDRAWN = d; }
+  function paintSMC(g, W, o) {
+    const r = o.r, t2x = o.t2x, p2y = o.p2y; if (!r) return null;
+    const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [] };
+    if (o.smc) {
     // Whole chart: past zones too, faint, from the order block to the candle that closed through them
     if (all) for (const z of r.zones) {
       if (!z.broken) continue;
@@ -1091,7 +1098,7 @@
     // it, "swept" = wick through and closed back, "broken" = closed through. Recent: the newest 6 · Whole chart: all
     // two pairs at one price (lows 1+2 and 1+3) are one level: drawn once, so they don't use up the newest-N slots
     const uniq = a => { const s = new Set(); return a.filter(e => { const k = e.kind + e.p + '|' + (e.taken || 0); if (s.has(k)) return false; s.add(k); return true; }); };
-    if (U.smcTaken) for (const e of (all ? uniq(r.eqs.filter(e => e.taken)) : uniq(r.eqs.filter(e => e.taken)).slice(-6))) {
+    if (o.taken) for (const e of (all ? uniq(r.eqs.filter(e => e.taken)) : uniq(r.eqs.filter(e => e.taken)).slice(-6))) {
       const x0 = t2x(e.t1), x1 = t2x(e.taken - r.tf), y = p2y(e.p); if (x0 == null || y == null) continue;
       const xe = x1 == null ? W : x1; if (xe < 0 || x0 > W) continue;
       g.strokeStyle = hexA(COL.warn, 0.38); g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(xe, y); g.stroke(); g.setLineDash([]);
@@ -1103,7 +1110,7 @@
       label(g, e.kind, W - 4, y + (e.side === 'H' ? -9 : 9), COL.warn, 'right', 'transparent'); done.eqs++;
     }
     }
-    const BR = r.breaks.filter(b => b.kind === 'CHoCH' ? U.choch : U.bos);   // CHoCH and BOS each by their own tick
+    const BR = r.breaks.filter(b => b.kind === 'CHoCH' ? o.choch : o.bos);   // CHoCH and BOS each by their own tick
     for (const b of (all ? BR : BR.slice(-8))) {
       const x0 = t2x(b.fromT), x1 = t2x(b.t), y = p2y(b.p); if (x0 == null || x1 == null || y == null) continue;
       done.breaks.push(b.kind);
@@ -1111,7 +1118,7 @@
       g.strokeStyle = c; g.setLineDash([5, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
       label(g, b.kind, (x0 + x1) / 2, y + (b.dir === 1 ? -9 : 9), c, 'center', 'transparent');
     }
-    SMCDRAWN = done;
+    return done;
   }
   // previous day high / low: yesterday's daily candle of this market (UTC days; FX skips the weekend), fetched once a day
   // per market. In a replay "yesterday" is the day before the replay clock, a day that has fully closed: no peeking.
@@ -1130,10 +1137,12 @@
       PDK = key; PDAY = p ? { key, t: p[0], h: p[2], l: p[3] } : null; prim.req(); legend();
     }).catch(() => { if (PDBUSY === key) { PDBUSY = ''; PDFAIL = { key, at: Date.now() }; } });
   }
-  function drawPD(g, W) {
-    const xa = t2x(PDAY.t), x0 = xa == null ? 0 : Math.max(0, xa); if (x0 >= W) return;
+  function drawPD(g, W) { paintPD(g, W, { pd: PDAY, t2x, p2y, fp }); }
+  function paintPD(g, W, o) {
+    const pd = o.pd, t2x = o.t2x, p2y = o.p2y, fp = o.fp;
+    const xa = t2x(pd.t), x0 = xa == null ? 0 : Math.max(0, xa); if (x0 >= W) return;
     g.font = '600 10px "Geist Mono", ui-monospace, monospace';
-    for (const [p, name] of [[PDAY.h, 'PDH'], [PDAY.l, 'PDL']]) {
+    for (const [p, name] of [[pd.h, 'PDH'], [pd.l, 'PDL']]) {
       const y = p2y(p); if (y == null) continue;
       g.strokeStyle = hexA(COL.pri, 0.85); g.lineWidth = 1.5; g.beginPath(); g.moveTo(x0, y); g.lineTo(W, y); g.stroke();
       label(g, name + ' ' + fp(p), W - 4, y + (name === 'PDH' ? -9 : 9), COL.pri, 'right', COL.bg);   // solid: readable over the newest candles
@@ -1141,18 +1150,23 @@
   }
   // the highest high and lowest low of the candles on screen, like TradingView's high / low labels: a faint line from
   // that candle to the price axis and its price. Follows scrolling and zooming; in a replay only candles up to the clock exist.
-  function drawHiLo(g, W) {
-    const B = S.bars, n = B.length, r = chart.timeScale().getVisibleLogicalRange(); if (!n || !r) return;
-    const i0 = Math.max(0, Math.ceil(r.from)), i1 = Math.min(n - 1, Math.floor(r.to)); if (i1 - i0 < 2) return;
-    const cr = box.getBoundingClientRect(), covers = [];
+  function drawHiLo(g, W) { paintHiLo(g, W, { bars: S.bars, ts: chart.timeScale(), p2y, fp, covers: () => coversOf(box, [document.querySelector('.dk-qt'), document.querySelector('.tt')], [document.querySelector('[data-legend]')]) }); }
+  // what sits on a chart (Buy / Sell box, a table, the legend's text lines), in that chart's px, for labels to step around
+  function coversOf(host, els, texts) {
+    const cr = host.getBoundingClientRect(), covers = [];
     const add = r => { if (r.width > 0 && r.height > 0) covers.push({ l: r.left - cr.left - 2, r: r.right - cr.left + 2, t: r.top - cr.top - 1, b: r.bottom - cr.top + 1 }); };
-    for (const el of [document.querySelector('.dk-qt'), document.querySelector('.tt')]) if (el && !el.hidden && el.offsetParent) add(el.getBoundingClientRect());
-    const lg = document.querySelector('[data-legend]');
-    if (lg && lg.offsetParent) { const rg = document.createRange(); rg.selectNodeContents(lg); for (const r of rg.getClientRects()) add(r); }
+    for (const el of els) if (el && !el.hidden && el.offsetParent) add(el.getBoundingClientRect());
+    for (const lg of texts) if (lg && lg.offsetParent) { const rg = document.createRange(); rg.selectNodeContents(lg); for (const r of rg.getClientRects()) add(r); }
+    return covers;
+  }
+  function paintHiLo(g, W, o) {
+    const B = o.bars, ts = o.ts, p2y = o.p2y, fp = o.fp, n = B.length, r = ts.getVisibleLogicalRange(); if (!n || !r) return;
+    const i0 = Math.max(0, Math.ceil(r.from)), i1 = Math.min(n - 1, Math.floor(r.to)); if (i1 - i0 < 2) return;
+    const covers = o.covers();
     let hi = i0, lo = i0;
     for (let i = i0; i <= i1; i++) { if (B[i][2] > B[hi][2]) hi = i; if (B[i][3] < B[lo][3]) lo = i; }
     for (const [i, p, tag, dy] of [[hi, B[hi][2], 'High', -1], [lo, B[lo][3], 'Low', 1]]) {
-      const x = chart.timeScale().logicalToCoordinate(i), y = p2y(p); if (x == null || y == null) continue;
+      const x = ts.logicalToCoordinate(i), y = p2y(p); if (x == null || y == null) continue;
       const txt = `${tag} ${fp(p)}`;
       g.font = '600 10.5px "Geist Mono", ui-monospace, monospace';
       const w = g.measureText(txt).width + 10; let ly = y + dy * 11;
@@ -1824,15 +1838,7 @@
       let sn = TLF[mode][key];
       if (!sn || sn.at > nowT()) { sn = tlSnap(base, U.tf); TLF[mode][key] = sn; if (mode === 'live') tlSave(); }
       TLS = tlAfter(sn); TLS.at = sn.at;
-      if (U.tlineHtf) for (const k in TLF[mode]) {   // top-down: the lines drawn on this coin's higher timeframes
-        const h = TLF[mode][k]; if (k === key || !k.startsWith(U.ex + '|' + U.sym + '|') || !TF[h.tf] || TF[h.tf].ms <= tfMs || h.at > nowT()) continue;
-        // the holding line nearest to price on each side, so a few timeframes stay readable
-        const Ln = S.bars.length - 1, px = S.bars[Ln][4], val = l => { const L1 = t2l(l.t1), L2 = t2l(l.t2); return L1 == null || L2 == null || L2 === L1 ? null : l.p1 + (l.p2 - l.p1) * (Ln - L1) / (L2 - L1); };
-        for (const side of ['L', 'H']) {
-          const c = h.lines.filter(l => l.side === side && l.brkT == null).map(l => [l, val(l)]).filter(x => x[1] != null && x[1] > 0).sort((a, b) => Math.abs(a[1] - px) - Math.abs(b[1] - px))[0];
-          if (c) TLS.push(Object.assign({}, c[0], { htf: h.tf, liveBrk: null, liveTouches: [] }));
-        }
-      }
+      if (U.tlineHtf) TLS.push(...tlTop(mode, key, S.bars, tfMs, t2l));   // top-down: the lines drawn on this coin's higher timeframes
     }
     if (!smcAny() || !window.SMC) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
@@ -1896,20 +1902,35 @@
     return { at: nowT(), tf, last: base[base.length - 1][0], atr: L.atr, lines: L.map(l => ({ side: l.side, t1: l.tp, p1: l.v0, t2: l.tq, p2: l.v0 + l.s * (l.iq - l.i0), brkT: l.brkT, touches: l.touches, nT: l.nT })) };
   }
   // what price did at a frozen line after it was drawn (closed candles on this chart): the first close through it, new touches
-  function tlAfter(sn) {
-    const B = S.bars, now = nowT(), tol = 0.1 * (sn.atr || 0);
+  function tlAfter(sn) { return tlAfterOn(sn, S.bars, U.tf, t2l); }
+  function tlAfterOn(sn, B, tf, t2l) {   // also the Compare chart's (its candles and timeframe)
+    const now = nowT(), tol = 0.1 * (sn.atr || 0);
     return sn.lines.map(l => {
       const o = Object.assign({}, l, { liveBrk: null, liveTouches: [] }); if (l.brkT != null) return o;
       const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) return o;
       let lo = 0, hi = B.length; while (lo < hi) { const m = (lo + hi) >> 1; if (B[m][0] <= sn.last) lo = m + 1; else hi = m; }
       let lastT = -9;
-      for (let i = lo; i < B.length && nextB(B[i][0], U.tf) <= now; i++) {
+      for (let i = lo; i < B.length && nextB(B[i][0], tf) <= now; i++) {
         const v = l.p1 + (l.p2 - l.p1) * (i - L1) / (L2 - L1), b = B[i];
         if (l.side === 'L' ? b[4] < v : b[4] > v) { o.liveBrk = b[0]; break; }
         if (Math.abs((l.side === 'L' ? b[3] : b[2]) - v) <= tol) { if (i - lastT > 1) o.liveTouches.push(b[0]); lastT = i; }
       }
       return o;
     });
+  }
+  // top-down: lines drawn on the higher timeframes of the coin in key (ex|sym|tf), on the main chart or the Compare chart —
+  // the holding line nearest to price on each side per timeframe, so a few timeframes stay readable
+  function tlTop(mode, key, B, tfMs, t2l) {
+    const out = [], pre = key.split('|').slice(0, 2).join('|') + '|'; if (!B.length) return out;
+    const Ln = B.length - 1, px = B[Ln][4], val = l => { const L1 = t2l(l.t1), L2 = t2l(l.t2); return L1 == null || L2 == null || L2 === L1 ? null : l.p1 + (l.p2 - l.p1) * (Ln - L1) / (L2 - L1); };
+    for (const k in TLF[mode]) {
+      const h = TLF[mode][k]; if (k === key || !k.startsWith(pre) || !TF[h.tf] || TF[h.tf].ms <= tfMs || h.at > nowT()) continue;
+      for (const side of ['L', 'H']) {
+        const c = h.lines.filter(l => l.side === side && l.brkT == null).map(l => [l, val(l)]).filter(x => x[1] != null && x[1] > 0).sort((a, b) => Math.abs(a[1] - px) - Math.abs(b[1] - px))[0];
+        if (c) out.push(Object.assign({}, c[0], { htf: h.tf, liveBrk: null, liveTouches: [] }));
+      }
+    }
+    return out;
   }
   function fvgScan(B, tf) {
     const out = []; let atr = null, open = [];
@@ -2291,10 +2312,10 @@
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
-    t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
+    t2x, p2y, label, req: () => prim.req(), tlSave, paint: { fvg: paintFVG, tl: paintTL, smc: paintSMC, pd: paintPD, hilo: paintHiLo, covers: coversOf }, legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
     pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
-    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, nextB, smcOpt, MIN, HOUR, DAY, WEEK_OFF, liqOf } };
+    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, nextB, smcOpt, MIN, HOUR, DAY, WEEK, WEEK_OFF, liqOf, fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS } };
   root.classList.toggle('b-min', !!U.bmin);
   playUI(); toolUI(); headUI(); renderWatch(); renderAll(); stepLabel();
   symList(U.ex).then(() => { if (S.bars.length) applyMeta(); }).catch(() => { /* precision guessed from prices */ });

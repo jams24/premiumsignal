@@ -96,18 +96,20 @@
   });
 
   // ---------------------------------------------------------------- what the chart shows
-  const tfOK = () => u.TF[U.tf] && u.TF[U.tf].ms <= 4 * HOUR;
-  function view(W) {
-    const B = S.bars, n = B.length; if (!n) return null;
-    const ms = u.TF[U.tf].ms, r = RD.chart.timeScale().getVisibleLogicalRange(); if (!r) return null;
+  const tfOK = tf => u.TF[tf] && u.TF[tf].ms <= 4 * HOUR;
+  // c = the chart to draw on: its candles, timeframe, time → x, price → y, time scale and pane height (main or Compare)
+  const mainC = () => ({ bars: S.bars, tf: U.tf, t2x: RD.t2x, p2y: RD.p2y, ts: RD.chart.timeScale(), H: () => RD.box.clientHeight - RD.chart.timeScale().height() });
+  function view(W, c) {
+    const B = c.bars, n = B.length; if (!n) return null;
+    const ms = u.TF[c.tf].ms, r = c.ts.getVisibleLogicalRange(); if (!r) return null;
     const l2t = l => (l <= n - 1 ? B[Math.max(0, Math.min(n - 1, Math.round(l)))][0] + (l < 0 ? l * ms : 0) : B[n - 1][0] + (l - (n - 1)) * ms);
     const t0 = l2t(r.from), t1 = l2t(r.to);
-    const xa = RD.t2x(t0), xb = RD.t2x(t0 + DAY), pxDay = xa != null && xb != null ? xb - xa : 0;
-    return { t0, t1, pxDay, H: RD.box.clientHeight - RD.chart.timeScale().height(), W };
+    const xa = c.t2x(t0), xb = c.t2x(t0 + DAY), pxDay = xa != null && xb != null ? xb - xa : 0;
+    return { t0, t1, pxDay, H: c.H(), W };
   }
   // the high / low of a session from the candles on the chart (a replay's chart only holds candles up to its clock)
-  function hiLo(open, close) {
-    const B = S.bars, n = B.length, now = u.nowT(); if (!n) return null;
+  function hiLo(open, close, B = S.bars) {
+    const n = B.length, now = u.nowT(); if (!n) return null;
     let lo = 0, hi = n;
     while (lo < hi) { const m = (lo + hi) >> 1; if (B[m][0] < open) lo = m + 1; else hi = m; }
     let H = -Infinity, L = Infinity, last = null;
@@ -118,17 +120,23 @@
   const S2 = { dbg: null };   // what the last frame drew (tests)
   X.draw.push((g, W, z) => {
     if (z === 'top') S2.dbg = null;
-    if (!P.on || !tfOK() || !active().length) return;
-    const v = view(W); if (!v || v.pxDay < 26) return;   // too zoomed out: the lines would be a wall
+    if (!P.on) return;
+    const d = paint(g, W, z, mainC()); if (z === 'top' && d) S2.dbg = d;
+  });
+  // the Compare chart draws sessions with the same settings (which sessions, their times, shading, highs / lows)
+  RD.sessPaint = (g, W, z, c) => paint(g, W, z, c);
+  function paint(g, W, z, c) {
+    if (!tfOK(c.tf) || !active().length) return null;
+    const v = view(W, c); if (!v || v.pxDay < 26) return null;   // too zoomed out: the lines would be a wall
     const list = sessions(v.t0, v.t1).filter(x => P[x.s.k]), A = u.hexA, clamp = x => Math.max(-2, Math.min(W + 2, x));
     const row = k => SESS.findIndex(s => s.k === k);
     if (z === 'bottom') {
-      if (!P.shade) return;
+      if (!P.shade) return null;
       for (const x of list) {
-        const a = RD.t2x(x.open), b = RD.t2x(x.close); if (a == null || b == null || b < 0 || a > W) continue;
+        const a = c.t2x(x.open), b = c.t2x(x.close); if (a == null || b == null || b < 0 || a > W) continue;
         g.fillStyle = A(x.s.color, x.wk ? 0.03 : 0.055); g.fillRect(clamp(a), 0, clamp(b) - clamp(a), v.H);
       }
-      return;
+      return null;
     }
     const big = v.pxDay >= 110, mid = v.pxDay >= 50, now = u.nowT(), dbg = { lines: 0, labels: 0, hl: 0, pxDay: Math.round(v.pxDay) };
     // highs / lows first so the open / close lines sit on top
@@ -137,11 +145,11 @@
       for (const x of list) if (x.close <= now) newest[x.s.k] = x;
       for (const x of list) {
         if (x.open > now) continue;
-        const r = hiLo(x.open, x.close); if (!r) continue;
-        const a = RD.t2x(x.open), b = RD.t2x(Math.min(x.close, r.last + u.TF[U.tf].ms)); if (a == null || b == null || b < 0 || a > W) continue;
+        const r = hiLo(x.open, x.close, c.bars); if (!r) continue;
+        const a = c.t2x(x.open), b = c.t2x(Math.min(x.close, r.last + u.TF[c.tf].ms)); if (a == null || b == null || b < 0 || a > W) continue;
         const ext = newest[x.s.k] === x;
         for (const [p, nm] of [[r.H, 'H'], [r.L, 'L']]) {
-          const y = RD.p2y(p); if (y == null) continue;
+          const y = c.p2y(p); if (y == null) continue;
           g.strokeStyle = A(x.s.color, 0.9); g.lineWidth = 1; g.setLineDash([2, 3]);
           g.beginPath(); g.moveTo(clamp(a), y); g.lineTo(clamp(b), y); g.stroke(); dbg.hl++;
           if (ext && b < W) { g.strokeStyle = A(x.s.color, 0.45); g.beginPath(); g.moveTo(clamp(b), y); g.lineTo(W, y); g.stroke(); }
@@ -154,7 +162,7 @@
     for (const x of list) {
       const y0 = v.H - 12 - (2 - row(x.s.k)) * 17;   // bottom of the chart (the legend and price tags live at the top)
       for (const [t, isOpen] of [[x.open, true], [x.close, false]]) {
-        const px = RD.t2x(t); if (px == null || px < -1 || px > W + 1) continue;
+        const px = c.t2x(t); if (px == null || px < -1 || px > W + 1) continue;
         g.strokeStyle = A(x.s.color, (isOpen ? 0.85 : 0.6) * (x.wk ? 0.55 : 1)); g.lineWidth = 1; g.setLineDash(isOpen ? [] : [4, 4]);
         g.beginPath(); g.moveTo(Math.round(px) + 0.5, 0); g.lineTo(Math.round(px) + 0.5, v.H); g.stroke(); g.setLineDash([]); dbg.lines++;
         const lc = x.wk ? A(x.s.color, 0.6) : x.s.color;
@@ -163,8 +171,8 @@
         if (x.wk) dbg.wk = (dbg.wk || 0) + 1;
       }
     }
-    S2.dbg = dbg;
-  });
+    return dbg;
+  }
 
   // legend: which sessions are open at the chart's time (the replay clock in a replay) and what comes next
   const span = ms => { const m = Math.max(0, Math.round(ms / MIN)), h = Math.floor(m / 60); return h ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
