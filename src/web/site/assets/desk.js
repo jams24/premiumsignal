@@ -42,9 +42,10 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, choch: false, bos: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
+  { const s0 = store.get('rd-ui-v1', {}); if (U.smc && !('choch' in s0) && !('bos' in s0)) { U.choch = true; U.bos = true; } }
   if (!['binance', 'bybit', 'fx'].includes(U.ex)) U.ex = 'binance';
   const saveUI = () => store.set('rd-ui-v1', U);
   // extension points: the admin layer (/assets/deskadmin.js, served to admins only) adds chart lines, markers and bottom tabs
@@ -1049,9 +1050,12 @@
     }
     TLBOX = out;
   }
+  let SMCDRAWN = null;   // what drawSMC painted last, for tests
+  function smcAny() { return !!(U.smc || U.choch || U.bos); }   // anything that needs the SMC engine
   function drawSMC(g, W) {
     const r = SMCR; if (!r) return;
-    const all = !!U.smcAll;
+    const all = !!U.smcAll, done = { zones: 0, eqs: 0, breaks: [] };
+    if (U.smc) {
     // Whole chart: past zones too, faint, from the order block to the candle that closed through them
     if (all) for (const z of r.zones) {
       if (!z.broken) continue;
@@ -1066,7 +1070,7 @@
       const c = z.type === 'demand' ? COL.up : COL.down;
       g.fillStyle = hexA(c, 0.11); g.fillRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
-      label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent');
+      label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent'); done.zones++;
     }
     // equal lows / highs price has already taken (Indicators → keep them): faded, from the first low to the candle that took
     // it, "swept" = wick through and closed back, "broken" = closed through. Recent: the newest 6 · Whole chart: all
@@ -1081,13 +1085,43 @@
     for (const e of (all ? uniq(r.eqs.filter(e => !e.taken)) : uniq(r.eqs.filter(e => !e.taken)).slice(-4))) {
       const x0 = t2x(e.t1), y = p2y(e.p); if (x0 == null || y == null) continue;
       g.strokeStyle = hexA(COL.warn, 0.85); g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
-      label(g, e.kind, W - 4, y + (e.side === 'H' ? -9 : 9), COL.warn, 'right', 'transparent');
+      label(g, e.kind, W - 4, y + (e.side === 'H' ? -9 : 9), COL.warn, 'right', 'transparent'); done.eqs++;
     }
-    for (const b of (all ? r.breaks : r.breaks.slice(-8))) {
+    }
+    const BR = r.breaks.filter(b => b.kind === 'CHoCH' ? U.choch : U.bos);   // CHoCH and BOS each by their own tick
+    for (const b of (all ? BR : BR.slice(-8))) {
       const x0 = t2x(b.fromT), x1 = t2x(b.t), y = p2y(b.p); if (x0 == null || x1 == null || y == null) continue;
+      done.breaks.push(b.kind);
       const c = b.dir === 1 ? COL.up : COL.down;
       g.strokeStyle = c; g.setLineDash([5, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
       label(g, b.kind, (x0 + x1) / 2, y + (b.dir === 1 ? -9 : 9), c, 'center', 'transparent');
+    }
+    SMCDRAWN = done;
+  }
+  // previous day high / low: yesterday's daily candle of this market (UTC days; FX skips the weekend), fetched once a day
+  // per market. In a replay "yesterday" is the day before the replay clock, a day that has fully closed: no peeking.
+  let PDAY = null, PDK = '', PDBUSY = '', PDFAIL = { key: '', at: 0 };
+  function pdCheck() {
+    if (!U.pdhl || TF[U.tf].ms >= WEEK || U.tf === '1M') { if (PDAY || PDK) { PDAY = null; PDK = ''; prim.req(); legend(); } return; }
+    const d0 = bucket(nowT(), '1D'), key = U.ex + '|' + U.sym + '|' + d0;
+    if (key === PDK || key === PDBUSY || (PDFAIL.key === key && Date.now() - PDFAIL.at < 30e3)) return;
+    if (PDAY && PDAY.key !== key) { PDAY = null; prim.req(); legend(); }
+    PDBUSY = key;
+    api().klines(U.sym, '1D', { end: d0 - 1, limit: 3 }).then(k => {
+      if (PDBUSY !== key) return; PDBUSY = '';
+      const p = (k || []).filter(c => c[0] < d0).pop();
+      const now = U.ex + '|' + U.sym + '|' + bucket(nowT(), '1D');
+      if (now !== key) return pdCheck();   // the market or the day changed while this was loading
+      PDK = key; PDAY = p ? { key, t: p[0], h: p[2], l: p[3] } : null; prim.req(); legend();
+    }).catch(() => { if (PDBUSY === key) { PDBUSY = ''; PDFAIL = { key, at: Date.now() }; } });
+  }
+  function drawPD(g, W) {
+    const xa = t2x(PDAY.t), x0 = xa == null ? 0 : Math.max(0, xa); if (x0 >= W) return;
+    g.font = '600 10px "Geist Mono", ui-monospace, monospace';
+    for (const [p, name] of [[PDAY.h, 'PDH'], [PDAY.l, 'PDL']]) {
+      const y = p2y(p); if (y == null) continue;
+      g.strokeStyle = hexA(COL.pri, 0.85); g.lineWidth = 1.5; g.beginPath(); g.moveTo(x0, y); g.lineTo(W, y); g.stroke();
+      label(g, name + ' ' + fp(p), W - 4, y + (name === 'PDH' ? -9 : 9), COL.pri, 'right', COL.bg);   // solid: readable over the newest candles
     }
   }
   // the highest high and lowest low of the candles on screen, like TradingView's high / low labels: a faint line from
@@ -1129,11 +1163,12 @@
     paneViews() { return VIEWS; },
   };
   const VIEWS = [
-    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smcFvg && FVGS && !X.smcOff) { s.context.save(); drawFVG(s.context, s.mediaSize.width); s.context.restore(); } if (U.smc && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
+    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smcFvg && FVGS && !X.smcOff) { s.context.save(); drawFVG(s.context, s.mediaSize.width); s.context.restore(); } if (smcAny() && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
       if (U.hilo) { g.save(); drawHiLo(g, W); g.restore(); }
       if (U.tline && TLS) { g.save(); drawTL(g, W); g.restore(); }
+      if (U.pdhl && PDAY) { g.save(); drawPD(g, W); g.restore(); }
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
@@ -1758,8 +1793,8 @@
   // ------------------------------------------------------------------ SMC overlay (closed candles only)
   let smcT = null;
   function smcSchedule() {
-    emit('bars');   // the candles changed (new candle, replay step, load): add-ons like the A+ layer read again
-    if (!U.smc && !U.smcFvg && !U.tline) { if (SMCR || FVGS || TLS) { SMCR = null; FVGS = null; TLS = null; setMarkers(); prim.req(); legend(); } return; }
+    emit('bars'); pdCheck();   // the candles changed (new candle, replay step, load): add-ons like the A+ layer read again
+    if (!smcAny() && !U.smcFvg && !U.tline) { if (SMCR || FVGS || TLS) { SMCR = null; FVGS = null; TLS = null; setMarkers(); prim.req(); legend(); } return; }
     if (smcT) return;
     smcT = setTimeout(() => { smcT = null; smcRun(); }, R.playing ? 200 : 20);
   }
@@ -1769,7 +1804,7 @@
     const base = B.slice(Math.max(0, n - (U.smcAll ? 6000 : 500)), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);   // Recent: last 500 · Whole chart: all loaded
     FVGS = U.smcFvg && base.length >= 3 ? fvgScan(base, U.tf) : null;   // closed candles only
     TLS = U.tline && base.length >= 12 ? tlineScan(base, U.tf) : null;
-    if (!U.smc || !window.SMC) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
+    if (!smcAny() || !window.SMC) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
     const l = base[base.length - 1];
     base.push([nextB(l[0], U.tf), l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
@@ -1872,7 +1907,8 @@
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
     if (U.tline && TLS) { const Ln = S.bars.length - 1, hold = TLS.filter(l => l.brkT == null).map(l => { const L0 = t2l(l.tp); return L0 == null ? '' : `<b class="${l.side === 'L' ? 'up' : 'down'}" title="${l.side === 'L' ? 'Support' : 'Resistance'} line, ${l.nT} touches">${l.s < 0 ? '↘' : '↗'} ${fp(l.v0 + l.s * (Ln - Math.round(L0)))}</b>`; }).filter(Boolean);
       if (hold.length) l2 += `<span>Trend lines ${hold.join(' · ')}</span>`; }
-    if (U.smc && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
+    if (U.pdhl && PDAY) l2 += `<span>PDH <b>${fp(PDAY.h)}</b> · PDL <b>${fp(PDAY.l)}</b></span>`;
+    if (smcAny() && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
       `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
     LG.innerHTML = `<div class="l1"><b>${esc(mktName(U.sym))} · ${U.tf} · ${api().name}${U.ex === 'fx' ? ' <em class="lg-fx" title="Interbank prices (the market TradingView’s FX charts show), via our server, ~10 s refresh. Chart and paper trades only.">interbank</em>' : ''}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
   }
@@ -1884,7 +1920,7 @@
   function headUI() {
     $('[data-sym]').textContent = U.sym; $('[data-exname]').textContent = api().name;
     $$('[data-tf]').forEach(b => b.classList.toggle('on', b.dataset.tf === U.tf)); $('[data-tfsel]').value = U.tf;
-    $('[data-act="smc"]').setAttribute('aria-pressed', String(!!U.smc));
+    $('[data-act="smc"]').setAttribute('aria-pressed', String(smcAny()));
     $$('[data-act="smcall"]').forEach(b => { if (!b.closest('[data-legend]')) b.classList.toggle('on', (b.dataset.v === '1') === !!U.smcAll); });
     $$('[data-ind]').forEach(i => { i.checked = !!U[i.dataset.ind]; });
     $$('[data-act="candles"]').forEach(b => { const on = b.dataset.v === (U.candles === 'mono' ? 'mono' : 'color'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
@@ -2096,9 +2132,9 @@
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
-      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!U.smc && !U.smcFvg && !U.tline) U.smc = true;   // FVG / trend lines alone use it too: don't switch SMC on for them
+      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
-      else if (act === 'smc') { U.smc = !U.smc; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
+      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
       else if (act === 'rpick-chart') { closeModals(); if (!R.on) startPick('replay'); else startPick('replay'); }
@@ -2146,7 +2182,9 @@
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') smcSchedule(); else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; saveUI(); headUI(); smcSchedule(); }
+    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos') smcSchedule();
+    else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
@@ -2194,7 +2232,7 @@
   window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
