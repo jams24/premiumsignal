@@ -1,7 +1,8 @@
 /* ReplayDesk · Compare: a second chart beside the main one (below it on a phone) — "which one is stronger" (BTC vs ETH vs
    SOL), or the SAME coin on another timeframe for a top-down view (BTC 1m on the main chart, BTC 15m here). Candles come
-   straight from the exchange like the main chart. It follows the main chart's clock: in a replay it never shows a candle
-   the main chart hasn't reached (the forming candle is built from closed finer candles only). Same timeframe: scroll, zoom
+   straight from the exchange like the main chart. It follows the main chart's clock both ways: in a replay it never shows a
+   candle the main chart hasn't reached (the forming candle is built from closed finer candles only), and a step back on the
+   main chart takes it back too. Same timeframe: scroll, zoom
    and crosshair move together; its own timeframe: own zoom, the crosshair still points at the same moment.
    Its own Indicators menu (volume, EMAs, high / low, PDH / PDL, sessions, FVG, trend lines, SMC, CHoCH, BOS), separate
    from the main chart's ticks but drawn by the same code (RD.paint), and a 24 h read-out of both coins: % change and where
@@ -17,7 +18,7 @@
   const U = RD.U, R = RD.R, S = RD.S, COL = RD.COL, chartEl = RD.chartEl, PAINT = RD.paint, TLF = RD.TLF;
   const btn = $('[data-act="cmp"]');
   const C = Object.assign({ on: false, sym: 'ETHUSDT', tf: '', smc: true, ind: null }, RD.store.get('rd-cmp-v1', {}),
-    { bars: [], gen: 0, ws: null, wsT: null, buf: [], bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, F: null, TL: null, tlsn: null, pd: null, ema: {},
+    { bars: [], gen: 0, ws: null, wsT: null, hist: [], fine: [], fi: 0, b0: 0, bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, F: null, TL: null, tlsn: null, pd: null, ema: {},
       key: '', prec: 2, driver: 'main', hover: null, err: '' });
   // this chart's own indicator ticks (older saves had one SMC switch: it becomes SMC + CHoCH + BOS)
   const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false },
@@ -163,7 +164,7 @@
         const clock = nowT(), b0 = bucket(clock, tf);
         const hist = await api(C.ex).klines(C.sym, tf, { end: b0 - 1, limit: 1000 });
         if (g !== C.gen) return;
-        C.bars = hist.filter(k => k[0] < b0); C.buf = []; C.bufEnd = b0; C.res = RD.util.resOf ? RD.util.resOf(tf, C.ex) : RES[tf]; C.fetching = null; C.clock = b0;
+        C.hist = hist.filter(k => k[0] < b0); C.bars = C.hist.slice(); C.fine = []; C.fi = 0; C.b0 = b0; C.bufEnd = b0; C.res = RD.util.resOf ? RD.util.resOf(tf, C.ex) : RES[tf]; C.fetching = null; C.clock = b0;
         await feed(clock + 120 * TF[C.res].ms, g);
         if (g !== C.gen) return;
         reveal(clock, true);
@@ -176,6 +177,7 @@
       cs.setData(C.bars.map(toC)); setVol(); setEMAs();
       fit(); say(''); indRun(); legend();
       if (!R.on) startWs(g);
+      else if (nowT() !== C.clock) { const t = nowT(); if (t > C.clock) reveal(t); else rewind(t); }   // the clock moved while this loaded (steps are ignored until then)
     } catch (e) {
       if (g !== C.gen) return;
       C.bars = []; cs.setData([]); vs.setData([]); setEMAs(); C.err = e.message; marks(); prim.req(); legend();
@@ -188,30 +190,41 @@
     if (!C.tf) { const r = RD.chart.timeScale().getVisibleRange(); if (r) { try { ch.timeScale().setVisibleRange(r); return; } catch (e) { /* fall through */ } } }
     const n = C.bars.length; ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (phone() ? 90 : 160)), to: n + 10 });
   }
-  function feed(until, g) {
-    if (C.fetching) return C.fetching;
-    C.fetching = (async () => {
+  function feed(until, g) {   // one fetch at a time per load (a newer load never waits on an older one's fetch)
+    if (C.fetching && C.fetching.g === g) return C.fetching.p;
+    const p = (async () => {
       const lim = Math.floor(Date.now() / MIN) * MIN;
       while (g === C.gen && C.bufEnd < until && C.bufEnd < lim) {
         const rms = TF[C.res].ms, to = Math.min(C.bufEnd + 700 * rms, lim);
         const ks = await fetchSpan(C.sym, C.bufEnd, to, C.res, C.ex);
         if (g !== C.gen) return;
-        for (const k of ks) if (k[0] >= C.bufEnd) C.buf.push(k);
+        for (const k of ks) if (k[0] >= C.bufEnd) C.fine.push(k);
         C.bufEnd = to;
       }
-    })().finally(() => { C.fetching = null; });
-    return C.fetching;
+    })().finally(() => { if (C.fetching && C.fetching.p === p) C.fetching = null; });
+    C.fetching = { g, p };
+    return p;
   }
-  function reveal(clock, quiet) {   // closed feed candles up to the main clock go into the compare candles
-    const tf = ctf(), B = C.bars; let from = Infinity;
-    while (C.buf.length && C.buf[0][0] + C.buf[0][6] <= clock) {
-      const k = C.buf.shift(), b = bucket(k[0], tf), last = B[B.length - 1];
+  // closed finer candles up to the main clock go into the compare candles. They stay in C.fine (C.fi = the next one not
+  // shown yet), so a step back can build the chart again at the earlier clock.
+  function reveal(clock, quiet) {
+    const tf = ctf(), B = C.bars, F = C.fine; let from = Infinity;
+    while (C.fi < F.length && F[C.fi][0] + F[C.fi][6] <= clock) {
+      const k = F[C.fi++], b = bucket(k[0], tf), last = B[B.length - 1];
       if (last && last[0] === b) { last[2] = Math.max(last[2], k[2]); last[3] = Math.min(last[3], k[3]); last[4] = k[4]; last[5] += k[5]; from = Math.min(from, B.length - 1); }
       else if (!last || b > last[0]) { B.push([b, k[1], k[2], k[3], k[4], k[5]]); from = Math.min(from, B.length - 1); }
     }
     C.clock = clock;
     if (!quiet && from !== Infinity) { for (let i = from; i < B.length; i++) { cs.update(toC(B[i])); if (I.vol) vs.update(toV(B[i])); } if (Object.keys(EMAS).some(k => I[k])) setEMAs(); runSoon(); legendSoon(); }
-    if (C.buf.length < 60 && R.on) { const g = C.gen; feed(clock + 300 * TF[C.res].ms, g).then(() => { if (g === C.gen && C.clock === clock && C.buf.length && C.buf[0][0] + C.buf[0][6] <= nowT()) reveal(nowT()); }).catch(() => { /* next tick retries */ }); }
+    if (C.fine.length - C.fi < 60 && R.on) { const g = C.gen; feed(clock + 300 * TF[C.res].ms, g).then(() => { const k = C.fine[C.fi]; if (g === C.gen && C.clock === clock && k && k[0] + k[6] <= nowT()) reveal(nowT()); }).catch(() => { /* next tick retries */ }); }
+  }
+  // the main chart went back in time: the candles before this chart's first replay candle never change, the rest is built
+  // again from the finer candles up to the new clock. Further back than that first candle: load again at the new clock.
+  function rewind(clock) {
+    if (clock < C.b0) { load(); return; }
+    C.bars = C.hist.slice(); C.fi = 0; C.hover = null;
+    reveal(clock, true);
+    cs.setData(C.bars.map(toC)); setVol(); setEMAs(); indRun(); legend();
   }
 
   // ---- indicators that read the candles: FVG, frozen trend lines, SMC / CHoCH / BOS (closed candles only) and PDH / PDL
@@ -432,7 +445,7 @@
   RD.on('load', () => { if (C.on) load(); else syncBar(); });
   RD.on('tick', () => {
     if (!C.on || !C.bars.length) return;
-    if (R.on && C.mode === 'replay' && nowT() > C.clock) reveal(nowT());
+    if (R.on && C.mode === 'replay') { const t = nowT(); if (t > C.clock) reveal(t); else if (t < C.clock) rewind(t); }
     legendSoon();
   });
   RD.on('theme', theme);
@@ -440,7 +453,7 @@
   // even for the second until the main chart's replay is ready (its 'load' then loads this one again)
   RD.on('mode', () => {
     if (!C.on) return;
-    C.gen++; stopWs(); C.mode = ''; C.bars = []; C.buf = []; C.A = null; C.F = null; C.TL = null; C.tlsn = null; C.key = ''; C.hover = null;
+    C.gen++; stopWs(); C.mode = ''; C.bars = []; C.hist = []; C.fine = []; C.fi = 0; C.A = null; C.F = null; C.TL = null; C.tlsn = null; C.key = ''; C.hover = null;
     if (ch) { cs.setData([]); vs.setData([]); setEMAs(); marks(); prim.req(); }
     sumEl.hidden = true; lgEl.innerHTML = ''; say(`<span class="spin-s"></span> Loading ${esc(coin(C.sym))}…`);
   });
