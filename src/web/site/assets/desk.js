@@ -42,9 +42,12 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, choch: false, bos: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
+  // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
+  const TLF = { live: store.get('rd-tl-v1', {}), replay: {} };
+  const tlSave = () => { const k = Object.keys(TLF.live); if (k.length > 40) k.sort((a, b) => TLF.live[a].at - TLF.live[b].at).slice(0, k.length - 40).forEach(x => delete TLF.live[x]); store.set('rd-tl-v1', TLF.live); };
   { const s0 = store.get('rd-ui-v1', {}); if (U.smc && !('choch' in s0) && !('bos' in s0)) { U.choch = true; U.bos = true; } }
   if (!['binance', 'bybit', 'fx'].includes(U.ex)) U.ex = 'binance';
   const saveUI = () => store.set('rd-ui-v1', U);
@@ -333,7 +336,8 @@
   for (const ms of [300, 1200, 3000, 8000]) setTimeout(themeCheck, ms);
 
   // ------------------------------------------------------------------ state
-  const S = { bars: [], gen: 0, lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
+  const S = { bars: [], key: '', gen: 0,   // key: exchange | coin | timeframe of the candles in bars (U changes first, the candles after they load)
+    lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
   const R = { on: false, clock: 0, buf: [], bufEnd: 0, res: '1m', playing: false, timer: null, busy: false, end: false, step: 'bar', speed: 800, gen: 0, fetching: null, back: [] };
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
   const toV = b => ({ time: b[0] / 1000, value: b[5], color: volColor(b[4] >= b[1]) });
@@ -375,7 +379,7 @@
       const bars = await api().klines(U.sym, U.tf, { limit: 1000 });
       if (g !== S.gen) return;
       if (!bars.length) throw new Error(`No candles for ${U.sym} on ${api().name}.`);
-      S.bars = bars; S.noOld = false; S.lastPx = bars[bars.length - 1][4]; S.marks[U.sym] = S.lastPx;
+      S.bars = bars; S.key = U.ex + '|' + U.sym + '|' + U.tf; S.noOld = false; S.lastPx = bars[bars.length - 1][4]; S.marks[U.sym] = S.lastPx;
       applyMeta(); setAll(); showRecent(); hideMsg(); headUI(); tickUI();
       startStream(g); emit('load');
     } catch (e) { if (g === S.gen) loadFailed(e, loadLive); }
@@ -442,7 +446,7 @@
     if (!isFinite(t) || t > Date.now() - rpMin()) { toast('Pick a moment in the past.'); return; }
     closeModals(); pausePlay(); clearPick();
     if (R.on) P.closeMode('replay', 'Replay restarted');
-    R.on = true; R.clock = bucket(t, U.tf);
+    R.on = true; R.clock = bucket(t, U.tf); TLF.replay = {};
     stopStream(); modeUI(); saveR();
     await rebuildReplay();
   }
@@ -457,7 +461,7 @@
       if (g !== S.gen) return;
       const span = R.clock > b0 ? await fetchSpan(U.sym, b0, R.clock, R.res) : [];
       if (g !== S.gen) return;
-      S.bars = hist.filter(k => k[0] < b0); S.noOld = false;
+      S.bars = hist.filter(k => k[0] < b0); S.key = U.ex + '|' + U.sym + '|' + U.tf; S.noOld = false;
       for (const k of span) aggInto(k);
       if (!S.bars.length) throw new Error(`No candles for ${U.sym} before ${tnice(R.clock)} — it was probably not listed yet. Pick a later start.`);
       S.lastPx = lastBar()[4]; S.rpx[U.sym] = S.lastPx;
@@ -1032,21 +1036,32 @@
     const ts = chart.timeScale(), B = S.bars; if (!B.length) return;
     const xr = ts.coordinateToLogical(W), Lr = xr == null ? B.length + 5 : Math.ceil(xr) + 1, Ln = B.length - 1, out = [];
     g.font = '600 10px "Geist Mono", ui-monospace, monospace';
+    const seg = (La, Lb, at, dash) => { const xa = ts.logicalToCoordinate(La), xb = ts.logicalToCoordinate(Lb), ya = p2y(at(La)), yb = p2y(at(Lb));
+      if (xa == null || xb == null || ya == null || yb == null) return null; g.setLineDash(dash); g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb, yb); g.stroke(); g.setLineDash([]); return [xa, ya, xb, yb]; };
     for (const l of TLS) {
-      const L0 = t2l(l.tp); if (L0 == null) continue;
-      const Lp = Math.round(L0), at = L => l.v0 + l.s * (L - Lp), c = l.side === 'L' ? COL.up : COL.down, broken = l.brkT != null;
-      const x0 = ts.logicalToCoordinate(Lp), x1 = ts.logicalToCoordinate(Lr), y0 = p2y(at(Lp)), y1 = p2y(at(Lr));
-      if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
-      g.strokeStyle = hexA(c, broken ? 0.5 : 0.95); g.lineWidth = broken ? 1.5 : 3; g.setLineDash(broken ? [6, 5] : []);
-      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); g.setLineDash([]);
-      for (const t of l.touches) {
+      const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) continue;
+      const at = L => l.p1 + (l.p2 - l.p1) * (L - L1) / (L2 - L1), c = l.side === 'L' ? COL.up : COL.down, htf = !!l.htf;
+      const pre = l.brkT != null, Lb = l.liveBrk != null ? t2l(l.liveBrk) : null, holding = !pre && Lb == null;
+      const wid = htf ? 2 : 3;
+      let box;
+      if (pre) { g.strokeStyle = hexA(c, 0.5); g.lineWidth = 1.5; box = seg(L1, Lr, at, [6, 5]); }
+      else if (Lb != null) {   // broken after it was drawn: solid up to the candle that closed through, then faint
+        g.strokeStyle = hexA(c, htf ? 0.7 : 0.95); g.lineWidth = wid; box = seg(L1, Lb, at, []);
+        g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1.5; seg(Lb, Lr, at, [6, 5]);
+        const xb = ts.logicalToCoordinate(Lb), yb = p2y(at(Lb));
+        if (xb != null && yb != null) { g.strokeStyle = COL.warn; g.lineWidth = 2; g.beginPath(); g.moveTo(xb - 4, yb - 4); g.lineTo(xb + 4, yb + 4); g.moveTo(xb + 4, yb - 4); g.lineTo(xb - 4, yb + 4); g.stroke(); }
+      } else { g.strokeStyle = hexA(c, htf ? 0.7 : 0.95); g.lineWidth = wid; box = seg(L1, Lr, at, []); }
+      if (!box) continue;
+      for (const [list, ring] of [[l.touches || [], false], [l.liveTouches || [], true]]) for (const t of list) {
         const L = t2l(t); if (L == null) continue;
-        const x = ts.logicalToCoordinate(Math.round(L)), y = p2y(at(Math.round(L))); if (x == null || y == null) continue;
-        g.beginPath(); g.arc(x, y, broken ? 2.5 : 3.5, 0, Math.PI * 2); g.fillStyle = hexA(c, broken ? 0.55 : 1); g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.bg; g.stroke();
+        const x = ts.logicalToCoordinate(L), y = p2y(at(L)); if (x == null || y == null) continue;
+        g.beginPath(); g.arc(x, y, pre || htf ? 2.5 : 3.5, 0, Math.PI * 2);
+        if (ring) { g.fillStyle = COL.bg; g.fill(); g.lineWidth = 2; g.strokeStyle = c; g.stroke(); }   // touched after the line was drawn: hollow
+        else { g.fillStyle = hexA(c, pre ? 0.55 : 1); g.fill(); g.lineWidth = 1.5; g.strokeStyle = COL.bg; g.stroke(); }
       }
       const vn = at(Ln), xn = ts.logicalToCoordinate(Ln), yn = p2y(vn);
-      if (!broken && xn != null && yn != null && xn > 0 && xn < W - 60) label(g, fp(vn), xn + 8, yn + (l.side === 'L' ? 11 : -11), c, 'left', COL.panel);
-      out.push({ side: l.side, broken, x0, y0, x1, y1, now: vn, nT: l.nT });
+      if (holding && xn != null && yn != null && xn > 0 && xn < W - 60) label(g, (htf ? l.htf + ' ' : '') + fp(vn), xn + 8, yn + (l.side === 'L' ? 11 : -11), c, 'left', COL.panel);
+      out.push({ side: l.side, broken: !holding, pre, liveBrk: l.liveBrk, htf: l.htf || null, x0: box[0], y0: box[1], x1: box[2], y1: box[3], now: vn, nT: l.nT });
     }
     TLBOX = out;
   }
@@ -1803,7 +1818,22 @@
     let n = B.length; if (n && nextB(B[n - 1][0], U.tf) > nowT()) n--;   // the forming candle is not closed yet
     const base = B.slice(Math.max(0, n - (U.smcAll ? 6000 : 500)), n).map(b => [b[0], b[1], b[2], b[3], b[4], b[5]]);   // Recent: last 500 · Whole chart: all loaded
     FVGS = U.smcFvg && base.length >= 3 ? fvgScan(base, U.tf) : null;   // closed candles only
-    TLS = U.tline && base.length >= 12 ? tlineScan(base, U.tf) : null;
+    TLS = null;
+    if (U.tline && base.length >= 12 && S.key === U.ex + '|' + U.sym + '|' + U.tf) {   // never freeze lines from the last chart's candles while the new ones load
+      const mode = R.on ? 'replay' : 'live', key = S.key, tfMs = TF[U.tf].ms;
+      let sn = TLF[mode][key];
+      if (!sn || sn.at > nowT()) { sn = tlSnap(base, U.tf); TLF[mode][key] = sn; if (mode === 'live') tlSave(); }
+      TLS = tlAfter(sn); TLS.at = sn.at;
+      if (U.tlineHtf) for (const k in TLF[mode]) {   // top-down: the lines drawn on this coin's higher timeframes
+        const h = TLF[mode][k]; if (k === key || !k.startsWith(U.ex + '|' + U.sym + '|') || !TF[h.tf] || TF[h.tf].ms <= tfMs || h.at > nowT()) continue;
+        // the holding line nearest to price on each side, so a few timeframes stay readable
+        const Ln = S.bars.length - 1, px = S.bars[Ln][4], val = l => { const L1 = t2l(l.t1), L2 = t2l(l.t2); return L1 == null || L2 == null || L2 === L1 ? null : l.p1 + (l.p2 - l.p1) * (Ln - L1) / (L2 - L1); };
+        for (const side of ['L', 'H']) {
+          const c = h.lines.filter(l => l.side === side && l.brkT == null).map(l => [l, val(l)]).filter(x => x[1] != null && x[1] > 0).sort((a, b) => Math.abs(a[1] - px) - Math.abs(b[1] - px))[0];
+          if (c) TLS.push(Object.assign({}, c[0], { htf: h.tf, liveBrk: null, liveTouches: [] }));
+        }
+      }
+    }
     if (!smcAny() || !window.SMC) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
     if (base.length < 12) { SMCR = null; setMarkers(); prim.req(); legend(); return; }
     const l = base[base.length - 1];
@@ -1829,7 +1859,7 @@
       const v = side === 'L' ? i => B[i][3] : i => B[i][2], end = brk == null ? n : brk, touches = [];
       let last = -9;
       for (let i = p; i < end; i++) if (Math.abs(v(i) - (v(p) + s * (i - p))) <= 0.1 * atr[i]) { if (i - last > 1) touches.push(B[i][0]); last = i; }
-      return { side, tp: B[p][0], tq: B[q][0], v0: v(p), s, brkT: brk == null ? null : B[brk][0], touches, nT: touches.length, i0: p, ib: brk };
+      return { side, tp: B[p][0], tq: B[q][0], v0: v(p), s, brkT: brk == null ? null : B[brk][0], touches, nT: touches.length, i0: p, iq: q, ib: brk };
     };
     for (const side of ['L', 'H']) {
       const lo = side === 'L', v = lo ? i => B[i][3] : i => B[i][2], sg = lo ? 1 : -1;   // sg 1: candles stay above the line
@@ -1857,7 +1887,29 @@
       const br = out.filter(l => l.side === side && l.brkT != null && l.nT >= 2 && n - l.ib <= 40).sort((a, b) => b.nT - a.nT || b.ib - a.ib)[0];
       if (br) keep.push(br);
     }
+    keep.atr = atr[n - 1];
     return keep;
+  }
+  // freeze a scan: each line by its two anchors (time, price), drawn straight between them on any timeframe
+  function tlSnap(base, tf) {
+    const L = tlineScan(base, tf);
+    return { at: nowT(), tf, last: base[base.length - 1][0], atr: L.atr, lines: L.map(l => ({ side: l.side, t1: l.tp, p1: l.v0, t2: l.tq, p2: l.v0 + l.s * (l.iq - l.i0), brkT: l.brkT, touches: l.touches, nT: l.nT })) };
+  }
+  // what price did at a frozen line after it was drawn (closed candles on this chart): the first close through it, new touches
+  function tlAfter(sn) {
+    const B = S.bars, now = nowT(), tol = 0.1 * (sn.atr || 0);
+    return sn.lines.map(l => {
+      const o = Object.assign({}, l, { liveBrk: null, liveTouches: [] }); if (l.brkT != null) return o;
+      const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) return o;
+      let lo = 0, hi = B.length; while (lo < hi) { const m = (lo + hi) >> 1; if (B[m][0] <= sn.last) lo = m + 1; else hi = m; }
+      let lastT = -9;
+      for (let i = lo; i < B.length && nextB(B[i][0], U.tf) <= now; i++) {
+        const v = l.p1 + (l.p2 - l.p1) * (i - L1) / (L2 - L1), b = B[i];
+        if (l.side === 'L' ? b[4] < v : b[4] > v) { o.liveBrk = b[0]; break; }
+        if (Math.abs((l.side === 'L' ? b[3] : b[2]) - v) <= tol) { if (i - lastT > 1) o.liveTouches.push(b[0]); lastT = i; }
+      }
+      return o;
+    });
   }
   function fvgScan(B, tf) {
     const out = []; let atr = null, open = [];
@@ -1905,8 +1957,11 @@
     let l2 = U.vol && U.ex !== 'fx' ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';   // FX has no shared volume
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
-    if (U.tline && TLS) { const Ln = S.bars.length - 1, hold = TLS.filter(l => l.brkT == null).map(l => { const L0 = t2l(l.tp); return L0 == null ? '' : `<b class="${l.side === 'L' ? 'up' : 'down'}" title="${l.side === 'L' ? 'Support' : 'Resistance'} line, ${l.nT} touches">${l.s < 0 ? '↘' : '↗'} ${fp(l.v0 + l.s * (Ln - Math.round(L0)))}</b>`; }).filter(Boolean);
-      if (hold.length) l2 += `<span>Trend lines ${hold.join(' · ')}</span>`; }
+    if (U.tline && TLS) { const Ln = S.bars.length - 1, hold = TLS.filter(l => !l.htf && l.brkT == null && l.liveBrk == null).map(l => { const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) return '';
+        const v = l.p1 + (l.p2 - l.p1) * (Ln - L1) / (L2 - L1); return `<b class="${l.side === 'L' ? 'up' : 'down'}" title="${l.htf ? l.htf + ' ' : ''}${l.side === 'L' ? 'support' : 'resistance'} line, ${l.nT} touches when drawn">${l.htf ? l.htf + ' ' : ''}${l.p2 < l.p1 ? '↘' : '↗'} ${fp(v)}</b>`; }).filter(Boolean);
+      const nb = TLS.filter(l => l.liveBrk != null).length, ht = {}; for (const l of TLS) if (l.htf) ht[l.htf] = (ht[l.htf] || 0) + 1;
+      const htx = Object.keys(ht).sort((a, b) => TF[b].ms - TF[a].ms).map(k => '+' + ht[k] + ' ' + k).join(' ');
+      l2 += `<span>Trend lines <em title="Drawn from the candles closed by then and kept there as price moves">drawn ${tshort(TLS.at)}</em>${hold.length ? ' ' + hold.join(' · ') : ''}${htx ? ` · <em title="Lines from your higher-timeframe charts of this coin (top-down), the nearest one each side. Their prices are on the chart.">${htx}</em>` : ''}${nb ? ` · <b class="m">${nb} broken since</b>` : ''}</span><button type="button" class="lg-btn" data-act="tlredraw" title="Draw the trend lines again from the latest closed candles (this coin and timeframe)">Redraw now</button>`; }
     if (U.pdhl && PDAY) l2 += `<span>PDH <b>${fp(PDAY.h)}</b> · PDL <b>${fp(PDAY.l)}</b></span>`;
     if (smcAny() && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
       `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
@@ -2132,7 +2187,8 @@
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
-      else if (act === 'smcall') { U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
+      else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
+      else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
@@ -2184,7 +2240,7 @@
     if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
     else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; saveUI(); headUI(); smcSchedule(); }
     else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos') smcSchedule();
-    else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline') smcSchedule(); else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
+    else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
@@ -2232,7 +2288,7 @@
   window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
