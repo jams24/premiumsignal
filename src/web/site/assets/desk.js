@@ -1183,6 +1183,7 @@
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
   let KPOI = null;       // POI: the untouched order blocks with their grades (smcRun)
   const POIC = '#eab308';
+  const OB_UP = '#3b82f6', OB_DN = '#ec4899';   // order blocks: their own colours (FVGs are green / orange, supply / demand green / red)
   const POI_BOX = [['trend', 'trend'], ['pd', 'discount / premium'], ['fvg', 'FVG'], ['took', 'took liquidity'], ['ind', 'inducement']];
   const poiWhy = (q, htf) => POI_BOX.filter(([k]) => q.b[k] != null).map(([k, nm]) => `${k === 'trend' ? htf + ' ' + nm : k === 'pd' ? htf + ' ' + (q.d === 1 ? 'discount' : 'premium') : nm} ${q.b[k] ? '✓' : '✗'}`).join(' · ');
   function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq || U.zz || U.ob || U.kpoi); }   // anything that needs the SMC engine
@@ -1209,28 +1210,53 @@
     }
     }
     // order blocks (Indicators → Order blocks; with SMC on too it replaces SMC's supply / demand boxes): the last candle against
-    // the move that broke structure. Fresh = price has not come back to it yet (solid); tapped = it came back and the box held
-    // (paler, dashed). Recent: the newest 3 of each kind still holding · Whole chart: all, and the broken ones faint up to the
-    // candle that closed through them.
+    // the move that broke structure, in their own colours (blue bull, pink bear) so they never blend with FVGs (green / orange)
+    // or supply / demand (green / red). Each box is contained: a fresh one (price not back yet) runs to the right edge with a
+    // thick border; a tapped one stops at the candle that came back into it (thinner, dashed); a broken one (Whole chart only)
+    // stops at the candle that closed through it, faint. Boxes of one kind that overlap become one box ("Bull OB ×2"), and a
+    // label that would sit on another is left out. Recent: the newest 3 of each kind still holding · Whole chart: all.
     if (o.ob) {
-      done.obs = { fresh: 0, tapped: 0 };
-      if (all) for (const z of r.zones) {
-        if (!z.broken) continue;
-        const x0 = t2x(z.t), x1 = t2x(z.broken), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null) continue;
-        const xe = x1 == null ? W : x1; if (xe < 0 || x0 > W) continue;
-        const c = z.type === 'demand' ? COL.up : COL.down;
-        g.fillStyle = hexA(c, 0.04); g.fillRect(x0, Math.min(y0, y1), Math.max(1, xe - x0), Math.abs(y1 - y0));
-        g.strokeStyle = hexA(c, 0.2); g.setLineDash([3, 3]); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), Math.max(1, xe - x0), Math.abs(y1 - y0)); g.setLineDash([]);
-      }
+      done.obs = { fresh: 0, tapped: 0, broken: 0, rects: [], colors: [OB_UP, OB_DN] };
+      const st = z => z.broken ? 'broken' : z.touched ? 'tapped' : 'fresh', RANK = { fresh: 2, tapped: 1, broken: 0 };
       const hold = r.zones.filter(z => !z.broken);
-      const pick = all ? hold : hold.filter(z => z.type === 'demand').slice(-3).concat(hold.filter(z => z.type === 'supply').slice(-3));
+      const pick = (all ? r.zones : hold.filter(z => z.type === 'demand').slice(-3).concat(hold.filter(z => z.type === 'supply').slice(-3)))
+        .map(z => ({ type: z.type, top: z.top, bot: z.bot, t: z.t, end: z.broken || z.touched || Infinity, state: st(z), n: 1 }))
+        .sort((a, b) => a.t - b.t);
+      // merge: same kind, prices overlap and times overlap → one box over both (broken ones only with broken ones)
+      let G = [];
       for (const z of pick) {
-        const x0 = t2x(z.t), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null || x0 > W) continue;
-        const dem = z.type === 'demand', c = dem ? COL.up : COL.down, tap = !!z.touched, y = Math.min(y0, y1), h = Math.max(1.5, Math.abs(y1 - y0)), xa = Math.max(0, x0);
-        g.fillStyle = hexA(c, tap ? 0.06 : 0.14); g.fillRect(xa, y, W - xa, h);
-        g.strokeStyle = hexA(c, tap ? 0.45 : 0.75); g.lineWidth = 1; if (tap) g.setLineDash([4, 3]); g.strokeRect(xa, y, W - xa, h); g.setLineDash([]);
-        label(g, (dem ? 'Bull OB' : 'Bear OB') + (tap ? ' · tapped' : ''), xa + 2, h >= 16 ? y + 9 : dem ? y + h + 9 : y - 9, hexA(c, tap ? 0.7 : 1), 'left', 'transparent');
-        done.obs[tap ? 'tapped' : 'fresh']++;
+        const m = G.find(q => q.type === z.type && (q.state === 'broken') === (z.state === 'broken') && z.bot < q.top && z.top > q.bot && z.t <= q.end && q.t <= z.end);
+        if (!m) { G.push(Object.assign({}, z)); continue; }
+        m.top = Math.max(m.top, z.top); m.bot = Math.min(m.bot, z.bot); m.t = Math.min(m.t, z.t); m.end = Math.max(m.end, z.end); m.n += z.n;
+        if (RANK[z.state] > RANK[m.state]) m.state = z.state;
+      }
+      for (let again = true; again;) {   // a merged box can now reach another one
+        again = false;
+        for (let i = 0; i < G.length && !again; i++) for (let j = i + 1; j < G.length && !again; j++) {
+          const a = G[i], b = G[j];
+          if (a.type !== b.type || (a.state === 'broken') !== (b.state === 'broken') || !(b.bot < a.top && b.top > a.bot && b.t <= a.end && a.t <= b.end)) continue;
+          a.top = Math.max(a.top, b.top); a.bot = Math.min(a.bot, b.bot); a.t = Math.min(a.t, b.t); a.end = Math.max(a.end, b.end); a.n += b.n;
+          if (RANK[b.state] > RANK[a.state]) a.state = b.state;
+          G.splice(j, 1); again = true;
+        }
+      }
+      G.sort((a, b) => RANK[a.state] - RANK[b.state]);   // faint first, fresh on top
+      const labs = [];
+      for (const q of G) {
+        const x0 = t2x(q.t), y0 = p2y(q.top), y1 = p2y(q.bot); if (x0 == null || y0 == null || y1 == null || x0 > W) continue;
+        const xe = q.state === 'fresh' || !isFinite(q.end) ? W : Math.min(W, t2x(q.end) ?? W); if (xe < 0) continue;
+        const dem = q.type === 'demand', c = dem ? OB_UP : OB_DN, y = Math.min(y0, y1), h = Math.max(2, Math.abs(y1 - y0)), xa = Math.max(0, x0), w = Math.max(2, xe - xa);
+        const S = { fresh: [0.18, 0.95, 2, []], tapped: [0.09, 0.65, 1.5, [5, 3]], broken: [0.04, 0.3, 1, [3, 3]] }[q.state];
+        g.fillStyle = hexA(c, S[0]); g.fillRect(xa, y, w, h);
+        g.strokeStyle = hexA(c, S[1]); g.lineWidth = S[2]; g.setLineDash(S[3]); g.strokeRect(xa + S[2] / 2, y + S[2] / 2, Math.max(1, w - S[2]), Math.max(1, h - S[2])); g.setLineDash([]);
+        done.obs[q.state]++; done.obs.rects.push({ type: q.type, state: q.state, x0: xa, x1: xa + w, y, h, n: q.n });
+        if (q.state === 'broken') continue;
+        const text = (dem ? 'Bull OB' : 'Bear OB') + (q.n > 1 ? ' ×' + q.n : '') + (q.state === 'tapped' ? ' · tapped' : '');
+        const ly = h >= 16 ? y + 9 : dem ? y + h + 9 : y - 9, lw = text.length * 6.6 + 8;
+        if (lw > w + 40 && q.state === 'tapped') continue;   // a short tapped box: the box says enough
+        if (labs.some(l => Math.abs(l.y - ly) < 14 && xa < l.x + l.w && l.x < xa + 2 + lw)) continue;
+        labs.push({ x: xa + 2, y: ly, w: lw });
+        label(g, text, xa + 2, ly, hexA(c, q.state === 'fresh' ? 1 : 0.8), 'left', q.state === 'fresh' ? hexA(COL.bg.length === 7 ? COL.bg : '#0b0e14', 0.7) : 'transparent');
       }
     }
     // POI (Indicators → POI): the order blocks price has not come back to yet, nearest two below (buy) and above (sell), each
