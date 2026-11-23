@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, of: false, cvd: true, ofAbs: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, of: false, cvd: true, ofAbs: false, bt: false, btMin: 'auto', vp: false, vpMode: 'vis', pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
@@ -492,6 +492,237 @@
     return out;
   }
 
+  // ------------------------------------------------------------------ big trades (Indicators → Big trades)
+  // The exchange's live trades drawn as circles where they traded: green = a market buy (lifted the offer), red = a market
+  // sell (hit the bid), circle area ∝ the order's $ size. Fills with the same millisecond and side are one order (Binance's
+  // aggTrade already joins one order's fills at one price; a sweep through several prices arrives as several), placed at
+  // its average price. Size filter: Auto = about BT_RATE orders an hour (the size the biggest orders of the last hour
+  // reach), or a fixed $ amount. The exchanges hand out only a short trade history (Binance: the last few thousand trades,
+  // Bybit: the last 1000), so the circles start a little before the chart opened and fill in live from then on.
+  // Live Binance / Bybit charts only: not replay (no trade history that far back), not FX (no shared trades).
+  const BT_RATE = 40, BT_PAGES = 8, BT_KEEP = 20000;
+  const BT = { key: '', on: false, list: [], st: [], su: [], since: null, ws: null, ping: null, timer: null, ft: null, rq: null, retry: null, pend: null, auto: 0, err: '', loading: false, gen: 0, buf: null, noFloor: false, heard: 0, first: null };
+  let BTHIT = [], hoverPt = null;   // circles drawn last frame [x, y, r, order] (hover read-out) · the pointer over the chart
+  const btKey = () => U.ex + '|' + U.sym;
+  const btWant = () => !!U.bt && !R.on && (U.ex === 'binance' || U.ex === 'bybit');
+  const btFixed = () => U.btMin && U.btMin !== 'auto' ? +U.btMin : 0;
+  const btThr = () => btFixed() || BT.auto;
+  const btFloor = () => BT.noFloor ? 0 : 0.3 * Math.min(BT.auto || 5e4, btFixed() || Infinity, 5e4);   // orders kept for drawing
+  const fusd = v => v >= 1e9 ? '$' + (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? '$' + (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k' : '$' + v.toFixed(0);
+  const tsec = t => new Date(t).toISOString().slice(11, 19);
+  function btStop() {
+    BT.gen++;
+    if (BT.ws) { BT.ws.onclose = null; try { BT.ws.close(); } catch (e) { /* closed */ } BT.ws = null; }
+    for (const k of ['ping', 'timer']) { clearInterval(BT[k]); BT[k] = null; }
+    for (const k of ['ft', 'rq', 'retry']) { clearTimeout(BT[k]); BT[k] = null; }
+    BT.on = false;
+  }
+  function btSet() {   // follows the toggle, the coin, the exchange and replay
+    if (!btWant()) { if (BT.on || BT.ws) btStop(); BTHIT = []; prim.req(); return; }
+    if (BT.on && BT.key === btKey()) return;
+    btStart();
+  }
+  function btOrder(t, p, q, s) {   // one fill, in time order → orders
+    const P = BT.pend;
+    if (P && P.t === t && P.s === s) { P.q += q; P.v += p * q; return; }
+    btFlush(); BT.pend = { t, s, q, v: p * q };
+  }
+  function btFlush() {
+    const P = BT.pend; if (!P) return; BT.pend = null;
+    const o = { t: P.t, p: P.v / P.q, q: P.q, usd: P.v, s: P.s };
+    BT.st.push(o.t); BT.su.push(o.usd);
+    if (o.usd >= btFloor()) { BT.list.push(o); if (BT.list.length > BT_KEEP) BT.list.splice(0, BT.list.length - BT_KEEP); if (!BT.buf && o.usd >= btThr()) btDraw(); }
+  }
+  function btDraw() { if (BT.rq) return; BT.rq = setTimeout(() => { BT.rq = null; prim.req(); if (hoverPt) legend(); }, 250); }
+  function btAuto() {   // Auto size: the (K+1)th biggest order of the last hour, K = BT_RATE an hour of what we have
+    const now = Date.now(), from = now - HOUR;
+    let k0 = 0; while (k0 < BT.st.length && BT.st[k0] < from) k0++;
+    if (k0) { BT.st.splice(0, k0); BT.su.splice(0, k0); }
+    const span = Math.max(MIN, now - Math.max(BT.since || now, from)), K = Math.max(3, Math.round(BT_RATE * span / HOUR));
+    const top = [];   // the K + 1 biggest, ascending
+    for (const v of BT.su) {
+      if (top.length > K && v <= top[0]) continue;
+      let lo = 0, hi = top.length; while (lo < hi) { const m = (lo + hi) >> 1; if (top[m] < v) lo = m + 1; else hi = m; }
+      top.splice(lo, 0, v); if (top.length > K + 1) top.shift();
+    }
+    BT.auto = top.length ? top[0] : 0;
+    const f = btFloor(); if (BT.list.length && BT.list[0].usd < f) BT.list = BT.list.filter(o => o.usd >= f);
+  }
+  async function btHistory(ex, sym) {   // the trades the exchange still hands out, oldest first: [t, price, qty, side, id]
+    if (ex === 'bybit') {
+      const d = await getJSON('https://api.bybit.com/v5/market/recent-trade?category=linear&symbol=' + sym + '&limit=1000');
+      if (d.retCode !== 0) throw new Error(d.retMsg || 'Bybit error');
+      return d.result.list.map(x => [+x.time, +x.price, +x.size, x.side === 'Buy' ? 1 : -1, x.execId]).sort((a, b) => a[0] - b[0]);
+    }
+    let out = [], from = null;
+    for (let i = 0; i < BT_PAGES; i++) {   // pages of 1000, newest first (each costs Binance weight 20)
+      const d = await getJSON('https://fapi.binance.com/fapi/v1/aggTrades?symbol=' + sym + '&limit=1000' + (from != null ? '&fromId=' + from : ''));
+      if (!Array.isArray(d) || !d.length) break;
+      out = d.map(x => [x.T, +x.p, +x.q, x.m ? -1 : 1, x.a]).concat(out);
+      if (d[0].a <= 0 || Date.now() - d[0].T > 2 * HOUR) break;
+      from = Math.max(0, d[0].a - 1000);
+    }
+    return out;
+  }
+  function btSock(g, ex, sym) {
+    let ws;
+    try { ws = new WebSocket(ex === 'bybit' ? 'wss://stream.bybit.com/v5/public/linear' : 'wss://fstream.binance.com/market/ws/' + sym.toLowerCase() + '@aggTrade'); } catch (e) { return; }
+    BT.ws = ws;
+    const take = f => { if (g !== BT.gen) return; BT.heard = Date.now(); if (BT.first) { const r = BT.first; BT.first = null; r(); } if (BT.buf) { BT.buf.push(f); return; } btOrder(f[0], f[1], f[2], f[3]); clearTimeout(BT.ft); BT.ft = setTimeout(btFlush, 300); };
+    if (ex === 'bybit') {
+      ws.onopen = () => { try { ws.send(JSON.stringify({ op: 'subscribe', args: ['publicTrade.' + sym] })); } catch (e) { /* closed */ } BT.ping = setInterval(() => { try { ws.send('{"op":"ping"}'); } catch (e) { /* closed */ } }, 20000); };
+      ws.onmessage = m => { try { const d = JSON.parse(m.data); if (d.topic && d.data) for (const x of d.data) take([+x.T, +x.p, +x.v, x.S === 'Buy' ? 1 : -1, x.i]); } catch (e) { /* skip */ } };
+    } else ws.onmessage = m => { try { const x = JSON.parse(m.data); if (x.e === 'aggTrade') take([x.T, +x.p, +x.q, x.m ? -1 : 1, x.a]); } catch (e) { /* skip */ } };
+    ws.onclose = () => {   // lost: start again in a few seconds (fresh history covers the hole)
+      if (g !== BT.gen) return;
+      BT.ws = null; clearInterval(BT.ping); BT.ping = null; BT.on = false;
+      BT.retry = setTimeout(() => { if (g === BT.gen) btSet(); }, 3000);
+    };
+  }
+  async function btStart() {
+    btStop();
+    const g = ++BT.gen, ex = U.ex, sym = U.sym;
+    Object.assign(BT, { key: btKey(), on: true, list: [], st: [], su: [], since: null, pend: null, auto: 0, err: '', loading: true, buf: [], noFloor: true, heard: 0 });
+    BTHIT = []; legend();
+    // the history is fetched once the socket has sent its first trade (or after 4 s), so the two overlap: no trades lost
+    // between them; the overlap is dropped by trade id (Binance's aggregate ids run in order; Bybit's by time + id)
+    const first = new Promise(r => { BT.first = r; setTimeout(r, 4000); });
+    btSock(g, ex, sym);
+    await first; BT.first = null;
+    if (g !== BT.gen) return;
+    let fills = [];
+    try { fills = await btHistory(ex, sym); } catch (e) { if (g === BT.gen) BT.err = e.message || 'no answer'; }
+    if (g !== BT.gen) return;
+    for (const f of fills) btOrder(f[0], f[1], f[2], f[3]);
+    const lastT = fills.length ? fills[fills.length - 1][0] : -Infinity, lastId = fills.length ? fills[fills.length - 1][4] : -Infinity, ids = new Set(fills.filter(f => f[0] === lastT).map(f => String(f[4])));
+    for (const f of BT.buf) if (ex === 'binance' ? f[4] > lastId : f[0] > lastT || (f[0] === lastT && !ids.has(String(f[4])))) btOrder(f[0], f[1], f[2], f[3]);   // the socket's, past the history
+    BT.since = fills.length ? fills[0][0] : Date.now();
+    BT.buf = null; btFlush(); BT.noFloor = false; BT.loading = false; btAuto();
+    BT.timer = setInterval(() => { if (g === BT.gen) { btAuto(); prim.req(); legend(); } }, 20000);
+    prim.req(); legend();
+  }
+  function drawBT(g) {
+    BTHIT = [];
+    const thr = btThr(), B = S.bars, n = B.length; if (!thr || !BT.list.length || !n) return;
+    const ts = chart.timeScale(), vr = ts.getVisibleLogicalRange(); if (!vr) return;
+    const ms = TF[U.tf].ms, a = Math.max(0, Math.floor(vr.from)), tA = a < n ? B[a][0] : Infinity, tB = vr.to >= n - 1 ? Infinity : B[Math.ceil(vr.to)][0] + ms;
+    let lo = 0, hi = BT.list.length; while (lo < hi) { const m = (lo + hi) >> 1; if (BT.list[m].t < tA) lo = m + 1; else hi = m; }
+    let sel = [];
+    for (let i = lo; i < BT.list.length; i++) { const o = BT.list[i]; if (o.t >= tB) break; if (o.usd >= thr) sel.push(o); }
+    sel.sort((x, y) => y.usd - x.usd); if (sel.length > 1500) sel = sel.slice(0, 1500);   // biggest first: the small ones stay on top
+    for (const o of sel) {
+      const L = t2l(o.t); if (L == null) continue;
+      const x = ts.logicalToCoordinate(Math.floor(L)), y = p2y(o.p); if (x == null || y == null) continue;   // on its candle, at its price
+      const r = Math.min(26, 3 + 4.5 * Math.sqrt(o.usd / thr)), c = o.s === 1 ? COL.up : COL.down;
+      g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI);
+      g.fillStyle = hexA(c, 0.5); g.fill(); g.lineWidth = 1; g.strokeStyle = hexA(c, 0.95); g.stroke();
+      BTHIT.push([x, y, r, o]);
+    }
+  }
+  function btLegend() {
+    if (U.ex === 'fx') return '<span title="FX prices have no shared trades to show.">Big trades: <b class="warn">not for FX</b></span>';
+    if (R.on) return '<span title="The exchanges hand out only a short trade history (minutes on a busy coin), so big trades show on live charts only.">Big trades: <b class="warn">live charts only</b></span>';
+    if (hoverPt) for (let i = BTHIT.length - 1; i >= 0; i--) {   // the circle under the pointer (smallest on top)
+      const [x, y, r, o] = BTHIT[i];
+      if (Math.hypot(hoverPt.x - x, hoverPt.y - y) <= r) return `<span title="One market order (fills in the same millisecond and direction joined), at its average price. Time in UTC.">Big ${o.s === 1 ? '<b class="up">buy</b>' : '<b class="down">sell</b>'} <b>${fusd(o.usd)}</b> · ${fv(o.q)} ${esc(coin(U.sym))} at <b>${fp(o.p)}</b> · ${tsec(o.t)}</span>`;
+    }
+    const thr = btThr(), auto = !btFixed();
+    return `<span title="Circles = single market orders of at least this size: green bought at the offer, red sold at the bid, bigger circle = bigger order. ${auto ? `Auto picks the size so about ${BT_RATE} orders an hour show. ` : ''}${api().name} hands out only a short trade history, so they start a little before you opened the chart. Hover a circle for its size.">Big trades ≥ <b>${thr ? fusd(thr) : '…'}</b>${auto ? ' <em>auto</em>' : ''}${BT.loading ? ' · loading…' : BT.since ? ` · since ${tsec(BT.since).slice(0, 5)}` : ''}${BT.err ? ' · <b class="warn">history did not load</b>' : ''}</span>`;
+  }
+
+  // ------------------------------------------------------------------ volume profile (Indicators → Volume profile)
+  // How much traded at each price: each candle's volume spread evenly over its high–low, split into market buys (green) and
+  // market sells (red) where the candles carry the split (Binance; a Bybit chart borrows Binance's while Order flow is on),
+  // one colour otherwise. POC = the fullest row (a line across), value area = the 70% of the volume around it (brighter rows,
+  // VAH / VAL). Range: the candles in view (drawn at the chart's right edge) or each UTC day (drawn from the day's first
+  // candle, like a session profile; 1H charts and below). Built from the chart's candles: a 1m chart's profile is finer.
+  let VPX = null, vpSig = '', vpRq = null;   // the profile the legend reads: { poc, vah, val, day } · its last numbers · legend refresh
+  const vpCol = () => isLight() ? '#c026d3' : '#e879f9';
+  function vpBuild(i0, i1, lo, hi, N) {
+    const bw = (hi - lo) / N, tot = new Float64Array(N), buy = new Float64Array(N), sell = new Float64Array(N); let split = false;   // a candle without the split counts in tot only
+    for (let i = i0; i <= i1; i++) {
+      const b = S.bars[i], v = b[5]; if (!(v > 0)) continue;
+      const f = ofVB(b), share = f ? f[1] / f[0] : null; if (f) split = true;
+      const x = Math.max(0, Math.min(N - 1, Math.floor((b[3] - lo) / bw))), y = Math.max(0, Math.min(N - 1, Math.floor((b[2] - lo) / bw))), k = v / (y - x + 1);
+      for (let j = x; j <= y; j++) { tot[j] += k; if (share != null) { buy[j] += k * share; sell[j] += k * (1 - share); } }
+    }
+    let poc = 0, sum = 0; for (let j = 0; j < N; j++) { sum += tot[j]; if (tot[j] > tot[poc]) poc = j; }
+    if (!(sum > 0)) return null;
+    let up = poc, dn = poc, va = tot[poc];
+    while (va < 0.7 * sum && (up < N - 1 || dn > 0)) { const a = up < N - 1 ? tot[up + 1] : -1, c = dn > 0 ? tot[dn - 1] : -1; if (a >= c) va += tot[++up]; else va += tot[--dn]; }
+    return { lo, bw, N, tot, buy, sell, split, poc, up, dn, max: tot[poc], pocP: lo + (poc + 0.5) * bw, vah: lo + (up + 1) * bw, val: lo + dn * bw };
+  }
+  function vpRows(g, P, x0, wMax, toLeft) {   // the rows: buy part then sell part, from x0 (rightwards, or leftwards from x0)
+    for (let j = 0; j < P.N; j++) {
+      if (!P.tot[j]) continue;
+      const ya = p2y(P.lo + j * P.bw), yb = p2y(P.lo + (j + 1) * P.bw); if (ya == null || yb == null) continue;
+      const y = Math.min(ya, yb) + 0.5, h = Math.max(1, Math.abs(ya - yb) - 1), w = wMax * P.tot[j] / P.max, a = j >= P.dn && j <= P.up ? 0.5 : 0.22, xs = toLeft ? x0 - w : x0;
+      if (P.split) {   // buys, sells, then any volume without the split (grey)
+        const wb = w * P.buy[j] / P.tot[j], wsl = w * P.sell[j] / P.tot[j], wn = w - wb - wsl;
+        g.fillStyle = hexA(COL.up, a); g.fillRect(xs, y, wb, h); g.fillStyle = hexA(COL.down, a); g.fillRect(xs + wb, y, wsl, h);
+        if (wn > 0.5) { g.fillStyle = hexA(COL.muted, a + 0.12); g.fillRect(xs + wb + wsl, y, wn, h); }
+      }
+      else { g.fillStyle = hexA(COL.muted, a + 0.12); g.fillRect(xs, y, w, h); }
+    }
+  }
+  const vpDays = () => U.vpMode === 'day' && TF[U.tf].ms <= HOUR;
+  function drawVP(g, W) {
+    VPX = null;
+    try { vpDraw(g, W); } finally {   // the legend follows when the numbers change (scroll, zoom, new candles)
+      const sig = VPX ? [VPX.poc, VPX.vah, VPX.val, VPX.day].join('|') : '';
+      if (sig !== vpSig) { vpSig = sig; if (!vpRq) vpRq = setTimeout(() => { vpRq = null; legend(); }, 0); }
+    }
+  }
+  function vpDraw(g, W) {
+    const B = S.bars, n = B.length, ts = chart.timeScale(), vr = ts.getVisibleLogicalRange(); if (!n || !vr) return;
+    const i0 = Math.max(0, Math.ceil(vr.from)), i1 = Math.min(n - 1, Math.floor(vr.to)); if (i1 < i0) return;
+    const rowsOf = (lo, hi, cap = 140) => { const a = p2y(lo), b = p2y(hi); return a == null || b == null ? 0 : Math.max(8, Math.min(cap, Math.round((a - b) / 4))); };   // rows ~4 px tall
+    if (vpDays()) {   // one profile per UTC day, from the day's first candle
+      const half = (ts.options().barSpacing || 6) / 2;
+      let a = i0; while (a > 0 && Math.floor(B[a - 1][0] / DAY) === Math.floor(B[i0][0] / DAY)) a--;
+      while (a <= i1) {
+        const day = Math.floor(B[a][0] / DAY); let b = a, lo = Infinity, hi = -Infinity;
+        while (b + 1 < n && Math.floor(B[b + 1][0] / DAY) === day) b++;
+        for (let i = a; i <= b; i++) { if (B[i][3] < lo) lo = B[i][3]; if (B[i][2] > hi) hi = B[i][2]; }
+        const xa = ts.logicalToCoordinate(a), xb = ts.logicalToCoordinate(b), N = rowsOf(lo, hi, 400);   // a day can be taller than the screen
+        if (xa != null && xb != null && N && hi > lo) {
+          const x0 = xa - half, x1 = xb + half, P = vpBuild(a, b, lo, hi, N);
+          if (P) {
+            const xs = Math.max(x0, 0);   // a day that began off the left edge: its profile starts at the edge
+            vpRows(g, P, xs, Math.min(Math.max(0, x1 - xs) * 0.45, xs > x0 ? 170 : 220), false);
+            const yp = p2y(P.pocP); if (yp != null) { g.strokeStyle = vpCol(); g.lineWidth = 1.5; g.beginPath(); g.moveTo(x0, yp); g.lineTo(x1, yp); g.stroke(); }
+            g.strokeStyle = hexA(COL.muted, 0.55); g.lineWidth = 1; g.setLineDash([3, 3]);
+            for (const p of [P.vah, P.val]) { const y = p2y(p); if (y != null) { g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); } }
+            g.setLineDash([]);
+            VPX = { poc: P.pocP, vah: P.vah, val: P.val, day: day * DAY };
+          }
+        }
+        a = b + 1;
+      }
+      return;
+    }
+    let lo = Infinity, hi = -Infinity; for (let i = i0; i <= i1; i++) { if (B[i][3] < lo) lo = B[i][3]; if (B[i][2] > hi) hi = B[i][2]; }
+    const N = rowsOf(lo, hi); if (!N || !(hi > lo)) return;
+    const P = vpBuild(i0, i1, lo, hi, N); if (!P) return;
+    const wMax = Math.min(W * (phone() ? 0.3 : 0.22), 260), xR = W - 2;
+    vpRows(g, P, xR, wMax, true);
+    const yp = p2y(P.pocP);
+    if (yp != null) { g.strokeStyle = hexA(vpCol(), 0.85); g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, yp); g.lineTo(W, yp); g.stroke(); }
+    g.font = '600 9.5px "Geist Mono", ui-monospace, monospace'; g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (const [p, txt, c] of [[P.vah, 'VAH', COL.muted], [P.pocP, 'POC', vpCol()], [P.val, 'VAL', COL.muted]]) {
+      const y = p2y(p); if (y == null) continue;
+      if (txt !== 'POC') { g.strokeStyle = hexA(COL.muted, 0.6); g.lineWidth = 1; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(xR - wMax, y); g.lineTo(xR, y); g.stroke(); g.setLineDash([]); }
+      g.fillStyle = c; g.fillText(txt, xR - wMax - 4, y);
+    }
+    VPX = { poc: P.pocP, vah: P.vah, val: P.val, day: null };
+  }
+  function vpLegend() {
+    if (U.ex === 'fx') return '<span title="FX prices have no shared volume.">Volume profile: <b class="warn">not for FX</b></span>';
+    if (!VPX) return '';
+    const note = U.vpMode === 'day' && !vpDays() ? ' <em title="Each day needs a 1H chart or lower; this is the candles in view.">in view</em>' : VPX.day != null ? ` <em>${new Date(VPX.day).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' })}</em>` : '';
+    return `<span title="Volume profile${VPX.day != null ? ' of the newest day on screen' : ' of the candles in view'}: POC = the price with the most volume, VA = the range holding 70% of it.">POC <b class="vp-poc">${fp(VPX.poc)}</b> · VA <b>${fp(VPX.val)}–${fp(VPX.vah)}</b>${note}</span>`;
+  }
+
   function emaArr(n) { return emaOf(S.bars, n); }
   function emaOf(B, n) {   // also the Compare chart's
     const out = [], k = 2 / (n + 1); let e = null, sum = 0;
@@ -530,7 +761,7 @@
       if (!bars.length) throw new Error(`No candles for ${U.sym} on ${api().name}.`);
       S.bars = bars; S.key = U.ex + '|' + U.sym + '|' + U.tf; S.noOld = false; S.lastPx = bars[bars.length - 1][4]; S.marks[U.sym] = S.lastPx;
       applyMeta(); setAll(); showRecent(); hideMsg(); headUI(); tickUI();
-      startStream(g); emit('load');
+      startStream(g); btSet(); emit('load');
     } catch (e) { if (g === S.gen) loadFailed(e, loadLive); }
   }
   function loadFailed(e, retry) {
@@ -604,7 +835,7 @@
     closeModals(); pausePlay(); clearPick();
     if (R.on) P.closeMode('replay', 'Replay restarted');
     R.on = true; R.clock = bucket(t, U.tf); TLF.replay = {}; newSession();
-    stopStream(); modeUI(); saveR();
+    stopStream(); btSet(); modeUI(); saveR();
     await rebuildReplay();
   }
   async function rebuildReplay() {
@@ -1548,12 +1779,13 @@
     paneViews() { return VIEWS; },
   };
   const VIEWS = [
-    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.smcFvg && FVGS && !X.smcOff) { s.context.save(); drawFVG(s.context, s.mediaSize.width); s.context.restore(); } if (smcAny() && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
+    { zOrder: () => 'bottom', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => { if (U.vp && U.ex !== 'fx') { s.context.save(); drawVP(s.context, s.mediaSize.width); s.context.restore(); } if (U.smcFvg && FVGS && !X.smcOff) { s.context.save(); drawFVG(s.context, s.mediaSize.width); s.context.restore(); } if (smcAny() && !X.smcOff) drawSMC(s.context, s.mediaSize.width); xDraw(s.context, s.mediaSize.width, 'bottom'); }) }) },
     { zOrder: () => 'top', renderer: () => ({ draw: target => target.useMediaCoordinateSpace(s => {
       const g = s.context, W = s.mediaSize.width;
       if (U.hilo) { g.save(); drawHiLo(g, W); g.restore(); }
       if (U.tline && TLS) { g.save(); drawTL(g, W); g.restore(); }
       if (U.pdhl && PDAY) { g.save(); drawPD(g, W); g.restore(); }
+      if (U.bt && !R.on && U.ex !== 'fx') { g.save(); drawBT(g); g.restore(); } else if (BTHIT.length) BTHIT = [];
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
@@ -2413,6 +2645,8 @@
       else if (ofBorrow() && !ofOK()) l2 += '<span>Order flow: loading Binance…</span>';
       else if (ofOK()) l2 += `<span title="${R.on && b[0] + TF[U.tf].ms > R.clock ? 'In replay, a candle’s order flow shows once the candle has closed.' : 'No order flow for this candle.'}">Δ <b>—</b></span>`;
     }
+    if (U.bt) l2 += btLegend();
+    if (U.vp) l2 += vpLegend();
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
     if (U.tline && TLS) { const Ln = S.bars.length - 1, hold = TLS.filter(l => !l.htf && l.brkT == null && l.liveBrk == null).map(l => { const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) return '';
@@ -2441,6 +2675,7 @@
     LG.innerHTML = `<div class="l1"><b>${esc(mktName(U.sym))} · ${U.tf} · ${api().name}${U.ex === 'fx' ? ' <em class="lg-fx" title="Interbank prices (the market TradingView’s FX charts show), via our server, ~10 s refresh. Chart and paper trades only.">interbank</em>' : ''}</b><span class="ohlc"><span><em>O</em>${fp(b[1])}</span><span><em>H</em>${fp(b[2])}</span><span><em>L</em>${fp(b[3])}</span><span class="${cl}"><em>C</em>${fp(b[4])}</span><span class="${cl}">${up ? '+' : '−'}${fp(Math.abs(ch))} (${pct(ch / b[1] * 100)})</span></span></div>${l2 ? `<div class="l2">${l2}</div>` : ''}`;
   }
   chart.subscribeCrosshairMove(p => {
+    hoverPt = p && p.point ? { x: p.point.x, y: p.point.y } : null;
     if (p && p.time != null) { const t = p.time * 1000, B = S.bars; let lo = 0, hi = B.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (B[m][0] <= t) lo = m; else hi = m - 1; } hoverBar = B[lo] && B[lo][0] === t ? B[lo] : null; }
     else hoverBar = null;
     legend();
@@ -2451,6 +2686,9 @@
     $('[data-act="smc"]').setAttribute('aria-pressed', String(smcAny()));
     $$('[data-act="smcall"]').forEach(b => { if (!b.closest('[data-legend]')) b.classList.toggle('on', (b.dataset.v === '1') === !!U.smcAll); });
     $$('[data-ind]').forEach(i => { i.checked = !!U[i.dataset.ind]; });
+    $$('[data-act="btsz"]').forEach(b => { const on = b.dataset.v === String(U.btMin || 'auto'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    $$('[data-act="vpm"]').forEach(b => { const on = b.dataset.v === (U.vpMode === 'day' ? 'day' : 'vis'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    $$('[data-btopts]').forEach(e => { e.hidden = !U.bt; }); $$('[data-vpopts]').forEach(e => { e.hidden = !U.vp; });
     $$('[data-act="candles"]').forEach(b => { const on = b.dataset.v === (U.candles === 'mono' ? 'mono' : 'color'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
     document.title = (X.titlePre || '') + `${coin(U.sym)} ${S.lastPx ? fp(S.lastPx) : ''} · ${R.on ? 'Replay' : 'Desk'} · ReplayDesk`;
     $$('.wl-row').forEach(r => r.classList.toggle('on', r.dataset.s === U.sym));
@@ -2659,6 +2897,8 @@
       else if (act === 'retry') { hideMsg(); if (S.retry) S.retry(); }
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
+      else if (act === 'btsz') { U.btMin = a.dataset.v || 'auto'; saveUI(); headUI(); prim.req(); legend(); }
+      else if (act === 'vpm') { U.vpMode = a.dataset.v === 'day' ? 'day' : 'vis'; saveUI(); headUI(); prim.req(); legend(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
       else if (act === 'ofbin') { symList('binance').then(l => { if (l.some(s => s.s === U.sym)) setSymbol(U.sym, 'binance'); else toast(mktName(U.sym) + ' is not listed on Binance futures, so there is no order flow for it here.'); }, () => setSymbol(U.sym, 'binance')); }
       else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
@@ -2717,6 +2957,8 @@
     else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq' || i.dataset.ind === 'ob' || i.dataset.ind === 'kpoi') smcSchedule();
     else if (i.dataset.ind === 'zz') { smcSchedule(); setMarkers(); }
     else if (i.dataset.ind === 'of' || i.dataset.ind === 'cvd' || i.dataset.ind === 'ofAbs') { ofSet(); setMarkers(); }
+    else if (i.dataset.ind === 'bt') btSet();
+    else if (i.dataset.ind === 'vp') prim.req();
     else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else if (i.dataset.ind === 'poi' || i.dataset.ind === 'poiAll' || i.dataset.ind === 'poiPause') emit('poi'); else setEMAs();
     legend();
   }));
@@ -2764,7 +3006,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { get BT() { return BT; }, get BTHIT() { return BTHIT; }, get VPX() { return VPX; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
