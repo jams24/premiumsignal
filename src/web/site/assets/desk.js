@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, of: false, cvd: true, ofAbs: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
@@ -107,7 +107,7 @@
         if (o.start != null) q.set('startTime', String(o.start));
         if (o.end != null) q.set('endTime', String(o.end));
         const d = await getJSON('https://fapi.binance.com/fapi/v1/klines?' + q);
-        return d.map(k => [k[0], +k[1], +k[2], +k[3], +k[4], +k[5]]);
+        return d.map(k => [k[0], +k[1], +k[2], +k[3], +k[4], +k[5], TF[iv].ms, +k[9]]);   // [6] length, [7] taker buy volume (order flow)
       },
       async symbols() {
         const d = await getJSON('https://fapi.binance.com/fapi/v1/exchangeInfo', 25000);
@@ -124,7 +124,7 @@
       // Binance moved its futures market streams under /market: the old /ws/ address still connects but never sends
       socket(sym, iv, onK) {
         const ws = new WebSocket('wss://fstream.binance.com/market/ws/' + sym.toLowerCase() + '@kline_' + TF[iv].b);
-        ws.onmessage = m => { try { const k = JSON.parse(m.data).k; if (k) onK([k.t, +k.o, +k.h, +k.l, +k.c, +k.v]); } catch (e) { /* skip */ } };
+        ws.onmessage = m => { try { const k = JSON.parse(m.data).k; if (k) onK([k.t, +k.o, +k.h, +k.l, +k.c, +k.v, TF[iv].ms, +k.V]); } catch (e) { /* skip */ } };
         return { ws, close() { ws.onclose = null; try { ws.close(); } catch (e) { /* closed */ } } };
       },
     },
@@ -297,7 +297,8 @@
   const box = $('[data-chart]');
   const chart = LC.createChart(box, {
     autoSize: true,
-    layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11 },
+    layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11,
+      panes: { separatorColor: css('--dk-line'), separatorHoverColor: css('--dk-line') } },   // the order-flow panes' dividers
     grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
     crosshair: { mode: LC.CrosshairMode.Normal, vertLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') }, horzLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') } },
     rightPriceScale: { borderColor: css('--dk-line'), scaleMargins: { top: 0.08, bottom: 0.18 } },
@@ -317,7 +318,7 @@
     colSeen = colKey();
     readCol();
     chart.applyOptions({
-      layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted },
+      layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, panes: { separatorColor: css('--dk-line'), separatorHoverColor: css('--dk-line') } },
       grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
       crosshair: { vertLine: { labelBackgroundColor: css('--panel-3') }, horzLine: { labelBackgroundColor: css('--panel-3') } },
       rightPriceScale: { borderColor: css('--dk-line') }, timeScale: { borderColor: css('--dk-line') },
@@ -351,14 +352,91 @@
     const on = U.vol && U.volMa && U.ex !== 'fx', L = [];
     if (on) for (let i = VMA - 1; i < S.bars.length; i++) L.push({ time: S.bars[i][0] / 1000, value: volAvg(i, true) });
     vma.setData(L);
+    ofSet();
   }
   function volUpd(i) {
+    ofUpd(i);
     if (!U.vol) return;
     vs.update(toV(S.bars[i], i));
     if (U.volMa && U.ex !== 'fx' && i >= VMA - 1) vma.update({ time: S.bars[i][0] / 1000, value: volAvg(i, true) });
   }
   const lastBar = () => S.bars[S.bars.length - 1];
   const nowT = () => R.on ? R.clock : Date.now();
+
+  // ------------------------------------------------------------------ order flow (Indicators → Order flow)
+  // Binance's candles split each candle's volume into market buys (orders that bought at the offer: the taker buy volume,
+  // kept as bar[7]) and market sells (the rest). Delta = market buys − market sells, one bar per candle in a pane under the
+  // chart (bright = at least twice the average size of the OFN candles before). CVD adds the deltas up from the first loaded
+  // candle, in a pane of its own: its slope matters, not its level. Absorption: heavy one-sided market orders (delta at least
+  // twice that average) on a closed candle that still closed the other way. Bybit and FX candles carry no buy / sell split,
+  // so no panes there (the legend says so). Untested: practice, not a signal.
+  const OFN = 20, OFX = { ok: false, panes: 1, d: 0, c: 0, abs: [] };
+  let ofD = null, ofC = null, OFS = [];   // the delta and CVD series; OFS[i] = the deltas added up to bar i
+  const ofDelta = b => b && b[7] != null && isFinite(b[7]) && b[5] > 0 ? 2 * b[7] - b[5] : null;
+  const ofOK = () => U.ex === 'binance' && S.bars.length > 0 && ofDelta(S.bars[S.bars.length - 1]) != null;
+  const ofCvdCol = () => isLight() ? '#0284c7' : '#38bdf8';
+  const fd = v => { const a = Math.abs(v); return (v < 0 ? '−' : '+') + (a >= 1e3 ? fv(a) : a >= 100 ? a.toFixed(0) : a >= 1 ? a.toFixed(1) : a.toFixed(3)); };
+  function ofAvg(i) {   // the average size (|delta|) of the OFN candles before bar i
+    let s = 0, n = 0;
+    for (let j = Math.max(0, i - OFN); j < i; j++) { const d = ofDelta(S.bars[j]); if (d != null) { s += Math.abs(d); n++; } }
+    return n >= OFN ? s / n : null;
+  }
+  function ofPt(i) {
+    const b = S.bars[i], d = ofDelta(b), t = b[0] / 1000;
+    if (d == null) return { time: t };
+    const a = ofAvg(i), hi = a != null && a > 0 && Math.abs(d) >= 2 * a;
+    return { time: t, value: d, color: hexA(d >= 0 ? COL.up : COL.down, hi ? 0.9 : 0.42) };
+  }
+  function ofPanes() {
+    const on = !!U.of && ofOK(), wantC = on && !!U.cvd;
+    if (!!ofD === on && !!ofC === wantC) return;
+    if (ofC) { chart.removeSeries(ofC); ofC = null; }
+    if (ofD) { chart.removeSeries(ofD); ofD = null; }
+    for (let i = chart.panes().length - 1; i > 0; i--) if (!chart.panes()[i].getSeries().length) chart.removePane(i);
+    if (on) ofD = chart.addSeries(LC.HistogramSeries, { priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, base: 0 }, 1);
+    if (wantC) ofC = chart.addSeries(LC.LineSeries, { color: ofCvdCol(), lineWidth: 2, priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }, 2);
+    const P = chart.panes(); for (let i = 0; i < P.length; i++) P[i].setStretchFactor(i ? (phone() ? 0.22 : 0.2) : 1);
+    requestAnimationFrame(ofLift);
+  }
+  // the height of the order-flow panes under the price pane (--ofh): the phone's on-chart Buy / Sell bar and pencil button
+  // sit above them, at the bottom of the price pane, as they do without them. The panes get their size on the next frame.
+  function ofLift() {
+    let h = 0;
+    if (chart.panes().length > 1) { try { h = Math.max(0, box.clientHeight - chart.timeScale().height() - chart.panes()[0].getHeight()); } catch (e) { h = 0; } }
+    root.style.setProperty('--ofh', Math.round(h) + 'px');
+  }
+  window.addEventListener('resize', () => requestAnimationFrame(ofLift));
+  function ofSet() {
+    ofPanes();
+    OFS = []; let c = 0;
+    for (const b of S.bars) { const d = ofDelta(b); if (d != null) c += d; OFS.push(c); }
+    if (ofD) ofD.setData(S.bars.map((b, i) => ofPt(i)));
+    if (ofC) { ofC.applyOptions({ color: ofCvdCol() }); ofC.setData(S.bars.map((b, i) => ofDelta(b) != null ? { time: b[0] / 1000, value: OFS[i] } : { time: b[0] / 1000 })); }
+    OFX.ok = ofOK(); OFX.panes = chart.panes().length; OFX.d = ofD ? ofD.data().length : 0; OFX.c = ofC ? ofC.data().length : 0;
+    if ((U.of && U.ofAbs) || OFX.abs.length) setMarkers();
+  }
+  function ofUpd(i) {
+    if (!ofD && !ofC && !(U.of && U.ofAbs)) return;
+    if (!ofOK()) { if (ofD || ofC) ofSet(); return; }   // a Bybit / FX chart: nothing to add (panes go if they were up)
+    if (i > OFS.length) { ofSet(); return; }
+    const b = S.bars[i], d = ofDelta(b), grew = i === OFS.length;
+    OFS.length = i; OFS.push((i > 0 ? OFS[i - 1] : 0) + (d || 0));
+    if (ofD) ofD.update(ofPt(i));
+    if (ofC) ofC.update(d != null ? { time: b[0] / 1000, value: OFS[i] } : { time: b[0] / 1000 });
+    if (grew) { OFX.d = ofD ? ofD.data().length : 0; OFX.c = ofC ? ofC.data().length : 0; }
+    if (U.of && U.ofAbs && (grew || R.on)) setMarkers();
+  }
+  function ofAbs() {   // [{ t, side }]: side 1 = market sells soaked up (▲), −1 = market buys soaked up (▼); closed candles only
+    const out = []; if (!U.of || !U.ofAbs || !ofOK()) return out;
+    const ms = TF[U.tf].ms, now = nowT();
+    for (let i = OFN; i < S.bars.length; i++) {
+      const b = S.bars[i]; if (b[0] + ms > now) break;
+      const d = ofDelta(b), a = ofAvg(i);
+      if (d == null || a == null || a <= 0 || Math.abs(d) < 2 * a) continue;
+      if (d > 0 && b[4] < b[1]) out.push({ t: b[0], side: -1 }); else if (d < 0 && b[4] > b[1]) out.push({ t: b[0], side: 1 });
+    }
+    return out;
+  }
 
   function emaArr(n) { return emaOf(S.bars, n); }
   function emaOf(B, n) {   // also the Compare chart's
@@ -450,8 +528,9 @@
   // ------------------------------------------------------------------ replay
   function aggInto(k) {
     const b = bucket(k[0], U.tf), last = lastBar();
-    if (last && last[0] === b) { last[2] = Math.max(last[2], k[2]); last[3] = Math.min(last[3], k[3]); last[4] = k[4]; last[5] += k[5]; return S.bars.length - 1; }
-    S.bars.push([b, k[1], k[2], k[3], k[4], k[5]]); return S.bars.length - 1;
+    // feed candles are [t, o, h, l, c, v, length, taker buy]; chart bars [t, o, h, l, c, v, length, taker buy]
+    if (last && last[0] === b) { last[2] = Math.max(last[2], k[2]); last[3] = Math.min(last[3], k[3]); last[4] = k[4]; last[5] += k[5]; last[7] = last[7] != null && k[7] != null ? last[7] + k[7] : null; return S.bars.length - 1; }
+    S.bars.push([b, k[1], k[2], k[3], k[4], k[5], TF[U.tf].ms, k[7] != null ? k[7] : null]); return S.bars.length - 1;
   }
   function saveR() { store.set('rd-replay-v1', R.on ? { sym: U.sym, ex: U.ex, clock: R.clock, step: R.step, speed: R.speed, sid: R.sid } : null); }
   // a replay session = one replay start (a new start is a new session); its trades carry its id (the journal groups them)
@@ -1075,7 +1154,8 @@
     const i = Math.floor(l); return B[i][0] + (B[i + 1][0] - B[i][0]) * (l - i);
   }
   const paneW = () => chart.timeScale().width();
-  const paneH = () => box.clientHeight - chart.timeScale().height();
+  // the price pane's height: the order-flow panes (Indicators → Order flow) sit under it, above the time axis
+  const paneH = () => { if (chart.panes().length > 1) { try { return chart.paneSize(0).height; } catch (e) { /* older chart */ } } return box.clientHeight - chart.timeScale().height(); };
 
   function label(g, text, x, y, color, align, bg) {
     g.font = '600 10.5px "Geist Mono", ui-monospace, monospace';
@@ -2249,6 +2329,9 @@
       if (!U.zz) for (const s of keep(SMCR.swings, 40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
       for (const w of keep(SMCR.sweeps, 6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
     }
+    // order flow: absorption marks (Indicators → Order flow → Absorption marks)
+    OFX.abs = ofAbs();
+    for (const m of OFX.abs) if (m.t >= first) M.push({ time: m.t / 1000, position: m.side === 1 ? 'belowBar' : 'aboveBar', color: m.side === 1 ? COL.up : COL.down, shape: m.side === 1 ? 'arrowUp' : 'arrowDown', text: 'absorb' });
     // extension marks: { t (ms), position, color, shape, text } — snapped to the chart's candle, never past the replay clock
     const last = S.bars.length ? S.bars[S.bars.length - 1][0] : 0, now = nowT();
     for (const f of X.marks) { try { for (const m of f()) if (m.t >= first && m.t <= now && bucket(m.t, U.tf) <= last) M.push({ time: bucket(m.t, U.tf) / 1000, position: m.position, color: m.color, shape: m.shape, text: m.text }); } catch (e) { console.error(e); } }
@@ -2266,6 +2349,11 @@
     if (U.vol && U.ex !== 'fx') {   // FX has no shared volume
       const bi = S.bars.indexOf(b), av = bi >= 0 ? volAvg(bi, false) : null, x = av > 0 ? b[5] / av : null;
       l2 = `<span title="Volume of this candle${x != null ? ` and how it compares with the average of the ${VMA} candles before it` : ''}">Vol <b>${fv(b[5])}</b>${x != null ? ` · <b class="${x >= 2 ? 'warn' : ''}">${x.toFixed(1)}×</b> avg` : ''}</span>`;
+    }
+    if (U.of) {   // order flow of this candle (Binance charts)
+      const d = ofDelta(b), bi = d != null ? S.bars.indexOf(b) : -1;
+      if (d != null && U.ex === 'binance') l2 += `<span title="Order flow of this candle: market buys minus market sells (delta) and the share of its volume that was market buying${U.cvd ? '; CVD = the deltas added up from the first loaded candle (read its slope, not its level)' : ''}">Δ <b class="${d >= 0 ? 'up' : 'down'}">${fd(d)}</b> · buy <b>${(b[7] / b[5] * 100).toFixed(0)}%</b>${U.cvd && bi >= 0 && OFS[bi] != null ? ` · CVD <b>${fd(OFS[bi])}</b>` : ''}</span>`;
+      else if (!ofOK()) l2 += `<span title="Order flow needs each candle's volume split into market buys and market sells. Binance's futures candles carry that split; Bybit's and the FX candles don't.">Order flow: <b class="warn">Binance charts only</b></span>${U.ex === 'bybit' ? '<button type="button" class="lg-btn" data-act="ofbin" title="Open this coin on Binance, where the candles carry the buy / sell split">Use Binance</button>' : ''}`;
     }
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
@@ -2514,6 +2602,7 @@
       else if (act === 'ind') { const p = $('[data-indpop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); }
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
+      else if (act === 'ofbin') { symList('binance').then(l => { if (l.some(s => s.s === U.sym)) setSymbol(U.sym, 'binance'); else toast(mktName(U.sym) + ' is not listed on Binance futures, so there is no order flow for it here.'); }, () => setSymbol(U.sym, 'binance')); }
       else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
       else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; U.eq = true; U.liq = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
@@ -2569,6 +2658,7 @@
     else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; U.liq = U.smc; saveUI(); headUI(); smcSchedule(); }
     else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq' || i.dataset.ind === 'ob' || i.dataset.ind === 'kpoi') smcSchedule();
     else if (i.dataset.ind === 'zz') { smcSchedule(); setMarkers(); }
+    else if (i.dataset.ind === 'of' || i.dataset.ind === 'cvd' || i.dataset.ind === 'ofAbs') { ofSet(); setMarkers(); }
     else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else if (i.dataset.ind === 'poi' || i.dataset.ind === 'poiAll' || i.dataset.ind === 'poiPause') emit('poi'); else setEMAs();
     legend();
   }));
@@ -2616,7 +2706,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { get OFX() { return OFX; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },

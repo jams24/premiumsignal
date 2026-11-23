@@ -244,16 +244,16 @@
   .dk-smc { padding: 0 8px; }
   .dk-tools { position: absolute; left: 8px; top: 56px; z-index: 20; display: none; max-height: calc(100% - 140px); padding: 4px; border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
   .dk.tools-open .dk-tools { display: flex; }
-  .dk-fab { position: absolute; right: 64px; bottom: 34px; z-index: 6; display: block; }
+  .dk-fab { position: absolute; right: 64px; bottom: calc(34px + var(--ofh, 0px)); z-index: 6; display: block; }
   .dk-fab button { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--line-strong); border-radius: 12px; background: color-mix(in oklab, var(--panel) 90%, transparent); color: var(--text-2); box-shadow: var(--shadow); }
   .dk.tools-open .dk-fab button { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 50%, transparent); }
   .dk.replay .dk-rpm { display: flex; }
-  .dk-rpm { position: absolute; left: 8px; right: 8px; bottom: 30px; z-index: 7; align-items: center; gap: 2px; padding: 4px; border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent); border-radius: 14px;
+  .dk-rpm { position: absolute; left: 8px; right: 8px; bottom: calc(30px + var(--ofh, 0px)); z-index: 7; align-items: center; gap: 2px; padding: 4px; border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent); border-radius: 14px;
     background: color-mix(in oklab, var(--panel) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: var(--shadow); }
   .dk-rpm button { display: grid; place-items: center; width: 42px; height: 40px; border-radius: 10px; color: var(--text-2); }
   .dk-rpm .dk-play { width: 48px; background: color-mix(in oklab, var(--warn) 16%, transparent); }
   .dk-rpm .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 11.5px; color: var(--warn); }
-  .dk.replay .dk-fab { bottom: 92px; }
+  .dk.replay .dk-fab { bottom: calc(92px + var(--ofh, 0px)); }
   .dk-legend { left: 8px; top: 6px; font-size: 11px; } .dk-legend .ohlc { font-size: 10.5px; }
 
   .dk-side, .dk-bottom { position: fixed; left: 0; right: 0; bottom: calc(var(--tabbar) + env(safe-area-inset-bottom)); z-index: 30; max-height: min(78dvh, 640px);
@@ -593,16 +593,16 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
   .dk-top .dk-smc, .dk-top .dk-coachb, .dk-top .dk-findb, .dk-top .dk-cmpb, .dk-right [data-theme-toggle] { display: none !important; }
   .dk-moreb { padding: 0 8px; } .dk-moreb[aria-expanded="true"] { background: var(--dk-hover); color: var(--text); }
   .dk-plus { display: none !important; }
-  .dk-qt { top: auto !important; bottom: 34px; left: 52px; }   /* right of the TradingView mark, left of the pencil button */
-  .dk.replay .dk-qt { bottom: 92px; }
+  .dk-qt { top: auto !important; bottom: calc(34px + var(--ofh, 0px)); left: 52px; }   /* right of the TradingView mark, left of the pencil button */
+  .dk.replay .dk-qt { bottom: calc(92px + var(--ofh, 0px)); }
   .dk-chart.cmp-on .dk-qt { bottom: calc(50% + 40px); }   /* Compare: on the main (top) chart, above the 24h strip — it trades the main coin */
   .dk-qt > button { min-width: 64px; height: 44px; padding: 0 8px; }
   .dk-qt .qt-m { padding: 0 4px; }
   .dk-qt .qt-sz { height: 20px; }
-  .dk-chart:has(.dk-qt:not([hidden])) .dk-qbar { bottom: 86px; }
-  .dk.replay .dk-chart:has(.dk-qt:not([hidden])) .dk-qbar { bottom: 144px; }
-  .dk-chart:has(.dk-qt:not([hidden])) .dk-fab { bottom: 86px; }   /* the pencil goes above the Buy / Sell box */
-  .dk.replay .dk-chart:has(.dk-qt:not([hidden])) .dk-fab { bottom: 144px; }
+  .dk-chart:has(.dk-qt:not([hidden])) .dk-qbar { bottom: calc(86px + var(--ofh, 0px)); }
+  .dk.replay .dk-chart:has(.dk-qt:not([hidden])) .dk-qbar { bottom: calc(144px + var(--ofh, 0px)); }
+  .dk-chart:has(.dk-qt:not([hidden])) .dk-fab { bottom: calc(86px + var(--ofh, 0px)); }   /* the pencil goes above the Buy / Sell box */
+  .dk.replay .dk-chart:has(.dk-qt:not([hidden])) .dk-fab { bottom: calc(144px + var(--ofh, 0px)); }
   .dk:has(.dk-qt:not([hidden])) ~ .dk-toast { bottom: calc(var(--tabbar) + 86px + env(safe-area-inset-bottom)); }   /* toasts above the box */
   .dk.replay:has(.dk-qt:not([hidden])) ~ .dk-toast { bottom: calc(var(--tabbar) + 144px + env(safe-area-inset-bottom)); }
   /* finger-sized buttons */
@@ -634,7 +634,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 .rx-exn { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; font-size: 11.5px; line-height: 1.45; color: var(--text-2); } .rx-exn .icon { flex: none; margin-top: 1px; color: var(--primary); } .rx-exn b { color: var(--text); }
 .dk-qt.busy .qt-s, .dk-qt.busy .qt-b { opacity: .45; }
 .dk-qbar.picking { pointer-events: none; } .dk-qbar.picking button { pointer-events: auto; }
-@media (max-width: 899px) { .dk-qbar { top: auto; bottom: 34px; } .dk.replay .dk-qbar { bottom: 92px; } }
+@media (max-width: 899px) { .dk-qbar { top: auto; bottom: calc(34px + var(--ofh, 0px)); } .dk.replay .dk-qbar { bottom: calc(92px + var(--ofh, 0px)); } }   /* --ofh: the order-flow panes under the price pane */
 .qb-sn { flex-basis: 100%; font-size: 11px; color: var(--muted); }
 
 /* ---- 🎓 Walk me through: the SMC coach card on the chart (deskcoach.js) ---- */
