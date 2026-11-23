@@ -19,6 +19,7 @@ const ADM = require('./admin');
 const { ASSETS, FAVICON, safeNext } = require('./html');
 const NEWS = require('./news');
 const FX = require('./fx');   // interbank FX candles for the desk (server-side: the source has no CORS)
+const BIG = require('./bigtrades');   // past days' big trades for the desk's bubbles (the exchanges' daily trade files)
 const PAPER = require('./paper');   // the desk's paper journal (closed paper trades saved to the account)
 
 const publicUrl = () => (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
@@ -93,7 +94,7 @@ function serveAsset(req, res, url) {
 }
 
 const PAGES = new Set(['/', '/learn', '/terms', '/privacy', '/risk', '/signin', '/signup', '/check-email', '/forgot', '/reset', '/app', '/account',
-  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico', '/api/site/news', '/api/site/paper']);
+  '/admin', '/dashboard', '/dashboard/classic', '/robots.txt', '/icon.svg', '/favicon.ico', '/api/site/news', '/api/site/paper', '/api/site/bigtrades']);
 
 async function handle(req, res, url, opts = {}) {
   const p = url.pathname;
@@ -146,6 +147,11 @@ async function route(req, res, url, { dashboardHtml, newsEvents }) {
     if (!who) { json(res, 401, { error: 'auth' }); return true; }
     if (!A.limit(`fx:${A.clientIp(req)}`, 900, 300e3)) { json(res, 429, { error: 'rate', message: 'Too many FX requests. Wait a few minutes.' }); return true; }
     await FX.route(res, url, json); return true;
+  }
+  if (p === '/api/site/bigtrades') {   // one past day of a coin's big trades (signed in; cached, one day processed at a time)
+    if (!who) { json(res, 401, { error: 'auth' }); return true; }
+    if (!A.limit(`bt:${A.clientIp(req)}`, 150, 300e3)) { json(res, 429, { error: 'rate', message: 'Too many requests. Wait a few minutes.' }); return true; }
+    await BIG.route(req, res, url, json, A.clientIp(req)); return true;
   }
   if (p === '/api/site/news') {   // the desk's Market panel: economic calendar + crypto headlines (signed in, rate limited)
     if (!who) { json(res, 401, { error: 'auth' }); return true; }

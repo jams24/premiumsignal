@@ -496,17 +496,18 @@
   // The exchange's live trades drawn as circles where they traded: green = a market buy (lifted the offer), red = a market
   // sell (hit the bid), circle area ∝ the order's $ size. Fills with the same millisecond and side are one order (Binance's
   // aggTrade already joins one order's fills at one price; a sweep through several prices arrives as several), placed at
-  // its average price. Size filter: Auto = about BT_RATE orders an hour (the size the biggest orders of the last hour
-  // reach), or a fixed $ amount. The exchanges hand out only a short trade history (Binance: the last few thousand trades,
-  // Bybit: the last 1000), so the circles start a little before the chart opened and fill in live from then on.
-  // Live Binance / Bybit charts only: not replay (no trade history that far back), not FX (no shared trades).
-  const BT_RATE = 40, BT_PAGES = 8, BT_KEEP = 20000;
+  // its average price. Size filter: Auto = about BT_RATE orders an hour, at most BT_CANDLE a candle (15m: 16 an hour, 1H: 4,
+  // so a candle doesn't drown in circles) — the size the biggest orders reach — or a fixed $ amount. Today: the exchanges' live APIs hand out only a short trade history (Binance: the last few
+  // thousand trades, Bybit: the last 1000), so today's circles start a little before the chart opened and fill in live.
+  // Past days (and replay): the exchange's daily trade file, below. Binance / Bybit charts; not FX (no shared trades).
+  const BT_RATE = 40, BT_CANDLE = 4, BT_PAGES = 8, BT_KEEP = 20000;
+  const btRate = () => Math.min(BT_RATE, BT_CANDLE * HOUR / TF[U.tf].ms);   // Auto: orders an hour on this timeframe
   const BT = { key: '', on: false, list: [], st: [], su: [], since: null, ws: null, ping: null, timer: null, ft: null, rq: null, retry: null, pend: null, auto: 0, err: '', loading: false, gen: 0, buf: null, noFloor: false, heard: 0, first: null };
   let BTHIT = [], hoverPt = null;   // circles drawn last frame [x, y, r, order] (hover read-out) · the pointer over the chart
   const btKey = () => U.ex + '|' + U.sym;
   const btWant = () => !!U.bt && !R.on && (U.ex === 'binance' || U.ex === 'bybit');
   const btFixed = () => U.btMin && U.btMin !== 'auto' ? +U.btMin : 0;
-  const btThr = () => btFixed() || BT.auto;
+  const btThr = () => btFixed() || (BT.autoTf !== U.tf && BT.on && !BT.loading ? (btAuto(), BT.auto) : BT.auto);
   const btFloor = () => BT.noFloor ? 0 : 0.3 * Math.min(BT.auto || 5e4, btFixed() || Infinity, 5e4);   // orders kept for drawing
   const fusd = v => v >= 1e9 ? '$' + (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? '$' + (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k' : '$' + v.toFixed(0);
   const tsec = t => new Date(t).toISOString().slice(11, 19);
@@ -518,6 +519,7 @@
     BT.on = false;
   }
   function btSet() {   // follows the toggle, the coin, the exchange and replay
+    btHistSoon();
     if (!btWant()) { if (BT.on || BT.ws) btStop(); BTHIT = []; prim.req(); return; }
     if (BT.on && BT.key === btKey()) return;
     btStart();
@@ -534,11 +536,11 @@
     if (o.usd >= btFloor()) { BT.list.push(o); if (BT.list.length > BT_KEEP) BT.list.splice(0, BT.list.length - BT_KEEP); if (!BT.buf && o.usd >= btThr()) btDraw(); }
   }
   function btDraw() { if (BT.rq) return; BT.rq = setTimeout(() => { BT.rq = null; prim.req(); if (hoverPt) legend(); }, 250); }
-  function btAuto() {   // Auto size: the (K+1)th biggest order of the last hour, K = BT_RATE an hour of what we have
-    const now = Date.now(), from = now - HOUR;
+  function btAuto() {   // Auto size: the (K+1)th biggest order of the last hour, K = btRate() an hour of what we have
+    const now = Date.now(), from = now - HOUR; BT.autoTf = U.tf;
     let k0 = 0; while (k0 < BT.st.length && BT.st[k0] < from) k0++;
     if (k0) { BT.st.splice(0, k0); BT.su.splice(0, k0); }
-    const span = Math.max(MIN, now - Math.max(BT.since || now, from)), K = Math.max(3, Math.round(BT_RATE * span / HOUR));
+    const span = Math.max(MIN, now - Math.max(BT.since || now, from)), K = Math.max(3, Math.round(btRate() * span / HOUR));
     const top = [];   // the K + 1 biggest, ascending
     for (const v of BT.su) {
       if (top.length > K && v <= top[0]) continue;
@@ -601,19 +603,83 @@
     BT.timer = setInterval(() => { if (g === BT.gen) { btAuto(); prim.req(); legend(); } }, 20000);
     prim.req(); legend();
   }
+  // Past days: the exchange's daily trade file (published the next day), turned into big orders by our server
+  // (/api/site/bigtrades, site/bigtrades.js): every order of at least min(the day's auto size, $50k); the day's auto size =
+  // about BT_RATE orders an hour over that whole day. Loaded for the newest BTD_VIEW days in view (one at a time, 1H charts
+  // and below), in replay too, where only orders before the replay clock show. Today has no file yet: live trades only.
+  const BTD_VIEW = 6, BTD_KEEP = 10;   // days loaded for one view · days kept in memory (a BTC day can hold 50k orders)
+  const BTD = { key: '', days: new Map(), chain: Promise.resolve(), view: [], more: false, t: null, vs: '', chk: 0 };   // day start → { st: load|ok|none|err, list, auto, at }
+  const btHistOK = () => !!U.bt && (U.ex === 'binance' || U.ex === 'bybit') && TF[U.tf].ms <= HOUR;
+  const dayName = d => new Date(d).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+  function dayThr(e) {   // a past day's Auto size on this timeframe: its (K+1)th biggest order, K = btRate() × 24
+    if (e.kTf !== U.tf) { const K = Math.round(btRate() * 24); e.kTf = U.tf; e.k = e.sz.length ? Math.max(e.auto, e.sz[Math.min(K, e.sz.length - 1)]) : e.auto; }
+    return e.k;
+  }
+  function btHistSoon() { clearTimeout(BTD.t); BTD.t = setTimeout(btHistNeed, 250); }
+  function btHistNeed() {
+    BTD.view = []; BTD.more = false;
+    if (!btHistOK() || !S.bars.length) return;
+    const k = U.ex + '|' + U.sym; if (BTD.key !== k) { BTD.key = k; BTD.days = new Map(); }
+    const vr = chart.timeScale().getVisibleLogicalRange(); if (!vr) return;
+    const B = S.bars, n = B.length, a = B[Math.max(0, Math.min(n - 1, Math.floor(vr.from)))][0], z = vr.to >= n - 1 ? nowT() : B[Math.max(0, Math.min(n - 1, Math.ceil(vr.to)))][0];
+    const today = Math.floor(Date.now() / DAY) * DAY;
+    for (let d = Math.floor(z / DAY) * DAY; d >= Math.floor(a / DAY) * DAY; d -= DAY) { if (BTD.view.length >= BTD_VIEW) { BTD.more = true; break; } BTD.view.push(d); }   // newest first
+    if (BTD.days.size > BTD_KEEP) {   // keep memory in check: drop the days furthest from view
+      const mid = (a + z) / 2, far = [...BTD.days.keys()].filter(d => !BTD.view.includes(d) && BTD.days.get(d).st !== 'load').sort((x, y) => Math.abs(y - mid) - Math.abs(x - mid));
+      for (const d of far.slice(0, BTD.days.size - BTD_KEEP)) BTD.days.delete(d);
+    }
+    for (const d of BTD.view) {
+      if (d >= today) continue;
+      const e = BTD.days.get(d);
+      if (!e || (e.st === 'err' && Date.now() - e.at > (e.wait || 60e3)) || (e.st === 'none' && Date.now() - e.at > 30 * 60e3)) btHistLoad(k, d);
+    }
+  }
+  function btHistLoad(k, d) {
+    const e = { st: 'load', list: [], auto: 0, at: Date.now() }; BTD.days.set(d, e);
+    BTD.chain = BTD.chain.then(async () => {
+      if (BTD.key !== k || BTD.days.get(d) !== e) return;
+      const [ex, sym] = k.split('|');
+      try {
+        const ac = new AbortController(), to = setTimeout(() => ac.abort(), 180000);
+        let r;
+        try {
+          const res = await fetch(`/api/site/bigtrades?ex=${ex}&sym=${sym}&day=${new Date(d).toISOString().slice(0, 10)}`, { signal: ac.signal, credentials: 'same-origin' });
+          r = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(r.message || 'HTTP ' + res.status);
+        } finally { clearTimeout(to); }
+        if (r.missing) e.st = 'none';
+        else { e.list = r.list.map(x => ({ t: d + x[0], p: x[1], usd: x[2], s: x[3], q: x[2] / x[1] })); e.sz = r.list.map(x => x[2]).sort((x, y) => y - x); e.auto = r.auto; e.st = 'ok'; }
+      } catch (err) { e.st = 'err'; e.err = err.name === 'AbortError' ? 'no answer in time' : err.message; e.wait = /new days loaded/.test(e.err) ? 11 * 60e3 : 60e3; }   // the hourly limit: wait longer before asking again
+      e.at = Date.now();
+      if (BTD.key === k) { prim.req(); legend(); }
+    });
+  }
   function drawBT(g) {
     BTHIT = [];
-    const thr = btThr(), B = S.bars, n = B.length; if (!thr || !BT.list.length || !n) return;
+    const B = S.bars, n = B.length; if (!n) return;
     const ts = chart.timeScale(), vr = ts.getVisibleLogicalRange(); if (!vr) return;
     const ms = TF[U.tf].ms, a = Math.max(0, Math.floor(vr.from)), tA = a < n ? B[a][0] : Infinity, tB = vr.to >= n - 1 ? Infinity : B[Math.ceil(vr.to)][0] + ms;
-    let lo = 0, hi = BT.list.length; while (lo < hi) { const m = (lo + hi) >> 1; if (BT.list[m].t < tA) lo = m + 1; else hi = m; }
-    let sel = [];
-    for (let i = lo; i < BT.list.length; i++) { const o = BT.list[i]; if (o.t >= tB) break; if (o.usd >= thr) sel.push(o); }
-    sel.sort((x, y) => y.usd - x.usd); if (sel.length > 1500) sel = sel.slice(0, 1500);   // biggest first: the small ones stay on top
-    for (const o of sel) {
+    // the days in view changed (scroll, new candles, replay step past midnight, timeframe), or 30 s passed (retries): check the past days
+    const vs = `${U.ex}|${U.sym}|${U.tf}|${R.on}|${Math.floor(tA / DAY)}|${Math.floor(Math.min(tB, nowT()) / DAY)}`;
+    if (vs !== BTD.vs || Date.now() - BTD.chk > 30e3) { BTD.vs = vs; BTD.chk = Date.now(); btHistSoon(); }
+    const fixed = btFixed(), sel = [];
+    const from = (list, thr, upto, skip) => {   // orders in view of one list (time order), at least thr, before upto
+      if (!thr || !list.length) return;
+      let lo = 0, hi = list.length; while (lo < hi) { const m = (lo + hi) >> 1; if (list[m].t < tA) lo = m + 1; else hi = m; }
+      for (let i = lo; i < list.length; i++) { const o = list[i]; if (o.t >= tB || o.t >= upto) break; if (o.usd >= thr && !(skip && skip(o))) sel.push([o, thr]); }
+    };
+    const upto = R.on ? R.clock : Infinity;
+    if (btHistOK() && BTD.key === U.ex + '|' + U.sym) for (const [d, e] of BTD.days) if (e.st === 'ok' && d + DAY > tA && d < tB) from(e.list, fixed || dayThr(e), upto);
+    if (!R.on && BT.key === btKey()) {   // live: today's (a day whose file is loaded keeps the file's)
+      const had = t => { const e = BTD.key === BT.key && BTD.days.get(Math.floor(t / DAY) * DAY); return !!(e && e.st === 'ok'); };
+      from(BT.list, btThr(), Infinity, o => had(o.t));
+    }
+    sel.sort((x, y) => y[0].usd - x[0].usd);   // biggest first: the small ones stay on top
+    const sp = Math.abs((ts.logicalToCoordinate(1) ?? 0) - (ts.logicalToCoordinate(0) ?? 0)) || 8, rCap = Math.max(8, Math.min(26, 3 * sp)), rk = rCap / 26;   // circles shrink with thin candles
+    for (const [o, thr] of sel.length > 1500 ? sel.slice(0, 1500) : sel) {
       const L = t2l(o.t); if (L == null) continue;
       const x = ts.logicalToCoordinate(Math.floor(L)), y = p2y(o.p); if (x == null || y == null) continue;   // on its candle, at its price
-      const r = Math.min(26, 3 + 4.5 * Math.sqrt(o.usd / thr)), c = o.s === 1 ? COL.up : COL.down;
+      const r = Math.min(rCap, (3 + 4.5 * Math.sqrt(o.usd / thr)) * rk), c = o.s === 1 ? COL.up : COL.down;
       g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI);
       g.fillStyle = hexA(c, 0.5); g.fill(); g.lineWidth = 1; g.strokeStyle = hexA(c, 0.95); g.stroke();
       BTHIT.push([x, y, r, o]);
@@ -621,15 +687,25 @@
   }
   function btLegend() {
     if (U.ex === 'fx') return '<span title="FX prices have no shared trades to show.">Big trades: <b class="warn">not for FX</b></span>';
-    if (R.on) return '<span title="The exchanges hand out only a short trade history (minutes on a busy coin), so big trades show on live charts only.">Big trades: <b class="warn">live charts only</b></span>';
     if (hoverPt) for (let i = BTHIT.length - 1; i >= 0; i--) {   // the circle under the pointer (smallest on top)
       const [x, y, r, o] = BTHIT[i];
       if (Math.hypot(hoverPt.x - x, hoverPt.y - y) <= r) return `<span title="One market order (fills in the same millisecond and direction joined), at its average price. Time in UTC.">Big ${o.s === 1 ? '<b class="up">buy</b>' : '<b class="down">sell</b>'} <b>${fusd(o.usd)}</b> · ${fv(o.q)} ${esc(coin(U.sym))} at <b>${fp(o.p)}</b> · ${tsec(o.t)}</span>`;
     }
-    const thr = btThr(), auto = !btFixed();
-    return `<span title="Circles = single market orders of at least this size: green bought at the offer, red sold at the bid, bigger circle = bigger order. ${auto ? `Auto picks the size so about ${BT_RATE} orders an hour show. ` : ''}${api().name} hands out only a short trade history, so they start a little before you opened the chart. Hover a circle for its size.">Big trades ≥ <b>${thr ? fusd(thr) : '…'}</b>${auto ? ' <em>auto</em>' : ''}${BT.loading ? ' · loading…' : BT.since ? ` · since ${tsec(BT.since).slice(0, 5)}` : ''}${BT.err ? ' · <b class="warn">history did not load</b>' : ''}</span>`;
+    const auto = !btFixed(), today = Math.floor(Date.now() / DAY) * DAY, ex = api().name;
+    const vd = BTD.key === U.ex + '|' + U.sym ? BTD.view : [], st = d => BTD.days.get(d);
+    const past = vd.filter(d => d < today), loading = past.filter(d => st(d) && st(d).st === 'load'), none = past.filter(d => st(d) && st(d).st === 'none'), bad = past.filter(d => st(d) && st(d).st === 'err');
+    const pastOnly = !R.on && vd.length > 0 && !vd.includes(today), cd = R.on ? Math.floor(R.clock / DAY) * DAY : pastOnly ? vd[0] : today, ce = st(cd);
+    const thr = btFixed() || (R.on || pastOnly ? (ce && ce.st === 'ok' ? dayThr(ce) : 0) : btThr());
+    let s = `Big trades ≥ <b>${thr ? fusd(thr) : '…'}</b>${auto ? ` <em>auto${pastOnly || R.on ? ` ${dayName(cd)}` : ''}</em>` : ''}`;
+    if (!R.on && !pastOnly) s += BT.loading ? ' · loading…' : BT.since ? ` · today since ${tsec(Math.max(BT.since, today)).slice(0, 5)}` : '';
+    else if (cd >= today) s += ' · <b class="warn">today’s trades come out tomorrow</b>';
+    if (loading.length) s += ` · loading ${loading.map(dayName).join(', ')}…`;
+    if (none.length) s += ` · <span class="warn">no trade file for ${none.map(dayName).join(', ')}</span>`;
+    if (bad.length) s += ` · <b class="warn" title="${esc(st(bad[0]).err || '')}">${dayName(bad[0])} did not load</b>`;
+    if (BTD.more && vd.length) s += ` · <em>from ${dayName(vd[vd.length - 1])}: zoom in for earlier days</em>`;
+    if (U.bt && TF[U.tf].ms > HOUR) s += ' · <em>earlier days: 1H charts and below</em>';
+    return `<span title="Circles = single market orders of at least this size: green bought at the offer, red sold at the bid, bigger circle = bigger order. ${auto ? `Auto: about ${+btRate().toFixed(1)} orders an hour on this timeframe (at most ${BT_CANDLE} a candle; for past days, over that whole day). ` : ''}Past days come from ${ex}'s daily trade file, published the next day; today comes from the live trades since a little before you opened the chart. In replay, only orders before the replay clock show. Hover a circle for its size.">${s}</span>`;
   }
-
   // ------------------------------------------------------------------ volume profile (Indicators → Volume profile)
   // How much traded at each price: each candle's volume spread evenly over its high–low, split into market buys (green) and
   // market sells (red) where the candles carry the split (Binance; a Bybit chart borrows Binance's while Order flow is on),
@@ -1785,7 +1861,7 @@
       if (U.hilo) { g.save(); drawHiLo(g, W); g.restore(); }
       if (U.tline && TLS) { g.save(); drawTL(g, W); g.restore(); }
       if (U.pdhl && PDAY) { g.save(); drawPD(g, W); g.restore(); }
-      if (U.bt && !R.on && U.ex !== 'fx') { g.save(); drawBT(g); g.restore(); } else if (BTHIT.length) BTHIT = [];
+      if (U.bt && U.ex !== 'fx') { g.save(); drawBT(g); g.restore(); } else if (BTHIT.length) BTHIT = [];
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
@@ -3006,7 +3082,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { get BT() { return BT; }, get BTHIT() { return BTHIT; }, get VPX() { return VPX; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { get BT() { return BT; }, get BTD() { return BTD; }, get BTHIT() { return BTHIT; }, get VPX() { return VPX; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
