@@ -40,7 +40,7 @@
     ['hilo', 'High / low of the candles in view'],
     ['pdhl', 'Previous day high / low (PDH / PDL)', 'Yesterday\'s high and low (UTC days) of this chart\'s coin. In a replay: the day before the replay clock. Not shown on 1W / 1M.'],
     ['sess', 'Sessions (Asia, London, New York)', 'Session open / close lines with the main chart\'s session settings (Indicators → Sessions: which sessions, their times, shading). Shown on 1m–4H.'],
-    ['ob', 'Order blocks (OB)', 'The last candle against the move that broke structure: blue bull, pink bear. Solid to the right edge = not tapped yet; dashed, stopping at the tap = tapped and held. Overlapping ones drawn as one. Closed candles only.'],
+    ['ob', 'Order blocks (OB)', 'The last candle against the move that broke structure: blue bull, pink bear. 15 candles long like the FVG boxes, shorter when tapped (dashed) or broken. Overlapping ones drawn as one. Closed candles only.'],
     ['fvg', 'Fair value gaps (FVG)', 'Three candles where the first and third don\'t overlap. Green = gap below price, orange = gap above. Closed candles only.'],
     ['tline', 'Trend lines (auto, frozen when drawn)', 'Drawn once when switched on, then kept while price moves: a × marks the first close through a line, hollow dots new touches. Redraw now (in this chart\'s legend) draws them again. The main chart\'s top-down option shows the lines drawn here.'],
     ['tlineHtf', 'Also show higher-timeframe lines (top-down)', 'Lines drawn on a higher timeframe of this coin, on either chart, tagged with their timeframe.', 'sub'],

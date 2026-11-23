@@ -1183,7 +1183,7 @@
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
   let KPOI = null;       // POI: the untouched order blocks with their grades (smcRun)
   const POIC = '#eab308';
-  const OB_UP = '#3b82f6', OB_DN = '#ec4899';   // order blocks: their own colours (FVGs are green / orange, supply / demand green / red)
+  const OB_UP = '#3b82f6', OB_DN = '#ec4899', OB_LEN = 15;   // order blocks: their own colours (FVGs are green / orange, supply / demand green / red)
   const POI_BOX = [['trend', 'trend'], ['pd', 'discount / premium'], ['fvg', 'FVG'], ['took', 'took liquidity'], ['ind', 'inducement']];
   const poiWhy = (q, htf) => POI_BOX.filter(([k]) => q.b[k] != null).map(([k, nm]) => `${k === 'trend' ? htf + ' ' + nm : k === 'pd' ? htf + ' ' + (q.d === 1 ? 'discount' : 'premium') : nm} ${q.b[k] ? '✓' : '✗'}`).join(' · ');
   function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq || U.zz || U.ob || U.kpoi); }   // anything that needs the SMC engine
@@ -1211,16 +1211,16 @@
     }
     // order blocks (Indicators → Order blocks; with SMC on too it replaces SMC's supply / demand boxes): the last candle against
     // the move that broke structure, in their own colours (blue bull, pink bear) so they never blend with FVGs (green / orange)
-    // or supply / demand (green / red). Each box is contained: a fresh one (price not back yet) runs to the right edge with a
-    // thick border; a tapped one stops at the candle that came back into it (thinner, dashed); a broken one (Whole chart only)
-    // stops at the candle that closed through it, faint. Boxes of one kind that overlap become one box ("Bull OB ×2"), and a
-    // label that would sit on another is left out. Recent: the newest 3 of each kind still holding · Whole chart: all.
+    // or supply / demand (green / red). Contained like the FVG boxes: OB_LEN candles from the order block, shorter when price
+    // comes back into it (tapped: paler, dashed) or closes through it (broken, Whole chart only: faint); "OB" at its right end.
+    // Boxes of one kind that overlap become one box ("OB ×2"), and a label that would sit on another is left out.
+    // Recent: the newest 3 of each kind still holding · Whole chart: all.
     if (o.ob) {
       done.obs = { fresh: 0, tapped: 0, broken: 0, rects: [], colors: [OB_UP, OB_DN] };
       const st = z => z.broken ? 'broken' : z.touched ? 'tapped' : 'fresh', RANK = { fresh: 2, tapped: 1, broken: 0 };
       const hold = r.zones.filter(z => !z.broken);
       const pick = (all ? r.zones : hold.filter(z => z.type === 'demand').slice(-3).concat(hold.filter(z => z.type === 'supply').slice(-3)))
-        .map(z => ({ type: z.type, top: z.top, bot: z.bot, t: z.t, end: z.broken || z.touched || Infinity, state: st(z), n: 1 }))
+        .map(z => ({ type: z.type, top: z.top, bot: z.bot, t: z.t, end: Math.min(z.broken || Infinity, z.touched || Infinity, z.t + OB_LEN * r.tf), state: st(z), n: 1 }))
         .sort((a, b) => a.t - b.t);
       // merge: same kind, prices overlap and times overlap → one box over both (broken ones only with broken ones)
       let G = [];
@@ -1244,19 +1244,21 @@
       const labs = [];
       for (const q of G) {
         const x0 = t2x(q.t), y0 = p2y(q.top), y1 = p2y(q.bot); if (x0 == null || y0 == null || y1 == null || x0 > W) continue;
-        const xe = q.state === 'fresh' || !isFinite(q.end) ? W : Math.min(W, t2x(q.end) ?? W); if (xe < 0) continue;
+        const xq = t2x(q.end), xe = xq == null ? W : Math.min(W, xq); if (xe < 0) continue;
         const dem = q.type === 'demand', c = dem ? OB_UP : OB_DN, y = Math.min(y0, y1), h = Math.max(2, Math.abs(y1 - y0)), xa = Math.max(0, x0), w = Math.max(2, xe - xa);
-        const S = { fresh: [0.18, 0.95, 2, []], tapped: [0.09, 0.65, 1.5, [5, 3]], broken: [0.04, 0.3, 1, [3, 3]] }[q.state];
+        const S = { fresh: [0.22, 0.95, 1.5, []], tapped: [0.1, 0.6, 1, [4, 3]], broken: [0.04, 0.3, 1, [3, 3]] }[q.state];
         g.fillStyle = hexA(c, S[0]); g.fillRect(xa, y, w, h);
         g.strokeStyle = hexA(c, S[1]); g.lineWidth = S[2]; g.setLineDash(S[3]); g.strokeRect(xa + S[2] / 2, y + S[2] / 2, Math.max(1, w - S[2]), Math.max(1, h - S[2])); g.setLineDash([]);
-        done.obs[q.state]++; done.obs.rects.push({ type: q.type, state: q.state, x0: xa, x1: xa + w, y, h, n: q.n });
+        done.obs[q.state]++; done.obs.rects.push({ type: q.type, state: q.state, x0: xa, x1: xa + w, y, h, n: q.n, t: q.t, end: q.end });
         if (q.state === 'broken') continue;
-        const text = (dem ? 'Bull OB' : 'Bear OB') + (q.n > 1 ? ' ×' + q.n : '') + (q.state === 'tapped' ? ' · tapped' : '');
-        const ly = h >= 16 ? y + 9 : dem ? y + h + 9 : y - 9, lw = text.length * 6.6 + 8;
-        if (lw > w + 40 && q.state === 'tapped') continue;   // a short tapped box: the box says enough
-        if (labs.some(l => Math.abs(l.y - ly) < 14 && xa < l.x + l.w && l.x < xa + 2 + lw)) continue;
-        labs.push({ x: xa + 2, y: ly, w: lw });
-        label(g, text, xa + 2, ly, hexA(c, q.state === 'fresh' ? 1 : 0.8), 'left', q.state === 'fresh' ? hexA(COL.bg.length === 7 ? COL.bg : '#0b0e14', 0.7) : 'transparent');
+        // "OB" at the right end, like the FVG boxes: inside when it fits, else just after the box
+        const text = 'OB' + (q.n > 1 ? ' ×' + q.n : ''), xr = Math.min(xa + w, W);
+        g.font = '600 9px "Geist Mono", ui-monospace, monospace'; g.textBaseline = 'middle';
+        const tw = g.measureText(text).width, inside = h >= 9 && w >= tw + 8, lx = inside ? xr - 3 - tw : xr + 3, ly = y + h / 2;
+        if (!inside && lx + tw > W) continue;
+        if (labs.some(l => Math.abs(l.y - ly) < 10 && lx < l.x + l.w + 2 && l.x < lx + tw + 2)) continue;
+        labs.push({ x: lx, y: ly, w: tw });
+        g.fillStyle = hexA(c, q.state === 'fresh' ? 0.95 : 0.7); g.textAlign = 'left'; g.fillText(text, lx, ly + 0.5);
       }
     }
     // POI (Indicators → POI): the order blocks price has not come back to yet, nearest two below (buy) and above (sell), each
