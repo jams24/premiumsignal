@@ -370,10 +370,63 @@
   // candle, in a pane of its own: its slope matters, not its level. Absorption: heavy one-sided market orders (delta at least
   // twice that average) on a closed candle that still closed the other way. Bybit and FX candles carry no buy / sell split,
   // so no panes there (the legend says so). Untested: practice, not a signal.
-  const OFN = 20, OFX = { ok: false, panes: 1, d: 0, c: 0, abs: [] };
+  const OFN = 20, OFX = { ok: false, panes: 1, abs: [], get d() { return ofD ? ofD.data().length : 0; }, get c() { return ofC ? ofC.data().length : 0; } };   // read by tests
   let ofD = null, ofC = null, OFS = [];   // the delta and CVD series; OFS[i] = the deltas added up to bar i
-  const ofDelta = b => b && b[7] != null && isFinite(b[7]) && b[5] > 0 ? 2 * b[7] - b[5] : null;
-  const ofOK = () => U.ex === 'binance' && S.bars.length > 0 && ofDelta(S.bars[S.bars.length - 1]) != null;
+  // Bybit charts: Bybit's candles carry no buy / sell split, so the same coin's Binance candles lend theirs (FLOW.m: open
+  // time → [volume, market buys], for this coin + timeframe). Live: Binance's kline socket keeps the forming candle's flow;
+  // replay: a candle's flow shows only once the replay clock has closed it (the Binance candle is the whole candle).
+  const FLOW = { key: '', m: new Map(), from: Infinity, to: -Infinity, ws: null, busy: false, none: false, err: '', errAt: 0 };
+  const ofKey = () => U.sym + '|' + U.tf;
+  const ofBorrow = () => U.ex === 'bybit';
+  function ofVB(b) {   // [volume, market buys] of a chart candle, or null
+    if (!b) return null;
+    if (b[7] != null && isFinite(b[7])) return b[5] > 0 ? [b[5], b[7]] : null;
+    if (!ofBorrow() || FLOW.key !== ofKey()) return null;
+    const f = FLOW.m.get(b[0]);
+    if (!f || !(f[0] > 0) || (R.on && b[0] + TF[U.tf].ms > R.clock)) return null;
+    return f;
+  }
+  const ofDelta = b => { const f = ofVB(b); return f ? 2 * f[1] - f[0] : null; };
+  const ofOK = () => S.bars.length > 0 && (U.ex === 'binance' ? ofDelta(S.bars[S.bars.length - 1]) != null : ofBorrow() && FLOW.key === ofKey() && FLOW.m.size > 0);
+  function flowStop() { if (FLOW.ws) { FLOW.ws.close(); FLOW.ws = null; } }
+  async function flowLoad() {   // Binance flow for the Bybit chart's candles (and, live, Binance's socket for the newest)
+    if (!U.of || !ofBorrow() || !S.bars.length) { flowStop(); return; }
+    const key = ofKey(), ms = TF[U.tf].ms;
+    if (FLOW.key !== key) { flowStop(); Object.assign(FLOW, { key, m: new Map(), from: Infinity, to: -Infinity, none: false, err: '', errAt: 0 }); }
+    if (R.on) flowStop();
+    if (FLOW.none || Date.now() - FLOW.errAt < 30000) return;
+    let L;
+    try { L = await symList('binance'); } catch (e) { FLOW.err = e.message || 'no answer'; FLOW.errAt = Date.now(); legend(); return; }
+    if (FLOW.key !== key || !ofBorrow() || !U.of) return;
+    if (!L.some(s => s.s === U.sym)) { FLOW.none = true; ofSet(); legend(); return; }
+    if (FLOW.busy || !S.bars.length) return;
+    const first = S.bars[0][0], lastT = S.bars[S.bars.length - 1][0];
+    if (!R.on && !FLOW.ws) {   // live: Binance's socket for the forming candle; the newest few are fetched again
+      if (FLOW.to > -Infinity) FLOW.to = Math.min(FLOW.to, lastT - 3 * ms);
+      try {
+        FLOW.ws = EX.binance.stream(U.sym, U.tf, k => {
+          if (FLOW.key !== key || R.on || !ofBorrow() || k[7] == null) return;
+          FLOW.m.set(k[0], [k[5], k[7]]);
+          let i = S.bars.length - 1; while (i > 0 && S.bars[i][0] > k[0]) i--;
+          if (i >= 0 && S.bars[i][0] === k[0]) for (let j = i; j < S.bars.length; j++) ofUpd(j);
+        }, {});
+      } catch (e) { FLOW.ws = null; }
+    }
+    const end = R.on ? Math.min(floorTo(Date.now(), MIN) + ms, R.clock + 300 * ms) : lastT + ms;
+    const need = FLOW.to < FLOW.from ? [[first, end]] : [[first, FLOW.from], [FLOW.to, end]].filter(r => r[0] < r[1]);
+    if (!need.length) return;
+    FLOW.busy = true;
+    try {
+      for (const [a, z] of need) {
+        const ks = await fetchRange(U.sym, U.tf, a, z, 'binance');
+        if (FLOW.key !== key) return;
+        for (const k of ks) if (k[7] != null) FLOW.m.set(k[0], [k[5], k[7]]);
+        FLOW.from = Math.min(FLOW.from, a); FLOW.to = Math.max(FLOW.to, z);
+      }
+      FLOW.err = '';
+    } catch (e) { FLOW.err = e.message || 'no answer'; FLOW.errAt = Date.now(); legend(); return; } finally { FLOW.busy = false; }
+    if (FLOW.key === key && U.of && ofBorrow()) { ofSet(); legend(); }
+  }
   const ofCvdCol = () => isLight() ? '#0284c7' : '#38bdf8';
   const fd = v => { const a = Math.abs(v); return (v < 0 ? '−' : '+') + (a >= 1e3 ? fv(a) : a >= 100 ? a.toFixed(0) : a >= 1 ? a.toFixed(1) : a.toFixed(3)); };
   function ofAvg(i) {   // the average size (|delta|) of the OFN candles before bar i
@@ -407,23 +460,24 @@
   }
   window.addEventListener('resize', () => requestAnimationFrame(ofLift));
   function ofSet() {
+    if (U.of && ofBorrow()) flowLoad(); else flowStop();
     ofPanes();
     OFS = []; let c = 0;
     for (const b of S.bars) { const d = ofDelta(b); if (d != null) c += d; OFS.push(c); }
     if (ofD) ofD.setData(S.bars.map((b, i) => ofPt(i)));
     if (ofC) { ofC.applyOptions({ color: ofCvdCol() }); ofC.setData(S.bars.map((b, i) => ofDelta(b) != null ? { time: b[0] / 1000, value: OFS[i] } : { time: b[0] / 1000 })); }
-    OFX.ok = ofOK(); OFX.panes = chart.panes().length; OFX.d = ofD ? ofD.data().length : 0; OFX.c = ofC ? ofC.data().length : 0;
+    OFX.ok = ofOK(); OFX.panes = chart.panes().length;
     if ((U.of && U.ofAbs) || OFX.abs.length) setMarkers();
   }
   function ofUpd(i) {
     if (!ofD && !ofC && !(U.of && U.ofAbs)) return;
-    if (!ofOK()) { if (ofD || ofC) ofSet(); return; }   // a Bybit / FX chart: nothing to add (panes go if they were up)
+    if (ofBorrow() && R.on && FLOW.key === ofKey() && R.clock + 50 * TF[U.tf].ms > FLOW.to && FLOW.to < Date.now() - TF[U.tf].ms) flowLoad();   // replay: Binance flow further ahead
+    if (!ofOK()) { if (ofD || ofC) ofSet(); return; }   // no flow here (FX, a coin Binance doesn't list, still loading)
     if (i > OFS.length) { ofSet(); return; }
     const b = S.bars[i], d = ofDelta(b), grew = i === OFS.length;
     OFS.length = i; OFS.push((i > 0 ? OFS[i - 1] : 0) + (d || 0));
     if (ofD) ofD.update(ofPt(i));
     if (ofC) ofC.update(d != null ? { time: b[0] / 1000, value: OFS[i] } : { time: b[0] / 1000 });
-    if (grew) { OFX.d = ofD ? ofD.data().length : 0; OFX.c = ofC ? ofC.data().length : 0; }
     if (U.of && U.ofAbs && (grew || R.on)) setMarkers();
   }
   function ofAbs() {   // [{ t, side }]: side 1 = market sells soaked up (▲), −1 = market buys soaked up (▼); closed candles only
@@ -2350,10 +2404,14 @@
       const bi = S.bars.indexOf(b), av = bi >= 0 ? volAvg(bi, false) : null, x = av > 0 ? b[5] / av : null;
       l2 = `<span title="Volume of this candle${x != null ? ` and how it compares with the average of the ${VMA} candles before it` : ''}">Vol <b>${fv(b[5])}</b>${x != null ? ` · <b class="${x >= 2 ? 'warn' : ''}">${x.toFixed(1)}×</b> avg` : ''}</span>`;
     }
-    if (U.of) {   // order flow of this candle (Binance charts)
-      const d = ofDelta(b), bi = d != null ? S.bars.indexOf(b) : -1;
-      if (d != null && U.ex === 'binance') l2 += `<span title="Order flow of this candle: market buys minus market sells (delta) and the share of its volume that was market buying${U.cvd ? '; CVD = the deltas added up from the first loaded candle (read its slope, not its level)' : ''}">Δ <b class="${d >= 0 ? 'up' : 'down'}">${fd(d)}</b> · buy <b>${(b[7] / b[5] * 100).toFixed(0)}%</b>${U.cvd && bi >= 0 && OFS[bi] != null ? ` · CVD <b>${fd(OFS[bi])}</b>` : ''}</span>`;
-      else if (!ofOK()) l2 += `<span title="Order flow needs each candle's volume split into market buys and market sells. Binance's futures candles carry that split; Bybit's and the FX candles don't.">Order flow: <b class="warn">Binance charts only</b></span>${U.ex === 'bybit' ? '<button type="button" class="lg-btn" data-act="ofbin" title="Open this coin on Binance, where the candles carry the buy / sell split">Use Binance</button>' : ''}`;
+    if (U.of) {   // order flow of this candle (Binance's own; on a Bybit chart the same coin's Binance candles)
+      const f = ofVB(b), d = f ? 2 * f[1] - f[0] : null, bi = d != null ? S.bars.indexOf(b) : -1, lent = d != null && b[7] == null;
+      if (d != null) l2 += `<span title="Order flow of this candle: market buys minus market sells (delta) and the share of its volume that was market buying${U.cvd ? '; CVD = the deltas added up from the first loaded candle (read its slope, not its level)' : ''}">Δ <b class="${d >= 0 ? 'up' : 'down'}">${fd(d)}</b> · buy <b>${(f[1] / f[0] * 100).toFixed(0)}%</b>${U.cvd && bi >= 0 && OFS[bi] != null ? ` · CVD <b>${fd(OFS[bi])}</b>` : ''}${lent ? ' <em title="This chart shows Bybit prices. Bybit’s candles don’t record which trades were market buys and which were market sells, so the order flow comes from the same coin on Binance futures, the biggest futures market. The volume bars are still Bybit’s.">Binance flow</em>' : ''}</span>`;
+      else if (U.ex === 'fx') l2 += '<span title="FX has no shared volume, so there are no market buys and sells to count.">Order flow: <b class="warn">not for FX</b></span>';
+      else if (ofBorrow() && FLOW.none) l2 += `<span title="Bybit’s candles don’t record market buys and sells, and this coin has no Binance futures market to borrow them from.">Order flow: <b class="warn">${esc(mktName(U.sym))} is not on Binance futures</b></span>`;
+      else if (ofBorrow() && FLOW.err && !ofOK()) l2 += `<span title="${esc(FLOW.err)}">Order flow: <b class="warn">Binance did not answer</b> (tries again in 30 s)</span>`;
+      else if (ofBorrow() && !ofOK()) l2 += '<span>Order flow: loading Binance…</span>';
+      else if (ofOK()) l2 += `<span title="${R.on && b[0] + TF[U.tf].ms > R.clock ? 'In replay, a candle’s order flow shows once the candle has closed.' : 'No order flow for this candle.'}">Δ <b>—</b></span>`;
     }
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
@@ -2706,7 +2764,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { get OFX() { return OFX; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
