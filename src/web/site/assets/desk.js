@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
@@ -1181,12 +1181,16 @@
     return out;
   }
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
-  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq || U.zz); }   // anything that needs the SMC engine
-  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, liq: U.liq, zz: U.zz, bars: S.bars, t2x, p2y }); if (d) SMCDRAWN = d; }
+  let KPOI = null;       // POI: the untouched order blocks with their grades (smcRun)
+  const POIC = '#eab308';
+  const POI_BOX = [['trend', 'trend'], ['pd', 'discount / premium'], ['fvg', 'FVG'], ['took', 'took liquidity'], ['ind', 'inducement']];
+  const poiWhy = (q, htf) => POI_BOX.filter(([k]) => q.b[k] != null).map(([k, nm]) => `${k === 'trend' ? htf + ' ' + nm : k === 'pd' ? htf + ' ' + (q.d === 1 ? 'discount' : 'premium') : nm} ${q.b[k] ? '✓' : '✗'}`).join(' · ');
+  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq || U.zz || U.ob || U.kpoi); }   // anything that needs the SMC engine
+  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, liq: U.liq, zz: U.zz, ob: U.ob, poi: U.kpoi ? KPOI : null, bars: S.bars, t2x, p2y }); if (d) SMCDRAWN = d; }
   function paintSMC(g, W, o) {
     const r = o.r, t2x = o.t2x, p2y = o.p2y; if (!r) return null;
     const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [], liq: 0, sweeps: 0, zz: [] };
-    if (o.smc) {
+    if (o.smc && !o.ob) {
     // Whole chart: past zones too, faint, from the order block to the candle that closed through them
     if (all) for (const z of r.zones) {
       if (!z.broken) continue;
@@ -1203,6 +1207,47 @@
       g.strokeStyle = hexA(c, 0.45); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), W - x0, Math.abs(y1 - y0));
       label(g, z.type === 'demand' ? 'Demand' : 'Supply', x0 + 2, Math.min(y0, y1) + 9, c, 'left', 'transparent'); done.zones++;
     }
+    }
+    // order blocks (Indicators → Order blocks; with SMC on too it replaces SMC's supply / demand boxes): the last candle against
+    // the move that broke structure. Fresh = price has not come back to it yet (solid); tapped = it came back and the box held
+    // (paler, dashed). Recent: the newest 3 of each kind still holding · Whole chart: all, and the broken ones faint up to the
+    // candle that closed through them.
+    if (o.ob) {
+      done.obs = { fresh: 0, tapped: 0 };
+      if (all) for (const z of r.zones) {
+        if (!z.broken) continue;
+        const x0 = t2x(z.t), x1 = t2x(z.broken), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null) continue;
+        const xe = x1 == null ? W : x1; if (xe < 0 || x0 > W) continue;
+        const c = z.type === 'demand' ? COL.up : COL.down;
+        g.fillStyle = hexA(c, 0.04); g.fillRect(x0, Math.min(y0, y1), Math.max(1, xe - x0), Math.abs(y1 - y0));
+        g.strokeStyle = hexA(c, 0.2); g.setLineDash([3, 3]); g.lineWidth = 1; g.strokeRect(x0, Math.min(y0, y1), Math.max(1, xe - x0), Math.abs(y1 - y0)); g.setLineDash([]);
+      }
+      const hold = r.zones.filter(z => !z.broken);
+      const pick = all ? hold : hold.filter(z => z.type === 'demand').slice(-3).concat(hold.filter(z => z.type === 'supply').slice(-3));
+      for (const z of pick) {
+        const x0 = t2x(z.t), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null || x0 > W) continue;
+        const dem = z.type === 'demand', c = dem ? COL.up : COL.down, tap = !!z.touched, y = Math.min(y0, y1), h = Math.max(1.5, Math.abs(y1 - y0)), xa = Math.max(0, x0);
+        g.fillStyle = hexA(c, tap ? 0.06 : 0.14); g.fillRect(xa, y, W - xa, h);
+        g.strokeStyle = hexA(c, tap ? 0.45 : 0.75); g.lineWidth = 1; if (tap) g.setLineDash([4, 3]); g.strokeRect(xa, y, W - xa, h); g.setLineDash([]);
+        label(g, (dem ? 'Bull OB' : 'Bear OB') + (tap ? ' · tapped' : ''), xa + 2, h >= 16 ? y + 9 : dem ? y + h + 9 : y - 9, hexA(c, tap ? 0.7 : 1), 'left', 'transparent');
+        done.obs[tap ? 'tapped' : 'fresh']++;
+      }
+    }
+    // POI (Indicators → POI): the order blocks price has not come back to yet, nearest two below (buy) and above (sell), each
+    // graded by the five usual boxes (smcRun → SMC.poiBoxes): gold frame, bolder the higher the grade, "POI 4/5" on the side
+    // price comes from; the nearest each side also filled. Whole chart: every untouched one.
+    if (o.poi) {
+      done.poi = [];
+      const best = [o.poi.dn, o.poi.up].filter(Boolean), list = all ? o.poi.all : o.poi.near;
+      for (const q of list) {
+        const z = q.z, x0 = t2x(z.t), y0 = p2y(z.top), y1 = p2y(z.bot); if (x0 == null || y0 == null || y1 == null || x0 > W) continue;
+        const top = best.includes(q), c = q.d === 1 ? COL.up : COL.down, y = Math.min(y0, y1), h = Math.max(2, Math.abs(y1 - y0)), xa = Math.max(0, x0);
+        if (top) { g.fillStyle = hexA(c, 0.1); g.fillRect(xa, y, W - xa, h); }
+        const k = q.grade / q.of, a = k >= 0.8 ? 1 : k >= 0.6 ? 0.75 : 0.45;
+        g.strokeStyle = hexA(POIC, a); g.lineWidth = k >= 0.8 ? 2 : k >= 0.6 ? 1.5 : 1; g.strokeRect(xa, y, W - xa, h);
+        label(g, `POI ${q.grade}/${q.of}`, xa + 2, q.d === 1 ? y - 9 : y + h + 9, hexA(POIC, Math.max(a, 0.7)), 'left', top ? COL.panel : 'transparent');
+        done.poi.push({ d: q.d, grade: q.grade, top, y, h });
+      }
     }
     // equal highs / lows (their own tick, Indicators → EQH / EQL; on with SMC): two swing highs (lows) at about the same
     // price = stops resting there (liquidity). Dotted line from the first one to the right edge while untaken.
@@ -2028,7 +2073,38 @@
     const l = base[base.length - 1];
     base.push([nextB(l[0], U.tf), l[4], l[4], l[4], l[4], 0]);   // closes the last real candle; itself ignored
     try { SMCR = window.SMC.analyze(base, base.length - 1, smcOpt(U.tf)); } catch (e) { SMCR = null; }
+    KPOI = null;
+    if (U.kpoi && SMCR) { try { KPOI = poiList(base); } catch (e) { KPOI = null; } }
     setMarkers(); prim.req(); legend();
+  }
+  // POI (Indicators → POI): every order block price has not come back to yet, graded by the five usual "best POI" boxes
+  // (SMC.poiBoxes, the code our test ran). The trend and the premium / discount half come from the next slower chart, built
+  // here from this chart's closed candles. Shown: the nearest two each side (where price meets one next), each with its grade.
+  const HTF_OF = { '1m': '5m', '5m': '15m', '15m': '1H', '1H': '4H', '4H': '1D', '1D': '1W' };
+  function poiList(base) {
+    const E = window.SMC; if (!E.poiPrep) return null;
+    const closed = base.slice(0, -1); if (!closed.length) return null;   // without the stand-in candle that closes the last one
+    const at = nextB(closed[closed.length - 1][0], U.tf), htf = HTF_OF[U.tf];
+    let HR = null;
+    if (htf) {
+      const hb = [];
+      for (const b of closed) { const k = bucket(b[0], htf), l = hb[hb.length - 1]; if (l && l[0] === k) { l[2] = Math.max(l[2], b[2]); l[3] = Math.min(l[3], b[3]); l[4] = b[4]; l[5] += b[5]; } else hb.push([k, b[1], b[2], b[3], b[4], b[5]]); }
+      if (hb.length >= 12) {
+        const l = hb[hb.length - 1];
+        if (nextB(l[0], htf) <= at) hb.push([nextB(l[0], htf), l[4], l[4], l[4], l[4], 0]);   // complete: close it (otherwise it stays forming)
+        HR = E.analyze(hb, hb.length - 1, smcOpt(htf));
+      }
+    }
+    const P = E.poiPrep(SMCR, HR, base), px = closed[closed.length - 1][4], all = [];
+    for (const z of SMCR.zones) {
+      if (z.broken || z.touched) continue;
+      const d = z.type === 'demand' ? 1 : -1;
+      if (d === 1 ? z.top >= px : z.bot <= px) continue;
+      all.push(Object.assign({ z, d, dist: Math.abs((d === 1 ? z.top : z.bot) - px) / px }, E.poiBoxes(P, z, at)));
+    }
+    all.sort((a, b) => a.dist - b.dist);
+    const side = d => all.filter(q => q.d === d);
+    return { all, dn: side(1)[0] || null, up: side(-1)[0] || null, near: side(1).slice(0, 2).concat(side(-1).slice(0, 2)), htf: HR ? htf : null };
   }
   // fair value gaps: candle 1's high below candle 3's low (bullish) or its low above candle 3's high (bearish), at least a
   // quarter of the average candle range (ATR 14) so 1-minute noise stays off. Known when candle 3 closes. Later candles
@@ -2180,6 +2256,11 @@
       const px = S.lastPx, open = SMCR.eqs.filter(e => !e.taken);
       const up = open.filter(e => e.side === 'H' && e.p >= px).sort((a, b) => a.p - b.p)[0], dn = open.filter(e => e.side === 'L' && e.p <= px).sort((a, b) => b.p - a.p)[0];
       if (up || dn) l2 += `<span title="The nearest equal highs above the price and equal lows below it that price has not taken yet: stops rest there">${up ? `EQH <b class="down">${fp(up.p)}</b>` : ''}${up && dn ? ' · ' : ''}${dn ? `EQL <b class="up">${fp(dn.p)}</b>` : ''}</span>`;
+    }
+    if (U.kpoi && KPOI) {
+      const one = (q, arrow) => q ? `<span title="${esc(poiWhy(q, KPOI.htf))}">POI ${arrow} <b class="${q.d === 1 ? 'up' : 'down'}">${fp(q.z.bot)}–${fp(q.z.top)}</b> <b class="poi-g">${q.grade}/${q.of}</b></span>` : '';
+      const s = one(KPOI.up, '▼') + one(KPOI.dn, '▲');
+      l2 += s || '<span>POI: no untouched order block</span>';
     }
     if (smcAny() && SMCR) l2 += `<span>SMC trend <b class="${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : ''}">${SMCR.trend === 1 ? 'up' : SMCR.trend === -1 ? 'down' : '—'}</b></span>` +
       `<button type="button" class="lg-btn" data-act="smcall" data-v="${U.smcAll ? 0 : 1}" title="${U.smcAll ? 'SMC is labelling every loaded candle. Click to show only the newest structure.' : 'SMC is labelling the newest structure only. Click to label the whole chart.'}">${U.smcAll ? 'All · show recent' : 'Recent · show all'}</button>`;
@@ -2408,7 +2489,7 @@
       else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
       else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; U.eq = true; U.liq = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
-      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; U.liq = on; if (!on) U.zz = false; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
+      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; U.liq = on; if (!on) { U.zz = false; U.ob = false; U.kpoi = false; } saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
       else if (act === 'rpick-chart') { closeModals(); if (!R.on) startPick('replay'); else startPick('replay'); }
@@ -2458,7 +2539,7 @@
     if (i.dataset.ind === 'volMa' || i.dataset.ind === 'volHi') volSet();
     else if (i.dataset.ind === 'vol') { volSet(); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
     else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; U.liq = U.smc; saveUI(); headUI(); smcSchedule(); }
-    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq') smcSchedule();
+    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq' || i.dataset.ind === 'ob' || i.dataset.ind === 'kpoi') smcSchedule();
     else if (i.dataset.ind === 'zz') { smcSchedule(); setMarkers(); }
     else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else if (i.dataset.ind === 'poi' || i.dataset.ind === 'poiAll' || i.dataset.ind === 'poiPause') emit('poi'); else setEMAs();
     legend();
@@ -2510,7 +2591,7 @@
   window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), tlSave, paint: { fvg: paintFVG, tl: paintTL, smc: paintSMC, pd: paintPD, hilo: paintHiLo, covers: coversOf }, legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,

@@ -298,6 +298,49 @@ ${replay('premium')}`,
     ],
     practice: 'Use the 📐 fib tool on the desk from a swing low to a swing high. The 0.5 line is the equilibrium.' },
 
+  { slug: 'points-of-interest', track: 'smc', title: 'Points of interest (POI)', mins: 7, tags: ['Replay', 'Evidence', 'Quiz'],
+    sum: 'The zone you mark before price gets there, and the five boxes traders use to grade it. Then what 71,000 real touches say about the grade.',
+    body: `<p>A <b>point of interest (POI)</b> is a price area you mark <i>before</i> price gets there, where you plan to look for a trade.
+It is the reason SMC traders wait instead of buying in the middle of a move. On YouTube it is nearly always an order block, sometimes the fair value gap next to it.</p>
+${cards([['POI', 'Order block', '<p>The last candle against the move that broke structure (<a href="/learn/order-blocks-fvg">lesson</a>). The usual POI.</p>', 'go'],
+  ['POI', 'Fair value gap', '<p>The gap that move left. Often inside or right next to the order block, so many traders mark both as one area.</p>', 'go'],
+  ['Not a POI', 'Liquidity', '<p>Equal highs / lows, yesterday’s high / low, old swing points. Stops rest there, so price is drawn to them: they are targets, or the bait taken before the POI.</p>'],
+  ['Not a POI', 'The middle of a range', '<p>No zone, no liquidity, no reason. The stop has nowhere logical to go.</p>', 'no']])}
+<h2>Grading a POI: the five boxes</h2>
+<p>Every chart has many order blocks. Traders pick the one worth waiting for with a checklist like this one. The desk grades each order block the same way (Indicators → POI).</p>
+${table(['Box', 'The zone ticks it when…', 'Why traders like it'], [
+  ['1 · Trend', 'The next slower chart’s last BOS / CHoCH points the zone’s way', 'Trade with the bigger move'],
+  ['2 · Discount / premium', 'A buy zone sits in the bottom half of the slower chart’s range; a sell zone in the top half', 'Buy cheap, sell expensive (<a href="/learn/premium-discount">lesson</a>)'],
+  ['3 · FVG', 'The move away from it left a fair value gap', 'The move was strong: real buying or selling'],
+  ['4 · Took liquidity', 'It swept the low (high) before it', 'Big players filled their orders on others’ stops'],
+  ['5 · Inducement', 'A small swing formed between it and price after the break', 'Bait: early traders’ stops get taken on the way in (<a href="/learn/inducement">lesson</a>)']])}
+${replay('poi', 'A buy POI that ticks all five boxes, and price coming back to it')}
+<h2>Does a better POI hold more often?</h2>
+<p>We wrote the rules down first, then ran them on every order block the desk’s SMC engine found: 10 big coins, 15m and 1H charts, Dec 2024 – Nov 2026,
+<b>71,263 first touches</b>. A buy limit (sell limit) waits at the near edge of the box, the stop goes 0.1% past the far edge, the target is 1R. Each trade was
+compared with 20 random entries on the same coin, same month, same side and same stop size. The 7 coins in the second column were only added after the rules were written.</p>
+${table(['Boxes ticked', 'BTC, ETH, SOL', '7 other coins (unseen)'], [
+  ['0–2', '49.9% held · ' + R('−0.14R', 'neg'), '50.7% held · ' + R('−0.10R', 'neg')],
+  ['3', '52.1% held · ' + R('−0.09R', 'neg'), '52.3% held · ' + R('−0.06R', 'neg')],
+  ['<b>4–5</b>', '<b>52.9%</b> held · ' + R('−0.07R', 'neg'), '<b>52.9%</b> held · ' + R('−0.04R', 'neg')],
+  ['Random entry', 'about 50% held', 'about 50% held']])}
+<p class="muted">“Held” = reached 1R before the stop. R after fees (0.02% limit in and out, 0.05% for a stop). Stops were 0.5–0.8% of price, so fees alone cost about 0.1R a trade.</p>
+${callout('muted', 'What our test says', `<p><b>The grade is real but small.</b> A 4–5 box zone held about 3 points more often than a random entry and 2–3 points more than a 0–2 box zone, in both coin groups and both years. That is the first SMC idea in this course that beat random on unseen coins.</p>
+<p><b>It still does not pay on its own.</b> 53% at 1R is only a few cents per dollar risked before fees, and fees take more than that. 2R targets lost too.</p>
+${table(['Box', 'Held more often with it (BTC/ETH/SOL · other 7)'], [['Inducement', R('+5.2 · +3.3 pts', 'pos')], ['FVG', R('+1.6 · +2.0 pts', 'pos')], ['Discount / premium', '+0.5 · +0.7 pts'], ['Trend', '+0.3 · +0.4 pts'], ['Took liquidity', R('−0.6 · −1.7 pts', 'neg')]])}
+<p>Inducement and the FVG did the work. The zone that swept the low before it — the one in most textbook pictures — held a little <i>less</i> often in both groups.</p>`)}
+<h2>How to use it</h2>
+<ol class="steps"><li>Mark the next POI below and above price, and its grade, before price gets there.</li><li>Skip 0–2 box zones; spend your attention on 4–5.</li>
+<li>When price arrives, either wait at the box with a limit (<a href="/learn/zone-retest">zone retest</a>) or wait for the sweep and a fast-chart CHoCH (<a href="/learn/full-setup">full setup</a>).</li>
+<li>Stop past the far edge of the box. Size from the stop (<a href="/learn/position-size">lesson</a>). Target the liquidity on the other side.</li></ol>`,
+    keys: ['A POI is the zone you mark before price gets there — usually an order block.', 'Grade it: trend, discount / premium, FVG, took liquidity, inducement.', 'Tested: 4–5 boxes held a bit more often than random, but still lost after fees.'],
+    quiz: [
+      { q: 'Which of these is a POI rather than a target?', o: ['An untouched order block below price in an uptrend', 'Equal highs above price', 'Yesterday’s high'], a: 0, why: 'Equal highs and yesterday’s high are liquidity: where stops rest and price is drawn to. The order block is where you plan to enter.' },
+      { q: 'Price pulls back toward a buy POI and first takes a small low just above it. That small low was…', o: ['Inducement', 'A BOS', 'The order block'], a: 0, why: 'A small swing between the zone and price is the bait: its stops get taken on the way into the POI.' },
+      { q: 'In our test, 4–5 box POIs…', o: ['Held a bit more often than random but still lost after fees', 'Held 80% of the time', 'Did no better than random'], a: 0, why: 'About 53% reached 1R against about 50% for random entries — real, but smaller than the fees.' },
+    ],
+    practice: 'On the desk, tick Indicators → POI and replay a coin on 15m. Before each touch write the grade down; after it, write held or broke. After 20, compare your 4–5s with your 0–2s.' },
+
   { slug: 'full-setup', track: 'smc', title: 'The full short setup', mins: 6, tags: ['Replay', 'Quiz'],
     sum: 'Bearish structure, a bounce into premium, a sweep, a lower-timeframe CHoCH, then the entry — in that order.',
     body: `<p>Now the pieces go together in the order a trader checks them:</p>
@@ -377,7 +420,8 @@ ${table(['Setup', 'Market and period', 'Result'], [
   ['Same, only with the 4H trend', '204 small-cap perps, 14 Sep – 13 Nov 2026', R('shorts −0.09R, longs −0.21R', 'neg')],
   ['Zone retest, limit at the zone edge', '18 forex/metal/oil/index markets, 4H, 3 years', R('−0.04R (random −0.05R)', 'neg')],
   ['Same, gold only', 'Gold 4H 2023–26, PAXG 2022–24 unseen', R('+0.26R, +0.14R with tight spreads; −0.13R with perp fees', 'mix')],
-  ['Inducement', 'Forex, metals, indices, 10 big coins, 207 perps; 15m–daily', R('−0.14R over 5,544 trades (random −0.17R)', 'neg')]])}
+  ['Inducement', 'Forex, metals, indices, 10 big coins, 207 perps; 15m–daily', R('−0.14R over 5,544 trades (random −0.17R)', 'neg')],
+  ['POI grade: order blocks with 4–5 of the five boxes', '10 big coins, 15m and 1H, Dec 2024 – Nov 2026, 71,263 touches', R('held 1R 53% vs 50% random (both coin groups), still −0.04 to −0.07R after fees', 'mix')]])}
 ${callout('info', 'So why learn it?', '<p>Because the language is useful — structure, liquidity and zones describe where traders are trapped and where stops sit. What the tests say is that drawing the shapes is not an edge on its own. Use the replay desk to find out, with your own rules, whether <i>your</i> version beats a coin flip before you risk money on it.</p>')}
 <p class="muted">R is the amount risked: −0.14R means losing 14 cents per dollar risked, on average. Tests include exchange fees and spreads.</p>`,
     keys: ['Most coded SMC rules lost after fees.', 'Gold on 4H with tight spreads was the one consistent exception.', 'Test your own rules on replay before trading them.'],

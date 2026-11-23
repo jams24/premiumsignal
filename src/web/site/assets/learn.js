@@ -195,6 +195,32 @@
       { at: 19, t: 'Target hit, about 1.9R.' },
     ],
   };
+  // points of interest: a demand order block that ticks all five boxes, and price coming back to it
+  L.poi = {
+    aria: 'A red candle sweeps an old low, a fast rally leaves a fair value gap and breaks the last high; that red candle is the point of interest. Price pulls back, takes a small inducement low, taps the zone and rallies to the old high',
+    candles: gen([103.2, 102.4, 100.9, 101.8, 101.2, 100.6, 102.4, 103.4, 104.3, 104.8, 104.1, 103.6, 103.3, 103.9, 104.2, 103.4, 102.4, 101.7, 102.6, 103.4, 104.1, 104.9, 105.4, 105.0, 105.6],
+      { O: { 0: 103.8, 5: 101.3, 7: 102.6, 17: 102.1 }, H: { 3: 102.6, 5: 101.4, 9: 105.1, 14: 104.4, 22: 105.6 }, L: { 2: 100.4, 5: 99.8, 7: 102.5, 12: 103.0, 16: 102.2, 17: 100.95 } }),
+    ann: [
+      { type: 'line', y: 100.4, i0: 2, i1: 5, cls: 'liq', label: 'Old low', ly: 'below', at: 2 },
+      { type: 'mark', i: 5, y: 99.8, label: 'Takes the old low', cls: 'sweep', pos: 'below', at: 5 },
+      { type: 'zone', y0: 99.8, y1: 101.3, i0: 5, i1: 14, cls: 'demand', label: 'POI · order block', lp: 'in-right', at: 7 },
+      { type: 'zone', y0: 101.4, y1: 102.5, i0: 6, i1: 14, cls: 'fvg', label: 'FVG', lp: 'in-right', at: 7 },
+      { type: 'line', y: 102.6, i0: 3, i1: 7, cls: 'bos', label: 'BOS', at: 7 },
+      { type: 'line', y: 103.0, i0: 12, i1: 16, cls: 'liq', label: 'Inducement', ly: 'below', at: 12 },
+      { type: 'mark', i: 17, y: 100.95, label: 'POI tapped', cls: 'tp', pos: 'below', at: 17 },
+      { type: 'box', i0: 17, i1: 24, entry: 101.3, stop: 99.7, tp: 105.1, entryLabel: 'Buy', at: 17 },
+    ],
+    notes: [
+      { at: 2, t: 'An old low at 100.4. Buyers\' stops sit just under it: sell-side liquidity.' },
+      { at: 5, t: 'The last red candle dips under that low, fills those stops, and closes back above. Box 4 of the checklist: it took liquidity.' },
+      { at: 7, t: 'A fast rally leaves a fair value gap (box 3) and closes above the last high: a BOS. The last red candle before it is the order block. Mark it from its open to its low. That box is the POI.' },
+      { at: 9, t: 'Price makes a new high. The POI now sits in the bottom (discount) half of the move: box 2. Box 1 is the slower chart\'s trend, up here.' },
+      { at: 12, t: 'Price pulls back and a small low forms above the POI. Early buyers put their stops under it. SMC calls it inducement: box 5.' },
+      { at: 16, t: 'Price takes that small low on the way down. Those stops are the fuel that brings price into the POI.' },
+      { at: 17, t: 'It taps the POI and closes back up. A buy limit at the top of the box fills at 101.3, stop under the box at 99.7.' },
+      { at: 22, t: 'Price runs to the old high: 2.4R. This is the textbook picture, 5 boxes out of 5. The next part shows how often it really goes like this.' },
+    ],
+  };
   L.premium = {
     aria: 'A swing from 110 down to 100 split at 50 percent into premium and discount, with a short taken in the 62 to 79 percent band',
     candles: gen([109.2, 108.6, 107.4, 106.8, 105.5, 104.9, 103.6, 102.8, 101.6, 100.9, 100.4, 101.2, 102.3, 103.6, 104.4, 105.6, 106.6, 106.0, 104.8, 103.5, 102.4, 101.2, 100.3, 99.4, 99.8],

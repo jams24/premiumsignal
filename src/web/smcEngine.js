@@ -221,6 +221,49 @@
     return R;
   }
 
-  const SMC = { analyze };
+  /* POI grade: how many of the five usual "best POI" boxes an order block (zone) ticks, using only what was known at time
+     `at`. R: this chart's analyze() result, HR: the next slower chart's (or null: boxes 1–2 unknown), T: this chart's closed
+     candles [[t, o, h, l, c], ...] (the same grid as R). Boxes:
+       trend      the slower chart's last BOS / CHoCH points the zone's way
+       pd         the zone's middle is in the discount (demand) / premium (supply) half of the slower chart's dealing range
+                  (its last confirmed swing high and swing low)
+       fvg        the move from the order block to the break left a same-direction fair value gap
+       took       the zone's far edge is past the last same-side swing before the order block (the move swept it)
+       ind        inducement: a same-side swing formed between the zone and price after the break (price takes it on the way in)
+     Tested (23 Nov 2026, 10 coins, 15m and 1H, first touch, limit at the near edge, stop 0.1% past the far edge, 1R):
+     see the Academy lesson "Points of interest". */
+  function poiPrep(R, HR, T) {
+    const byConf = (a, b) => a.conf - b.conf, byT = (a, b) => a.t - b.t;
+    const idx = new Map(); T.forEach((c, i) => idx.set(c[0], i));
+    return {
+      R, T, idx, brkT: new Map(R.breaks.map(b => [b.conf, b.t])),
+      hBr: HR ? HR.breaks.slice().sort(byConf) : null,
+      hH: HR ? HR.swings.filter(s => s.side === 'H').sort(byConf) : null, hL: HR ? HR.swings.filter(s => s.side === 'L').sort(byConf) : null,
+      sH: R.swings.filter(s => s.side === 'H').sort(byT), sL: R.swings.filter(s => s.side === 'L').sort(byT),
+    };
+  }
+  function lastConf(list, t) { let lo = 0, hi = list.length - 1, r = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (list[m].conf <= t) { r = m; lo = m + 1; } else hi = m - 1; } return r; }
+  function poiBoxes(P, z, at) {
+    const d = z.type === 'demand' ? 1 : -1, far = d === 1 ? z.bot : z.top, T = P.T;
+    let trend = null, pd = null;
+    if (P.hBr) {
+      const hb = lastConf(P.hBr, at); trend = hb >= 0 && P.hBr[hb].dir === d ? 1 : 0;
+      const ih = lastConf(P.hH, at), il = lastConf(P.hL, at); pd = 0;
+      if (ih >= 0 && il >= 0) { const mid = (P.hH[ih].p + P.hL[il].p) / 2, zm = (z.top + z.bot) / 2; pd = d === 1 ? (zm < mid ? 1 : 0) : (zm > mid ? 1 : 0); }
+    }
+    const brkT = P.brkT.has(z.conf) ? P.brkT.get(z.conf) : z.conf - P.R.tf, a = P.idx.get(z.t), b = P.idx.get(brkT);
+    let fvg = 0;
+    if (a != null && b != null) for (let q = a + 1; q < b; q++) { const p = T[q - 1], nx = T[q + 1]; if (d === 1 ? p[2] < nx[3] : p[3] > nx[2]) { fvg = 1; break; } }
+    const same = d === 1 ? P.sL : P.sH;
+    let took = 0, prev = null;
+    for (const s of same) { if (s.t >= z.t) break; if (s.conf <= z.conf) prev = s; }
+    if (prev && (d === 1 ? far < prev.p : far > prev.p)) took = 1;
+    let ind = 0, indP = null;
+    for (const s of same) { if (s.t <= brkT) continue; if (s.t > at) break; if (s.conf <= at && (d === 1 ? s.p > z.top : s.p < z.bot)) { ind = 1; indP = s.p; break; } }
+    const b5 = { trend, pd, fvg, took, ind };
+    return { b: b5, indP, grade: (trend || 0) + (pd || 0) + fvg + took + ind, of: P.hBr ? 5 : 3 };
+  }
+
+  const SMC = { analyze, poiPrep, poiBoxes };
   if (typeof module === 'object' && module.exports) module.exports = SMC; else root.SMC = SMC;
 })(this);

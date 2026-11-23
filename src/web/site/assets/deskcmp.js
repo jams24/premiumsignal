@@ -21,12 +21,12 @@
     { bars: [], gen: 0, ws: null, wsT: null, hist: [], fine: [], fi: 0, b0: 0, bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, F: null, TL: null, tlsn: null, pd: null, ema: {},
       key: '', prec: 2, driver: 'main', hover: null, err: '' });
   // this chart's own indicator ticks (older saves had one SMC switch: it becomes SMC + CHoCH + BOS)
-  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false, eq: false, liq: false, zz: false },
+  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false },
     C.ind && typeof C.ind === 'object' ? C.ind : { smc: C.smc !== false, choch: C.smc !== false, bos: C.smc !== false });
   if (C.ind && typeof C.ind === 'object' && !('eq' in C.ind)) I.eq = !!I.smc;   // saved before EQH / EQL had a tick: SMC drew them
   C.ind = I;
   const save = () => RD.store.set('rd-cmp-v1', { on: C.on, sym: C.sym, tf: C.tf, ind: I });
-  const smcAny = () => !!(I.smc || I.choch || I.bos || I.eq || I.liq || I.zz);
+  const smcAny = () => !!(I.smc || I.choch || I.bos || I.eq || I.liq || I.zz || I.ob);
   const ctf = () => C.tf || U.tf;
   const same = () => C.sym === U.sym;
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -40,6 +40,7 @@
     ['hilo', 'High / low of the candles in view'],
     ['pdhl', 'Previous day high / low (PDH / PDL)', 'Yesterday\'s high and low (UTC days) of this chart\'s coin. In a replay: the day before the replay clock. Not shown on 1W / 1M.'],
     ['sess', 'Sessions (Asia, London, New York)', 'Session open / close lines with the main chart\'s session settings (Indicators → Sessions: which sessions, their times, shading). Shown on 1m–4H.'],
+    ['ob', 'Order blocks (OB)', 'The last candle against the move that broke structure. Solid = not tapped yet, dashed = tapped and held. Closed candles only.'],
     ['fvg', 'Fair value gaps (FVG)', 'Three candles where the first and third don\'t overlap. Green = gap below price, orange = gap above. Closed candles only.'],
     ['tline', 'Trend lines (auto, frozen when drawn)', 'Drawn once when switched on, then kept while price moves: a × marks the first close through a line, hollow dots new touches. Redraw now (in this chart\'s legend) draws them again. The main chart\'s top-down option shows the lines drawn here.'],
     ['tlineHtf', 'Also show higher-timeframe lines (top-down)', 'Lines drawn on a higher timeframe of this coin, on either chart, tagged with their timeframe.', 'sub'],
@@ -292,7 +293,7 @@
       DRAWN = {};
       if (I.sess && RD.sessPaint) one(() => RD.sessPaint(g, W, 'bottom', sctx()));
       if (I.fvg && C.F) one(() => { DRAWN.fvg = PAINT.fvg(g, W, { ms: TF[ctf()].ms, list: C.F.filter(f => !f.filled).slice(-8), t2x, p2y }); });
-      if (smcAny() && C.A) one(() => { DRAWN.smc = PAINT.smc(g, W, { r: C.A, all: false, smc: I.smc, taken: U.smcTaken, choch: I.choch, bos: I.bos, eq: I.eq, liq: I.liq, zz: I.zz, bars: C.bars, t2x, p2y }); });
+      if (smcAny() && C.A) one(() => { DRAWN.smc = PAINT.smc(g, W, { r: C.A, all: false, smc: I.smc, taken: U.smcTaken, choch: I.choch, bos: I.bos, eq: I.eq, liq: I.liq, zz: I.zz, ob: I.ob, bars: C.bars, t2x, p2y }); });
     } else {
       if (I.hilo) one(() => { PAINT.hilo(g, W, { bars: C.bars, ts: ch.timeScale(), p2y, fp: fpc, covers: () => PAINT.covers(box, [$('.cmp-bar', pane), pickEl, ipop, sumEl], [lgEl]) }); DRAWN.hilo = true; });
       if (I.sess && RD.sessPaint) one(() => { DRAWN.sess = RD.sessPaint(g, W, 'top', sctx()); });
@@ -424,7 +425,7 @@
     else if (k === 'ind') indPop(ipop.hidden);
     else if (k === 'indmain') {   // the main chart's ticks, copied once (each chart keeps its own after that)
       const ss = window.__rdSess && window.__rdSess.P;
-      Object.assign(I, { vol: !!U.vol, ema20: !!U.ema20, ema50: !!U.ema50, ema200: !!U.ema200, hilo: !!U.hilo, pdhl: !!U.pdhl, sess: !!(ss && ss.on), fvg: !!U.smcFvg, tline: !!U.tline, tlineHtf: U.tlineHtf !== false, smc: !!U.smc, choch: !!U.choch, bos: !!U.bos, eq: !!U.eq, liq: !!U.liq, zz: !!U.zz });
+      Object.assign(I, { vol: !!U.vol, ema20: !!U.ema20, ema50: !!U.ema50, ema200: !!U.ema200, hilo: !!U.hilo, pdhl: !!U.pdhl, sess: !!(ss && ss.on), fvg: !!U.smcFvg, tline: !!U.tline, tlineHtf: U.tlineHtf !== false, smc: !!U.smc, choch: !!U.choch, bos: !!U.bos, eq: !!U.eq, liq: !!U.liq, zz: !!U.zz, ob: !!U.ob });
       save(); setVol(); setEMAs(); indRun(); syncBar(); legend();
     }
     else if (k === 'tlredraw') {   // both charts show the same lines for one coin + timeframe: a redraw is for both
