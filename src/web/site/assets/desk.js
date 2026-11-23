@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
@@ -292,7 +292,8 @@
     const ink = isLight() ? '#131722' : '#d7dbe3';
     return { upColor: isLight() ? '#d9dce1' : '#eef0f4', downColor: isLight() ? '#131722' : '#2a2f3a', wickUpColor: ink, wickDownColor: ink, borderVisible: true, borderUpColor: ink, borderDownColor: ink, priceLineColor: ink };
   };
-  const volColor = up => (U.candles === 'mono' ? (isLight() ? (up ? 'rgba(19,23,34,.2)' : 'rgba(19,23,34,.42)') : (up ? 'rgba(238,240,244,.32)' : 'rgba(238,240,244,.14)')) : hexA(up ? COL.up : COL.down, 0.35));
+  // hi: a volume spike (Indicators → Volume → brighter bars), drawn strong
+  const volColor = (up, hi) => hi ? (U.candles === 'mono' ? (isLight() ? 'rgba(19,23,34,.72)' : 'rgba(238,240,244,.62)') : hexA(up ? COL.up : COL.down, 0.8)) : (U.candles === 'mono' ? (isLight() ? (up ? 'rgba(19,23,34,.2)' : 'rgba(19,23,34,.42)') : (up ? 'rgba(238,240,244,.32)' : 'rgba(238,240,244,.14)')) : hexA(up ? COL.up : COL.down, 0.35));
   const box = $('[data-chart]');
   const chart = LC.createChart(box, {
     autoSize: true,
@@ -305,6 +306,8 @@
   const cs = chart.addSeries(LC.CandlestickSeries, Object.assign(candleOpts(), { priceLineStyle: LC.LineStyle.Dashed }));
   const vs = chart.addSeries(LC.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false });
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
+  // the average volume of the last VMA candles, as a line over the bars (Indicators → Volume → average line)
+  const VMA = 20, vma = chart.addSeries(LC.LineSeries, { priceScaleId: 'vol', color: 'rgba(160,168,184,.85)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   const EMAS = { ema20: [20, '#f5a524'], ema50: [50, '#4f7cff'], ema200: [200, '#c084fc'] };
   const es = {};
   for (const k in EMAS) es[k] = chart.addSeries(LC.LineSeries, { color: EMAS[k][1], lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: !!U[k] });
@@ -320,7 +323,7 @@
       rightPriceScale: { borderColor: css('--dk-line') }, timeScale: { borderColor: css('--dk-line') },
     });
     cs.applyOptions(candleOpts());
-    if (S.bars.length) vs.setData(U.vol ? S.bars.map(toV) : []);
+    if (S.bars.length) volSet();
     setMarkers(); syncLines(); prim.req(); emit('theme');
   }
   new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -340,7 +343,20 @@
     lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
   const R = { on: false, clock: 0, buf: [], bufEnd: 0, res: '1m', playing: false, timer: null, busy: false, end: false, step: 'bar', speed: 800, gen: 0, fetching: null, back: [] };
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
-  const toV = b => ({ time: b[0] / 1000, value: b[5], color: volColor(b[4] >= b[1]) });
+  // average volume of the VMA candles ending at i (incl) or just before it (a spike is judged against the candles before it)
+  const volAvg = (i, incl) => { const e = incl ? i : i - 1, s = e - VMA + 1; if (s < 0 || e >= S.bars.length) return null; let t = 0; for (let j = s; j <= e; j++) t += S.bars[j][5]; return t / VMA; };
+  const toV = (b, i) => { const a = U.volHi && i != null ? volAvg(i, false) : null; return { time: b[0] / 1000, value: b[5], color: volColor(b[4] >= b[1], a != null && a > 0 && b[5] >= 2 * a) }; };
+  function volSet() {
+    vs.setData(U.vol ? S.bars.map(toV) : []);
+    const on = U.vol && U.volMa && U.ex !== 'fx', L = [];
+    if (on) for (let i = VMA - 1; i < S.bars.length; i++) L.push({ time: S.bars[i][0] / 1000, value: volAvg(i, true) });
+    vma.setData(L);
+  }
+  function volUpd(i) {
+    if (!U.vol) return;
+    vs.update(toV(S.bars[i], i));
+    if (U.volMa && U.ex !== 'fx' && i >= VMA - 1) vma.update({ time: S.bars[i][0] / 1000, value: volAvg(i, true) });
+  }
   const lastBar = () => S.bars[S.bars.length - 1];
   const nowT = () => R.on ? R.clock : Date.now();
 
@@ -357,7 +373,7 @@
   }
   function setEMAs() { for (const k in EMAS) { es[k].applyOptions({ visible: !!U[k] }); es[k].setData(U[k] ? emaArr(EMAS[k][0]) : []); } }
   function setAll() {
-    cs.setData(S.bars.map(toC)); vs.setData(U.vol ? S.bars.map(toV) : []); setEMAs();
+    cs.setData(S.bars.map(toC)); volSet(); setEMAs();
     smcSchedule(); syncLines(); legend(); prim.req();
   }
   // a fresh coin / timeframe always re-fits the price axis: dragging the chart up or down switches the axis's auto-fit off,
@@ -407,7 +423,7 @@
     else if (k[0] > last[0]) { S.bars.push(k); smcSchedule(); }
     else return;
     S.lastPx = k[4]; S.marks[U.sym] = k[4];
-    cs.update(toC(k)); if (U.vol) vs.update(toV(k)); emaLast();
+    cs.update(toC(k)); volUpd(S.bars.length - 1); emaLast();
     if (prev != null && prev !== k[4]) P.seg(U.sym, prev, k[4], Date.now(), 'live', true);
     tickUI();
   }
@@ -517,7 +533,7 @@
       if (R.bufEnd >= target) R.clock = Math.max(R.clock, target);
       if (R.clock !== snap.clock) { R.back.push(snap); if (R.back.length > 3000) R.back.shift(); }
       if (changed !== Infinity) {
-        for (let i = changed; i < S.bars.length; i++) { cs.update(toC(S.bars[i])); if (U.vol) vs.update(toV(S.bars[i])); }
+        for (let i = changed; i < S.bars.length; i++) { cs.update(toC(S.bars[i])); volUpd(i); }
         if (S.bars.length !== n0 || R.step !== 'small') smcSchedule(); else smcSchedule();
         emaLast();
       } else if (R.end && !R.buf.length) { pausePlay(); toast("You've reached the present. Exit the replay to trade the live market."); }
@@ -1117,11 +1133,11 @@
     return out;
   }
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
-  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq); }   // anything that needs the SMC engine
-  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, t2x, p2y }); if (d) SMCDRAWN = d; }
+  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq); }   // anything that needs the SMC engine
+  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, liq: U.liq, t2x, p2y }); if (d) SMCDRAWN = d; }
   function paintSMC(g, W, o) {
     const r = o.r, t2x = o.t2x, p2y = o.p2y; if (!r) return null;
-    const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [] };
+    const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [], liq: 0, sweeps: 0 };
     if (o.smc) {
     // Whole chart: past zones too, faint, from the order block to the candle that closed through them
     if (all) for (const z of r.zones) {
@@ -1158,6 +1174,25 @@
       g.strokeStyle = hexA(COL.warn, 0.85); g.setLineDash([2, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
       label(g, e.kind, W - 4, y + (e.side === 'H' ? -9 : 9), COL.warn, 'right', 'transparent'); done.eqs++;
     }
+    }
+    // liquidity (Indicators → Liquidity; on with SMC): stops rest above swing highs (buy-side, BSL) and below swing lows
+    // (sell-side, SSL). Untaken ones: a dotted line from the swing to the right edge (Recent: the nearest 3 above and 3 below
+    // the price · Whole chart: all). Taken by a wick that closed back = a sweep: a short line from the level to that candle.
+    if (o.liq) {
+      const LQ = '#8b5cf6', px = r.forming ? r.forming.c : null, lv = (r.liq || []).filter(l => l.kind === 'swing');
+      const side = s => { const a = lv.filter(l => l.side === s); if (all || px == null) return all ? a : a.slice(-3); return a.sort((p, q) => Math.abs(p.p - px) - Math.abs(q.p - px)).slice(0, 3); };
+      for (const l of side('H').concat(side('L'))) {
+        const x0 = t2x(l.t), y = p2y(l.p); if (x0 == null || y == null || x0 > W) continue;
+        g.strokeStyle = hexA(LQ, 0.8); g.setLineDash([1, 3]); g.lineWidth = 1.5; g.beginPath(); g.moveTo(Math.max(0, x0), y); g.lineTo(W, y); g.stroke(); g.setLineDash([]);
+        label(g, l.side === 'H' ? 'BSL' : 'SSL', W - 4, y + (l.side === 'H' ? -9 : 9), LQ, 'right', 'transparent'); done.liq++;
+      }
+      for (const w of (all ? r.sweeps : r.sweeps.slice(-6))) {
+        const x0 = t2x(w.levelT), x1 = t2x(w.t), y = p2y(w.p); if (x1 == null || y == null || x1 < 0 || x1 > W) continue;
+        const xa = x0 == null ? 0 : Math.max(0, x0), hi = w.dir === -1;
+        g.strokeStyle = hexA(LQ, 0.5); g.setLineDash([3, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(xa, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
+        g.strokeStyle = LQ; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x1 - 3, y - 3); g.lineTo(x1 + 3, y + 3); g.moveTo(x1 + 3, y - 3); g.lineTo(x1 - 3, y + 3); g.stroke();
+        label(g, (w.kind === 'swing' ? (hi ? 'BSL' : 'SSL') : w.kind) + ' swept', x1 + 5, y + (hi ? -9 : 9), LQ, 'left', 'transparent'); done.sweeps++;
+      }
     }
     const BR = r.breaks.filter(b => b.kind === 'CHoCH' ? o.choch : o.bos);   // CHoCH and BOS each by their own tick
     for (const b of (all ? BR : BR.slice(-8))) {
@@ -2024,7 +2059,11 @@
   function legend() {
     const b = hoverBar || lastBar(); if (!b) { LG.innerHTML = ''; return; }
     const ch = b[4] - b[1], up = ch >= 0, cl = up ? 'up' : 'down';
-    let l2 = U.vol && U.ex !== 'fx' ? `<span>Vol <b>${fv(b[5])}</b></span>` : '';   // FX has no shared volume
+    let l2 = '';
+    if (U.vol && U.ex !== 'fx') {   // FX has no shared volume
+      const bi = S.bars.indexOf(b), av = bi >= 0 ? volAvg(bi, false) : null, x = av > 0 ? b[5] / av : null;
+      l2 = `<span title="Volume of this candle${x != null ? ` and how it compares with the average of the ${VMA} candles before it` : ''}">Vol <b>${fv(b[5])}</b>${x != null ? ` · <b class="${x >= 2 ? 'warn' : ''}">${x.toFixed(1)}×</b> avg` : ''}</span>`;
+    }
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
     for (const f of X.legend) { try { const h = f(); if (h) l2 += h; } catch (e) { console.error(e); } }
     if (U.tline && TLS) { const Ln = S.bars.length - 1, hold = TLS.filter(l => !l.htf && l.brkT == null && l.liveBrk == null).map(l => { const L1 = t2l(l.t1), L2 = t2l(l.t2); if (L1 == null || L2 == null || L2 === L1) return '';
@@ -2033,6 +2072,11 @@
       const htx = Object.keys(ht).sort((a, b) => TF[b].ms - TF[a].ms).map(k => '+' + ht[k] + ' ' + k).join(' ');
       l2 += `<span>Trend lines <em title="Drawn from the candles closed by then and kept there as price moves">drawn ${tshort(TLS.at)}</em>${hold.length ? ' ' + hold.join(' · ') : ''}${htx ? ` · <em title="Lines from your higher-timeframe charts of this coin (top-down), the nearest one each side. Their prices are on the chart.">${htx}</em>` : ''}${nb ? ` · <b class="m">${nb} broken since</b>` : ''}</span><button type="button" class="lg-btn" data-act="tlredraw" title="Draw the trend lines again from the latest closed candles (this coin and timeframe)">Redraw now</button>`; }
     if (U.pdhl && PDAY) l2 += `<span>PDH <b>${fp(PDAY.h)}</b> · PDL <b>${fp(PDAY.l)}</b></span>`;
+    if (U.liq && SMCR && SMCR.liq) {
+      const px = S.lastPx, lv = SMCR.liq.filter(l => l.kind === 'swing');
+      const up = lv.filter(l => l.side === 'H' && l.p >= px).sort((a, b) => a.p - b.p)[0], dn = lv.filter(l => l.side === 'L' && l.p <= px).sort((a, b) => b.p - a.p)[0];
+      if (up || dn) l2 += `<span title="Liquidity: the nearest swing high above the price (buy-side, BSL) and swing low below it (sell-side, SSL) that price has not taken yet: stop orders rest just past them">${up ? `BSL <b class="down">${fp(up.p)}</b>` : ''}${up && dn ? ' · ' : ''}${dn ? `SSL <b class="up">${fp(dn.p)}</b>` : ''}</span>`;
+    }
     if (U.eq && SMCR && SMCR.eqs) {
       const px = S.lastPx, open = SMCR.eqs.filter(e => !e.taken);
       const up = open.filter(e => e.side === 'H' && e.p >= px).sort((a, b) => a.p - b.p)[0], dn = open.filter(e => e.side === 'L' && e.p <= px).sort((a, b) => b.p - a.p)[0];
@@ -2263,9 +2307,9 @@
       else if (act === 'more') { const p = $('[data-morepop]'); p.hidden = !p.hidden; a.setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) moreUI(); }
       else if (act === 'candles') { U.candles = a.dataset.v === 'mono' ? 'mono' : 'color'; saveUI(); headUI(); applyTheme(); }
       else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
-      else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; U.eq = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
+      else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; U.eq = true; U.liq = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
-      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
+      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; U.liq = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
       else if (act === 'rpick-chart') { closeModals(); if (!R.on) startPick('replay'); else startPick('replay'); }
@@ -2312,10 +2356,11 @@
   $('[data-tfsel]').addEventListener('change', e => setTF(e.target.value));
   $$('[data-ind]').forEach(i => i.addEventListener('change', () => {
     U[i.dataset.ind] = i.checked; saveUI(); headUI();
-    if (i.dataset.ind === 'vol') { vs.setData(U.vol ? S.bars.map(toV) : []); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
-    else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; saveUI(); headUI(); smcSchedule(); }
-    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq') smcSchedule();
-    else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else setEMAs();
+    if (i.dataset.ind === 'volMa' || i.dataset.ind === 'volHi') volSet();
+    else if (i.dataset.ind === 'vol') { volSet(); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
+    else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; U.liq = U.smc; saveUI(); headUI(); smcSchedule(); }
+    else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq') smcSchedule();
+    else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else if (i.dataset.ind === 'poi' || i.dataset.ind === 'poiAll' || i.dataset.ind === 'poiPause') emit('poi'); else setEMAs();
     legend();
   }));
   $('[data-speed]').addEventListener('change', e => { R.speed = +e.target.value; saveR(); });
