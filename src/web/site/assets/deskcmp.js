@@ -21,12 +21,12 @@
     { bars: [], gen: 0, ws: null, wsT: null, hist: [], fine: [], fi: 0, b0: 0, bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, F: null, TL: null, tlsn: null, pd: null, ema: {},
       key: '', prec: 2, driver: 'main', hover: null, err: '' });
   // this chart's own indicator ticks (older saves had one SMC switch: it becomes SMC + CHoCH + BOS)
-  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false, eq: false, liq: false },
+  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false, eq: false, liq: false, zz: false },
     C.ind && typeof C.ind === 'object' ? C.ind : { smc: C.smc !== false, choch: C.smc !== false, bos: C.smc !== false });
   if (C.ind && typeof C.ind === 'object' && !('eq' in C.ind)) I.eq = !!I.smc;   // saved before EQH / EQL had a tick: SMC drew them
   C.ind = I;
   const save = () => RD.store.set('rd-cmp-v1', { on: C.on, sym: C.sym, tf: C.tf, ind: I });
-  const smcAny = () => !!(I.smc || I.choch || I.bos || I.eq || I.liq);
+  const smcAny = () => !!(I.smc || I.choch || I.bos || I.eq || I.liq || I.zz);
   const ctf = () => C.tf || U.tf;
   const same = () => C.sym === U.sym;
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -48,6 +48,7 @@
     ['choch', 'CHoCH: change of character'], ['bos', 'BOS: break of structure'],
     ['eq', 'Equal highs / lows (EQH / EQL)', 'Two swing highs (or lows) at about the same price: stops rest just past them. The main chart\'s "keep after price takes them" setting applies.'],
     ['liq', 'Liquidity: BSL / SSL and sweeps', 'Untaken swing highs (buy-side) and lows (sell-side), where stops rest, and where a wick swept one and closed back.'],
+    ['zz', 'ZigZag: swing points joined, HH / HL / LH / LL', 'The swing points joined into one line with HH / HL / LH / LL labels, and a dashed leg to the furthest price since the last swing.'],
   ];
   const pane = document.createElement('div');
   pane.className = 'dk-cmp'; pane.hidden = true; pane.setAttribute('aria-label', 'Compare chart');
@@ -291,7 +292,7 @@
       DRAWN = {};
       if (I.sess && RD.sessPaint) one(() => RD.sessPaint(g, W, 'bottom', sctx()));
       if (I.fvg && C.F) one(() => { DRAWN.fvg = PAINT.fvg(g, W, { ms: TF[ctf()].ms, list: C.F.filter(f => !f.filled).slice(-8), t2x, p2y }); });
-      if (smcAny() && C.A) one(() => { DRAWN.smc = PAINT.smc(g, W, { r: C.A, all: false, smc: I.smc, taken: U.smcTaken, choch: I.choch, bos: I.bos, eq: I.eq, liq: I.liq, t2x, p2y }); });
+      if (smcAny() && C.A) one(() => { DRAWN.smc = PAINT.smc(g, W, { r: C.A, all: false, smc: I.smc, taken: U.smcTaken, choch: I.choch, bos: I.bos, eq: I.eq, liq: I.liq, zz: I.zz, bars: C.bars, t2x, p2y }); });
     } else {
       if (I.hilo) one(() => { PAINT.hilo(g, W, { bars: C.bars, ts: ch.timeScale(), p2y, fp: fpc, covers: () => PAINT.covers(box, [$('.cmp-bar', pane), pickEl, ipop, sumEl], [lgEl]) }); DRAWN.hilo = true; });
       if (I.sess && RD.sessPaint) one(() => { DRAWN.sess = RD.sessPaint(g, W, 'top', sctx()); });
@@ -423,7 +424,7 @@
     else if (k === 'ind') indPop(ipop.hidden);
     else if (k === 'indmain') {   // the main chart's ticks, copied once (each chart keeps its own after that)
       const ss = window.__rdSess && window.__rdSess.P;
-      Object.assign(I, { vol: !!U.vol, ema20: !!U.ema20, ema50: !!U.ema50, ema200: !!U.ema200, hilo: !!U.hilo, pdhl: !!U.pdhl, sess: !!(ss && ss.on), fvg: !!U.smcFvg, tline: !!U.tline, tlineHtf: U.tlineHtf !== false, smc: !!U.smc, choch: !!U.choch, bos: !!U.bos, eq: !!U.eq, liq: !!U.liq });
+      Object.assign(I, { vol: !!U.vol, ema20: !!U.ema20, ema50: !!U.ema50, ema200: !!U.ema200, hilo: !!U.hilo, pdhl: !!U.pdhl, sess: !!(ss && ss.on), fvg: !!U.smcFvg, tline: !!U.tline, tlineHtf: U.tlineHtf !== false, smc: !!U.smc, choch: !!U.choch, bos: !!U.bos, eq: !!U.eq, liq: !!U.liq, zz: !!U.zz });
       save(); setVol(); setEMAs(); indRun(); syncBar(); legend();
     }
     else if (k === 'tlredraw') {   // both charts show the same lines for one coin + timeframe: a redraw is for both

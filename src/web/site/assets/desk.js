@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
@@ -955,8 +955,9 @@
   const saveDraw = () => store.set('rd-draw-v1', DRAW);
   let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null, FVGS = null, TLS = null;
   const ONE = new Set(['hline', 'ray']), TWO = new Set(['trend', 'rect', 'fib', 'measure']);
-  const drawTool = t => ONE.has(t) || TWO.has(t) || t === 'pen';
+  const drawTool = t => ONE.has(t) || TWO.has(t) || t === 'pen' || t === 'zig';
   let PENS = [];   // strokes of this pencil session, newest last (Undo)
+  let ZIGDRAWN = [];   // the labels of the last zig-zag drawn (tests)
   const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
   function t2l(t) { return t2lOf(S.bars, TF[U.tf].ms, t); }
@@ -1020,6 +1021,52 @@
     }
     return { t, p };
   }
+  // a zig-zag point: the high or the low (whichever is nearer the pointer) of the candle under it, since a turn is a wick's
+  // tip. Past the last candle the point goes where the pointer is; ⌘ / Ctrl held places it freely anywhere.
+  function zigPt(x, y, o = {}) {
+    const t = x2t(x), p = y2p(y); if (t == null || p == null) return { t: null, p: null };
+    if (o.flip) return { t, p };
+    const L = t2l(t), c = L == null ? null : S.bars[Math.round(L)];
+    if (!c || c[0] !== t) return { t, p };
+    const yh = p2y(c[2]), yl = p2y(c[3]); if (yh == null || yl == null) return { t, p };
+    return Math.abs(y - yh) <= Math.abs(y - yl) ? { t, p: c[2] } : { t, p: c[3] };
+  }
+  // HH / HL / LH / LL for a zig-zag's prices: a point above the one before it is a high (the first one: above the next);
+  // each high is compared with the last high, each low with the last low. Within 0.01% = EQH / EQL.
+  function zigKinds(ps) {
+    const out = []; let lh = null, ll = null;
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i], ref = i ? ps[i - 1] : ps[1], hi = ref == null ? true : p > ref;
+      let k;
+      if (hi) { k = lh == null ? 'H' : Math.abs(p - lh) <= lh * 1e-4 ? 'EQH' : p > lh ? 'HH' : 'LH'; lh = p; }
+      else { k = ll == null ? 'L' : Math.abs(p - ll) <= ll * 1e-4 ? 'EQL' : p < ll ? 'LL' : 'HL'; ll = p; }
+      out.push({ hi, k });
+    }
+    return out;
+  }
+  // P: screen points, ps: their prices. o: { color, w, pct (each leg's % move), forming (the last leg is still forming: dashed, no label) }
+  function paintZig(g, P, ps, o) {
+    if (P.length < 2) return [];
+    const K = zigKinds(ps), n = P.length;
+    g.strokeStyle = o.color; g.lineWidth = o.w || 1.5; g.lineJoin = 'round'; g.setLineDash([]);
+    g.beginPath(); g.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i < (o.forming ? n - 1 : n); i++) g.lineTo(P[i][0], P[i][1]);
+    g.stroke();
+    if (o.forming) { g.setLineDash([4, 4]); g.beginPath(); g.moveTo(P[n - 2][0], P[n - 2][1]); g.lineTo(P[n - 1][0], P[n - 1][1]); g.stroke(); g.setLineDash([]); }
+    g.lineJoin = 'miter';
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      if (o.forming && i === n - 1) continue;
+      const k = K[i], col = k.k === 'HH' || k.k === 'HL' ? COL.up : k.k === 'LH' || k.k === 'LL' ? COL.down : o.color;
+      label(g, k.k, P[i][0], P[i][1] + (k.hi ? -11 : 11), col, 'center', 'transparent'); out.push(k.k);
+    }
+    if (o.pct) for (let i = 1; i < n; i++) {
+      if (Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]) < 60) continue;   // too short to label
+      const ch = (ps[i] / ps[i - 1] - 1) * 100;
+      label(g, pct(ch), (P[i][0] + P[i - 1][0]) / 2 + 8, (P[i][1] + P[i - 1][1]) / 2, ch >= 0 ? COL.up : COL.down, 'left', 'transparent');
+    }
+    return out;
+  }
   // logical index → time, between candles too (the inverse of t2l)
   function l2t(l) {
     const B = S.bars, n = B.length, ms = TF[U.tf].ms; if (!n) return null;
@@ -1045,6 +1092,7 @@
     const [x0, y0] = P[0];
     if (d.type === 'hline') { g.beginPath(); g.moveTo(0, y0); g.lineTo(W, y0); g.stroke(); label(g, fp(d.pts[0].p), W - 4, y0 - 10, c, 'right'); }
     else if (d.type === 'ray') { g.beginPath(); g.moveTo(x0, y0); g.lineTo(W, y0); g.stroke(); label(g, fp(d.pts[0].p), W - 4, y0 - 10, c, 'right'); }
+    else if (d.type === 'zig') { ZIGDRAWN = paintZig(g, P, d.pts.map(q => q.p), { color: c, w: sel ? 2 : 1.5, pct: true }); }
     else if (d.type === 'pen') {   // smooth through the middle of each pair of points
       g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = sel ? 3 : 2; g.beginPath(); g.moveTo(x0, y0);
       for (let i = 1; i < P.length - 1; i++) g.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
@@ -1133,11 +1181,11 @@
     return out;
   }
   let SMCDRAWN = null;   // what drawSMC painted last, for tests
-  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq); }   // anything that needs the SMC engine
-  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, liq: U.liq, t2x, p2y }); if (d) SMCDRAWN = d; }
+  function smcAny() { return !!(U.smc || U.choch || U.bos || U.eq || U.liq || U.zz); }   // anything that needs the SMC engine
+  function drawSMC(g, W) { const d = paintSMC(g, W, { r: SMCR, all: U.smcAll, smc: U.smc, taken: U.smcTaken, choch: U.choch, bos: U.bos, eq: U.eq, liq: U.liq, zz: U.zz, bars: S.bars, t2x, p2y }); if (d) SMCDRAWN = d; }
   function paintSMC(g, W, o) {
     const r = o.r, t2x = o.t2x, p2y = o.p2y; if (!r) return null;
-    const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [], liq: 0, sweeps: 0 };
+    const all = !!o.all, done = { zones: 0, eqs: 0, breaks: [], liq: 0, sweeps: 0, zz: [] };
     if (o.smc) {
     // Whole chart: past zones too, faint, from the order block to the candle that closed through them
     if (all) for (const z of r.zones) {
@@ -1193,6 +1241,23 @@
         g.strokeStyle = LQ; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x1 - 3, y - 3); g.lineTo(x1 + 3, y + 3); g.moveTo(x1 + 3, y - 3); g.lineTo(x1 - 3, y + 3); g.stroke();
         label(g, (w.kind === 'swing' ? (hi ? 'BSL' : 'SSL') : w.kind) + ' swept', x1 + 5, y + (hi ? -9 : 9), LQ, 'left', 'transparent'); done.sweeps++;
       }
+    }
+    // ZigZag (Indicators → ZigZag): the swing points joined — two highs in a row keep the higher, two lows the lower — each
+    // labelled HH / HL / LH / LL, then a dashed leg to the furthest price since the last one (not confirmed yet).
+    if (o.zz) {
+      const Z = [];
+      for (const s of r.swings) {
+        const last = Z[Z.length - 1];
+        if (last && last.side === s.side) { if (s.side === 'H' ? s.p >= last.p : s.p <= last.p) Z[Z.length - 1] = s; continue; }
+        Z.push(s);
+      }
+      const use = all ? Z : Z.slice(-30), pts = use.map(s => ({ t: s.t, p: s.p }));
+      const lz = use[use.length - 1], B = o.bars || [];
+      let fm = null;
+      if (lz) for (const b of B) if (b[0] > lz.t && (lz.side === 'H' ? !fm || b[3] < fm.p : !fm || b[2] > fm.p)) fm = { t: b[0], p: lz.side === 'H' ? b[3] : b[2] };
+      if (fm && (lz.side === 'H' ? fm.p < lz.p : fm.p > lz.p)) pts.push(fm); else fm = null;
+      const P = pts.map(q => [t2x(q.t), p2y(q.p)]), ok = P.every(q => q[0] != null && q[1] != null);
+      if (ok && P.length >= 2) done.zz = paintZig(g, P, pts.map(q => q.p), { color: hexA(COL.text, 0.75), w: 1.5, forming: !!fm });
     }
     const BR = r.breaks.filter(b => b.kind === 'CHoCH' ? o.choch : o.bos);   // CHoCH and BOS each by their own tick
     for (const b of (all ? BR : BR.slice(-8))) {
@@ -1308,6 +1373,7 @@
       else if (d.type === 'ray') hit = Math.abs(y - y0) < lr && x > x0 - lr;
       else if (d.type === 'trend') hit = distSeg(x, y, x0, y0, x1, y1) < lr;
       else if (d.type === 'pen') { for (let s = 1; s < P.length && !hit; s++) hit = distSeg(x, y, P[s - 1][0], P[s - 1][1], P[s][0], P[s][1]) < 7; }
+      else if (d.type === 'zig') { for (let s = 1; s < P.length && !hit; s++) hit = distSeg(x, y, P[s - 1][0], P[s - 1][1], P[s][0], P[s][1]) < lr; }
       else if (d.type === 'rect') hit = x >= Math.min(x0, x1) - 4 && x <= Math.max(x0, x1) + 4 && y >= Math.min(y0, y1) - 4 && y <= Math.max(y0, y1) + 4;
       else if (d.type === 'fib') hit = x >= Math.min(x0, x1) && x <= Math.max(x0, x1) && FIBS.some(k => { const yy = p2y(d.pts[1].p + (d.pts[0].p - d.pts[1].p) * k); return yy != null && Math.abs(y - yy) < 6; });
       if (hit) return { d, h: -1 };
@@ -1340,6 +1406,17 @@
       e.stopPropagation(); e.preventDefault();
       const q = penPt(x, y); if (q) { DRAFT = { type: 'pen', pts: [q] }; PD = { kind: 'pen' }; prim.req(); }
       return;
+    }
+    if (TOOL === 'zig') {
+      e.stopPropagation(); e.preventDefault();
+      const pt = zigPt(x, y, ptOpts(e)); if (pt.t == null || pt.p == null) return;
+      if (!DRAFT || DRAFT.type !== 'zig') DRAFT = { type: 'zig', pts: [pt, Object.assign({}, pt)] };
+      else {
+        const fixed = DRAFT.pts.slice(0, -1), last = fixed[fixed.length - 1];
+        if (last && last.t === pt.t && last.p === pt.p) { zigFinish(); return; }
+        DRAFT.pts = fixed.concat([pt, Object.assign({}, pt)]);
+      }
+      zigHint(); prim.req(); return;
     }
     if (TWO.has(TOOL) || ONE.has(TOOL)) {
       e.stopPropagation(); e.preventDefault();
@@ -1378,6 +1455,7 @@
       }
       prim.req(); return;
     }
+    if (DRAFT && DRAFT.type === 'zig') { if (inPane(x, y)) { const pt = zigPt(x, y, ptOpts(e)); if (pt.t != null && pt.p != null) { DRAFT.pts[DRAFT.pts.length - 1] = pt; prim.req(); } } return; }
     if (DRAFT) { const pt = tp(x, y, ptOpts(e)); if (pt.t != null && pt.p != null) { DRAFT.pts[1] = pt; prim.req(); } return; }
     if (!PD) { hover(x, y); return; }
     if (PD.kind === 'line' && DRAG) {
@@ -1386,7 +1464,7 @@
       ltip.hidden = true;
     } else if (PD.kind === 'drawing') {
       const d = PD.d;
-      if (PD.h >= 0) { const pt = tp(x + PD.off[0], y + PD.off[1], ptOpts(e)); if (pt.t != null && pt.p != null) d.pts[PD.h] = pt; }
+      if (PD.h >= 0) { const pt = (d.type === 'zig' ? zigPt : tp)(x + PD.off[0], y + PD.off[1], ptOpts(e)); if (pt.t != null && pt.p != null) d.pts[PD.h] = pt; }
       else {
         const t = x2t(x), p = y2p(y); if (t == null || p == null) return;
         const dt = t - PD.t0, dp = p - PD.p0;
@@ -1482,6 +1560,26 @@
     if (d.type === 'measure') { MEASURE = d; setTool('cursor'); prim.req(); return; }
     addDrawing(d); setTool('cursor');
   }
+  // zig-zag: the last point follows the pointer until the next click; Finish keeps the clicked ones (2 or more)
+  function zigFinish() {
+    const d = DRAFT; if (!d || d.type !== 'zig') return;
+    const pts = d.pts.slice(0, -1).filter((q, i, a) => !i || q.t !== a[i - 1].t || q.p !== a[i - 1].p);
+    DRAFT = null;
+    if (pts.length >= 2) { addDrawing({ type: 'zig', pts }); toast(`Zig-zag saved: ${pts.length} points. Click it to move it or drag a point.`); }
+    setTool('cursor');
+  }
+  function zigUndo() {
+    if (!DRAFT || DRAFT.type !== 'zig') return;
+    const fixed = DRAFT.pts.slice(0, -1);
+    if (fixed.length <= 1) DRAFT = null; else { fixed.pop(); DRAFT.pts = fixed.concat([Object.assign({}, DRAFT.pts[DRAFT.pts.length - 1])]); }
+    zigHint(); prim.req();
+  }
+  function zigHint() {
+    const n = DRAFT && DRAFT.type === 'zig' ? DRAFT.pts.length - 1 : 0;
+    hint(n ? `Zig-zag: ${n} point${n > 1 ? 's' : ''} · click the next turn${phone() ? '' : ' · double-click or Enter to finish'}`
+      : `Zig-zag: click each swing high and low in turn. Points snap to the candle's high or low${phone() ? '' : ` (hold ${MODK} for a free point)`} and are labelled HH / HL / LH / LL.`,
+    n ? [['Undo point', zigUndo], ['Finish', zigFinish], ['Cancel', () => setTool('cursor')]] : [['Cancel', () => setTool('cursor')]]);
+  }
   function addDrawing(d) {
     const o = { id: Date.now() + Math.random(), type: d.type, pts: d.pts.map(q => ({ t: q.t, p: q.p })) };
     (DRAW[U.sym] = DRAW[U.sym] || []).push(o);
@@ -1524,6 +1622,7 @@
     if (t === 'clear') { hint(`Remove all ${(DRAW[U.sym] || []).length} drawings on ${esc(U.sym)}?`, [['Remove', () => { DRAW[U.sym] = []; SEL = null; saveDraw(); prim.req(); hint(); }], ['Cancel', () => hint()]]); return; }
     TOOL = t; DRAFT = null; PENS = []; lock(drawTool(t)); toolUI();
     if (t === 'pen') hint('Pencil: drag on the chart to draw', [['Undo', penUndo], ['Done', () => setTool('cursor')]]);
+    else if (t === 'zig') zigHint();
     else if (t !== 'cursor' && t !== 'cross') { hint(`${{ trend: 'Trend line', hline: 'Horizontal line', ray: 'Horizontal ray', rect: 'Rectangle', fib: 'Fibonacci', measure: 'Measure' }[t]}: ${ONE.has(t) ? 'tap the chart at the price' : 'drag across the chart, or tap two points'}`, [['Cancel', () => setTool('cursor')]]); }
     else hint();
     if (phone()) root.classList.toggle('tools-open', false);
@@ -2043,7 +2142,7 @@
     const first = S.bars.length ? S.bars[0][0] : 0, M = [];
     if (SMCR && U.smc && !X.smcOff) {
       const keep = (a, k) => (U.smcAll ? a : a.slice(-k));   // Recent: the newest only · Whole chart: all
-      for (const s of keep(SMCR.swings, 40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
+      if (!U.zz) for (const s of keep(SMCR.swings, 40)) if (s.t >= first) M.push({ time: s.t / 1000, position: s.side === 'H' ? 'aboveBar' : 'belowBar', color: s.side === 'H' ? COL.down : COL.up, shape: 'circle', size: 0.4, text: s.label });
       for (const w of keep(SMCR.sweeps, 6)) if (w.t >= first) M.push({ time: w.t / 1000, position: w.dir === -1 ? 'aboveBar' : 'belowBar', color: COL.warn, shape: w.dir === -1 ? 'arrowDown' : 'arrowUp', text: 'sweep' });
     }
     // extension marks: { t (ms), position, color, shape, text } — snapped to the chart's candle, never past the replay clock
@@ -2309,7 +2408,7 @@
       else if (act === 'tlredraw') { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); smcSchedule(); }
       else if (act === 'smcall') { if (U.tline) { delete TLF[R.on ? 'replay' : 'live'][U.ex + '|' + U.sym + '|' + U.tf]; if (!R.on) tlSave(); } U.smcAll = a.dataset.v === '1'; if (!smcAny() && !U.smcFvg && !U.tline) { U.smc = true; U.choch = true; U.bos = true; U.eq = true; U.liq = true; }   // FVG / trend lines / CHoCH / BOS alone use it too: don't switch SMC on for them
       saveUI(); headUI(); smcSchedule(); legend(); if (!window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
-      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; U.liq = on; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
+      else if (act === 'smc') { const on = !smcAny(); U.smc = on; U.choch = on; U.bos = on; U.eq = on; U.liq = on; if (!on) U.zz = false; saveUI(); headUI(); smcSchedule(); if (U.smc && !window.SMC) toast('The SMC overlay did not load. Reload the page.', 'down'); }
       else if (act === 'replay') openModal($('[data-rmodal]'));
       else if (act === 'rstart') openModal($('[data-rmodal]'));
       else if (act === 'rpick-chart') { closeModals(); if (!R.on) startPick('replay'); else startPick('replay'); }
@@ -2360,6 +2459,7 @@
     else if (i.dataset.ind === 'vol') { volSet(); cs.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: U.vol ? 0.18 : 0.06 } }); }
     else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; U.liq = U.smc; saveUI(); headUI(); smcSchedule(); }
     else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq') smcSchedule();
+    else if (i.dataset.ind === 'zz') { smcSchedule(); setMarkers(); }
     else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else if (i.dataset.ind === 'poi' || i.dataset.ind === 'poiAll' || i.dataset.ind === 'poiPause') emit('poi'); else setEMAs();
     legend();
   }));
@@ -2375,13 +2475,15 @@
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && TOOL === 'pen') { e.preventDefault(); penUndo(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
+    if (DRAFT && DRAFT.type === 'zig' && (k === 'Enter' || (k === 'Escape' && DRAFT.pts.length > 2))) { e.preventDefault(); zigFinish(); return; }
+    if (DRAFT && DRAFT.type === 'zig' && k === 'Backspace') { e.preventDefault(); zigUndo(); return; }
     if (k === 'Escape') { if (Q.on) qEnd(); menuClose(); if (DRAFT || TOOL !== 'cursor') setTool('cursor'); if (PICK) clearPick(); if (MEASURE) { MEASURE = null; prim.req(); } if (SEL) { SEL = null; selUI(); prim.req(); } closeSheets(); }
     else if (SEL && /^Arrow(Up|Down|Left|Right)$/.test(k)) { e.preventDefault(); nudgeSel(k, e.shiftKey); }
     else if (k === ' ' && R.on) { e.preventDefault(); if (R.playing) pausePlay(); else play(); }
     else if (k === 'ArrowRight' && R.on) { e.preventDefault(); pausePlay(); step(); }
     else if (k === 'ArrowLeft' && R.on) { e.preventDefault(); stepBack(); }
     else if ((k === 'Delete' || k === 'Backspace') && SEL) { e.preventDefault(); removeSel(); }
-    else { const map = { p: 'pen', t: 'trend', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
+    else { const map = { p: 'pen', t: 'trend', z: 'zig', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
   });
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) root.classList.remove('full'); });
   // drag the top edge of the positions panel to make it taller or shorter (remembered)
@@ -2408,7 +2510,7 @@
   window.__rd = { S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), tlSave, paint: { fvg: paintFVG, tl: paintTL, smc: paintSMC, pd: paintPD, hilo: paintHiLo, covers: coversOf }, legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
