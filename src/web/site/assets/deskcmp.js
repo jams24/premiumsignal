@@ -15,14 +15,14 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const { fp, pct, esc, coin, fv, ic, phone, hexA, nowT, fetchSpan, api, TF, RES, bucket, nextB, smcOpt, MIN, HOUR, tshort, WEEK,
-    fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS, ofMake, btMake, vpMake, poiList, poiWhy, VMA } = RD.util;
+    fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS, ofMake, btMake, vpMake, rsiMake, paneLayout, poiList, poiWhy, VMA } = RD.util;
   const U = RD.U, R = RD.R, S = RD.S, COL = RD.COL, chartEl = RD.chartEl, PAINT = RD.paint, TLF = RD.TLF;
   const btn = $('[data-act="cmp"]');
   const C = Object.assign({ on: false, sym: 'ETHUSDT', tf: '', smc: true, ind: null }, RD.store.get('rd-cmp-v1', {}),
     { bars: [], gen: 0, ws: null, wsT: null, hist: [], fine: [], fi: 0, b0: 0, bufEnd: 0, fetching: null, res: '1m', clock: 0, A: null, F: null, TL: null, tlsn: null, pd: null, ema: {},
       key: '', prec: 2, driver: 'main', hover: null, hp: null, err: '', P: null, rd: null });
   // this chart's own indicator ticks (older saves had one SMC switch: it becomes SMC + CHoCH + BOS)
-  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false, eq: false, liq: false, zz: false, volMa: true, volHi: true, of: false, cvd: true, ofAbs: false, bt: false, vp: false, kpoi: false, poi: false, ob: false },
+  const I = Object.assign({ vol: true, ema20: false, ema50: false, ema200: false, hilo: false, pdhl: false, sess: false, fvg: false, tline: false, tlineHtf: true, smc: false, choch: false, bos: false, eq: false, liq: false, zz: false, volMa: true, volHi: true, of: false, cvd: true, ofAbs: false, rsi: false, bt: false, vp: false, kpoi: false, poi: false, ob: false },
     C.ind && typeof C.ind === 'object' ? C.ind : { smc: C.smc !== false, choch: C.smc !== false, bos: C.smc !== false });
   if (C.ind && typeof C.ind === 'object' && !('eq' in C.ind)) I.eq = !!I.smc;   // saved before EQH / EQL had a tick: SMC drew them
   C.ind = I;
@@ -43,6 +43,7 @@
     ['of', 'Order flow (delta)', 'Market buys − market sells in each candle, as bars in a pane under this chart (Binance candles; a Bybit chart borrows the same coin\'s Binance flow). Not for FX.'],
     ['cvd', 'CVD line', 'The deltas added up from the first loaded candle, in a pane of its own: read its slope, not its level.', 'sub'],
     ['ofAbs', 'Absorption marks', 'Heavy one-sided market orders (delta at least twice the average) on a candle that still closed the other way. Closed candles only.', 'sub'],
+    ['rsi', 'RSI (14)', 'RSI (Relative Strength Index, 14 candles, Wilder\'s smoothing): the size of the recent up-closes against the down-closes, from 0 to 100, as a line in a pane under the chart. Above 70 = stretched up (“overbought”), below 30 = stretched down (“oversold”), 50 = balanced. A reading of the move, not a signal on its own: a stretched RSI can stay stretched in a strong move.'],
     ['bt', 'Big trades (bubbles)', 'Single market orders as circles where they traded: green = market buy, red = market sell, bigger = bigger order. Past days from the exchange\'s daily trade file, today from our server\'s recording and the live trades. Size: the main chart\'s setting (Indicators → Big trades → Size).'],
     ['vp', 'Volume profile', 'How much traded at each price, as rows; POC = the fullest row, VAH / VAL = the 70% value area. Range: the main chart\'s setting (candles in view or each day).'],
     ['ema20', 'EMA 20'], ['ema50', 'EMA 50'], ['ema200', 'EMA 200'],
@@ -90,7 +91,9 @@
   sumEl.className = 'cmp-sum'; sumEl.hidden = true; sumEl.setAttribute('aria-live', 'polite');
   chartEl.appendChild(sumEl);
 
-  let ch = null, cs = null, vs = null, vma = null, mk = null, OFc = null, BTc = null, VPc = null; const es = {};
+  let ch = null, cs = null, vs = null, vma = null, mk = null, OFc = null, BTc = null, VPc = null, RSIc = null; const es = {};
+  // the panes under this chart in a fixed order (delta, CVD, RSI)
+  function cLayout() { if (ch) paneLayout(ch, (OFc ? OFc.series() : []).concat(RSIc ? RSIc.series() : [])); }
   function make() {
     if (ch) return;
     ch = LC.createChart(box, {
@@ -106,7 +109,8 @@
     ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     vma = ch.addSeries(LC.LineSeries, { priceScaleId: 'vol', color: 'rgba(160,168,184,.85)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     const host = { chart: ch, box, bars: () => C.bars, tf: ctf, ex: () => C.ex, sym: () => C.sym, replay: () => R.on, clock: () => R.clock, now: () => nowT(), legend: () => legendSoon(), p2y, t2l, fp: fpc };
-    OFc = ofMake(Object.assign({}, host, { ind: () => ({ of: I.of && C.on, cvd: I.cvd, ofAbs: I.ofAbs }), marks: () => marks() }));
+    OFc = ofMake(Object.assign({}, host, { ind: () => ({ of: I.of && C.on, cvd: I.cvd, ofAbs: I.ofAbs }), marks: () => marks(), layout: () => cLayout() }));
+    RSIc = rsiMake(Object.assign({}, host, { ind: () => ({ rsi: I.rsi && C.on }), layout: () => cLayout() }));
     BTc = btMake(Object.assign({}, host, { ind: () => ({ bt: I.bt && C.on, btMin: U.btMin }), req: () => prim.req(), hover: () => C.hp, exName: () => api(C.ex).name }));
     VPc = vpMake(Object.assign({}, host, { ind: () => ({ vpMode: U.vpMode }), vb: b => OFc.vb(b) }));
     for (const k in EMAS) es[k] = ch.addSeries(LC.LineSeries, { color: EMAS[k][1], lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: !!I[k] });
@@ -145,6 +149,7 @@
     const b = C.bars[i]; if (!b) return;
     if (I.vol) { vs.update(toV(b, i)); if (vmaOn() && i >= VMA - 1) vma.update({ time: b[0] / 1000, value: volAvg(i, true) }); }
     OFc.upd(i);
+    if (RSIc) RSIc.upd(i);
   }
   // this chart's time → x and price → y (between candles too), for the shared painters
   const t2l = t => t2lOf(C.bars, TF[ctf()].ms, t);
@@ -167,6 +172,7 @@
     vma.setData(L);
     cs.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: I.vol ? 0.18 : 0.06 } });
     OFc.set();
+    if (RSIc) RSIc.set();
   }
   function setEMAs() { if (!ch) return; for (const k in EMAS) { C.ema[k] = I[k] && C.bars.length ? emaOf(C.bars, EMAS[k][0]) : []; es[k].applyOptions({ visible: !!I[k] }); es[k].setData(C.ema[k]); } }
   function emaLast() { for (const k in EMAS) if (I[k] && C.bars.length) { const a = emaOf(C.bars, EMAS[k][0]); C.ema[k] = a; if (a.length) es[k].update(a[a.length - 1]); } }
@@ -385,6 +391,7 @@
       }
       if (I.vol && C.ex !== 'fx') { const bi = C.bars.indexOf(b), av = bi >= 0 ? volAvg(bi, false) : null, x = av > 0 ? b[5] / av : null; bits.push(`<span>Vol <b>${fv(b[5])}</b>${x != null ? ` · <b class="${x >= 2 ? 'warn' : ''}">${x.toFixed(1)}×</b> avg` : ''}</span>`); }
       if (I.of) { const h = OFc.legend(b); if (h) bits.push(h); }
+      if (I.rsi && RSIc) { const h = RSIc.legend(b); if (h) bits.push(h); }
       if (I.bt) bits.push(BTc.legend());
       if (I.vp) { const h = VPc.legend(); if (h) bits.push(h); }
       if (I.kpoi && C.P) {
@@ -446,7 +453,7 @@
     if (open) { pickEl.hidden = true; syncBar(); }
   }
   function apply(k) {
-    if (k === 'vol' || k === 'volMa' || k === 'volHi' || k === 'of' || k === 'cvd') setVol();
+    if (k === 'vol' || k === 'volMa' || k === 'volHi' || k === 'of' || k === 'cvd' || k === 'rsi') setVol();
     else if (k === 'ofAbs') { if (OFc) { OFc.set(); marks(); } }   // before the chart is made: the ticks apply when it loads
     else if (k === 'bt') { if (BTc) BTc.set(); prim.req(); }
     else if (k === 'vp') prim.req();
@@ -487,7 +494,7 @@
     else if (k === 'indmain') {   // the main chart's ticks, copied once (each chart keeps its own after that)
       const ss = window.__rdSess && window.__rdSess.P;
       Object.assign(I, { vol: !!U.vol, ema20: !!U.ema20, ema50: !!U.ema50, ema200: !!U.ema200, hilo: !!U.hilo, pdhl: !!U.pdhl, sess: !!(ss && ss.on), fvg: !!U.smcFvg, tline: !!U.tline, tlineHtf: U.tlineHtf !== false, smc: !!U.smc, choch: !!U.choch, bos: !!U.bos, eq: !!U.eq, liq: !!U.liq, zz: !!U.zz, ob: !!U.ob,
-        volMa: U.volMa !== false, volHi: U.volHi !== false, of: !!U.of, cvd: U.cvd !== false, ofAbs: !!U.ofAbs, bt: !!U.bt, vp: !!U.vp, kpoi: !!U.kpoi, poi: !!U.poi });
+        volMa: U.volMa !== false, volHi: U.volHi !== false, of: !!U.of, cvd: U.cvd !== false, ofAbs: !!U.ofAbs, rsi: !!U.rsi, bt: !!U.bt, vp: !!U.vp, kpoi: !!U.kpoi, poi: !!U.poi });
       save(); setVol(); setEMAs(); if (BTc) BTc.set(); indRun(); syncBar(); legend();
     }
     else if (k === 'tlredraw') {   // both charts show the same lines for one coin + timeframe: a redraw is for both
@@ -524,6 +531,6 @@
     if (ch) { cs.setData([]); setVol(); setEMAs(); BTc.set(); if (C.rd) C.rd.load(); marks(); prim.req(); }
     sumEl.hidden = true; lgEl.innerHTML = ''; say(`<span class="spin-s"></span> Loading ${esc(coin(C.sym))}…`);
   });
-  window.__rdCmp = { C, I, show, load, indRun, choose, openPick, get DRAWN() { return DRAWN; }, get OF() { return OFc; }, get BT() { return BTc; }, get VP() { return VPc; }, get RDS() { return C.rd; }, get VMAD() { return vma ? vma.data() : []; } };   // for tests
+  window.__rdCmp = { C, I, show, load, indRun, choose, openPick, get DRAWN() { return DRAWN; }, get OF() { return OFc; }, get BT() { return BTc; }, get VP() { return VPc; }, get RDS() { return C.rd; }, get VMAD() { return vma ? vma.data() : []; }, get RSI() { return RSIc; } };   // for tests
   if (C.on) show(true); else syncBar();
 })();

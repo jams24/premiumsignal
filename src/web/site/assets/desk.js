@@ -42,7 +42,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
-  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, of: false, cvd: true, ofAbs: false, bt: false, btMin: 'auto', vp: false, vpMode: 'vis', pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
+  const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, of: false, cvd: true, ofAbs: false, rsi: false, bt: false, btMin: 'auto', vp: false, vpMode: 'vis', pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, candles: 'color',
     magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
@@ -343,6 +343,7 @@
   const S = { bars: [], key: '', gen: 0,   // key: exchange | coin | timeframe of the candles in bars (U changes first, the candles after they load)
     lastPx: null, marks: {}, rpx: {}, loadingOld: false, noOld: false, ws: null, wsT: null, fellBack: false };
   const R = { on: false, clock: 0, buf: [], bufEnd: 0, res: '1m', playing: false, timer: null, busy: false, end: false, step: 'bar', speed: 800, gen: 0, fetching: null, back: [] };
+  let RSI = null;   // the RSI pane (rsiMake, made after the order flow)
   const toC = b => ({ time: b[0] / 1000, open: b[1], high: b[2], low: b[3], close: b[4] });
   // average volume of the VMA candles ending at i (incl) or just before it (a spike is judged against the candles before it)
   const volAvg = (i, incl) => { const e = incl ? i : i - 1, s = e - VMA + 1; if (s < 0 || e >= S.bars.length) return null; let t = 0; for (let j = s; j <= e; j++) t += S.bars[j][5]; return t / VMA; };
@@ -353,9 +354,11 @@
     if (on) for (let i = VMA - 1; i < S.bars.length; i++) L.push({ time: S.bars[i][0] / 1000, value: volAvg(i, true) });
     vma.setData(L);
     ofSet();
+    if (RSI) RSI.set();
   }
   function volUpd(i) {
     ofUpd(i);
+    if (RSI) RSI.upd(i);
     if (!U.vol) return;
     vs.update(toV(S.bars[i], i));
     if (U.volMa && U.ex !== 'fx' && i >= VMA - 1) vma.update({ time: S.bars[i][0] / 1000, value: volAvg(i, true) });
@@ -451,7 +454,7 @@
       for (let i = H.chart.panes().length - 1; i > 0; i--) if (!H.chart.panes()[i].getSeries().length) H.chart.removePane(i);
       if (on) ofD = H.chart.addSeries(LC.HistogramSeries, { priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, base: 0 }, 1);
       if (wantC) ofC = H.chart.addSeries(LC.LineSeries, { color: ofCvdCol(), lineWidth: 2, priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }, 2);
-      const P = H.chart.panes(); for (let i = 0; i < P.length; i++) P[i].setStretchFactor(i ? (phone() ? 0.22 : 0.2) : 1);
+      if (H.layout) H.layout(); else { const P = H.chart.panes(); for (let i = 0; i < P.length; i++) P[i].setStretchFactor(i ? (phone() ? 0.22 : 0.2) : 1); }
       requestAnimationFrame(ofLift);
     }
     // the height of the order-flow panes under the price pane (--ofh): the phone's on-chart Buy / Sell bar and pencil button
@@ -508,10 +511,71 @@
       }
       return l2;
     }
-    return { X: OFX, FLOW, vb: ofVB, delta: ofDelta, ok: ofOK, borrow: ofBorrow, set: ofSet, upd: ofUpd, abs: ofAbs, flowLoad, flowStop, lift: ofLift, sums: () => OFS, legend: ofLegend };
+    return { series: () => [ofD, ofC], X: OFX, FLOW, vb: ofVB, delta: ofDelta, ok: ofOK, borrow: ofBorrow, set: ofSet, upd: ofUpd, abs: ofAbs, flowLoad, flowStop, lift: ofLift, sums: () => OFS, legend: ofLegend };
   }
+
+  // ------------------------------------------------------------------ RSI (Indicators → RSI)
+  // Relative Strength Index, 14 candles, Wilder's smoothing, on the chart's closes, in a pane of its own (0–100, dashed lines
+  // at 70 / 50 / 30). The forming candle's value moves with its close; in a replay only the candles shown so far count.
+  // paneLayout(chart, series): the panes under the price pane in a fixed order (order flow delta, CVD, RSI), empty ones removed.
+  function paneLayout(ch, list) {
+    const L = list.filter(Boolean);
+    L.forEach((s, k) => { try { if (s.getPane().paneIndex() !== k + 1) s.moveToPane(k + 1); } catch (e) { /* the pane comes back on the next layout */ } });
+    for (let i = ch.panes().length - 1; i > 0; i--) if (!ch.panes()[i].getSeries().length) ch.removePane(i);
+    const P = ch.panes(); for (let i = 0; i < P.length; i++) P[i].setStretchFactor(i ? (phone() ? 0.22 : 0.2) : 1);
+  }
+  // rsiMake(H): one chart's RSI. H = { chart, bars(), ind() (its tick: rsi), legend(), layout() }
+  function rsiMake(H) {
+    const N = 14, X = { N, get n() { return rs ? rs.data().filter(p => p.value != null).length : 0; }, get on() { return !!rs; }, vals: [] };
+    let rs = null, AG = [], AL = [], V = [];   // Wilder's average gain / loss and the RSI of each candle (null for the first N)
+    const col = () => isLight() ? '#7c3aed' : '#a78bfa';
+    function pane() {
+      const on = !!H.ind().rsi && H.bars().length > N;
+      if (!!rs === on) return;
+      if (rs) { H.chart.removeSeries(rs); rs = null; }
+      if (on) {
+        rs = H.chart.addSeries(LC.LineSeries, { color: col(), lineWidth: 2, priceFormat: { type: 'price', precision: 1, minMove: 0.1 }, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) }, H.chart.panes().length);
+        for (const [p, c] of [[70, 'rgba(239,68,68,.55)'], [50, 'rgba(128,128,128,.35)'], [30, 'rgba(34,197,94,.55)']]) rs.createPriceLine({ price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+      }
+      H.layout();
+    }
+    function calc(from) {   // recompute candles from..end (the ones before keep their values)
+      const B = H.bars(), n = B.length;
+      from = Math.max(0, Math.min(from, V.length));
+      AG.length = from; AL.length = from; V.length = from;
+      for (let i = from; i < n; i++) {
+        let ag = null, al = null;
+        if (i === N) { let g = 0, l = 0; for (let j = 1; j <= N; j++) { const d = B[j][4] - B[j - 1][4]; if (d > 0) g += d; else l -= d; } ag = g / N; al = l / N; }
+        else if (i > N && AG[i - 1] != null) { const d = B[i][4] - B[i - 1][4]; ag = (AG[i - 1] * (N - 1) + (d > 0 ? d : 0)) / N; al = (AL[i - 1] * (N - 1) + (d < 0 ? -d : 0)) / N; }
+        AG.push(ag); AL.push(al);
+        V.push(ag == null ? null : al === 0 ? (ag === 0 ? 50 : 100) : 100 - 100 / (1 + ag / al));
+      }
+      X.vals = V;
+    }
+    const pt = i => { const b = H.bars()[i]; return V[i] == null ? { time: b[0] / 1000 } : { time: b[0] / 1000, value: V[i] }; };
+    function set() {
+      pane(); calc(0);
+      if (rs) { rs.applyOptions({ color: col() }); rs.setData(H.bars().map((b, i) => pt(i))); }
+    }
+    function upd(i) {
+      if (!H.ind().rsi) { if (rs) set(); return; }
+      if (!rs || i > V.length || i < V.length - 1) { set(); return; }   // a gap or an older candle changed: all again
+      calc(i); rs.update(pt(i));
+    }
+    function legend(b) {
+      if (!H.ind().rsi) return '';
+      const i = H.bars().indexOf(b), v = i >= 0 ? V[i] : null;
+      if (v == null) return '<span title="RSI needs ' + (N + 1) + ' candles.">RSI ' + N + ' <b>—</b></span>';
+      const z = v >= 70 ? ' class="down"' : v <= 30 ? ' class="up"' : '';
+      return `<span title="RSI (Relative Strength Index, 14 candles, Wilder's smoothing): the size of the recent up-closes against the down-closes, from 0 to 100, as a line in a pane under the chart. Above 70 = stretched up (“overbought”), below 30 = stretched down (“oversold”), 50 = balanced. A reading of the move, not a signal on its own: a stretched RSI can stay stretched in a strong move.">RSI ${N} <b${z}>${v.toFixed(1)}</b>${v >= 70 ? ' overbought' : v <= 30 ? ' oversold' : ''}</span>`;
+    }
+    return { X, set, upd, legend, series: () => [rs] };
+  }
+  function mainLayout() { paneLayout(chart, OF.series().concat(RSI ? RSI.series() : [])); requestAnimationFrame(OF.lift); }
   const OF = ofMake({ chart, box, bars: () => S.bars, tf: () => U.tf, ex: () => U.ex, sym: () => U.sym, ind: () => U, replay: () => R.on, clock: () => R.clock, now: () => nowT(),
-    legend: () => legend(), marks: () => setMarkers(), lift: h => root.style.setProperty('--ofh', h + 'px') });
+    legend: () => legend(), marks: () => setMarkers(), lift: h => root.style.setProperty('--ofh', h + 'px'), layout: () => mainLayout() });
+  RSI = rsiMake({ chart, bars: () => S.bars, ind: () => U, legend: () => legend(), layout: () => mainLayout() });
   const OFX = OF.X, FLOW = OF.FLOW, ofVB = OF.vb, ofDelta = OF.delta, ofOK = OF.ok, ofBorrow = OF.borrow, ofSet = OF.set, ofUpd = OF.upd, ofAbs = OF.abs, flowLoad = OF.flowLoad, ofLift = OF.lift;
 
   // ------------------------------------------------------------------ big trades (Indicators → Big trades)
@@ -2822,6 +2886,7 @@
       l2 = `<span title="Volume of this candle${x != null ? ` and how it compares with the average of the ${VMA} candles before it` : ''}">Vol <b>${fv(b[5])}</b>${x != null ? ` · <b class="${x >= 2 ? 'warn' : ''}">${x.toFixed(1)}×</b> avg` : ''}</span>`;
     }
     if (U.of) l2 += OF.legend(b);
+    if (U.rsi) l2 += RSI.legend(b);
     if (U.bt) l2 += btLegend();
     if (U.vp) l2 += vpLegend();
     for (const k in EMAS) if (U[k]) { const a = emaArr(EMAS[k][0]); const i = a.findIndex(p => p.time === b[0] / 1000); if (i >= 0) l2 += `<span style="color:${EMAS[k][1]}">EMA ${EMAS[k][0]} ${fp(a[i].value)}</span>`; }
@@ -3133,7 +3198,7 @@
     else if (i.dataset.ind === 'smc') { U.choch = U.smc; U.bos = U.smc; U.eq = U.smc; U.liq = U.smc; saveUI(); headUI(); smcSchedule(); }
     else if (i.dataset.ind === 'choch' || i.dataset.ind === 'bos' || i.dataset.ind === 'eq' || i.dataset.ind === 'liq' || i.dataset.ind === 'ob' || i.dataset.ind === 'kpoi') smcSchedule();
     else if (i.dataset.ind === 'zz') { smcSchedule(); setMarkers(); }
-    else if (i.dataset.ind === 'of' || i.dataset.ind === 'cvd' || i.dataset.ind === 'ofAbs') { ofSet(); setMarkers(); }
+    else if (i.dataset.ind === 'of' || i.dataset.ind === 'cvd' || i.dataset.ind === 'ofAbs') { ofSet(); setMarkers(); } else if (i.dataset.ind === 'rsi') { RSI.set(); legend(); }
     else if (i.dataset.ind === 'bt') btSet();
     else if (i.dataset.ind === 'vp') prim.req();
     else if (i.dataset.ind === 'pdhl') { pdCheck(); prim.req(); } else if (i.dataset.ind === 'smcTaken' || i.dataset.ind === 'aplusDone' || i.dataset.ind === 'hilo') prim.req(); else if (i.dataset.ind === 'smcFvg' || i.dataset.ind === 'tline' || i.dataset.ind === 'tlineHtf') { if (i.dataset.ind === 'tline' && !U.tline) { TLF.live = {}; TLF.replay = {}; tlSave(); } smcSchedule(); } else if (i.dataset.ind === 'qt') qtUI(); else if (i.dataset.ind === 'aplus' || i.dataset.ind === 'aplusPause' || i.dataset.ind === 'aplusAlert' || i.dataset.ind === 'aplusRing' || i.dataset.ind === 'aplusRingTrig' || i.dataset.ind === 'aplusFull') emit('aplus'); else if (i.dataset.ind === 'poi' || i.dataset.ind === 'poiAll' || i.dataset.ind === 'poiPause') emit('poi'); else setEMAs();
@@ -3183,7 +3248,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { get BT() { return BT; }, get BTD() { return BTD; }, get BTB() { return BTB; }, get BTHIT() { return BTM.hits; }, get VPX() { return VPM.X; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OF.sums(), ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { get BT() { return BT; }, get BTD() { return BTD; }, get BTB() { return BTB; }, get BTHIT() { return BTM.hits; }, get VPX() { return VPM.X; }, get RSIX() { return RSI.X; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OF.sums(), ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
@@ -3192,7 +3257,7 @@
     t2x, p2y, label, req: () => prim.req(), tlSave, paint: { fvg: paintFVG, tl: paintTL, smc: paintSMC, pd: paintPD, hilo: paintHiLo, covers: coversOf }, legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
     pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
-    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, nextB, smcOpt, MIN, HOUR, DAY, WEEK, WEEK_OFF, liqOf, fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS, ofMake, btMake, vpMake, poiList, poiWhy, VMA } };
+    util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, nextB, smcOpt, MIN, HOUR, DAY, WEEK, WEEK_OFF, liqOf, fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS, ofMake, btMake, vpMake, rsiMake, paneLayout, poiList, poiWhy, VMA } };
   root.classList.toggle('b-min', !!U.bmin);
   playUI(); toolUI(); headUI(); renderWatch(); renderAll(); stepLabel();
   symList(U.ex).then(() => { if (S.bars.length) applyMeta(); }).catch(() => { /* precision guessed from prices */ });
