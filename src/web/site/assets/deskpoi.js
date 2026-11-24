@@ -31,6 +31,7 @@
     const keyNow = () => [HO.sym(), HO.ex(), R.on ? 'r' : 'l'].join('|');   // the chart's timeframe does not change the signal
     const closedCount = end => { let lo = 0, hi = M.all.length; while (lo < hi) { const m = (lo + hi) >> 1; if (M.all[m][0] + MIN <= end) lo = m + 1; else hi = m; } return lo; };
     const tfOk = () => !!TF_OK[HO.tf()];
+    const want = () => (HO.want ? HO.want() : HO.on());   // read for its tick, or for Trade marks (deskwins.js; no drawing or toasts for that)
     function reset() { M.gen++; M.key = ''; M.all = []; M.n = -1; M.err = ''; M.out = null; M.seen = null; M.from = M.to = 0; }
 
     // ---------------------------------------------------------------- the rules, on 1-minute candles K[0..n-1]
@@ -136,7 +137,7 @@
 
     // ---------------------------------------------------------------- data
     async function load() {
-      if (!HO.on()) { if (M.out || M.key) { reset(); HO.req(); HO.marks(); HO.legend(); } return; }
+      if (!want()) { if (M.out || M.key) { reset(); HO.req(); HO.marks(); HO.legend(); } return; }
       if (M.busy) { M.again = true; return; }
       const key = keyNow(), end = endNow(), sym = HO.sym(), ex = HO.ex();
       const fresh = key !== M.key || end < M.from + DAY || end > M.to + DAY || M.all.length > (DAYS + 3) * 1440;
@@ -175,8 +176,8 @@
       if (M.seen == null) M.seen = conf;   // the first read: no toast for signals already on the chart
       else if (conf > M.seen) {
         M.seen = conf;
-        if (HO.loud && R.on && R.playing && U.poiPause !== false) RD.pause();
-        if (HO.loud) RD.toast(`${l.dir === 1 ? '▲ RD buy' : '▼ RD sell'} on ${u.coin(HO.sym())} at ${hm(l.t)} UTC · limit ${HO.fp(l.entry)}, stop ${HO.fp(l.stop)}, target ${HO.fp(l.target)} (3R). Practice: tested ≈ random.`, l.dir === 1 ? 'up' : 'down');
+        if (HO.loud && HO.on() && R.on && R.playing && U.poiPause !== false) RD.pause();
+        if (HO.loud && HO.on()) RD.toast(`${l.dir === 1 ? '▲ RD buy' : '▼ RD sell'} on ${u.coin(HO.sym())} at ${hm(l.t)} UTC · limit ${HO.fp(l.entry)}, stop ${HO.fp(l.stop)}, target ${HO.fp(l.target)} (3R). Practice: tested ≈ random.`, l.dir === 1 ? 'up' : 'down');
       }
       HO.req(); HO.marks(); HO.legend();
     }
@@ -267,20 +268,22 @@
       s += `<span${t}>RD ▲▼ ${DAYS}d: <b>${L.length}</b>${done.length ? ` · ${wins} won, ${done.length - wins} lost · ${sum >= 0 ? '+' : ''}${sum.toFixed(1)}R before fees` : ''}${!HO.all() && !sessOf(end - MIN) ? ' · sessions only (London 07–11, New York 13–17 UTC)' : ''}</span>`;
       return s;
     }
-    return { M, load, reset, analyze, marks, draw, legend, taken, result, scan };
+    return { M, load, reset, analyze, marks, draw, legend, taken, result, scan, want, tfOk, ready: () => !!M.out && M.key === keyNow() };
   }
   RD.rdMake = make;   // the Compare chart makes its own
-  const main = make({ sym: () => U.sym, ex: () => U.ex, tf: () => U.tf, on: () => !!U.poi, all: () => !!U.poiAll, loud: true, t2x: t => RD.t2x(t), p2y: p => RD.p2y(p),
+  const main = make({ sym: () => U.sym, ex: () => U.ex, tf: () => U.tf, on: () => !!U.poi, want: () => !!U.poi || (!!U.wins && U.winsRd !== false), all: () => !!U.poiAll, loud: true, t2x: t => RD.t2x(t), p2y: p => RD.p2y(p),
     bars: () => RD.S.bars, box: RD.box, chart: RD.chart, req: () => RD.req(), marks: () => RD.refreshMarkers(), legend: () => RD.legend(), fp: v => u.fp(v) });
   X.marks.push(main.marks); X.draw.push(main.draw); X.legend.push(main.legend);
 
   // ---------------------------------------------------------------- when to read again
-  RD.on('poi', () => { if (!U.poi) { main.reset(); RD.req(); RD.refreshMarkers(); RD.legend(); } else if (main.M.out) { main.M.n = -1; main.analyze(); } else main.load(); });
+  const again = () => { if (!main.want()) { main.reset(); RD.req(); RD.refreshMarkers(); RD.legend(); } else if (main.M.out) { main.M.n = -1; main.analyze(); } else main.load(); };
+  RD.on('poi', again);
+  RD.on('wins', again);
   RD.on('sym', () => { main.reset(); main.load(); });
   RD.on('load', () => main.load());
   RD.on('mode', () => { main.reset(); main.load(); });
-  RD.on('bars', () => { if (U.poi) main.load(); });   // a new candle, a replay step, another timeframe
-  setInterval(() => { if (U.poi && !R.on && !document.hidden) main.load(); }, 20000);   // live: new 1-minute closes between chart candles
-  window.__rdPoi = Object.assign(main.M, { scan: main.scan, taken: main.taken, result: main.result, TESTED });
-  if (U.poi) main.load();
+  RD.on('bars', () => { if (main.want()) main.load(); });   // a new candle, a replay step, another timeframe
+  setInterval(() => { if (main.want() && !R.on && !document.hidden) main.load(); }, 20000);   // live: new 1-minute closes between chart candles
+  window.__rdPoi = Object.assign(main.M, { scan: main.scan, taken: main.taken, result: main.result, TESTED, DAYS, ready: main.ready, tfOk: main.tfOk, want: main.want });
+  if (main.want()) main.load();
 })();

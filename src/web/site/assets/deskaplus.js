@@ -28,6 +28,8 @@
   const endNow = () => Math.floor((R.on ? R.clock : Date.now()) / MIN) * MIN;
   const stfNow = () => STF[U.tf] || null;
   const keyNow = () => [U.sym, U.ex, stfNow(), R.on ? 'r' : 'l'].join('|');
+  // the setups are read for this indicator, or for Trade marks (deskwins.js) — that one only borrows them: no boxes, toasts or pauses here
+  const need = () => !!U.aplus || (!!U.wins && U.winsAp !== false);
   const closedCount = end => { let lo = 0, hi = M.all.length; while (lo < hi) { const m = (lo + hi) >> 1; if (M.all[m][0] + MIN <= end) lo = m + 1; else hi = m; } return lo; };
 
   function reset() { M.gen++; M.key = ''; M.all = []; M.hist = []; M.A = null; M.n = -1; M.err = ''; M.seen = null; M.armed = ''; M.from = M.to = 0; }
@@ -148,7 +150,7 @@
   }, true);
 
   async function load() {
-    if (!U.aplus || !stfNow()) { if (M.A || M.key) { reset(); RD.req(); RD.legend(); } return; }
+    if (!need() || !stfNow()) { if (M.A || M.key) { reset(); RD.req(); RD.legend(); } return; }
     if (M.busy) { M.again = true; return; }
     const key = keyNow(), end = endNow(), sym = U.sym, ex = U.ex, stf = stfNow(), sms = TF[stf].ms;
     const fresh = key !== M.key || end < M.from + HOUR || end > M.to + DAY || M.all.length > (DAYS + 4) * 1440;
@@ -194,8 +196,8 @@
     if (first) M.seen = conf;   // the first read: no toast for setups already on the chart
     else if (conf > M.seen) {
       M.seen = conf;
-      if (R.on && R.playing && U.aplusPause !== false) RD.pause();
-      RD.toast(`🎯 A+ ${l.side} on ${u.coin(U.sym)} at ${when(l.t, stf)} UTC · entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, l.side === 'long' ? 'up' : 'down');
+      if (U.aplus && R.on && R.playing && U.aplusPause !== false) RD.pause();
+      if (U.aplus) RD.toast(`🎯 A+ ${l.side} on ${u.coin(U.sym)} at ${when(l.t, stf)} UTC · entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, l.side === 'long' ? 'up' : 'down');
       if (alertsOn() && !result(l)) {   // already at its stop or target by the time we read it: nothing left to act on
         const late = Math.floor((end - l.conf) / MIN);
         alertUser(3, `🎯 A+ ${l.side} · ${u.coin(U.sym)} ${stf}`, `${late >= 2 ? late + ' min ago · ' : ''}Entry ${u.fp(l.entry)}, stop ${u.fp(l.stop)}, target ${u.fp(l.target)} (${l.R.toFixed(1)}R)`, 'rd-aplus-' + U.sym + '-' + l.t, l.side === 'long' ? 'up' : 'down');
@@ -215,7 +217,7 @@
         }
       }
     }
-    RD.req(); RD.legend();
+    RD.req(); RD.legend(); if (U.wins) RD.refreshMarkers();
   }
 
   // stop or target, walking the 1m candles after the trigger up to the clock (a candle that reaches both counts as the stop)
@@ -323,12 +325,13 @@
   X.legend.push(() => { const s = aplusLine(); return s && U.aplusAlert && !R.on && (quiet() || !soundReady()) ? (quiet() ? '<span class="down">🔕 Sounds muted · the bell in the top bar</span>' : '<span class="down">🔇 Click the page once so the alert can sound</span>') + s : s; });
 
   // ---------------------------------------------------------------- when to read again
-  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing || ((U.aplusRingTrig || U.aplusFull) && RG.stage === 2)) stopRing(); if (!U.aplus) { reset(); RD.req(); RD.legend(); } else load(); });
+  RD.on('aplus', () => { if (!U.aplus || !U.aplusAlert || !U.aplusRing || ((U.aplusRingTrig || U.aplusFull) && RG.stage === 2)) stopRing(); if (!need()) { reset(); RD.req(); RD.legend(); } else load(); });
+  RD.on('wins', () => { if (need()) load(); else if (M.key) { reset(); RD.req(); RD.legend(); } });
   RD.on('sym', () => { reset(); load(); });
   RD.on('load', () => load());
   RD.on('mode', () => { reset(); load(); });
-  RD.on('bars', () => { if (U.aplus) load(); });   // a new candle, a replay step, another timeframe
-  setInterval(() => { if (U.aplus && !R.on && (!document.hidden || U.aplusAlert)) load(); }, 20000);   // live: new 1-minute closes between chart candles (alerts keep watching from a hidden tab)
+  RD.on('bars', () => { if (need()) load(); });   // a new candle, a replay step, another timeframe
+  setInterval(() => { if (need() && !R.on && (!document.hidden || U.aplusAlert)) load(); }, 20000);   // live: new 1-minute closes between chart candles (alerts keep watching from a hidden tab)
   if (SND()) {
     SND().onStop(stopRing);
     SND().onMute(m => { if (m) stopSound(); else if (RG.on && !RG.src) ringSound(); });
@@ -336,6 +339,6 @@
       off: () => { const b = document.querySelector('[data-ind="aplusAlert"]'); if (b && b.checked) b.click(); } });
   }
   // the Watchlist alerts (deskwatch.js) ring through the same sound, card and notification
-  Object.assign(M, { analyze, alertUser, stopRing, unlock: unlockAudio, soundReady, stfNow }); window.__rdAplus = M;
-  if (U.aplus) load();
+  Object.assign(M, { analyze, alertUser, stopRing, unlock: unlockAudio, soundReady, stfNow, result, keyNow, need, DAYS, ready: () => !!M.A && M.key === keyNow() }); window.__rdAplus = M;
+  if (need()) load();
 })();

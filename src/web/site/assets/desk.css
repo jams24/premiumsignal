@@ -93,6 +93,7 @@
 .dk-legend .l2 { display: flex; flex-wrap: wrap; gap: 2px 10px; font-family: var(--mono); font-size: 11px; }
 .dk-legend .up { color: var(--up); } .dk-legend .down { color: var(--down); } .dk-legend .mut { color: var(--muted); } .dk-legend .warn { color: var(--warn); }
 .dk-legend .poi-g { color: #eab308; }
+.dk-legend .dk-wstory { flex-basis: 100%; color: var(--text); }
 .dk-legend .vp-poc { color: #e879f9; }
 :root[data-theme="light"] .dk-legend .vp-poc { color: #c026d3; }
 .dk-smcall[hidden] { display: none; }
