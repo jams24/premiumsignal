@@ -102,7 +102,7 @@ function footer() {
 <div class="foot-legal">
   <p>ReplayDesk is an education and practice tool. Nothing on this site is financial advice. Paper results and past charts do not
   predict future results. Trading crypto, especially with leverage, carries a high risk of loss.</p>
-  <p>© ${new Date().getFullYear()} ReplayDesk. Charts by <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a>.</p>
+  <p>© ${new Date().getFullYear()} ReplayDesk. Charts by <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts™</a>, Copyright (с) 2025 TradingView, Inc. <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">tradingview.com</a></p>
 </div></div></footer>`;
 }
 

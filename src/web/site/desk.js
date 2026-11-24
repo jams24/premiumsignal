@@ -195,6 +195,7 @@ function desk(who, nonce) {
 <main class="dk-chart">
   <div class="dk-legend" data-legend></div>
   <div class="dk-canvas" data-chart></div>
+  <a class="dk-credit" data-credit href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer" title="Charts: TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc. · https://www.tradingview.com/" aria-label="Charts: TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc. · https://www.tradingview.com/">TradingView</a>
   <div class="dk-hint" data-hint hidden></div>
   <div class="dk-msg" data-msg hidden></div>
   <div class="dk-fab" data-fab><button type="button" data-act="tools-m" aria-label="Drawing tools">${icon('pen-line', 'i-45')}</button></div>

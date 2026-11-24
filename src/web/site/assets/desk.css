@@ -81,6 +81,9 @@
 /* ---- chart ---- */
 .dk-chart { grid-area: chart; position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 .dk-canvas { position: absolute; inset: 0; }
+/* the chart library's credit (its licence: notice + link on the page), in the empty corner under the price scale */
+.dk-credit { position: absolute; right: 0; bottom: 0; z-index: 2; height: 26px; padding: 0 6px; display: flex; align-items: center; font: 500 9px var(--mono); letter-spacing: -0.02em; color: var(--muted); opacity: .7; text-decoration: none; white-space: nowrap; }
+.dk-credit:hover, .dk-credit:focus-visible { opacity: 1; color: var(--text); }
 .dk-canvas.c-cross, .dk-canvas.c-draw { cursor: crosshair; } .dk-canvas.c-ns { cursor: ns-resize; } .dk-canvas.c-move { cursor: move; } .dk-canvas.c-pick { cursor: copy; }
 .dk-legend { position: absolute; left: 10px; top: 8px; z-index: 3; max-width: calc(100% - 90px); pointer-events: none; font-size: 12px; line-height: 1.55; color: var(--text-2); }
 .dk-legend .l1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
@@ -541,7 +544,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
 
 /* ---- compare: a second chart beside the main one ---- */
 .dk-cmpb.on { background: color-mix(in oklab, var(--primary) 16%, transparent); color: var(--primary); }
-.dk-chart.cmp-on .dk-canvas { right: 50%; }
+.dk-chart.cmp-on .dk-canvas, .dk-chart.cmp-on .dk-credit { right: 50%; }
 .dk-chart.cmp-on .dk-hint, .dk-chart.cmp-on .dk-qbar { left: 25%; }
 .dk-chart.cmp-on .dk-legend { max-width: calc(50% - 80px); }
 .dk-cmp { position: absolute; top: 0; bottom: 0; left: 50%; right: 0; border-left: 1px solid var(--dk-line); background: var(--dk-bg); }
@@ -615,7 +618,7 @@ button.tpc:hover:not(:disabled) { background: color-mix(in oklab, var(--up) 12%,
   .dk-wt { width: 32px; height: 32px; }
   .dk-legend .lg-btn { height: 26px; padding: 0 10px; }
   .dk-cmpb { padding: 0 8px; } .dk-cmpb span { display: none; }
-  .dk-chart.cmp-on .dk-canvas { right: 0; bottom: 50%; }
+  .dk-chart.cmp-on .dk-canvas, .dk-chart.cmp-on .dk-credit { right: 0; bottom: 50%; }
   .dk-chart.cmp-on .dk-hint, .dk-chart.cmp-on .dk-qbar { left: 50%; }
   .dk-chart.cmp-on .dk-legend { max-width: calc(100% - 90px); }
   .dk-cmp { left: 0; top: 50%; border-left: 0; border-top: 1px solid var(--dk-line); }

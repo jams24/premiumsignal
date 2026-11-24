@@ -297,7 +297,7 @@
   const box = $('[data-chart]');
   const chart = LC.createChart(box, {
     autoSize: true,
-    layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11,
+    layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11, attributionLogo: false,   // credited by the corner link instead (data-credit), as the licence allows
       panes: { separatorColor: css('--dk-line'), separatorHoverColor: css('--dk-line') } },   // the order-flow panes' dividers
     grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
     crosshair: { mode: LC.CrosshairMode.Normal, vertLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') }, horzLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') } },

@@ -84,7 +84,7 @@
     if (ch) return;
     ch = LC.createChart(box, {
       autoSize: true,
-      layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11 },
+      layout: { background: { type: LC.ColorType.Solid, color: COL.bg }, textColor: COL.muted, fontFamily: "'Geist Mono', ui-monospace, Menlo, monospace", fontSize: 11, attributionLogo: false },   // the page credits TradingView once (data-credit)
       grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
       crosshair: { mode: LC.CrosshairMode.Normal, vertLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') }, horzLine: { style: LC.LineStyle.Dashed, labelBackgroundColor: css('--panel-3') } },
       rightPriceScale: { borderColor: css('--dk-line'), scaleMargins: { top: 0.12, bottom: I.vol ? 0.18 : 0.06 } },
