@@ -516,7 +516,7 @@
     if (BT.ws) { BT.ws.onclose = null; try { BT.ws.close(); } catch (e) { /* closed */ } BT.ws = null; }
     for (const k of ['ping', 'timer']) { clearInterval(BT[k]); BT[k] = null; }
     for (const k of ['ft', 'rq', 'retry']) { clearTimeout(BT[k]); BT[k] = null; }
-    BT.on = false;
+    BT.on = false; BT.bf = '';
   }
   function btSet() {   // follows the toggle, the coin, the exchange and replay
     btHistSoon();
@@ -527,13 +527,21 @@
   function btOrder(t, p, q, s) {   // one fill, in time order → orders
     const P = BT.pend;
     if (P && P.t === t && P.s === s) { P.q += q; P.v += p * q; return; }
+    const L = BT.last;   // written out already (the 300 ms timer; Binance sends a millisecond's fills up to ~180 ms apart) but the same millisecond + side: still that order
+    if (!P && L && L.t === t && L.s === s) {
+      L.q += q; L.usd += p * q; L.p = L.usd / L.q;
+      if (BT.st[BT.st.length - 1] === L.t) BT.su[BT.su.length - 1] = L.usd;
+      if (!L.kept && L.usd >= btFloor()) { L.kept = true; BT.list.push(L); }
+      if (!BT.buf && L.usd >= btThr()) btDraw();
+      return;
+    }
     btFlush(); BT.pend = { t, s, q, v: p * q };
   }
   function btFlush() {
     const P = BT.pend; if (!P) return; BT.pend = null;
-    const o = { t: P.t, p: P.v / P.q, q: P.q, usd: P.v, s: P.s };
-    BT.st.push(o.t); BT.su.push(o.usd);
-    if (o.usd >= btFloor()) { BT.list.push(o); if (BT.list.length > BT_KEEP) BT.list.splice(0, BT.list.length - BT_KEEP); if (!BT.buf && o.usd >= btThr()) btDraw(); }
+    const o = { t: P.t, p: P.v / P.q, q: P.q, usd: P.v, s: P.s, kept: false };
+    BT.st.push(o.t); BT.su.push(o.usd); BT.last = o;
+    if (o.usd >= btFloor()) { o.kept = true; BT.list.push(o); if (BT.list.length > BT_KEEP) { BT.list.splice(0, BT.list.length - BT_KEEP); if (BT.since) BT.since = Math.max(BT.since, BT.list[0].t); } if (!BT.buf && o.usd >= btThr()) btDraw(); }
   }
   function btDraw() { if (BT.rq) return; BT.rq = setTimeout(() => { BT.rq = null; prim.req(); if (hoverPt) legend(); }, 250); }
   function btAuto() {   // Auto size: the (K+1)th biggest order of the last hour, K = btRate() an hour of what we have
@@ -584,7 +592,7 @@
   async function btStart() {
     btStop();
     const g = ++BT.gen, ex = U.ex, sym = U.sym;
-    Object.assign(BT, { key: btKey(), on: true, list: [], st: [], su: [], since: null, pend: null, auto: 0, err: '', loading: true, buf: [], noFloor: true, heard: 0 });
+    Object.assign(BT, { key: btKey(), on: true, list: [], st: [], su: [], since: null, pend: null, auto: 0, err: '', loading: true, buf: [], noFloor: true, heard: 0, carry: [], firstId: 0, bf: '', bfn: 0, last: null });
     BTHIT = []; legend();
     // the history is fetched once the socket has sent its first trade (or after 4 s), so the two overlap: no trades lost
     // between them; the overlap is dropped by trade id (Binance's aggregate ids run in order; Bybit's by time + id)
@@ -595,24 +603,73 @@
     let fills = [];
     try { fills = await btHistory(ex, sym); } catch (e) { if (g === BT.gen) BT.err = e.message || 'no answer'; }
     if (g !== BT.gen) return;
-    for (const f of fills) btOrder(f[0], f[1], f[2], f[3]);
+    // Binance: the oldest millisecond waits (BT.carry), so the fill-back can join it with the fills just before it
+    let c0 = 0;
+    if (ex === 'binance' && fills.length) { while (c0 < fills.length && fills[c0][0] === fills[0][0]) c0++; if (c0 === fills.length) c0 = 0; }
+    BT.carry = fills.slice(0, c0); BT.firstId = ex === 'binance' && fills.length ? fills[0][4] : 0;
+    for (const f of fills.slice(c0)) btOrder(f[0], f[1], f[2], f[3]);
     const lastT = fills.length ? fills[fills.length - 1][0] : -Infinity, lastId = fills.length ? fills[fills.length - 1][4] : -Infinity, ids = new Set(fills.filter(f => f[0] === lastT).map(f => String(f[4])));
     for (const f of BT.buf) if (ex === 'binance' ? f[4] > lastId : f[0] > lastT || (f[0] === lastT && !ids.has(String(f[4])))) btOrder(f[0], f[1], f[2], f[3]);   // the socket's, past the history
-    BT.since = fills.length ? fills[0][0] : Date.now();
+    BT.since = fills.length > c0 ? fills[c0][0] : Date.now();
     BT.buf = null; btFlush(); BT.noFloor = false; BT.loading = false; btAuto();
     BT.timer = setInterval(() => { if (g === BT.gen) { btAuto(); prim.req(); legend(); } }, 20000);
     prim.req(); legend();
+    if (ex === 'binance' && BT.firstId > 0) btBackfill(g, sym);
+  }
+  // Binance fill-back: the hours before the chart opened, newest first, slowly (REST weight 20 a page, on the viewer's own
+  // connection), until 00:00 UTC (00:00 the day before while yesterday's file isn't loaded); not when our server's recording
+  // already reaches back past the desk's own trades (it covers that part); at most BTB.pages a chart
+  const BTB = { pages: 100, ms: 1500 };
+  const btSleep = ms => new Promise(r => setTimeout(r, ms));
+  async function btBackfill(g, sym) {
+    const day0 = Math.floor(Date.now() / DAY) * DAY;
+    for (let i = 0; i < 40 && g === BT.gen; i++) { const e = BTD.key === BT.key && BTD.days.get(day0); if (!btHistOK() || (e && e.st !== 'load')) break; await btSleep(500); }   // where the recording starts, first
+    let n = 0;
+    while (g === BT.gen) {
+      const e = BTD.key === BT.key ? BTD.days.get(day0) : null, y = BTD.key === BT.key ? BTD.days.get(day0 - DAY) : null;
+      const floorT = y && y.st === 'ok' && !y.rec ? day0 : day0 - DAY, recFrom = e && e.st === 'ok' && e.rec && e.from != null ? e.from : Infinity;
+      if (recFrom <= BT.since || !(BT.since > floorT) || n >= BTB.pages || BT.list.length >= BT_KEEP || !(BT.firstId > 0)) break;
+      if (BT.bf !== 'run') { BT.bf = 'run'; legend(); }
+      await btSleep(n ? BTB.ms : 200);
+      if (g !== BT.gen) return;
+      let d;
+      try { d = await getJSON('https://fapi.binance.com/fapi/v1/aggTrades?symbol=' + sym + '&limit=1000&fromId=' + Math.max(0, BT.firstId - 1000)); } catch (err) { BT.bfErr = err.message; break; }
+      if (g !== BT.gen) return;
+      const fills = (Array.isArray(d) ? d : []).filter(x => x.a < BT.firstId).map(x => [x.T, +x.p, +x.q, x.m ? -1 : 1, x.a]);
+      if (!fills.length) break;
+      btPrepend(fills); n++;
+      prim.req(); legend();
+    }
+    if (g === BT.gen) { BT.bf = ''; BT.bfn = n; legend(); }
+  }
+  function btJoin(fills) {   // fills (time order) → orders, as btOrder / btFlush do
+    const out = []; let P = null;
+    for (const [t, p, q, s] of fills) { if (P && P.t === t && P.s === s) { P.q += q; P.v += p * q; continue; } if (P) out.push(P); P = { t, s, q, v: p * q }; }
+    if (P) out.push(P);
+    return out.map(o => ({ t: o.t, p: o.v / o.q, q: o.q, usd: o.v, s: o.s }));
+  }
+  function btPrepend(fills) {   // older fills (time order) in front of what we have; their oldest millisecond waits for the next page
+    const all = fills.concat(BT.carry); BT.firstId = fills[0][4];
+    let c = 0; while (c < all.length && all[c][0] === all[0][0]) c++;
+    if (c === all.length) { BT.carry = all; return; }
+    BT.carry = all.slice(0, c);
+    const orders = btJoin(all.slice(c)), floor = btFloor(), hr = Date.now() - HOUR, recent = orders.filter(o => o.t >= hr);
+    BT.list = orders.filter(o => o.usd >= floor).concat(BT.list);
+    if (recent.length) { BT.st = recent.map(o => o.t).concat(BT.st); BT.su = recent.map(o => o.usd).concat(BT.su); }   // Auto counts the last hour
+    BT.since = all[c][0];
   }
   // Past days: the exchange's daily trade file (published the next day), turned into big orders by our server
   // (/api/site/bigtrades, site/bigtrades.js): every order of at least min(the day's auto size, $50k); the day's auto size =
   // about BT_RATE orders an hour over that whole day. Loaded for the newest BTD_VIEW days in view (one at a time, 1H charts
-  // and below), in replay too, where only orders before the replay clock show. Today has no file yet: live trades only.
+  // and below), in replay too, where only orders before the replay clock show. Today (and yesterday until its file is out):
+  // our server's recording of the coin (rec: it starts when someone opens the coin), drawn up to where the desk's own live
+  // trades begin; Binance charts also fill back the hours before the chart opened, slowly (btBackfill).
   const BTD_VIEW = 6, BTD_KEEP = 10;   // days loaded for one view · days kept in memory (a BTC day can hold 50k orders)
   const BTD = { key: '', days: new Map(), chain: Promise.resolve(), view: [], more: false, t: null, vs: '', chk: 0 };   // day start → { st: load|ok|none|err, list, auto, at }
   const btHistOK = () => !!U.bt && (U.ex === 'binance' || U.ex === 'bybit') && TF[U.tf].ms <= HOUR;
   const dayName = d => new Date(d).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' });
-  function dayThr(e) {   // a past day's Auto size on this timeframe: its (K+1)th biggest order, K = btRate() × 24
-    if (e.kTf !== U.tf) { const K = Math.round(btRate() * 24); e.kTf = U.tf; e.k = e.sz.length ? Math.max(e.auto, e.sz[Math.min(K, e.sz.length - 1)]) : e.auto; }
+  function dayThr(e) {   // a past day's Auto size on this timeframe: its (K+1)th biggest order, K = btRate() × hours covered
+    if (e.kTf !== U.tf) { const K = Math.round(btRate() * (e.hrs || 24)); e.kTf = U.tf; e.k = e.sz.length ? Math.max(e.auto, e.sz[Math.min(K, e.sz.length - 1)]) : e.auto; }
     return e.k;
   }
   function btHistSoon() { clearTimeout(BTD.t); BTD.t = setTimeout(btHistNeed, 250); }
@@ -629,9 +686,9 @@
       for (const d of far.slice(0, BTD.days.size - BTD_KEEP)) BTD.days.delete(d);
     }
     for (const d of BTD.view) {
-      if (d >= today) continue;
-      const e = BTD.days.get(d);
-      if (!e || (e.st === 'err' && Date.now() - e.at > (e.wait || 60e3)) || (e.st === 'none' && Date.now() - e.at > 30 * 60e3)) btHistLoad(k, d);
+      const e = BTD.days.get(d), now = Date.now(), retry = e && ((e.st === 'err' && now - e.at > (e.wait || 60e3)) || (e.st === 'none' && now - e.at > 30 * 60e3));
+      if (d >= today) { if (!e || retry || (R.on && e.st === 'ok' && now - e.at > 120e3)) btHistLoad(k, d); continue; }   // today: the server's recording (refreshed in replay)
+      if (!e || retry || e.today || (e.rec && e.st === 'ok' && now - e.at > 10 * 60e3)) btHistLoad(k, d);   // a day that was today, or recorded: ask again for its file
     }
   }
   function btHistLoad(k, d) {
@@ -647,8 +704,8 @@
           r = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(r.message || 'HTTP ' + res.status);
         } finally { clearTimeout(to); }
-        if (r.missing) e.st = 'none';
-        else { e.list = r.list.map(x => ({ t: d + x[0], p: x[1], usd: x[2], s: x[3], q: x[2] / x[1] })); e.sz = r.list.map(x => x[2]).sort((x, y) => y - x); e.auto = r.auto; e.st = 'ok'; }
+        if (r.missing) { e.st = 'none'; e.today = !!r.today; }
+        else { e.list = r.list.map(x => ({ t: d + x[0], p: x[1], usd: x[2], s: x[3], q: x[2] / x[1] })); e.sz = r.list.map(x => x[2]).sort((x, y) => y - x); e.auto = r.auto || 0; e.rec = !!r.rec; e.today = !!r.today; e.from = r.from; e.segs = r.segs || []; e.hrs = r.rec ? r.hrs : 24; e.st = 'ok'; }
       } catch (err) { e.st = 'err'; e.err = err.name === 'AbortError' ? 'no answer in time' : err.message; e.wait = /new days loaded/.test(e.err) ? 11 * 60e3 : 60e3; }   // the hourly limit: wait longer before asking again
       e.at = Date.now();
       if (BTD.key === k) { prim.req(); legend(); }
@@ -669,9 +726,13 @@
       for (let i = lo; i < list.length; i++) { const o = list[i]; if (o.t >= tB || o.t >= upto) break; if (o.usd >= thr && !(skip && skip(o))) sel.push([o, thr]); }
     };
     const upto = R.on ? R.clock : Infinity;
-    if (btHistOK() && BTD.key === U.ex + '|' + U.sym) for (const [d, e] of BTD.days) if (e.st === 'ok' && d + DAY > tA && d < tB) from(e.list, fixed || dayThr(e), upto);
-    if (!R.on && BT.key === btKey()) {   // live: today's (a day whose file is loaded keeps the file's)
-      const had = t => { const e = BTD.key === BT.key && BTD.days.get(Math.floor(t / DAY) * DAY); return !!(e && e.st === 'ok'); };
+    const own = !R.on && BT.key === btKey() && BT.since ? BT.since : Infinity;   // where the desk's own live trades start
+    if (btHistOK() && BTD.key === U.ex + '|' + U.sym) for (const [d, e] of BTD.days) if (e.st === 'ok' && d + DAY > tA && d < tB) {
+      if (e.rec && !R.on) from(e.list, e.today ? btThr() : fixed || dayThr(e), own);   // the server's recording, up to the desk's own
+      else from(e.list, fixed || dayThr(e), upto);
+    }
+    if (!R.on && BT.key === btKey()) {   // live: the desk's own trades (a day whose file is loaded keeps the file's)
+      const had = t => { const e = BTD.key === BT.key && BTD.days.get(Math.floor(t / DAY) * DAY); return !!(e && e.st === 'ok' && !e.rec); };
       from(BT.list, btThr(), Infinity, o => had(o.t));
     }
     sel.sort((x, y) => y[0].usd - x[0].usd);   // biggest first: the small ones stay on top
@@ -697,14 +758,23 @@
     const pastOnly = !R.on && vd.length > 0 && !vd.includes(today), cd = R.on ? Math.floor(R.clock / DAY) * DAY : pastOnly ? vd[0] : today, ce = st(cd);
     const thr = btFixed() || (R.on || pastOnly ? (ce && ce.st === 'ok' ? dayThr(ce) : 0) : btThr());
     let s = `Big trades ≥ <b>${thr ? fusd(thr) : '…'}</b>${auto ? ` <em>auto${pastOnly || R.on ? ` ${dayName(cd)}` : ''}</em>` : ''}`;
-    if (!R.on && !pastOnly) s += BT.loading ? ' · loading…' : BT.since ? ` · today since ${tsec(Math.max(BT.since, today)).slice(0, 5)}` : '';
-    else if (cd >= today) s += ' · <b class="warn">today’s trades come out tomorrow</b>';
+    if (!R.on && !pastOnly) {
+      if (BT.loading) s += ' · loading…';
+      else if (BT.since) {   // today covered by: the server's recording spans + the desk's own trades
+        const te = st(today), sp = (te && te.st === 'ok' && te.rec ? te.segs : []).concat([[BT.since, Date.now()]]).map(x => [Math.max(x[0], today), x[1]]).filter(x => x[1] > x[0]).sort((x, y) => x[0] - y[0]);
+        let gap = false, end = sp.length ? sp[0][1] : 0; for (const x of sp.slice(1)) { if (x[0] > end + 60e3) gap = true; end = Math.max(end, x[1]); }
+        s += ` · today since ${tsec(sp.length ? sp[0][0] : today).slice(0, 5)}${gap ? ' <em>(gaps)</em>' : ''}`;
+      }
+      if (BT.bf === 'run') s += ' · <em>filling back…</em>';
+    } else if (cd >= today && !(ce && ce.st === 'ok')) s += ' · <b class="warn">today: not recorded yet</b>';
+    const recd = past.filter(d => st(d) && st(d).st === 'ok' && st(d).rec);
+    if (recd.length) s += ` · <em>${recd.map(dayName).join(', ')}: our recording until the file is out (~08:00 UTC)</em>`;
     if (loading.length) s += ` · loading ${loading.map(dayName).join(', ')}…`;
     if (none.length) s += ` · <span class="warn">no trade file for ${none.map(dayName).join(', ')}</span>`;
     if (bad.length) s += ` · <b class="warn" title="${esc(st(bad[0]).err || '')}">${dayName(bad[0])} did not load</b>`;
     if (BTD.more && vd.length) s += ` · <em>from ${dayName(vd[vd.length - 1])}: zoom in for earlier days</em>`;
     if (U.bt && TF[U.tf].ms > HOUR) s += ' · <em>earlier days: 1H charts and below</em>';
-    return `<span title="Circles = single market orders of at least this size: green bought at the offer, red sold at the bid, bigger circle = bigger order. ${auto ? `Auto: about ${+btRate().toFixed(1)} orders an hour on this timeframe (at most ${BT_CANDLE} a candle; for past days, over that whole day). ` : ''}Past days come from ${ex}'s daily trade file, published the next day; today comes from the live trades since a little before you opened the chart. In replay, only orders before the replay clock show. Hover a circle for its size.">${s}</span>`;
+    return `<span title="Circles = single market orders of at least this size: green bought at the offer, red sold at the bid, bigger circle = bigger order. ${auto ? `Auto: about ${+btRate().toFixed(1)} orders an hour on this timeframe (at most ${BT_CANDLE} a candle; for past days, over that whole day). ` : ''}Past days come from ${ex}'s daily trade file, published the next day (until then, what our server recorded). Today: our server's recording of this coin (it starts the first time anyone opens the coin, and runs 24 h after the last look) plus the live trades since a little before you opened the chart${U.ex === 'binance' ? '; the hours before that are filled in slowly from Binance' : ''}. In replay, only orders before the replay clock show. Hover a circle for its size.">${s}</span>`;
   }
   // ------------------------------------------------------------------ volume profile (Indicators → Volume profile)
   // How much traded at each price: each candle's volume spread evenly over its high–low, split into market buys (green) and
@@ -3082,7 +3152,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { if (R.on) saveR(); saveAcctNow(); emit('hide'); } if (!document.hidden) pollLive(); });   // the live feed checks itself on return
 
   // ------------------------------------------------------------------ start
-  window.__rd = { get BT() { return BT; }, get BTD() { return BTD; }, get BTHIT() { return BTHIT; }, get VPX() { return VPX; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
+  window.__rd = { get BT() { return BT; }, get BTD() { return BTD; }, get BTB() { return BTB; }, get BTHIT() { return BTHIT; }, get VPX() { return VPX; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OFS, ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
     startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },

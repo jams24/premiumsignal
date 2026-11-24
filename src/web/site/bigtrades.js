@@ -11,13 +11,16 @@
    - kept = every order of at least min(auto, $50k), the smallest fixed size the desk offers, capped at MAX_KEEP biggest
    The result is small (a few thousand orders), cached in memory and on disk (past days never change), one day processed at
    a time so the bot's own work isn't starved. A day not cached yet is a 3–25 MB download, so new days are limited per IP
-   and for the whole site each hour (cached days are not). Today has no file yet: the desk uses the live trades for today. */
+   and for the whole site each hour (cached days are not). Today has no file yet: the server records it (below), and the
+   desk adds its own live trades. */
 const https = require('https');
 const zlib = require('zlib');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Transform, pipeline } = require('stream');
+const { promisify } = require('util');
+const gzipA = promisify(zlib.gzip), gunzipA = promisify(zlib.gunzip);   // off the event loop: the site runs inside the trading bot's process
 
 const DAY = 864e5, AUTO_K = 960, FIXED_MIN = 50000, MAX_KEEP = 60000, MAX_BYTES = 600 * 1024 * 1024, JOB_MS = 150e3;
 const UA = 'Mozilla/5.0';
@@ -29,18 +32,18 @@ let chain = Promise.resolve(), waiting = 0, writes = 0;
 const NEW_PER_IP = 40, NEW_ALL = 400, DISK_MAX = 4000;   // new days an hour per IP · for the whole site · files kept on disk
 const NEWS = new Map();   // IP → times it started a new day (last hour); '*' = everyone
 
-function newOk(ip) {   // may this IP start one more download now? (counts it when yes)
+function newOk(ip, max = NEW_PER_IP, site = true) {   // may this IP start one more download (recording) now? counts it when yes
   const now = Date.now(), recent = k => (NEWS.get(k) || []).filter(t => now - t < 3600e3);
-  const mine = recent(ip), all = recent('*');
-  if (mine.length >= NEW_PER_IP || all.length >= NEW_ALL) return false;
-  mine.push(now); all.push(now); NEWS.set(ip, mine); NEWS.set('*', all);
+  const mine = recent(ip), all = site ? recent('*') : [];
+  if (mine.length >= max || (site && all.length >= NEW_ALL)) return false;
+  mine.push(now); NEWS.set(ip, mine); if (site) { all.push(now); NEWS.set('*', all); }
   if (NEWS.size > 5000) for (const [k, v] of NEWS) if (!v.length || now - v[v.length - 1] > 3600e3) NEWS.delete(k);
   return true;
 }
 function diskTrim() {   // keep the newest DISK_MAX files (checked every 50 writes)
   if (++writes % 50) return;
   try {
-    const f = fs.readdirSync(DIR).map(n => { try { return [n, fs.statSync(path.join(DIR, n)).mtimeMs]; } catch (e) { return null; } }).filter(Boolean);
+    const f = fs.readdirSync(DIR).filter(n => !n.startsWith('rec-')).map(n => { try { return [n, fs.statSync(path.join(DIR, n)).mtimeMs]; } catch (e) { return null; } }).filter(Boolean);
     if (f.length <= DISK_MAX) return;
     f.sort((a, b) => a[1] - b[1]);
     for (const [n] of f.slice(0, f.length - DISK_MAX + 500)) { try { fs.unlinkSync(path.join(DIR, n)); } catch (e) { /* gone */ } }
@@ -189,7 +192,7 @@ async function dayGz(ex, sym, day, ip = '?') {
       const r = await Promise.race([build(ex, sym, day, ac.signal),
         new Promise((_, no) => { kill = setTimeout(() => { ac.abort(); no(new Error('the trade file took too long')); }, JOB_MS); })]);
       if (!r) { MISS.set(k, Date.now()); return { missing: true }; }
-      const gz = zlib.gzipSync(JSON.stringify(r));
+      const gz = await gzipA(JSON.stringify(r));
       try { fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(file, gz); diskTrim(); } catch (e) { /* memory cache still works */ }
       const v = { gz }; memPut(k, v); return v;
     } finally { clearTimeout(kill); waiting--; FLIGHT.delete(k); }
@@ -199,6 +202,161 @@ async function dayGz(ex, sym, day, ip = '?') {
   return job;
 }
 
+// ------------------------------------------------------------------ today: the server records
+// Today's file comes out tomorrow, so once someone opens a coin the server keeps its live trade stream open (24 h after the
+// last look, at most REC_MAX coins, one socket per exchange) and saves the big orders: every order of $50k or more plus
+// each hour's REC_TOPH biggest (the desk's Auto shows about 40 an hour). Kept 2 days and saved to disk every 5 min, so a
+// restart (every deploy) only leaves a gap. Sockets only: no REST calls (Binance's API weight is the bot's trading allowance).
+let WSlib = null; try { WSlib = require('ws'); } catch (e) { /* no recording without ws */ }
+const HOUR = 36e5, REC_MAX = 20, REC_HOLD = 24 * HOUR, REC_KEEP = 2 * DAY, REC_TOPH = 60, REC_NEW_PER_IP = 10;
+const REC = new Map();   // 'ex-SYM' → { ex, sym, orders: [[t, p, usd, s]] in time order, top: this hour's biggest under $50k, hour, pend, segs: [[from, to|null]], ask, n, dirty }
+const SOCK = { binance: null, bybit: null };
+let recTimer = null, recSaved = 0;
+
+function heapAdd(h, o) {   // min-heap by o.v holding the REC_TOPH biggest
+  if (h.length >= REC_TOPH) {
+    if (o.v <= h[0].v) return;
+    h[0] = o; let i = 0;
+    for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < h.length && h[l].v < h[m].v) m = l; if (r < h.length && h[r].v < h[m].v) m = r; if (m === i) return; [h[m], h[i]] = [h[i], h[m]]; i = m; }
+  }
+  h.push(o); let i = h.length - 1;
+  while (i > 0) { const p = (i - 1) >> 1; if (h[p].v <= h[i].v) break; [h[p], h[i]] = [h[i], h[p]]; i = p; }
+}
+const asRow = o => [o.t, +(o.v / o.q).toPrecision(8), Math.round(o.v), o.s];
+function recHour(r, h) {   // an hour closed: its biggest orders under $50k join the list; drop what's past 2 days
+  if (r.top.length) { for (const o of r.top) r.orders.push(asRow(o)); r.orders.sort((a, b) => a[0] - b[0]); r.top = []; r.dirty = true; }
+  r.hour = h;
+  const cut = Date.now() - REC_KEEP;
+  if (r.orders.length && r.orders[0][0] < cut) { let i = 0; while (i < r.orders.length && r.orders[i][0] < cut) i++; r.orders.splice(0, i); }
+  r.segs = r.segs.filter(s => s[1] == null || s[1] > cut);
+}
+function recFlush(r) {
+  const o = r.pend; if (!o) return; r.pend = null; r.n++;
+  const h = Math.floor(o.t / HOUR);
+  if (h > r.hour) recHour(r, h);   // hours only move forward
+  if (h < r.hour) {   // late, its hour already closed (by the minute timer): a big one goes in at its time, a small one is let go
+    if (o.v >= FIXED_MIN) { const a = asRow(o); let i = r.orders.length; while (i > 0 && r.orders[i - 1][0] > a[0]) i--; r.orders.splice(i, 0, a); r.dirty = true; }
+    return;
+  }
+  if (o.v >= FIXED_MIN) { r.orders.push(asRow(o)); r.dirty = true; } else heapAdd(r.top, o);
+}
+function recFill(r, t, p, q, s) {   // fills in time order → orders (same millisecond + side = one order, as on the desk)
+  if (!(t > 0) || !(p > 0) || !(q > 0)) return;
+  if (r.pend && r.pend.t === t && r.pend.s === s) { r.pend.q += q; r.pend.v += p * q; return; }
+  recFlush(r); r.pend = { t, s, q, v: p * q };
+}
+function segStart(r) { const L = r.segs[r.segs.length - 1]; if (!L || L[1] != null) r.segs.push([Date.now(), null]); }
+function segEnd(r, at) { const L = r.segs[r.segs.length - 1]; if (L && L[1] == null) { L[1] = at || Date.now(); r.dirty = true; } }
+
+function sockSend(ex, syms, on) {
+  const S = SOCK[ex]; if (!S || S.ws.readyState !== 1 || !syms.length) return;
+  try {
+    if (ex === 'bybit') for (let i = 0; i < syms.length; i += 10) S.ws.send(JSON.stringify({ op: on ? 'subscribe' : 'unsubscribe', args: syms.slice(i, i + 10).map(s => 'publicTrade.' + s) }));
+    else S.ws.send(JSON.stringify({ method: on ? 'SUBSCRIBE' : 'UNSUBSCRIBE', params: syms.map(s => s.toLowerCase() + '@aggTrade'), id: ++S.id }));
+  } catch (e) { /* closing: the reconnect subscribes again */ }
+}
+function sockOpen(ex) {
+  if (!WSlib || SOCK[ex]) return;
+  const ws = new WSlib(ex === 'bybit' ? 'wss://stream.bybit.com/v5/public/linear' : 'wss://fstream.binance.com/market/ws', { headers: { 'User-Agent': UA } });
+  const S = SOCK[ex] = { ws, ping: null, id: 1 };
+  ws.on('open', () => {
+    const mine = [...REC.values()].filter(r => r.ex === ex);
+    for (const r of mine) segStart(r);
+    sockSend(ex, mine.map(r => r.sym), true);
+    S.ping = setInterval(() => { try { if (ex === 'bybit') ws.send('{"op":"ping"}'); else ws.ping(); } catch (e) { /* closing */ } }, 20000);
+  });
+  ws.on('message', m => {
+    let x; try { x = JSON.parse(m); } catch (e) { return; }
+    if (ex === 'bybit') { if (!x.topic || !Array.isArray(x.data)) return; const r = REC.get('bybit-' + x.topic.slice(12)); if (r) for (const f of x.data) recFill(r, +f.T, +f.p, +f.v, f.S === 'Buy' ? 1 : -1); return; }
+    if (x.e !== 'aggTrade') return;
+    const r = REC.get('binance-' + x.s); if (r) recFill(r, x.T, +x.p, +x.q, x.m ? -1 : 1);
+  });
+  ws.on('close', () => {
+    clearInterval(S.ping);
+    for (const r of REC.values()) if (r.ex === ex) segEnd(r);
+    if (SOCK[ex] === S) SOCK[ex] = null;
+    if ([...REC.values()].some(r => r.ex === ex)) setTimeout(() => sockOpen(ex), 5000).unref();
+  });
+  ws.on('error', () => { /* 'close' follows */ });
+}
+const recFile = r => path.join(DIR, `rec-${r.ex}-${r.sym}.json.gz`);
+function recStop(r) {
+  REC.delete(r.ex + '-' + r.sym); sockSend(r.ex, [r.sym], false);
+  try { fs.unlinkSync(recFile(r)); } catch (e) { /* not saved */ }
+  if (![...REC.values()].some(x => x.ex === r.ex) && SOCK[r.ex]) { try { SOCK[r.ex].ws.close(); } catch (e) { /* gone */ } }
+}
+let saving = false;
+async function recSave(all) {   // the changed recordings to disk, compressed in the thread pool, one at a time
+  if (saving) return; saving = true; recSaved = Date.now();
+  try {
+    fs.mkdirSync(DIR, { recursive: true });
+    for (const r of [...REC.values()]) {
+      if (!all && !r.dirty) continue;
+      r.dirty = false;
+      const segs = r.segs.map(s => [s[0], s[1] == null ? Date.now() : s[1]]);
+      const gz = await gzipA(JSON.stringify({ ex: r.ex, sym: r.sym, orders: r.orders, top: r.top, hour: r.hour, segs, ask: r.ask, n: r.n, savedAt: Date.now() }));
+      if (REC.get(r.ex + '-' + r.sym) === r) await fs.promises.writeFile(recFile(r), gz);   // not stopped meanwhile
+    }
+  } catch (e) { /* next time */ } finally { saving = false; }
+}
+function recTick() {   // every minute: stop the coins nobody looked at for 24 h (or that never traded), close hours, save
+  const now = Date.now();
+  for (const r of [...REC.values()]) {
+    const age = r.segs.length ? now - r.segs[0][0] : 0;
+    if (now - r.ask > REC_HOLD || (r.n === 0 && !r.pend && age > 10 * 60e3)) { recStop(r); continue; }
+    const h = Math.floor(now / HOUR);
+    if (h > r.hour) { if (r.pend && r.pend.t < h * HOUR && now - r.pend.t > 5000) recFlush(r); if (h > r.hour) recHour(r, h); }   // the last order of the old hour first
+  }
+  if (now - recSaved > 5 * 60e3) recSave(false);
+}
+function recStartTimer() { if (!recTimer) { recTimer = setInterval(recTick, 60e3); recTimer.unref(); } }
+function recWatch(ex, sym, ip) {   // the coin's recording (started now when new; null when it can't be)
+  const k = ex + '-' + sym; let r = REC.get(k);
+  if (r) { r.ask = Date.now(); return r; }
+  if (!WSlib || !newOk('rec:' + ip, REC_NEW_PER_IP)) return null;
+  if (REC.size >= REC_MAX) { const old = [...REC.values()].sort((a, b) => a.ask - b.ask)[0]; recStop(old); }
+  r = { ex, sym, orders: [], top: [], hour: Math.floor(Date.now() / HOUR), pend: null, segs: [], ask: Date.now(), n: 0, dirty: true };
+  REC.set(k, r); recStartTimer();
+  if (SOCK[ex] && SOCK[ex].ws.readyState === 1) { segStart(r); sockSend(ex, [sym], true); } else sockOpen(ex);
+  return r;
+}
+function recDay(r, day0) {   // one UTC day of a recording: orders [ms into the day, price, $, side] and the covered spans
+  const day1 = day0 + DAY, list = [], now = Date.now();
+  const add = a => { if (a[0] >= day0 && a[0] < day1) list.push([a[0] - day0, a[1], a[2], a[3]]); };
+  for (const a of r.orders) add(a);
+  for (const o of r.top) add(asRow(o));
+  if (r.pend && r.pend.v >= FIXED_MIN) add(asRow(r.pend));
+  list.sort((a, b) => a[0] - b[0]);
+  const segs = r.segs.map(s => [Math.max(s[0], day0), Math.min(s[1] == null ? now : s[1], day1, now)]).filter(s => s[1] > s[0]);
+  const L = r.segs[r.segs.length - 1], from = L && L[1] == null ? Math.max(L[0], day0) : null;   // covered without a break up to now
+  return { ex: r.ex, sym: r.sym, day: new Date(day0).toISOString().slice(0, 10), t0: day0, rec: true, segs, from, hrs: segs.reduce((n, s) => n + (s[1] - s[0]), 0) / HOUR, auto: 0, floor: 0, list };
+}
+// after a restart: carry on recording the coins someone looked at in the last 24 h (the time down is a gap)
+function init() {
+  if (!WSlib) return;
+  let files = [];
+  try { files = fs.readdirSync(DIR).filter(n => n.startsWith('rec-')); } catch (e) { return; }
+  const now = Date.now();
+  for (const n of files) {
+    try {
+      const j = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(DIR, n))));
+      if (now - j.ask > REC_HOLD || now - j.savedAt > REC_KEEP || REC.size >= REC_MAX || !/^[A-Z0-9]{2,24}USDT$/.test(j.sym) || !['binance', 'bybit'].includes(j.ex)) { fs.unlinkSync(path.join(DIR, n)); continue; }
+      REC.set(j.ex + '-' + j.sym, { ex: j.ex, sym: j.sym, orders: j.orders || [], top: j.top || [], hour: j.hour, pend: null, segs: j.segs || [], ask: j.ask, n: j.n || 0, dirty: false });
+    } catch (e) { /* unreadable: skip */ }
+  }
+  if (!REC.size) return;
+  recStartTimer();
+  for (const ex of ['binance', 'bybit']) {
+    const mine = [...REC.values()].filter(r => r.ex === ex); if (!mine.length) continue;
+    if (SOCK[ex] && SOCK[ex].ws.readyState === 1) { for (const r of mine) segStart(r); sockSend(ex, mine.map(r => r.sym), true); } else sockOpen(ex);
+  }
+}
+async function recSend(req, res, body) {
+  const gzOk = /\bgzip\b/.test(req.headers['accept-encoding'] || ''), js = JSON.stringify(body), out = gzOk ? await gzipA(js) : js;
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...(gzOk ? { 'Content-Encoding': 'gzip' } : {}), 'X-Content-Type-Options': 'nosniff' });
+  res.end(out);
+}
+
 // GET /api/site/bigtrades?ex=binance|bybit&sym=XXXUSDT&day=YYYY-MM-DD
 async function route(req, res, url, json, ip) {
   const ex = url.searchParams.get('ex') === 'bybit' ? 'bybit' : 'binance';
@@ -206,17 +364,27 @@ async function route(req, res, url, json, ip) {
   if (!/^[A-Z0-9]{2,24}USDT$/.test(sym) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) { json(res, 400, { error: 'bad', message: 'sym and day (YYYY-MM-DD) needed' }); return; }
   const t = Date.parse(day + 'T00:00:00Z');
   if (!isFinite(t) || t < Date.parse('2019-09-01T00:00:00Z')) { json(res, 400, { error: 'bad', message: 'no trade files that far back' }); return; }
-  if (t >= Math.floor(Date.now() / DAY) * DAY) { json(res, 200, { ex, sym, day, missing: true, today: true }); return; }
+  const today0 = Math.floor(Date.now() / DAY) * DAY;
+  if (t > today0) { json(res, 400, { error: 'bad', message: 'that day has not started' }); return; }
+  if (t === today0) {   // today: no file yet → the server's own recording (started now when new)
+    const r = recWatch(ex, sym, ip);
+    if (!r) { json(res, 200, { ex, sym, day, missing: true, today: true, rec: false }); return; }
+    await recSend(req, res, { ...recDay(r, t), today: true }); return;
+  }
   let v;
   try { v = await dayGz(ex, sym, day, ip); } catch (e) {
     if (e.busy) { json(res, 503, { error: 'busy', message: 'Busy fetching other days. Try again in a minute.' }); return; }
     if (e.limit) { json(res, 429, { error: 'limit', message: 'Enough new days loaded for this hour. Days already loaded still show.' }); return; }
     json(res, 502, { error: 'source', message: e.message }); return;
   }
-  if (v.missing) { json(res, 200, { ex, sym, day, missing: true }); return; }
+  if (v.missing) {   // no file (yet: yesterday's comes in the morning): the recording of that day, when there is one
+    const r = REC.get(ex + '-' + sym), d = r && recDay(r, t);
+    if (d && d.segs.length) { await recSend(req, res, { ...d, partial: true }); return; }
+    json(res, 200, { ex, sym, day, missing: true }); return;
+  }
   const gzOk = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=86400', ...(gzOk ? { 'Content-Encoding': 'gzip' } : {}), 'X-Content-Type-Options': 'nosniff' });
-  res.end(gzOk ? v.gz : zlib.gunzipSync(v.gz));
+  res.end(gzOk ? v.gz : await gunzipA(v.gz));
 }
 
-module.exports = { route, build, parse, dayGz, newOk };
+module.exports = { route, build, parse, dayGz, newOk, init, _rec: { REC, SOCK, recFill, recFlush, recWatch, recDay, recSave, recStop, recTick } };

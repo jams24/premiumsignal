@@ -44,6 +44,7 @@ let started = false;
 function init() {
   if (started) return Promise.resolve();
   started = true;
+  try { BIG.init(); } catch (e) { logger.warn(`[web] big trades: ${e.message}`); }   // carries on recording today's big trades after a restart
   return db.init().catch(e => logger.warn(`[web] init: ${e.message}`));
 }
 
