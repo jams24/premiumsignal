@@ -1567,11 +1567,99 @@
   let DRAW = store.get('rd-draw-v1', {});
   const saveDraw = () => store.set('rd-draw-v1', DRAW);
   let TOOL = 'cursor', DRAFT = null, MEASURE = null, SEL = null, DRAG = null, PICK = null, SMCR = null, FVGS = null, TLS = null;
-  const ONE = new Set(['hline', 'ray']), TWO = new Set(['trend', 'rect', 'fib', 'measure']);
-  const drawTool = t => ONE.has(t) || TWO.has(t) || t === 'pen' || t === 'zig';
+  const ONE = new Set(['hline', 'ray']), TWO = new Set(['trend', 'rect', 'fib', 'measure']), POS = new Set(['long', 'short']);
+  const drawTool = t => ONE.has(t) || TWO.has(t) || POS.has(t) || t === 'pen' || t === 'zig';
   let PENS = [];   // strokes of this pencil session, newest last (Undo)
   let ZIGDRAWN = [];   // the labels of the last zig-zag drawn (tests)
   const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+
+  // ---- long / short position (TradingView's tool). pts: [0] the entry at the left edge, [1] the stop and [2] the target (both on
+  // the left edge), [3] the right edge at the entry price. Dollars use the paper ticket's size (margin × leverage), before fees.
+  // Inside the box it shows what price did: filled when a candle reaches the entry, then the stop or the target, whichever a
+  // candle reaches first (both in one candle = the stop; on the fill candle only the stop counts). Replays: only candles up to the clock.
+  let POSDRAWN = [];   // what the position boxes showed last (tests)
+  function posNew(type, pt) {
+    const L = type === 'long', E = pt.p, yE = p2y(E), ms = TF[U.tf].ms;
+    let s = yE == null ? null : y2p(yE + (L ? 1 : -1) * Math.max(24, paneH() * 0.07));
+    if (s == null || !isFinite(s) || s <= 0 || (L ? s >= E : s <= E)) s = E * (L ? 0.99 : 1.01);
+    const rs = rt(s); if (rs > 0 && (L ? rs < E : rs > E)) s = rs;
+    let tg = E + (E - s) * 2; const rtg = rt(tg); if (L ? rtg > E : rtg < E) tg = rtg;
+    const l0 = t2l(pt.t), t1 = l0 == null ? pt.t + 24 * ms : Math.round(l2t(l0 + 24));
+    return [{ t: pt.t, p: E }, { t: pt.t, p: s }, { t: pt.t, p: tg }, { t: t1, p: E }];
+  }
+  // after a handle moved: the stop stays on its side of the entry, the target on the other, the box at least one candle wide
+  function posFix(d, h) {
+    const L = d.type === 'long', P = d.pts, k = 1e-6;
+    const above = (v, ref) => Math.max(v, ref * (1 + k)), below = (v, ref) => Math.min(v, ref * (1 - k));
+    if (h === 0) {
+      P[0].p = L ? below(above(P[0].p, P[1].p), P[2].p) : below(above(P[0].p, P[2].p), P[1].p);
+      const l0 = t2l(P[0].t), l3 = t2l(P[3].t); if (l0 != null && l3 != null && l0 > l3 - 1) P[0].t = Math.round(l2t(l3 - 1));
+    }
+    if (h === 1) P[1].p = L ? below(P[1].p, P[0].p) : above(P[1].p, P[0].p);
+    if (h === 2) P[2].p = L ? above(P[2].p, P[0].p) : below(P[2].p, P[0].p);
+    if (h === 3) { const l0 = t2l(P[0].t), l3 = t2l(P[3].t); if (l0 != null && l3 != null && l3 < l0 + 1) P[3].t = Math.round(l2t(l0 + 1)); }
+    P[1].t = P[2].t = P[0].t; P[3].p = P[0].p;
+  }
+  // st: wait (entry not reached yet) · miss (the box ended first) · stop · target · open (still inside the box) · ended (box over, neither hit)
+  function posResult(d) {
+    const B = S.bars, n = B.length; if (!n) return null;
+    const L = d.type === 'long', E = d.pts[0].p, SL = d.pts[1].p, TG = d.pts[2].p, t1 = d.pts[3].t, l0 = t2l(d.pts[0].t);
+    if (l0 == null) return null;
+    let f = -1;
+    for (let i = Math.max(0, Math.floor(l0 + 1e-9)); i < n && B[i][0] <= t1; i++) if (B[i][3] <= E && B[i][2] >= E) { f = i; break; }
+    if (f < 0) return { st: B[n - 1][0] <= t1 ? 'wait' : 'miss' };
+    const out = (st, j, px) => ({ st, ft: B[f][0], xt: B[j][0], px, R: (L ? px - E : E - px) / Math.abs(E - SL) });
+    if (L ? B[f][3] <= SL : B[f][2] >= SL) return out('stop', f, SL);
+    let j = f + 1;
+    for (; j < n && B[j][0] <= t1; j++) {
+      if (L ? B[j][3] <= SL : B[j][2] >= SL) return out('stop', j, SL);
+      if (L ? B[j][2] >= TG : B[j][3] <= TG) return out('target', j, TG);
+    }
+    return out(j < n ? 'ended' : 'open', j - 1, B[j - 1][4]);
+  }
+  function drawPos(g, d, P, W, sel) {
+    const L = d.type === 'long', E = d.pts[0].p, SL = d.pts[1].p, TG = d.pts[2].p, dir = L ? 1 : -1;
+    const xl = Math.min(P[0][0], P[3][0]), xr = Math.max(P[0][0], P[3][0]), w = Math.max(1, xr - xl), yE = P[0][1], yS = P[1][1], yT = P[2][1];
+    const N = (+U.margin || 0) * (+U.lev || 1), risk = Math.abs(E - SL), rr = risk ? Math.abs(TG - E) / risk : 0, ch = v => Math.abs(v / E - 1);
+    g.fillStyle = hexA(COL.up, 0.13); g.fillRect(xl, Math.min(yE, yT), w, Math.abs(yT - yE));
+    g.fillStyle = hexA(COL.down, 0.13); g.fillRect(xl, Math.min(yE, yS), w, Math.abs(yS - yE));
+    const r = posResult(d);
+    if (r && r.ft != null) {   // from the fill to the exit (or the latest candle): a deeper shade on the side price went, a dashed path
+      const xa = t2x(r.ft), xb = t2x(r.xt), yb = p2y(r.px);
+      if (xa != null && xb != null && yb != null) {
+        const a = Math.max(xl, xa), b = Math.min(xr, Math.max(xb, xa + 1));
+        g.fillStyle = hexA(r.R >= 0 ? COL.up : COL.down, 0.22); g.fillRect(a, Math.min(yE, yb), Math.max(1, b - a), Math.abs(yb - yE));
+        g.strokeStyle = hexA(COL.text, 0.75); g.lineWidth = 1; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(xa, yE); g.lineTo(xb, yb); g.stroke(); g.setLineDash([]);
+      }
+    }
+    g.lineWidth = sel ? 1.5 : 1;
+    g.strokeStyle = COL.up; g.beginPath(); g.moveTo(xl, yT); g.lineTo(xr, yT); g.stroke();
+    g.strokeStyle = COL.down; g.beginPath(); g.moveTo(xl, yS); g.lineTo(xr, yS); g.stroke();
+    g.strokeStyle = hexA(COL.text, 0.8); g.beginPath(); g.moveTo(xl, yE); g.lineTo(xr, yE); g.stroke();
+    const tTxt =`Target ${fp(TG)} · ${pct(dir * (TG / E - 1) * 100)}${N ? ' · ' + money(N * ch(TG), true) : ''} · ${rr.toFixed(2)}R`;
+    const sTxt = `Stop ${fp(SL)} · ${pct(dir * (SL / E - 1) * 100)}${N ? ' · ' + money(-N * ch(SL)) : ''}`;
+    let res = '', rc = COL.text;
+    if (r) {
+      const pnl = v => (N ? ' ' + money(N * dir * (v / E - 1), true) : '');
+      if (r.st === 'target') { res = `✓ target in ${dur(r.xt - r.ft)}${pnl(TG)}`; rc = COL.up; }
+      else if (r.st === 'stop') { res = `✗ stopped in ${dur(r.xt - r.ft)}${pnl(SL)}`; rc = COL.down; }
+      else if (r.st === 'open') { res = `open ${r.R >= 0 ? '+' : '−'}${Math.abs(r.R).toFixed(2)}R${pnl(r.px)}`; rc = r.R >= 0 ? COL.up : COL.down; }
+      else if (r.st === 'ended') { res = `box ended ${r.R >= 0 ? '+' : '−'}${Math.abs(r.R).toFixed(2)}R${pnl(r.px)}`; rc = COL.muted; }
+      else if (r.st === 'wait') res = 'waiting for the entry';
+      else res = 'entry never reached';
+    }
+    const e1 = `${L ? 'Long' : 'Short'} ${fp(E)} · R:R ${rr.toFixed(2)}${N ? ' · size ' + money(N) : ''}`;
+    // centred on the box but kept on screen; the entry and the result sit just above / below the entry line, clear of its handles
+    g.font = '600 10.5px "Geist Mono", ui-monospace, monospace';
+    const half = Math.max(...[tTxt, sTxt, e1, res].map(s => g.measureText(s).width)) / 2 + 8;
+    const cx = Math.min(Math.max((xl + xr) / 2, half), Math.max(half, W - half));
+    label(g, tTxt, cx, yT + (L ? -10 : 10), COL.up, 'center', COL.panel);
+    label(g, sTxt, cx, yS + (L ? 10 : -10), COL.down, 'center', COL.panel);
+    label(g, e1, cx, yE - 11, COL.text, 'center', COL.panel);
+    if (res) label(g, res, cx, yE + 11, rc, 'center', COL.panel);
+    const eTxt = e1 + (res ? ' · ' + res : '');
+    POSDRAWN.push({ id: d.id, type: d.type, rr, r, tTxt, sTxt, eTxt, res, xl, xr, yE, yS, yT });
+  }
 
   function t2l(t) { return t2lOf(S.bars, TF[U.tf].ms, t); }
   function t2lOf(B, ms, t) {   // any chart's candles (the Compare chart too)
@@ -1706,6 +1794,7 @@
     const [x0, y0] = P[0];
     if (d.type === 'hline') { g.beginPath(); g.moveTo(0, y0); g.lineTo(W, y0); g.stroke(); label(g, fp(d.pts[0].p), W - 4, y0 - 10, c, 'right'); }
     else if (d.type === 'ray') { g.beginPath(); g.moveTo(x0, y0); g.lineTo(W, y0); g.stroke(); label(g, fp(d.pts[0].p), W - 4, y0 - 10, c, 'right'); }
+    else if (POS.has(d.type)) drawPos(g, d, P, W, sel);
     else if (d.type === 'zig') { ZIGDRAWN = paintZig(g, P, d.pts.map(q => q.p), { color: c, w: sel ? 2 : 1.5, pct: true }); }
     else if (d.type === 'pen') {   // smooth through the middle of each pair of points
       g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = sel ? 3 : 2; g.beginPath(); g.moveTo(x0, y0);
@@ -2035,6 +2124,7 @@
       if (U.tline && TLS) { g.save(); drawTL(g, W); g.restore(); }
       if (U.pdhl && PDAY) { g.save(); drawPD(g, W); g.restore(); }
       if (U.bt && U.ex !== 'fx') { g.save(); drawBT(g); g.restore(); } else if (BTM.hits.length) BTM.clearHits();
+      POSDRAWN = [];
       for (const d of DRAW[U.sym] || []) drawOne(g, d, W, d === SEL);
       if (DRAFT) drawOne(g, DRAFT, W, DRAFT.type !== 'pen');
       if (MEASURE) drawOne(g, MEASURE, W, false);
@@ -2063,6 +2153,7 @@
       else if (d.type === 'pen') { for (let s = 1; s < P.length && !hit; s++) hit = distSeg(x, y, P[s - 1][0], P[s - 1][1], P[s][0], P[s][1]) < 7; }
       else if (d.type === 'zig') { for (let s = 1; s < P.length && !hit; s++) hit = distSeg(x, y, P[s - 1][0], P[s - 1][1], P[s][0], P[s][1]) < lr; }
       else if (d.type === 'rect') hit = x >= Math.min(x0, x1) - 4 && x <= Math.max(x0, x1) + 4 && y >= Math.min(y0, y1) - 4 && y <= Math.max(y0, y1) + 4;
+      else if (POS.has(d.type)) { const xl = Math.min(x0, P[3][0]), xr = Math.max(x0, P[3][0]), ya = Math.min(P[1][1], P[2][1]), yb = Math.max(P[1][1], P[2][1]); hit = x >= xl - 4 && x <= xr + 4 && y >= ya - 4 && y <= yb + 4; }
       else if (d.type === 'fib') hit = x >= Math.min(x0, x1) && x <= Math.max(x0, x1) && FIBS.some(k => { const yy = p2y(d.pts[1].p + (d.pts[0].p - d.pts[1].p) * k); return yy != null && Math.abs(y - yy) < 6; });
       if (hit) return { d, h: -1 };
     }
@@ -2105,6 +2196,14 @@
         DRAFT.pts = fixed.concat([pt, Object.assign({}, pt)]);
       }
       zigHint(); prim.req(); return;
+    }
+    if (POS.has(TOOL)) {   // one click: the entry; the stop and target start ~7 % of the pane away (2R), the box 24 candles wide
+      e.stopPropagation(); e.preventDefault();
+      const pt = tp(x, y, ptOpts(e)); if (pt.t == null || pt.p == null) return;
+      const ty = TOOL, o = addDrawing({ type: ty, pts: posNew(ty, pt) }); setTool('cursor');
+      SEL = o; selUI(); prim.req();
+      toast(`${ty === 'long' ? 'Long' : 'Short'} position: drag the green line for the target, the red one for the stop, the right edge for how long · drag the box to move it`);
+      return;
     }
     if (TWO.has(TOOL) || ONE.has(TOOL)) {
       e.stopPropagation(); e.preventDefault();
@@ -2152,7 +2251,7 @@
       ltip.hidden = true;
     } else if (PD.kind === 'drawing') {
       const d = PD.d;
-      if (PD.h >= 0) { const pt = (d.type === 'zig' ? zigPt : tp)(x + PD.off[0], y + PD.off[1], ptOpts(e)); if (pt.t != null && pt.p != null) d.pts[PD.h] = pt; }
+      if (PD.h >= 0) { const pt = (d.type === 'zig' ? zigPt : tp)(x + PD.off[0], y + PD.off[1], ptOpts(e)); if (pt.t != null && pt.p != null) { d.pts[PD.h] = pt; if (POS.has(d.type)) posFix(d, PD.h); } }
       else {
         const t = x2t(x), p = y2p(y); if (t == null || p == null) return;
         const dt = t - PD.t0, dp = p - PD.p0;
@@ -2311,7 +2410,7 @@
     TOOL = t; DRAFT = null; PENS = []; lock(drawTool(t)); toolUI();
     if (t === 'pen') hint('Pencil: drag on the chart to draw', [['Undo', penUndo], ['Done', () => setTool('cursor')]]);
     else if (t === 'zig') zigHint();
-    else if (t !== 'cursor' && t !== 'cross') { hint(`${{ trend: 'Trend line', hline: 'Horizontal line', ray: 'Horizontal ray', rect: 'Rectangle', fib: 'Fibonacci', measure: 'Measure' }[t]}: ${ONE.has(t) ? 'tap the chart at the price' : 'drag across the chart, or tap two points'}`, [['Cancel', () => setTool('cursor')]]); }
+    else if (t !== 'cursor' && t !== 'cross') { hint(`${{ trend: 'Trend line', hline: 'Horizontal line', ray: 'Horizontal ray', rect: 'Rectangle', fib: 'Fibonacci', measure: 'Measure', long: 'Long position', short: 'Short position' }[t]}: ${POS.has(t) ? 'tap the chart at the entry price' : ONE.has(t) ? 'tap the chart at the price' : 'drag across the chart, or tap two points'}`, [['Cancel', () => setTool('cursor')]]); }
     else hint();
     if (phone()) root.classList.toggle('tools-open', false);
     prim.req();
@@ -3224,7 +3323,7 @@
     else if (k === 'ArrowRight' && R.on) { e.preventDefault(); pausePlay(); step(); }
     else if (k === 'ArrowLeft' && R.on) { e.preventDefault(); stepBack(); }
     else if ((k === 'Delete' || k === 'Backspace') && SEL) { e.preventDefault(); removeSel(); }
-    else { const map = { p: 'pen', t: 'trend', z: 'zig', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
+    else { const map = { p: 'pen', t: 'trend', z: 'zig', h: 'hline', r: 'ray', b: 'rect', f: 'fib', m: 'measure', l: 'long', s: 'short' }; if (map[k.toLowerCase()]) setTool(map[k.toLowerCase()]); }
   });
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) root.classList.remove('full'); });
   // drag the top edge of the positions panel to make it taller or shorter (remembered)
@@ -3251,7 +3350,7 @@
   window.__rd = { get BT() { return BT; }, get BTD() { return BTD; }, get BTB() { return BTB; }, get BTHIT() { return BTM.hits; }, get VPX() { return VPM.X; }, get RSIX() { return RSI.X; }, get hoverPt() { return hoverPt; }, get hoverBar() { return hoverBar; }, btThr, btAuto, btOrder, btFlush, vpBuild, get OFX() { return OFX; }, get FLOW() { return FLOW; }, ofSums: () => OF.sums(), ofDelta, S, R, U, EX, exFor, resOf, mktName, get A() { return A; }, P, acct: { fresh: freshAcct, fix: acctFix, bal: acctBal, saveNow: saveAcctNow, set: a => { A = acctFix(a); R.back = []; saveAcctNow(); renderAll(); setMarkers(); prim.req(); }, changed: () => changed(), newId, HIST_MAX }, chart, cs, step, stepBack, get SEL() { return SEL; }, drawings: () => DRAW[U.sym] || [], enterReplay, exitReplay, setSymbol, setTF, place,   // for tests and the curious
     // the admin layer's handles (deskadmin.js loads after this file)
     ext: X, watchlist: () => WL.slice(), renderWatch, on: (n, f) => { (X.ev[n] = X.ev[n] || []).push(f); }, openAt, syncLines, setMarkers, openSheet, closeSheets, sideTab, openModal, closeModals,
-    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
+    startPick, clearPick, hint, toast, COL, candleOpts, volColor, LS: LC.LineStyle, get PREC() { return PREC; }, get SMCR() { return SMCR; }, get FVGS() { return FVGS; }, get FVGBOX() { return FVGBOX; }, get TLS() { return TLS; }, TLF, get PDAY() { return PDAY; }, get SMCDRAWN() { return SMCDRAWN; }, get KPOI() { return KPOI; }, get ZIGDRAWN() { return ZIGDRAWN; }, get POSDRAWN() { return POSDRAWN; }, posResult, get DRAFT() { return DRAFT; }, get TOOL() { return TOOL; }, drawings: () => DRAW[U.sym] || [], get TLBOX() { return TLBOX; }, FVG_LEN, marksNow: () => (markers && markers.markers ? markers.markers() : []), get BTAB() { return BTAB; },
     setBTab: t => { BTAB = t; if (U.bmin) { U.bmin = false; saveUI(); root.classList.remove('b-min'); } renderBottom(false); }, renderBottom: () => renderBottom(false),
     menuOpen: (x, y, p) => menuOpen(x, y, p != null ? { p: rt(p), what: 'chart price', t: null } : snapAt(x, y)), menuClose, qStart, qPlan, qEnd, Q, paperSubmit, readT, store, chartEl, box,
     t2x, p2y, label, req: () => prim.req(), tlSave, paint: { fvg: paintFVG, tl: paintTL, smc: paintSMC, pd: paintPD, hilo: paintHiLo, covers: coversOf }, legend: () => legend(), refreshMarkers: () => setMarkers(), get PICK() { return PICK; }, FEE_T,
