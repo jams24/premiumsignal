@@ -2857,10 +2857,10 @@ class TelegramBot {
     const WEB_KEEP_BUTTONS = /^(mt_pos_refresh_new|mt_cancelorder_\d+|mt_nw_(pd|tk|sl|od)_\d+|mt_close_\d+|mt_be_\d+)$/;
     const plainText = (html) => String(html || '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
     const webOwner = () => Number(this.pumpAutoTrader?.config?.ownerId) || config.telegram.adminIds[0];
-    const webSend = (uid, html, markup) => {
+    const webSend = (uid, html, markup, via) => {
       // only buttons that work outside a panel (positions, trade / order actions): a panel's own buttons need its Telegram state
       const rows = (markup?.inline_keyboard || []).map(r => r.filter(b => WEB_KEEP_BUTTONS.test(b.callback_data || ''))).filter(r => r.length);
-      return this.bot.telegram.sendMessage(uid, `🌐 <i>From the dashboard</i>\n${html}`, { parse_mode: 'HTML', ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}) })
+      return this.bot.telegram.sendMessage(uid, `${via || '🌐 <i>From the dashboard</i>'}\n${html}`, { parse_mode: 'HTML', ...(rows.length ? { reply_markup: { inline_keyboard: rows } } : {}) })
         .catch(e => logger.warn(`[WEB TRADE] Telegram notice failed: ${e.message}`));
     };
     const posKb = () => Markup.inlineKeyboard([[Markup.button.callback('📊 Positions', 'mt_pos_refresh_new')]]).reply_markup;
@@ -2933,7 +2933,8 @@ class TelegramBot {
     };
 
     const webBusy = new Set();   // symbols with a dashboard order in flight
-    const webOpen = async (o) => {
+    // via: the header of its Telegram messages (the desk auto-trader names itself); blank = "From the dashboard"
+    const webOpen = async (o, via) => {
       const w = await webSetup(o);
       if (!w.st) return w;
       if (w.errors.length) return { errors: w.errors, setup: w.setup };
@@ -2943,7 +2944,7 @@ class TelegramBot {
       try {
         const before = new Set(this.pendingLimitOrders.keys());
         const msgs = [];
-        const say = (html, extra) => { msgs.push(html); return webSend(uid, html, extra?.reply_markup); };
+        const say = (html, extra) => { msgs.push(html); return webSend(uid, html, extra?.reply_markup, via); };
         // executeManual reports through ctx: here every message goes to the owner's chat. from.id is not the owner's id,
         // so the owner's own open /short · /long panel (manualTradeState) is left alone.
         const ctx = {
@@ -3027,17 +3028,18 @@ class TelegramBot {
         `order stop #${o.id} ${o.symbol} ${old} → ${sl}`);
     };
 
-    const webManage = async (a) => {
+    // a.auto: the desk auto-trader managing its own trade (it may be paper); set by src/engine/deskAuto.js only
+    const webManage = async (a, via) => {
       const uid = webOwner();
       if (!uid) return { error: 'No owner Telegram account set (ADMIN_TELEGRAM_IDS)' };
       // a position that is still open keeps its buttons (refresh, close, breakeven, take profit, stop)
-      const done = async (html, log, tradeId) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, tradeId ? tradeKb(tradeId) : posKb()); return { ok: true, text: plainText(html) }; };
+      const done = async (html, log, tradeId) => { logger.info(`[WEB TRADE] ${log}`); await webSend(uid, html, tradeId ? tradeKb(tradeId) : posKb(), via); return { ok: true, text: plainText(html) }; };
 
       if (a.action === 'cancel' || a.action === 'move_limit' || a.action === 'order_stop' || a.action === 'order_tp') {
         await loadPendingOrders();
         const o = this.pendingLimitOrders.get(a.id);
         if (!o) return { error: 'That limit order already filled, expired or was cancelled.' };
-        if (o.mode !== 'live') return { error: 'Only live orders are managed from the dashboard.' };
+        if (o.mode !== 'live' && !(a.auto && a.action === 'cancel')) return { error: 'Only live orders are managed from the dashboard.' };
         if (a.action === 'order_stop') return orderStop(o, a.price, done);
         if (a.action === 'order_tp') return orderTp(o, a.price, done);
         if (a.action === 'cancel') {
@@ -3068,7 +3070,7 @@ class TelegramBot {
 
       const t = await getOpenTradeById(a.id);
       if (!t) return { error: 'That position is already closed.' };
-      if (t.mode !== 'live') return { error: 'Only live positions are managed from the dashboard.' };
+      if (t.mode !== 'live' && !(a.auto && a.action === 'close')) return { error: 'Only live positions are managed from the dashboard.' };
       const executor = executorForSource(t.source);
       if (!executor) return { error: `No executor for source "${t.source}".` };
       const dir = t.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
@@ -3076,7 +3078,7 @@ class TelegramBot {
       if (a.action === 'close') {   // as mt_closeok
         const r = await executor.closeTradeNow(t, 'manual_close');
         return done(
-          `${r.pnlUsd >= 0 ? '✅' : '❌'} <b>CLOSED</b> — ${escapeHtml(t.symbol)}\n\n${dir} · 💰 LIVE\n` +
+          `${r.pnlUsd >= 0 ? '✅' : '❌'} <b>CLOSED</b> — ${escapeHtml(t.symbol)}\n\n${dir} · ${t.mode === 'live' ? '💰 LIVE' : '📝 PAPER'}\n` +
           `Entry $${fmtP(parseFloat(t.entry_price))} → Exit $${fmtP(r.exitPrice)}\nP&L: <b>${fmtUsd(r.pnlUsd)}</b> (${fmtPct(r.pnlPct)} on remaining)`,
           `closed ${t.symbol} #${t.id} → ${r.pnlUsd}`);
       }
@@ -3128,6 +3130,10 @@ class TelegramBot {
       preview: async (o) => { const w = await webSetup(o); return w.st ? { setup: w.setup } : w; },
       open: webOpen,
       manage: webManage,
+      // read-only, for the desk auto-trader (src/engine/deskAuto.js): a waiting limit order, a trade row, the trade a limit became
+      order: async (id) => { await loadPendingOrders(); const o = this.pendingLimitOrders.get(Number(id)); return o ? { id: o.id, symbol: o.symbol, mode: o.mode, limitPrice: o.limitPrice } : null; },
+      trade: async (id) => (await db.query('SELECT id, symbol, direction, mode, status, hit_tp1, entry_price, exit_price, pnl_usd, realized_pnl, close_reason, created_at, closed_at FROM trades WHERE id = $1', [Number(id)])).rows[0] || null,
+      tradeForOrder: async (id) => (await db.query("SELECT id FROM trades WHERE onchain_context->>'limitOrderId' = $1 ORDER BY id DESC LIMIT 1", [String(id)])).rows[0] || null,
     };
 
     this.bot.command('mclose', async (ctx) => {

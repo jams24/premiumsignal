@@ -25,6 +25,11 @@ try {
   const body = fs.readFileSync(path.join(__dirname, '..', 'smcEngine.js'));
   ASSETS['smc.js'] = { body, hash: crypto.createHash('sha256').update(body).digest('hex').slice(0, 10) };
 } catch (e) { /* no overlay; the desk still works */ }
+// the RD ▲ / ▼ rules (src/web/rdEngine.js), the same code the server's auto-trader reads, served as /assets/rd.js
+try {
+  const body = fs.readFileSync(path.join(__dirname, '..', 'rdEngine.js'));
+  ASSETS['rd.js'] = { body, hash: crypto.createHash('sha256').update(body).digest('hex').slice(0, 10) };
+} catch (e) { /* no RD signal; the desk still works */ }
 const asset = f => `/assets/${f}?v=${ASSETS[f] ? ASSETS[f].hash : '0'}`;
 
 const LOGO_SVG = (size = 32, id = 'g') => `<svg viewBox="0 0 32 32" width="${size}" height="${size}" class="logo-mark" aria-hidden="true">

@@ -408,7 +408,7 @@
   const val = n => num(F(n).value);
   const setF = (n, v) => { F(n).value = v == null ? '' : String(v); if (n === 'tp' && T.tp !== 'price') T.tp = 'price'; schedule(); renderT(); };
   const hasInput = () => ['limit', 'stop', 'tp'].some(n => F(n).value.trim() !== '');
-  const paneOpen = () => !$('[data-pane="real"]').hidden && (!phone() || $('.dk-side').classList.contains('open'));
+  const paneOpen = () => !$('[data-pane="real"]').hidden && !(RD.realSub && RD.realSub() === 'auto') && (!phone() || $('.dk-side').classList.contains('open'));
   const refPx = () => (T.entry !== 'market' ? val('limit') : RD.S.lastPx);
   function check() {
     const e = refPx(), errs = [], short = T.side === 'short', where = T.entry === 'stop' ? 'stop entry' : T.entry === 'limit' ? 'limit' : 'price now';
@@ -608,7 +608,7 @@
   // limit order (stop / TP / limit here, close, cancel — each through its confirm dialog), or a new real limit order planned
   // on the chart. A ⚡ real plan and the chart's Real Buy / Sell fill this ticket and open the review: the bot's exact order,
   // then Place. Nothing real is sent from the menu itself.
-  const openReal = () => { if (phone()) RD.openSheet('real'); else RD.sideTab('real'); };
+  const openReal = () => { if (RD.realSub) RD.realSub('order'); if (phone()) RD.openSheet('real'); else RD.sideTab('real'); };
   const needWeb = f => () => { if (!L.web) { RD.toast(offTitle, 'down'); return; } f(); };
   RD.ext.realActive = () => !$('[data-pane="real"]').hidden;
   RD.ext.realSize = () => ({ margin: val('margin') > 0 ? val('margin') : null, lev: val('lev') > 0 ? Math.round(val('lev')) : null });

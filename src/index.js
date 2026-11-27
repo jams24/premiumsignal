@@ -81,6 +81,7 @@ async function main() {
   try { site = require('./web/site'); site.init(); } catch (e) { logger.error(`[web] site not loaded: ${e.message}`); site = null; }
   const { SmcAlerts } = require('./collectors/smcAlerts');
   let aplusWatch = null;   // the desk's A+ Watchlist alerts (src/collectors/aplusWatch.js), set once the bot is up
+  let deskAuto = null;     // the desk's auto-trade (src/engine/deskAuto.js), set once the bot is up
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const key = (url.searchParams.get('key') || '').trim();
@@ -480,6 +481,13 @@ async function main() {
       return res.end(JSON.stringify({ error: 'Starting up, try again in a minute' }));
     }
 
+    // ReplayDesk Real → Auto trade: the charts it trades, its limits and what it did (admin only)
+    if (url.pathname === '/api/autotrade' && authed) {
+      if (deskAuto) return deskAuto.handle(req, url, res);
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Starting up, try again in a minute' }));
+    }
+
     if (url.pathname === '/api/chart' && authed) {
       try {
         let symbol = url.searchParams.get('symbol');
@@ -699,6 +707,17 @@ async function main() {
     aplusWatch = watch;
     watch.load().catch(e => logger.warn(`[A+ WATCH] settings load failed: ${e.message}`)).finally(() => watch.start());
   } catch (e) { logger.error(`[A+ WATCH] not loaded: ${e.message}`); }
+  // The desk's auto-trade: A+ / RD on the charts switched on, placed through the bot's own order path (bot.webTrade, the
+  // Real ticket's code), paper unless a chart is set to live. Loaded defensively: a failure here never stops the bot.
+  try {
+    const { DeskAuto } = require('./engine/deskAuto');
+    const da = new DeskAuto({
+      send: (html) => bot.bot.telegram.sendMessage(Number(pumpAutoTrader.config?.ownerId) || config.telegram.adminIds[0], html, { parse_mode: 'HTML', disable_web_page_preview: true }),
+      trade: () => bot.webTrade,
+    });
+    deskAuto = da;
+    da.load().catch(e => logger.warn(`[AUTO DESK] settings load failed: ${e.message}`)).finally(() => da.start());
+  } catch (e) { logger.error(`[AUTO DESK] not loaded: ${e.message}`); }
   const autoTradeEnter = (info) => pumpAutoTrader.onEnter(info).catch(e => logger.error(`Pump auto-trade error: ${e.message}`));
   // Channel trade updates: TP / stop / back-to-entry / 48h replies under every posted entry (exhaust short ✅ ENTER
   // replies, and switch longs / shorts when their 📣 channel posts are on), from the levels the channel showed
