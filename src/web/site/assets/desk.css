@@ -236,13 +236,16 @@
 /* ---- full screen chart ---- */
 .dk.full { grid-template-columns: 46px minmax(0, 1fr) 0; grid-template-rows: 46px minmax(0, 1fr) 0; }
 .dk.full .dk-side, .dk.full .dk-bottom { display: none; }
+/* side panel hidden for chart room (the top-bar panel button); sideTab() brings it back when something opens a pane */
+@media (min-width: 900px) { .dk.s-min { grid-template-columns: 46px minmax(0, 1fr) 0; } .dk.s-min .dk-side { display: none; } }
+.dk.s-min .dk-right [data-act="side"] { color: var(--primary); }
 
 /* ======================================================= phone */
 @media (max-width: 899px) {
   .dk { grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr) calc(var(--tabbar) + env(safe-area-inset-bottom)); grid-template-areas: "top" "chart" "tabbar"; }
   .dk.full { grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr) calc(var(--tabbar) + env(safe-area-inset-bottom)); }
   .dk-top { gap: 4px; padding: 0 6px; }
-  .dk-tfs, .dk-rbtn, .dk-rp, .dk-right [data-act="full"], .dk-vsep, .dk-mode span, .dk-ind .dk-pill span { display: none !important; }
+  .dk-tfs, .dk-rbtn, .dk-rp, .dk-right [data-act="full"], .dk-right [data-act="side"], .dk-vsep, .dk-mode span, .dk-ind .dk-pill span { display: none !important; }
   .dk-ind .dk-pill { padding: 0 8px; }
   .dk-pop { position: fixed; left: 8px; right: 8px; top: 52px; width: auto; max-height: calc(100dvh - 150px); overflow-y: auto; overscroll-behavior: contain; }
   .dk-mode { width: 22px; padding: 0; justify-content: center; }

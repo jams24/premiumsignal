@@ -6,8 +6,8 @@ const { esc, page, LOGO_SVG, themeBtn, asset, icon } = require('./html');
 const LWC = '<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js" ' +
   'integrity="sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN" crossorigin="anonymous" defer></script>';
 
-const TFS = ['1m', '5m', '15m', '1H', '4H', '1D', '1W', '1M'];
-const TFN = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1H': '1 hour', '4H': '4 hours', '1D': '1 day', '1W': '1 week', '1M': '1 month' };
+const TFS = ['1m', '5m', '15m', '30m', '1H', '4H', '1D', '1W', '1M'];
+const TFN = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '30m': '30 minutes', '1H': '1 hour', '4H': '4 hours', '1D': '1 day', '1W': '1 week', '1M': '1 month' };
 const TOOLS = [
   ['cursor', 'mouse-pointer-2', 'Cursor (Esc)'], ['cross', 'crosshair', 'Crosshair'], null,
   ['pen', 'pencil', 'Pencil: draw freehand (P)'], ['trend', 'move-diagonal', 'Trend line (T)'], ['zig', 'activity', 'Zig-zag: click each swing high and low, labelled HH / HL / LH / LL (Z)'], ['hline', 'minus', 'Horizontal line (H)'], ['ray', 'move-horizontal', 'Horizontal ray (R)'],
@@ -189,6 +189,7 @@ function desk(who, nonce) {
     <div class="dk-snd" data-snd><button type="button" class="dk-ib dk-bell" data-act="snd" aria-expanded="false" aria-label="Sounds and alarms" title="Sounds and alarms">${icon('bell', 'i-4 b-on')}${icon('bell-off', 'i-4 b-off')}<span class="dk-bell-t">Stop alarm</span></button><div class="dk-pop dk-sndpop" data-sndpop hidden role="dialog" aria-label="Sounds and alarms"></div></div>
     ${A ? `<button type="button" class="dk-wt" data-wt hidden aria-label="Web trading status"><i></i><span>Web trading</span></button>` : ''}
     <span class="dk-mode" data-mode><i></i><span>LIVE</span></span>
+    ${ib('side', 'panel-right', 'Hide the side panel', ' aria-pressed="false"')}
     ${ib('full', 'maximize', 'Full screen')}
     ${themeBtn()}
     ${userMenu(who)}

@@ -23,11 +23,12 @@
                                // requests and places drawings past the last candle; candle edges come from bucket() / nextB()
   const TF = {
     '1m': { ms: MIN, b: '1m', y: '1' }, '5m': { ms: 5 * MIN, b: '5m', y: '5' }, '15m': { ms: 15 * MIN, b: '15m', y: '15' },
+    '30m': { ms: 30 * MIN, b: '30m', y: '30' },
     '1H': { ms: HOUR, b: '1h', y: '60' }, '4H': { ms: 4 * HOUR, b: '4h', y: '240' }, '1D': { ms: DAY, b: '1d', y: 'D' }, '1W': { ms: WEEK, b: '1w', y: 'W' },
     '1M': { ms: MONTH, b: '1M', y: 'M' },
   };
-  const RES = { '1m': '1m', '5m': '1m', '15m': '1m', '1H': '1m', '4H': '5m', '1D': '15m', '1W': '1H', '1M': '4H' };   // replay feed per chart timeframe
-  const FXRES = { '1m': '1m', '5m': '5m', '15m': '15m', '1H': '1H', '4H': '1H', '1D': '1H', '1W': '1D', '1M': '1D' };   // FX: 1m kept 30 days, 5m / 15m 60, 1H 2 years
+  const RES = { '1m': '1m', '5m': '1m', '15m': '1m', '30m': '1m', '1H': '1m', '4H': '5m', '1D': '15m', '1W': '1H', '1M': '4H' };   // replay feed per chart timeframe
+  const FXRES = { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '15m', '1H': '1H', '4H': '1H', '1D': '1H', '1W': '1D', '1M': '1D' };   // FX: 1m kept 30 days, 5m / 15m 60, 1H 2 years
   const resOf = (tf, ex) => ((ex || U.ex) === 'fx' ? FXRES : RES)[tf];
   const FEE_T = 0.0005, FEE_M = 0.0002, MMR = 0.005, START_BAL = 10000;
   const monthOf = (t, add) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + add, 1); };
@@ -43,7 +44,7 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode or full */ } },
   };
   const U = Object.assign({ sym: 'BTCUSDT', ex: 'binance', tf: '15m', vol: true, volMa: true, volHi: true, ema20: false, ema50: false, ema200: false, smc: false, smcAll: false, smcTaken: true, smcFvg: false, tline: false, tlineHtf: true, choch: false, bos: false, eq: false, liq: false, zz: false, ob: false, kpoi: false, of: false, cvd: true, ofAbs: false, rsi: false, bt: false, btMin: 'auto', vp: false, vpMode: 'vis', pdhl: false, hilo: true, aplus: false, aplusPause: true, aplusDone: true, aplusAlert: false, aplusRing: false, aplusRingTrig: false, aplusFull: false, poi: false, poiAll: false, poiPause: true, wins: false, winsAp: true, winsRd: true, winsLoss: false, candles: 'color',
-    magnet: false, bmin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
+    magnet: false, bmin: false, smin: false, margin: 100, lev: 10, qt: true, qtk: 'mkt', bh: 0 }, store.get('rd-ui-v1', {}));
   if (!TF[U.tf]) U.tf = '15m';
   // frozen trend lines, per exchange | coin | timeframe: { at (when drawn: the clock), tf, last (newest candle used), atr, lines }
   const TLF = { live: store.get('rd-tl-v1', {}), replay: {} };
@@ -2822,7 +2823,7 @@
   // POI (Indicators → POI): every order block price has not come back to yet, graded by the five usual "best POI" boxes
   // (SMC.poiBoxes, the code our test ran). The trend and the premium / discount half come from the next slower chart, built
   // here from this chart's closed candles. Shown: the nearest two each side (where price meets one next), each with its grade.
-  const HTF_OF = { '1m': '5m', '5m': '15m', '15m': '1H', '1H': '4H', '4H': '1D', '1D': '1W' };
+  const HTF_OF = { '1m': '5m', '5m': '15m', '15m': '1H', '30m': '4H', '1H': '4H', '4H': '1D', '1D': '1W' };
   function poiList(base, SR = SMCR, tf = U.tf) {   // also the Compare chart's (its own SMC result and timeframe)
     const E = window.SMC; if (!E.poiPrep) return null;
     const closed = base.slice(0, -1); if (!closed.length) return null;   // without the stand-in candle that closes the last one
@@ -3159,7 +3160,12 @@
 
   // ------------------------------------------------------------------ sheets, modals, panels
   const side = $('.dk-side'), bottom = $('.dk-bottom'), scrim = $('[data-scrim]');
-  function sideTab(t) { $$('[data-ptab]').forEach(b => b.classList.toggle('on', b.dataset.ptab === t)); $$('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== t; }); if (t === 'watch') { renderWatch(); pollWatch(true); } emit('pane', t); qtUI(); }
+  function sideUI() {
+    root.classList.toggle('s-min', !!U.smin);
+    const b = $('.dk-right [data-act="side"]'), t = U.smin ? 'Show the side panel' : 'Hide the side panel';
+    if (b) { b.setAttribute('aria-pressed', String(!!U.smin)); b.title = t; b.setAttribute('aria-label', t); }
+  }
+  function sideTab(t) { if (U.smin && !phone()) { U.smin = false; saveUI(); sideUI(); } $$('[data-ptab]').forEach(b => b.classList.toggle('on', b.dataset.ptab === t)); $$('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== t; }); if (t === 'watch') { renderWatch(); pollWatch(true); } emit('pane', t); qtUI(); }
   function openSheet(name) {
     closeSheets(true);
     if ($(`[data-pane="${name}"]`)) { sideTab(name); side.classList.add('open'); }
@@ -3258,6 +3264,7 @@
       else if (act === 'close-modal') closeModals();
       else if (act === 'close-sheet') closeSheets();
       else if (act === 'collapse') { U.bmin = !U.bmin; saveUI(); root.classList.toggle('b-min', U.bmin); }
+      else if (act === 'side') { U.smin = !U.smin; saveUI(); sideUI(); }
       else if (act === 'full') { root.classList.toggle('full'); try { if (root.classList.contains('full') && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {}); else if (document.fullscreenElement) document.exitFullscreen(); } catch (er) { /* not allowed */ } }
       else if (act === 'tools-m') root.classList.toggle('tools-open');
       else if (act === 'reset') {
@@ -3357,7 +3364,7 @@
     pause: () => { if (R.playing) pausePlay(); },
     get lastPx() { return S.lastPx; },
     util: { fp, money, pct, fq, fr, fv, esc, rt, coin, tshort, tnice, dur, num, ic, phone, hexA, nowT, fetchRange, fetchSpan, api, TF, RES, resOf, mktName, bucket, nextB, smcOpt, MIN, HOUR, DAY, WEEK, WEEK_OFF, liqOf, fvgScan, tlSnap, tlAfterOn, tlTop, t2lOf, l2xOf, emaOf, EMAS, ofMake, btMake, vpMake, rsiMake, paneLayout, poiList, poiWhy, VMA } };
-  root.classList.toggle('b-min', !!U.bmin);
+  root.classList.toggle('b-min', !!U.bmin); sideUI();
   playUI(); toolUI(); headUI(); renderWatch(); renderAll(); stepLabel();
   symList(U.ex).then(() => { if (S.bars.length) applyMeta(); }).catch(() => { /* precision guessed from prices */ });
   const rs = store.get('rd-replay-v1', null);

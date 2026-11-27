@@ -18,7 +18,7 @@
   if (!RD) return;
   const { U, R } = RD, u = RD.util, X = RD.ext, { MIN, HOUR, DAY } = u;
   const DAYS = 4, AHEAD = 6 * HOUR, M15 = 15 * MIN, WATCH = 60, FILL = 30, HOLD = 360, TGT = 3;
-  const TF_OK = { '1m': 1, '5m': 1, '15m': 1, '1H': 1 };
+  const TF_OK = { '1m': 1, '5m': 1, '15m': 1, '30m': 1, '1H': 1 };
   const TESTED = 'Practice, not a signal. These exact rules on BTC, ETH and SOL (1-minute candles, Dec 2024 – Nov 2026, 3,136 trades in the London and New York opens) made about 0R before fees and −0.18R a trade after fees, the same as entering at a random time with the same stop and target. None of 8 extra filters helped (a sweep first, a big break candle, taker buying, the 15m or 4H trend, strength against BTC, New York only, fresh gaps only).';
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const sessOf = t => { const h = new Date(t).getUTCHours(); return h >= 7 && h <= 10 ? 'London' : h >= 13 && h <= 16 ? 'New York' : ''; };

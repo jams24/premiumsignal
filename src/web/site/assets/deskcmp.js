@@ -33,7 +33,7 @@
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const fpc = v => fp(v, C.prec);
   // the main chart's timeframe → the one above it, for a top-down view of the same coin
-  const UP = { '1m': '15m', '5m': '1H', '15m': '4H', '1H': '4H', '4H': '1D', '1D': '1W', '1W': '1M' };
+  const UP = { '1m': '15m', '5m': '1H', '15m': '4H', '30m': '4H', '1H': '4H', '4H': '1D', '1D': '1W', '1W': '1M' };
 
   // ---- the pane
   const ROWS = [

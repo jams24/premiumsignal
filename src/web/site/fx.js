@@ -39,6 +39,7 @@ const IV = {
   '1m': { y: '1m', ms: MIN, keep: 29.5 * DAY, span: 7 * DAY },
   '5m': { y: '5m', ms: 5 * MIN, keep: 59 * DAY, span: 59 * DAY },
   '15m': { y: '15m', ms: 15 * MIN, keep: 59 * DAY, span: 59 * DAY },
+  '30m': { y: '15m', ms: 30 * MIN, keep: 59 * DAY, span: 59 * DAY },   // two 15m candles each (shares their cache), the way 4H is built from 1h
   '1H': { y: '60m', ms: HOUR, keep: 729 * DAY, span: 729 * DAY },
   '4H': { y: '60m', ms: 4 * HOUR, keep: 729 * DAY, span: 729 * DAY },
   '1D': { y: '60m', ms: DAY, keep: Infinity, span: Infinity },
@@ -165,6 +166,7 @@ async function klines(sym, tf, o = {}) {
   } else {
     rows = await rawRange(P, I.y, qFrom, live ? now : qTo, live, ttl, I.keep);
     if (tf === '4H') rows = merge(rows, t => Math.floor(t / (4 * HOUR)) * 4 * HOUR);
+    if (tf === '30m') rows = merge(rows, t => Math.floor(t / (30 * MIN)) * 30 * MIN);
   }
   rows = rows.filter(r => r[0] >= (fwd ? o.start : -Infinity) && r[0] <= to);
   rows = fwd ? rows.slice(0, limit) : rows.slice(-limit);

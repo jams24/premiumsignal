@@ -17,7 +17,7 @@
   if (!RD || !window.SMC) return;
   const { U, R } = RD, u = RD.util, X = RD.ext, { MIN, HOUR, DAY, TF } = u;
   const DAYS = 3, HIST = 300, FRESH = 45 * MIN, AHEAD = 6 * HOUR;
-  const STF = { '1m': '5m', '5m': '5m', '15m': '15m', '1H': '1H', '4H': '4H' };   // chart → structure timeframe (1D / 1W: not offered)
+  const STF = { '1m': '5m', '5m': '5m', '15m': '15m', '30m': '30m', '1H': '1H', '4H': '4H' };   // chart → structure timeframe (1D / 1W: not offered)
   const TESTED = 'Practice, not signals: on the 207 coins our bot traded (14 Oct – 13 Nov 2026) these exact rules lost after fees (15m: −0.18R a trade over 6,014 setups; 5m: −0.12R over 6,834), no better than entering at a random time with the same stop and target.';
   const hm = t => new Date(t).toISOString().slice(11, 16);
   const when = (t, stf) => (TF[stf].ms >= HOUR ? new Date(t).toISOString().slice(5, 10) + ' ' : '') + hm(t);
