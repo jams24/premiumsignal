@@ -2405,9 +2405,34 @@
     saveDraw(); prim.req();
   }
   function removeSel() { if (!SEL) return; DRAW[U.sym] = (DRAW[U.sym] || []).filter(d => d !== SEL); SEL = null; saveDraw(); selUI(); prim.req(); }
+  // 🗑 clear this coin's chart: your drawings only, or a clean chart = the drawings plus every overlay on the candles switched
+  // off (volume, order flow and RSI panes stay). Both can be undone. Overlays go through their own tick boxes, so each
+  // add-on (sessions, A+, RD, trade marks...) tidies up exactly as when you untick it by hand.
+  const CLEAN = ['ema20', 'ema50', 'ema200', 'bt', 'vp', 'hilo', 'pdhl', 'smcFvg', 'ob', 'tline', 'smc', 'choch', 'bos', 'eq', 'liq', 'zz', 'kpoi', 'aplus', 'poi', 'wins'];
+  const sessBox = () => $('[data-indpop] [data-sess-on]');
+  function tick(i, on) { if (i && i.checked !== on) { i.checked = on; i.dispatchEvent(new Event('change', { bubbles: true })); } }
+  function setInd(k, on) { const i = $(`[data-indpop] [data-ind="${k}"]`); if (i) tick(i, on); else U[k] = on; }
+  function clearAsk() {
+    const sym = U.sym, n = (DRAW[sym] || []).length, sb = sessBox(), ov = CLEAN.filter(k => U[k]).length + (sb && sb.checked ? 1 : 0);
+    const what = [n ? `${n} drawing${n === 1 ? '' : 's'}` : '', ov ? `${ov} indicator${ov === 1 ? '' : 's'} on the candles` : ''].filter(Boolean).join(' and ');
+    if (!what) { hint(`Nothing to clear on ${esc(sym)}: no drawings and no indicators on the candles`, [['OK', () => hint()]]); return; }
+    hint(`Clear ${esc(sym)}? ${what}`, [n ? [`Drawings${ov ? ' only' : ''}`, () => clearRun(false)] : null, ov ? [n ? 'Drawings + indicators' : 'Indicators off', () => clearRun(true)] : null, ['Cancel', () => hint()]].filter(Boolean));
+  }
+  function clearRun(all) {
+    const sym = U.sym, kept = DRAW[sym] || [], snap = {}, sb = sessBox(), sWas = !!(sb && sb.checked);
+    DRAW[sym] = []; SEL = null; saveDraw(); touchUI();
+    if (all) { CLEAN.forEach(k => { snap[k] = !!U[k]; }); CLEAN.forEach(k => setInd(k, false)); tick(sb, false); saveUI(); headUI(); legend(); }   // snapshot first: SMC off also unticks CHoCH / BOS / EQ / liquidity
+    prim.req();
+    const undo = () => {
+      DRAW[sym] = kept.concat(DRAW[sym] || []); saveDraw();
+      if (all) { CLEAN.forEach(k => setInd(k, snap[k])); Object.assign(U, snap); saveUI(); headUI(); smcSchedule(); setMarkers(); legend(); if (sWas) tick(sessBox(), true); }
+      prim.req(); hint(); toast(`${sym} is back as it was${all && snap.tline ? ' (auto trend lines are drawn fresh)' : ''}.`);
+    };
+    hint(`${esc(sym)} cleared${kept.length ? ` · ${kept.length} drawing${kept.length === 1 ? '' : 's'} removed` : ''}${all ? ' · indicators off (Indicators menu turns them back on)' : ''}`, [['Undo', undo], ['OK', () => hint()]]);
+  }
   function setTool(t) {
     if (t === 'magnet') { U.magnet = !U.magnet; saveUI(); toolUI(); toast(U.magnet ? `Magnet on: a point near a candle's open / high / low / close snaps to it${phone() ? '' : ` · hold ${MODK} to place it freely`}` : `Magnet off${phone() ? '' : ` · hold ${MODK} to snap for a moment`}`); return; }
-    if (t === 'clear') { hint(`Remove all ${(DRAW[U.sym] || []).length} drawings on ${esc(U.sym)}?`, [['Remove', () => { DRAW[U.sym] = []; SEL = null; saveDraw(); prim.req(); hint(); }], ['Cancel', () => hint()]]); return; }
+    if (t === 'clear') { clearAsk(); return; }
     TOOL = t; DRAFT = null; PENS = []; lock(drawTool(t)); toolUI();
     if (t === 'pen') hint('Pencil: drag on the chart to draw', [['Undo', penUndo], ['Done', () => setTool('cursor')]]);
     else if (t === 'zig') zigHint();
@@ -2542,7 +2567,7 @@
     const tools = sec('', [
       chips('Paper ticket:', [['Limit', () => { T.type = 'limit'; fld('price').value = v; renderTicket(); syncLines(); showTicket(); }],
         ['Stop', () => { fld('sl').value = v; renderTicket(); syncLines(); showTicket(); }], ['Target', () => { fld('tp').value = v; renderTicket(); syncLines(); showTicket(); }]], { icon: 'crosshair' }),
-      chips('Chart:', [['Line', () => addDrawing({ type: 'hline', pts: [{ t: sp.t != null ? sp.t : lastBar()[0], p: v }] })], ['Copy', () => copyPrice(v)]]
+      chips('Chart:', [['Line', () => addDrawing({ type: 'hline', pts: [{ t: sp.t != null ? sp.t : lastBar()[0], p: v }] })], ['Copy', () => copyPrice(v)], ['Clear…', clearAsk]]
         .concat(X.chartChips.map(f => { try { return f(v); } catch (e) { console.error(e); return null; } }).filter(Boolean)), { icon: 'minus' }),
     ], 'tm-tools');
     const el = document.createElement('div');

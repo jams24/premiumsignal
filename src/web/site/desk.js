@@ -12,7 +12,7 @@ const TOOLS = [
   ['cursor', 'mouse-pointer-2', 'Cursor (Esc)'], ['cross', 'crosshair', 'Crosshair'], null,
   ['pen', 'pencil', 'Pencil: draw freehand (P)'], ['trend', 'move-diagonal', 'Trend line (T)'], ['zig', 'activity', 'Zig-zag: click each swing high and low, labelled HH / HL / LH / LL (Z)'], ['hline', 'minus', 'Horizontal line (H)'], ['ray', 'move-horizontal', 'Horizontal ray (R)'],
   ['rect', 'rectangle-horizontal', 'Rectangle / zone (B)'], ['fib', 'list', 'Fibonacci retracement (F)'], ['long', 'trending-up', 'Long position: click the entry, then drag the stop, target and right edge · R:R and $ at your paper ticket size (L)'], ['short', 'trending-down', 'Short position: click the entry, then drag the stop, target and right edge · R:R and $ at your paper ticket size (S)'], ['measure', 'ruler', 'Measure (M)'], null,
-  ['magnet', 'magnet', 'Magnet: snap to candle high / low / open / close'], ['clear', 'trash-2', 'Remove all drawings on this coin'],
+  ['magnet', 'magnet', 'Magnet: snap to candle high / low / open / close'], ['clear', 'trash-2', 'Clear this chart: your drawings on this coin, or the drawings and every indicator on the candles (can be undone; also in the right-click menu)'],
 ];
 // icons the browser code builds rows with
 const JS_ICONS = ['x', 'star', 'chevron-right', 'arrow-up-right', 'arrow-down-right', 'shield', 'circle-x', 'play', 'pause', 'trending-up', 'zap', 'minus', 'target', 'crosshair', 'search', 'chevron-left', 'chevron-up', 'chevron-down',

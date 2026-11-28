@@ -100,7 +100,8 @@
 .dk-hint { position: absolute; left: 50%; top: 10px; z-index: 6; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100% - 24px);
   padding: 7px 8px 7px 12px; border: 1px solid color-mix(in oklab, var(--primary) 40%, transparent); border-radius: 10px; background: color-mix(in oklab, var(--panel) 92%, transparent);
   box-shadow: var(--shadow); font-size: 12.5px; color: var(--text); }
-.dk-hint button { padding: 3px 8px; border-radius: 6px; background: var(--dk-hover); font-size: 12px; }
+.dk-hint button { padding: 3px 8px; border-radius: 6px; background: var(--dk-hover); font-size: 12px; white-space: nowrap; }
+@media (max-width: 899px) { .dk-hint { flex-wrap: wrap; row-gap: 6px; } .dk-hint > span { flex: 1 1 auto; min-width: min(190px, 100%); } }
 .dk-msg { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px; text-align: center; background: color-mix(in oklab, var(--dk-bg) 70%, transparent); color: var(--text-2); font-size: 13.5px; }
 .dk-msg .spin { width: 22px; height: 22px; margin: 0 auto 10px; border: 2px solid var(--dk-line); border-top-color: var(--primary); border-radius: 99px; animation: spin .8s linear infinite; }
 .dk-msg button { margin-top: 12px; }
